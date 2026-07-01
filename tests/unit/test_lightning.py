@@ -413,3 +413,79 @@ async def test_transport_error_message_names_exception_class() -> None:
     )
     with pytest.raises(LightningUnavailableError, match="ReadTimeout"):
         await client.open_channel(node_pubkey_hex="02aa", local_funding_sat=100_000)
+
+
+# --- channels: pending-open surfaced, best-effort ---------------------------------
+
+
+async def test_get_channels_includes_pending_open(monkeypatch) -> None:
+    """A JUST-funded channel (pendingchannels) must be visible next to open ones."""
+    transport = _routing_transport(
+        {
+            "/v1/channels": httpx.Response(200, json={"channels": []}),
+            "/v1/channels/pending": httpx.Response(
+                200,
+                json={
+                    "pending_open_channels": [
+                        {
+                            "channel": {
+                                "remote_node_pub": "03864ef0aa",
+                                "capacity": "400000",
+                                "local_balance": "398708",
+                                "channel_point": "abcd:0",
+                            }
+                        }
+                    ]
+                },
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert status.channels == []
+    assert len(status.pending) == 1
+    assert status.pending[0].capacity_sat == 400_000
+    assert status.pending[0].local_sat == 398_708
+    assert status.pending[0].remote_pubkey == "03864ef0aa"
+
+
+async def test_get_channels_pending_failure_keeps_open_channels(monkeypatch) -> None:
+    """pendingchannels erroring must NOT hide the open-channel truth (best-effort)."""
+    transport = _routing_transport(
+        {
+            "/v1/channels": httpx.Response(
+                200,
+                json={
+                    "channels": [
+                        {
+                            "chan_id": "1",
+                            "remote_pubkey": "02aa",
+                            "capacity": "100",
+                            "local_balance": "50",
+                            "remote_balance": "50",
+                            "active": True,
+                        }
+                    ]
+                },
+            ),
+            "/v1/channels/pending": httpx.Response(503, text="busy"),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert len(status.channels) == 1
+    assert status.pending == []

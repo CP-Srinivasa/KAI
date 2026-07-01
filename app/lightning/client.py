@@ -173,6 +173,14 @@ class LndRestClient:
         """GET /v1/channels — open channels with per-channel balances (read-only)."""
         return await self._get("/v1/channels")
 
+    async def pending_channels(self) -> dict[str, Any]:
+        """GET /v1/channels/pending — channels awaiting confirmations/close (read-only).
+
+        Covers ``pending_open_channels`` (funding tx broadcast, not yet enough
+        confs) plus force-close/waiting-close limbo — without this an open that
+        was JUST funded is invisible to every channel view."""
+        return await self._get("/v1/channels/pending")
+
     # ── write surface (value layer; gated) ────────────────────────────────────
     # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.
     # Requires a SCOPE-MINIMAL macaroon (invoices / channel-open) — NEVER the

@@ -772,11 +772,19 @@ export type LnChannel = {
   remote_sat: number; // inbound liquidity (KAI can receive)
   active: boolean;
 };
+export type LnPendingChannel = {
+  remote_pubkey: string;
+  capacity_sat: number;
+  local_sat: number;
+  channel_point: string;
+};
 export type LnChannels = {
   state: "disabled" | "unavailable" | "ok";
   reachable: boolean;
   channels: LnChannel[];
+  pending: LnPendingChannel[];
   num_channels: number;
+  num_pending: number;
   total_local_sat: number;
   total_remote_sat: number;
   reason: string;
@@ -785,6 +793,57 @@ export type LnChannels = {
 
 export function fetchLnChannels(signal?: AbortSignal): Promise<LnChannels> {
   return apiGet<LnChannels>("/dashboard/api/ln/channels", { signal });
+}
+
+// RaspiBlitz info mirror (read-only system snapshot over forced-command ssh;
+// default-off, fail-soft — available:false + reason instead of errors).
+export type NodeBlitzData = {
+  ts: number;
+  hostname: string;
+  raspiblitz_version?: string;
+  uptime_seconds: number | null;
+  load: number[] | null;
+  cpu_temp_c: number | null;
+  mem_total_mb: number | null;
+  mem_available_mb: number | null;
+  disk_total_gb: number | null;
+  disk_used_pct: number | null;
+  bitcoind: {
+    version: string | null;
+    chain: string | null;
+    blocks: number | null;
+    headers: number | null;
+    sync_pct: number | null;
+    peers: number | null;
+  };
+  lnd: {
+    version: string | null;
+    alias: string | null;
+    pubkey: string | null;
+    uris: string[];
+    synced_to_chain: boolean | null;
+    synced_to_graph: boolean | null;
+    block_height: number | null;
+    peers: number | null;
+    active_channels: number | null;
+    pending_channels: number | null;
+    wallet_confirmed_sat: number | null;
+    wallet_unconfirmed_sat: number | null;
+    channel_local_sat: number | null;
+    channel_remote_sat: number | null;
+    pending_open: { remote_pubkey: string | null; capacity_sat: number; channel_point: string | null }[];
+    fee_report: { day_sat: number | null; week_sat: number | null; month_sat: number | null };
+  };
+};
+export type NodeBlitz = {
+  available: boolean;
+  reason: string;
+  data: NodeBlitzData | null;
+  age_seconds: number | null;
+};
+
+export function fetchNodeBlitz(signal?: AbortSignal): Promise<NodeBlitz> {
+  return apiGet<NodeBlitz>("/dashboard/api/node/blitz", { signal });
 }
 
 // Node-Reputation-Telemetrie (read-only, default-off). Append-only Shadow-Stream;

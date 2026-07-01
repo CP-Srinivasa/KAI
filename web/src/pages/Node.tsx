@@ -20,6 +20,7 @@ import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
 import { NodeReputationPanel } from "@/components/panels/NodeReputationPanel";
 import { LnOpsAuditPanel } from "@/components/panels/LnOpsAuditPanel";
 import { LnControlPanel } from "@/components/panels/LnControlPanel";
+import { BlitzInfoPanel } from "@/components/panels/BlitzInfoPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { cn } from "@/lib/utils";
@@ -28,13 +29,12 @@ import { cn } from "@/lib/utils";
 //
 // Designprinzip (KAI-Doktrin): KEINE Fake-Live-Zahlen. Jede Kachel rendert
 // ihren WAHREN Stand:
-//   - Lightning  → echter /dashboard/api/lightning-Adapter, LIVE (readonly-Macaroon
-//     in Prod-.env gewired, Node erreichbar). Wert-Schicht (L402/Empfang) gebaut, inert.
+//   - Lightning  → echter /dashboard/api/lightning-Adapter, LIVE (Node erreichbar).
 //   - L1 (Chain) → LIVE: APP_CHAIN_ENABLED, eigener bitcoind, Fee-Shadow akkumuliert.
 //   - L3 (OTS)   → LIVE: APP_INTEGRITY_ENABLED, OTS-Stamper, tägliche Anchor-/Upgrade-Timer.
 //   - L2 (5. Bayes-Evidence) → gebaut, shadow-only, akkumuliert (edge-gated).
-//   - L4/L5 (Wert-Schicht) → gebaut; Empfang kapitalfrei (receive_enabled), Senden/Channels
-//     hart hinter pay_enabled (false) + Human-in-the-Loop.
+//   - L4/L5 (Wert-Schicht) → LIVE hinter Policy-Envelope + HOTP-Confirm; der wahre
+//     Gate-Zustand (pay_enabled) kommt aus der API, nie aus statischem Text.
 // Rechtfertigung dieser Schicht = Souveränität/Integrität/Resilienz, NICHT ein
 // romantisches Trading-Edge-Versprechen (Edge nur wenn shadow-bewiesen).
 
@@ -216,15 +216,16 @@ export function NodePage() {
             title="Agentische Wert-Schicht"
             icon={<Lock size={18} />}
             tone="warn"
-            badge="gebaut · gegated"
-            badgeTone="neg"
+            badge="LIVE · policy-gebremst"
+            badgeTone="warn"
             body={
               <>
-                L402 (sats-per-API-call) + Empfang gebaut. Empfangen ist kapitalfrei vom Senden
-                entkoppelt; Senden/Channels strikt hinter dem Kapital-Gate + Human-in-the-Loop.
+                L402 + Empfang + Channel-Open sind <span className="font-mono text-fg">live</span> —
+                jede kapital-wirksame Aktion läuft durch Policy-Envelope (Caps + Reserve-Floor) und
+                HOTP-Confirm. Den echten Kill-Switch-Zustand zeigt die LN-Steuerung unten.
               </>
             }
-            hint="Wert-Schicht U1–U5 gebaut + inert: Empfang via receive_enabled (kapitalfrei, pay_enabled bleibt false), L402-Demand-Probe + Earnings/Evaluator + Go-Live-Preflight. Senden/Channels nur bei (a) Edge bewiesen UND (b) Kapital live — echte Coins nie autonom, Operator führt aus."
+            hint="Seit 2026-07-01 operator-armiert: pay/receive/l402_enabled=true, Cockpit-Macaroon + HOTP-Seed provisioniert, enge Policy (allowed_actions, per-action-/daily-Cap, reserve_floor, confirm_threshold=1 ⇒ HOTP auf JEDEM Spend). Erster Channel (400k, ACINQ) über genau diesen Pfad eröffnet. Rollback: APP_LN_PAY_ENABLED=false."
           />
         </div>
       </section>
@@ -238,22 +239,22 @@ export function NodePage() {
             <LightningPanel />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">
-                <Network size={11} /> Wiring-Stand (verifiziert · 2026-06-25)
+                <Network size={11} /> Wiring-Stand (verifiziert · 2026-07-02)
                 <InfoHint
-                  label="Read-Wiring live · Value-Wiring offen"
-                  hint="Read-Pfad ist LIVE: readonly-Macaroon + base_url + TLS in der Prod-.env auf .23, settings.lightning.enabled=true, Node per getinfo erreichbar. Für die Wert-Schicht (L402-Empfang) fehlt nur ein scope-minimales invoices:write-Macaroon auf dem Node — pay_enabled bleibt strikt false."
+                  label="Read- UND Value-Wiring live"
+                  hint="Read-Pfad LIVE (Macaroon + base_url + TLS in der Prod-.env auf .23). Wert-Schicht seit 2026-07-01 operator-armiert: Cockpit-Macaroon (invoices+channel-write, NIE admin), HOTP-Seed, Policy-Envelope. Der wahre Kill-Switch-Zustand (pay_enabled) kommt live aus der API und steht im LN-Steuerung-Panel — dieser Text behauptet keinen Gate-Zustand."
                 />
               </span>
               <p className="mt-1">
                 Node-seitig laufen <span className="font-mono text-fg">bitcoind</span> +{" "}
-                <span className="font-mono text-fg">lnd</span> (WireGuard verbunden). Der Prod-Adapter
-                ist <span className="font-mono text-pos">live</span> und liefert echte Read-Daten
-                (Macaroon seit 16.06 gewired, <span className="font-mono text-fg">node_reachable</span>{" "}
-                verifiziert 25.06). Offen ist nur das{" "}
-                <span className="font-mono text-warn">invoices:write</span>-Macaroon für den gegateten
-                L402-Empfang.
+                <span className="font-mono text-fg">lnd</span> (Hybrid: Clearnet + Tor). Read-Adapter{" "}
+                <span className="font-mono text-pos">live</span>; Wert-Schicht{" "}
+                <span className="font-mono text-pos">armiert</span> hinter Policy-Envelope + HOTP —
+                erster Channel-Open (400k, ACINQ) lief 07-01 über genau diesen Pfad. Live-Zustand von{" "}
+                <span className="font-mono text-fg">pay_enabled</span> zeigt die LN-Steuerung rechts.
               </p>
             </div>
+            <BlitzInfoPanel />
             <AuditIntegrityKpi />
           </div>
 

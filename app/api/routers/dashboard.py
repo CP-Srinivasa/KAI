@@ -2052,6 +2052,7 @@ async def dashboard_ln_channels_api() -> JSONResponse:
     status = await get_channels()
     payload = asdict(status)
     payload["num_channels"] = len(status.channels)
+    payload["num_pending"] = len(status.pending)
     payload["total_local_sat"] = sum(c.local_sat for c in status.channels)
     payload["total_remote_sat"] = sum(c.remote_sat for c in status.channels)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
