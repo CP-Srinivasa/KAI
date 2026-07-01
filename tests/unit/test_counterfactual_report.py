@@ -128,6 +128,7 @@ def test_v1_glitch_reclassified_suspect_at_read_time(tmp_path: Path) -> None:
         "total": 2,
         "drift_exceeded": 1,
         "data_quality_suspect": 1,
+        "signed_drift_bps": 80.0,  # only the 80bps non-suspect row; the glitch excluded
     }
 
 
@@ -143,6 +144,7 @@ def test_by_symbol_and_by_source_breakdown(tmp_path: Path) -> None:
         "total": 2,
         "drift_exceeded": 1,
         "data_quality_suspect": 0,
+        "signed_drift_bps": 60.0,  # mean of signed 0 and +120 (non-suspect)
     }
     assert by_symbol["ETHUSDT"]["data_quality_suspect"] == 1
 
@@ -153,6 +155,44 @@ def test_by_symbol_and_by_source_breakdown(tmp_path: Path) -> None:
     rendered = render_counterfactual_report(report)
     assert "total_comparisons: 4" in rendered
     assert "BY SYMBOL" in rendered
+
+
+def test_signed_drift_bias_reveals_systematic_venue_skew(tmp_path: Path) -> None:
+    path = tmp_path / "cf.jsonl"
+    _write_jsonl(path, _rows())
+
+    report = build_counterfactual_report(path)
+    by_source = {row["source"]: row for row in report.by_source}
+
+    # technical_paper: signed non-suspect drift = mean(0, +120) = +60; the +5000
+    # suspect glitch must NOT leak into the bias.
+    assert by_source["technical_paper"]["signed_drift_bps"] == 60.0
+    # momentum: a one-sided NEGATIVE skew the |abs| percentiles would hide.
+    assert by_source["momentum"]["signed_drift_bps"] == -60.0
+
+    assert "signed_bias=" in render_counterfactual_report(report)
+
+
+def test_signed_drift_bias_zero_when_no_non_suspect_numeric(tmp_path: Path) -> None:
+    # A bucket whose only row is a read-time glitch has no non-suspect numeric
+    # drift → the bias is 0.0 (never derived from the glitch magnitude).
+    path = tmp_path / "cf.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {
+                "symbol": "X",
+                "source": "only_glitch",
+                "in_settled_range": False,
+                "drift_to_range_bps": 10_781_534.4,
+                "drift_exceeded": True,
+            }
+        ],
+    )
+    report = build_counterfactual_report(path)
+    by_source = {row["source"]: row for row in report.by_source}
+    assert by_source["only_glitch"]["signed_drift_bps"] == 0.0
+    assert by_source["only_glitch"]["data_quality_suspect"] == 1
 
 
 def test_empty_stream_is_unavailable(tmp_path: Path) -> None:
