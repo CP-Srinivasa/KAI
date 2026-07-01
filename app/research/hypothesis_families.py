@@ -116,14 +116,25 @@ FAMILIES: dict[str, HypothesisFamily] = {
         ),
         HypothesisFamily(
             name="news_direction",
-            status=PROBATION,
-            constructions_failed=1,
+            status=TERMINAL_DEAD,
+            constructions_failed=3,
             evidence=(
-                "prereg 5872f817a2d1632d 24h spot construction 2026-07-01: FAILED "
-                "(7 sources, no P>=0.95, max n=174<200)",
-                "open prereg directional_news_3d_theblock_newsbtc (out-of-sample)",
+                "prereg 5872f817a2d1632d 24h spot 2026-07-02 (full-corpus re-measure): "
+                "FAILED — 5 sources n>=200 at 1d, none passes P>=0.95+cost "
+                "(overall n=7106, 1d mean 5.2bps vs cost 20.9, P=0.77)",
+                "prereg 722f1593ca1d0acd hedged-BTC 4h 2026-07-02: FAILED "
+                "(overall 4h mean 0.08bps, P=0.50; pooled z=0.18)",
+                "prereg 6e23c6822669f7d5 micro-1m 2026-07-02: FAILED "
+                "(1-60min gross means ~1bps, best pooled P=0.949 < 0.9875 Bonferroni; "
+                "absence is NOT a latency artifact)",
             ),
-            notes="hedged + micro constructions must be pre-registered BEFORE measurement",
+            notes="stop rule hit 2026-07-02 (3 pre-registered constructions failed). "
+            "Sanctioned exceptions, registered as evidence-backed out-of-sample "
+            "follow-ups: prereg 4a3b1b0c5a94b73c hedged-1d-drift (in-sample pooled "
+            "z=2.85, I2=0.03, 17 sources — strongest homogeneous gross signal measured "
+            "to date, below retail cost) and prereg directional_news_3d_theblock_newsbtc. "
+            "Their failure closes the family for good; new constructions need "
+            "--force-dead-family.",
         ),
         HypothesisFamily(
             name="l2_microstructure",
