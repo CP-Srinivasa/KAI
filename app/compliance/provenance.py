@@ -22,6 +22,8 @@ from app.storage.jsonl_io import read_jsonl_tolerant
 
 ProvenanceKind = Literal["ownership_proof", "whitelist", "transfer"]
 
+DEFAULT_PROVENANCE_LEDGER_PATH = Path("artifacts/compliance/provenance_ledger.jsonl")
+
 _CAVEAT = (
     "nachweis-hygiene — records evidence to PROVE provenance (SoF/TFR/tax), never to "
     "obscure it; 'gaps' surface wallets that moved value without a recorded ownership "

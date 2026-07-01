@@ -44,3 +44,12 @@ def test_verify_true_for_matching_and_false_for_tampered() -> None:
 
 def test_verify_rejects_attestation_without_hash() -> None:
     assert verify_attestation({"a": 1}, {"algo": "sha256"}) is False
+
+
+def test_nan_payload_fails_loud_not_silent() -> None:
+    # NaN hat keine kanonische JSON-Form — ein Wahrheits-Primitiv muss laut
+    # scheitern statt stillschweigend Nicht-JSON zu hashen.
+    import pytest
+
+    with pytest.raises(ValueError):
+        compute_attestation({"p": float("nan")})

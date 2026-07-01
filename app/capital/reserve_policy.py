@@ -17,7 +17,6 @@ def compute_reserve_recommendation(
     current_reserve_usd: float,
     profit_split_pct: float,
     reserve_target_usd: float,
-    long_term_target_usd: float = 0.0,
 ) -> dict[str, Any]:
     """Recommend the reserve/long-term split for a realized gain (pure, no execute).
 
@@ -42,7 +41,7 @@ def compute_reserve_recommendation(
         "executes": False,  # recommendation only — movement is gated at the call site
         "rationale": (
             f"split {profit_split_pct:.0%} of realized gain; reserve filled to target "
-            f"then overflow to long-term hold (long_term_target={long_term_target_usd})."
+            "then overflow to long-term hold."
         ),
     }
 
