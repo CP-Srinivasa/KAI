@@ -930,6 +930,126 @@ def trading_prereg_list(
     console.print(table)
 
 
+@trading_app.command("hypothesis-eval")
+def trading_hypothesis_eval(
+    resolved: str = typer.Option(
+        "artifacts/shadow_candidate_resolved.jsonl", "--resolved", help="Resolved outcomes JSONL"
+    ),
+    ledger: str = typer.Option(
+        "artifacts/shadow_candidate_ledger.jsonl", "--ledger", help="Shadow-candidate ledger JSONL"
+    ),
+    funding: str = typer.Option(
+        "artifacts/funding_evidence_shadow.jsonl", "--funding", help="Funding evidence JSONL"
+    ),
+    oi: str = typer.Option(
+        "artifacts/oi_evidence_shadow.jsonl", "--oi", help="Open-interest evidence JSONL"
+    ),
+    momentum: str = typer.Option(
+        "artifacts/momentum_evidence_shadow.jsonl", "--momentum", help="Momentum evidence JSONL"
+    ),
+    l2: str = typer.Option(
+        "artifacts/l2_evidence_shadow.jsonl", "--l2", help="L2 on-chain evidence JSONL"
+    ),
+    horizon: int = typer.Option(
+        3600, "--horizon", help="Feature-mode horizon in s (60|300|900|3600)"
+    ),
+    tol_s: float = typer.Option(300.0, "--tol-s", help="Aligned-evidence join tolerance (s)"),
+    cost_bps: float = typer.Option(20.0, "--cost-bps", help="Round-trip cost floor (bps)"),
+    max_concentration: float = typer.Option(
+        0.8, "--max-concentration", help="Max single-symbol share for ACTIONABLE"
+    ),
+    min_sample: int = typer.Option(8, "--min-sample", help="Min per-group sample for feature mode"),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+) -> None:
+    """Score ALL shadow evidence families against the canonical, FILL-INDEPENDENT
+    outcome pool in ONE read-only pass (ADR 0012 truth harness).
+
+    Aligned-evidence families (funding, open_interest) get the +1/-1 spread + the
+    conservative ACTIONABLE gate; raw-feature families (momentum, L2) get the
+    moving-block-bootstrap direction verdict. The outcome pool is the resolved
+    shadow-candidate set — it grows on its own, so evaluation NEVER waits for a real
+    paper fill. Nothing is promoted: a positive result is a HYPOTHESIS, operator-
+    AND edge-gated.
+    """
+    import json as _json
+
+    from app.observability.l2_evidence_eval import evaluate_feature_direction, pit_join
+    from app.research.shadow_evidence_eval import evaluate_signal, index_evidence, render
+    from app.research.shadow_outcomes import (
+        HORIZONS,
+        load_canonical_outcomes,
+        read_jsonl,
+        to_feature_outcomes,
+    )
+
+    if horizon not in HORIZONS:
+        console.print(f"[red]refused:[/red] --horizon must be one of {HORIZONS}")
+        raise typer.Exit(2)
+
+    outcomes = load_canonical_outcomes(resolved_path=Path(resolved), ledger_path=Path(ledger))
+    feat_outcomes = to_feature_outcomes(outcomes, horizon=horizon)
+
+    aligned: dict[str, Any] = {}
+    for label, path in (("funding", funding), ("open_interest", oi)):
+        idx = index_evidence(read_jsonl(Path(path)))
+        aligned[label] = evaluate_signal(
+            outcomes, idx, tol_s=tol_s, cost_bps=cost_bps, max_concentration=max_concentration
+        )
+
+    features: dict[str, Any] = {}
+    for label, path, keys in (
+        ("momentum", momentum, ("momentum_score",)),
+        ("l2", l2, ("fee_percentile", "mempool_percentile")),
+    ):
+        measurements = read_jsonl(Path(path))
+        pairs = pit_join(measurements, feat_outcomes)
+        features[label] = {
+            "n_measurements": len(measurements),
+            "n_pairs": len(pairs),
+            "features": {
+                k: evaluate_feature_direction(pairs, feature_key=k, min_sample=min_sample)
+                for k in keys
+            },
+        }
+
+    if as_json:
+        print(
+            _json.dumps(
+                {
+                    "n_outcomes": len(outcomes),
+                    "horizon_s": horizon,
+                    "aligned": aligned,
+                    "features": features,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    print(
+        f"hypothesis-eval: {len(outcomes)} canonical outcomes (fill-independent), "
+        f"feature-horizon={horizon}s, tol={tol_s:.0f}s cost={cost_bps:.0f}bps"
+    )
+    for label in ("funding", "open_interest"):
+        print()
+        print(render(label, aligned[label]))
+    for label in ("momentum", "l2"):
+        f = features[label]
+        print()
+        print(f"### {label} — {f['n_measurements']} measurements, {f['n_pairs']} PIT pairs")
+        for k, r in f["features"].items():
+            print(
+                f"  {k}: direction={r['direction']} n_high={r['n_high']} n_low={r['n_low']} "
+                f"mean_high={r['mean_high']:.2f} mean_low={r['mean_low']:.2f} "
+                f"p_high+={r['p_high_positive']} p_low+={r['p_low_positive']}"
+            )
+    print()
+    print(
+        "hypothesis-eval: every result is a HYPOTHESIS — trust/edge promotion stays "
+        "operator- AND edge-gated (no auto-activation)."
+    )
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
