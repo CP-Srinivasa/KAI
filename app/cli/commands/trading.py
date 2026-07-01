@@ -497,10 +497,11 @@ def trading_evidence_window(
     else:
         console.print(render_window(report))
 
-    # Honest exit signal: a non-paper fill in a paper window is an integrity
-    # alarm. Edge-emptiness is informational (exit 0) — absence of evidence is
-    # not a failure of the report.
-    if report.safety.live_orders_attempted > 0:
+    # Honest exit signal: an UNEXPLAINED non-paper fill in a paper window is an
+    # integrity alarm. The documented-benign May-legacy marker is excluded, else
+    # the tripwire fires permanently and alarms nothing. Edge-emptiness is
+    # informational (exit 0) — absence of evidence is not a failure of the report.
+    if report.safety.live_orders_unexplained > 0:
         raise typer.Exit(2)
 
 
@@ -569,7 +570,9 @@ def trading_canonical_edge(
         print(_json.dumps(report.to_dict(), indent=2))
     else:
         console.print(render_window(report))
-    if report.safety.live_orders_attempted > 0:
+    # Tripwire wie bei evidence-window: nur UNERKLÄRTE Non-Paper-Fills (der
+    # dokumentiert-benigne Mai-legacy-Marker würde sonst jeden Lauf failen).
+    if report.safety.live_orders_unexplained > 0:
         raise typer.Exit(2)
 
 

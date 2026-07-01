@@ -164,19 +164,31 @@ class WindowCounts:
 
 # === bucket: SAFETY ============================================================
 
+# Dokumentiert-benigne Non-Paper-Marker: die 2 Mai-``legacy``-Fills sind
+# epoch-fremde, untersucht-benigne Alt-Closes (memories kai_triple_verdict_20260701 /
+# kai_edge_epoch_contamination_20260623). Sie bleiben in ``live_orders_attempted``
+# und ``non_paper_venues_seen`` voll sichtbar (Wahrheit unangetastet) — nur der
+# Exit-2-Tripwire keyed auf ``live_orders_unexplained``, sonst feuert er permanent
+# und alarmiert damit nichts. Ein ECHTER Live-Fill trägt einen realen Venue-Namen
+# und zählt weiter als unexplained.
+_DOCUMENTED_BENIGN_NON_PAPER_VENUES = frozenset({"legacy"})
+
 
 @dataclass(frozen=True)
 class WindowSafety:
     """Hard audit assertions. The whole point: prove no live leak happened.
 
     ``live_orders_attempted`` is DERIVED from the data (count of fills whose
-    venue is not a paper venue), not assumed to be 0. ``auto_promotions`` is
-    structurally 0 — this report and the edge gate never flip ``entry_mode``;
-    promotion is always an explicit operator action.
+    venue is not a paper venue), not assumed to be 0.
+    ``live_orders_unexplained`` excludes the documented-benign legacy marker —
+    the tripwire figure that MUST be 0. ``auto_promotions`` is structurally 0 —
+    this report and the edge gate never flip ``entry_mode``; promotion is always
+    an explicit operator action.
     """
 
     live_orders_attempted: int
     live_orders_attempted_derivation: str
+    live_orders_unexplained: int
     entry_mode_blocked: int
     auto_promotions: int
     non_paper_venues_seen: list[str]
@@ -185,6 +197,7 @@ class WindowSafety:
         return {
             "live_orders_attempted": self.live_orders_attempted,
             "live_orders_attempted_derivation": self.live_orders_attempted_derivation,
+            "live_orders_unexplained": self.live_orders_unexplained,
             "entry_mode_blocked": self.entry_mode_blocked,
             "auto_promotions": self.auto_promotions,
             "non_paper_venues_seen": list(self.non_paper_venues_seen),
@@ -611,6 +624,7 @@ def _build_safety(
         1 for ev in loop_list if str(ev.get("status", "")) == _STATUS_ENTRY_MODE_BLOCKED
     )
     live_attempts = 0
+    unexplained = 0
     non_paper: set[str] = set()
     for ev in exec_list:
         if ev.get("event_type") != "order_filled":
@@ -619,16 +633,21 @@ def _build_safety(
         if not _is_paper_venue(venue):
             live_attempts += 1
             non_paper.add(venue or "<unknown>")
+            if venue not in _DOCUMENTED_BENIGN_NON_PAPER_VENUES:
+                unexplained += 1
     derivation = (
         "count of order_filled events whose fee_venue/venue is not a paper venue "
         "(paper|sim|empty). 0 confirms every fill in the window was simulated; the "
         "paper engine also hard-blocks live_enabled=True at construction "
         "(PaperExecutionEngine), so this is a defence-in-depth count, not the only "
-        "guard."
+        "guard. live_orders_unexplained excludes the documented-benign 'legacy' "
+        "marker (epoch-foreign May closes) and is the tripwire figure that MUST "
+        "be 0."
     )
     return WindowSafety(
         live_orders_attempted=live_attempts,
         live_orders_attempted_derivation=derivation,
+        live_orders_unexplained=unexplained,
         entry_mode_blocked=entry_mode_blocked,
         # structurally 0: neither this report nor the edge gate flips entry_mode.
         auto_promotions=0,
@@ -746,11 +765,17 @@ def _build_notes(
             f"close(s) from ALL edge figures ({reasons}); counted as "
             "quarantine_rejected. Shared bayes_quarantine signatures (PR #112)."
         )
-    if safety.live_orders_attempted > 0:
+    if safety.live_orders_unexplained > 0:
         notes.append(
-            f"*** {safety.live_orders_attempted} NON-PAPER FILL(S) DETECTED "
+            f"*** {safety.live_orders_unexplained} UNEXPLAINED NON-PAPER FILL(S) DETECTED "
             f"({', '.join(safety.non_paper_venues_seen)}) — investigate immediately. "
             "The window is supposed to be paper-only."
+        )
+    elif safety.live_orders_attempted > 0:
+        notes.append(
+            f"{safety.live_orders_attempted} non-paper fill(s), alle dokumentiert-benign "
+            f"({', '.join(safety.non_paper_venues_seen)}: epoch-fremde Mai-Closes) — "
+            "kein Live-Leak."
         )
     if (
         edge.trade_count > 0
@@ -926,7 +951,13 @@ def render_window(report: EvidenceWindowReport) -> str:
     lines.append("")
 
     lines.append("SAFETY (hard audit assertions)")
-    lines.append(f"  live_orders_attempted = {s.live_orders_attempted}   (MUST be 0)")
+    lines.append(
+        f"  live_orders_unexplained = {s.live_orders_unexplained}   (MUST be 0 — tripwire)"
+    )
+    lines.append(
+        f"  live_orders_attempted = {s.live_orders_attempted}   "
+        "(inkl. dokumentiert-benigner legacy-Marker)"
+    )
     lines.append(f"  entry_mode_blocked    = {s.entry_mode_blocked}")
     lines.append(f"  auto_promotions       = {s.auto_promotions}   (report flips nothing)")
     if s.non_paper_venues_seen:

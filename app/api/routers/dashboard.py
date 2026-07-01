@@ -1151,6 +1151,7 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
             "realized_pnl_usd_sum": round(e.realized_pnl_usd_sum, 2),
             "quarantine_excluded_count": e.quarantine_excluded.excluded_count,
             "live_orders_attempted": report.safety.live_orders_attempted,
+            "live_orders_unexplained": report.safety.live_orders_unexplained,
             "window_started_at": w.started_at,
             "window_ended_at": w.ended_at,
             # Edge-gate + outlier-robustness so the UI can say "gate reached →
