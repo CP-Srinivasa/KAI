@@ -227,6 +227,32 @@ def test_safety_detects_a_non_paper_fill_as_live_attempt() -> None:
     assert report.safety.live_orders_attempted == 1
 
 
+def test_safety_acknowledged_legacy_order_ids_do_not_alarm_but_stay_visible() -> None:
+    """The two investigated Mai-legacy fills are ACK'd by exact order id.
+
+    They must not trip the alarm counter (which fails the daily attest unit),
+    but stay visible as ``live_orders_acknowledged``. Any OTHER fill reusing
+    the "legacy" venue marker still alarms — the ACK is id-pinned, not
+    venue-wide.
+    """
+    from app.observability.evidence_window import ACKNOWLEDGED_NON_PAPER_ORDER_IDS
+
+    ack_id = next(iter(ACKNOWLEDGED_NON_PAPER_ORDER_IDS))
+    acked = dict(
+        _entry_fill("ETH/USDT", "2026-05-10T10:00:00+00:00", venue="legacy"),
+        order_id=ack_id,
+    )
+    fresh_legacy = dict(
+        _entry_fill("SOL/USDT", "2026-06-20T10:00:00+00:00", venue="legacy"),
+        order_id="ord_something_new",
+    )
+    report = build_evidence_window(loop_events=[], exec_events=[acked, fresh_legacy])
+    assert report.safety.live_orders_acknowledged == 1
+    assert report.safety.live_orders_attempted == 1  # the new one still alarms
+    assert "legacy" in report.safety.non_paper_venues_seen
+    assert any("acknowledged legacy" in n for n in report.notes)
+
+
 def test_safety_entry_mode_blocked_count_surfaced() -> None:
     loop = [
         _loop_cycle("entry_mode_blocked", "BTC/USDT", "2026-06-01T10:00:00+00:00"),
