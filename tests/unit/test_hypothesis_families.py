@@ -28,7 +28,7 @@ def test_known_falsification_history_is_encoded() -> None:
     assert is_terminal_dead("ta_rules")
     assert is_terminal_dead("execution_alpha")
     assert is_terminal_dead("unlock_supply")
-    assert not is_terminal_dead("news_direction")  # probation, not dead
+    assert is_terminal_dead("news_direction")  # stop rule hit 2026-07-02 (3 fails)
     assert not is_terminal_dead("funding_carry")
     assert not is_terminal_dead("l2_microstructure")
     assert not is_terminal_dead("nonexistent_family")
