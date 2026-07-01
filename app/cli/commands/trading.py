@@ -827,6 +827,17 @@ def trading_prereg_register(
     sample_target: int = typer.Option(
         ..., "--sample-target", help="Pre-committed sample-size target (n)"
     ),
+    family: str = typer.Option(
+        "",
+        "--family",
+        help="Hypothesis family (see `trading family-status`); refused for "
+        "TERMINAL_DEAD families unless --force-dead-family",
+    ),
+    force_dead_family: bool = typer.Option(
+        False,
+        "--force-dead-family",
+        help="Explicit operator override: register despite a terminal-dead family",
+    ),
     ledger_path: str = typer.Option(
         str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
     ),
@@ -838,11 +849,13 @@ def trading_prereg_register(
     (deterministic ``prereg_id`` over the claim) to the pre-registration ledger so a
     later edge claim can be checked against what was committed in advance.
     Re-registering an identical claim is a no-op-by-identity (same ``prereg_id``) but
-    still records the new ``created_at_utc`` as a distinct row.
+    still records the new ``created_at_utc`` as a distinct row. ``--family`` applies
+    the codified stop rule: dead families don't silently refill the backlog.
     """
     import json as _json
     from datetime import UTC, datetime
 
+    from app.research.hypothesis_families import get_family, is_terminal_dead
     from app.research.prereg_ledger import DIRECTIONS, PreRegistrationLedger, register
 
     direction_norm = direction.strip().lower()
@@ -852,6 +865,26 @@ def trading_prereg_register(
     if sample_target <= 0:
         console.print("[red]prereg refused:[/red] --sample-target must be > 0")
         raise typer.Exit(2)
+    if family:
+        fam = get_family(family)
+        if fam is None:
+            console.print(
+                f"[yellow]note:[/yellow] unknown family {family!r} — not in the registry "
+                "(see `trading family-status`); registering anyway."
+            )
+        elif is_terminal_dead(family) and not force_dead_family:
+            console.print(
+                f"[red]prereg refused:[/red] family {family!r} is TERMINAL_DEAD "
+                f"({fam.constructions_failed} falsified constructions). Evidence: "
+                f"{'; '.join(fam.evidence)}. Override requires --force-dead-family."
+            )
+            raise typer.Exit(2)
+        elif fam.status == "probation":
+            console.print(
+                f"[yellow]note:[/yellow] family {family!r} is on PROBATION "
+                f"({fam.constructions_failed} failed construction(s)) — this "
+                "construction should encode a materially different mechanism."
+            )
 
     entry = register(
         name=name,
@@ -928,6 +961,127 @@ def trading_prereg_list(
             e.created_at_utc,
         )
     console.print(table)
+
+
+@trading_app.command("family-status")
+def trading_family_status(
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Hypothesis-family registry with the codified stop rule (read-only).
+
+    Shows every signal family's falsification state: TERMINAL_DEAD families refuse
+    new pre-registrations (no silent backlog refill with variations of dead ideas);
+    PROBATION families demand a materially different mechanism for the next try.
+    """
+    import json as _json
+    from dataclasses import asdict
+
+    from app.research.hypothesis_families import FAMILIES, STOP_RULE_FAILS
+
+    if as_json:
+        print(
+            _json.dumps(
+                {
+                    "stop_rule_fails": STOP_RULE_FAILS,
+                    "families": {n: asdict(f) for n, f in FAMILIES.items()},
+                },
+                indent=2,
+            )
+        )
+        return
+
+    table = Table(
+        title=f"Hypothesis families (stop rule: {STOP_RULE_FAILS} pre-registered "
+        "fails across distinct constructions = terminal)"
+    )
+    table.add_column("family")
+    table.add_column("status")
+    table.add_column("fails", justify="right")
+    table.add_column("evidence (newest)")
+    for name in sorted(FAMILIES):
+        f = FAMILIES[name]
+        style = {"terminal_dead": "red", "probation": "yellow"}.get(f.status, "green")
+        table.add_row(
+            name,
+            f"[{style}]{f.status}[/{style}]",
+            str(f.constructions_failed),
+            f.evidence[-1] if f.evidence else "-",
+        )
+    console.print(table)
+    console.print(
+        "prereg-register --family <name> enforces this: TERMINAL_DEAD refuses "
+        "(override: --force-dead-family), PROBATION warns."
+    )
+
+
+@trading_app.command("verdict-report")
+def trading_verdict_report(
+    from_json: str = typer.Option(
+        ..., "--from-json", help="Evaluator JSON output file (e.g. news-eval --json > f.json)"
+    ),
+    hypothesis: str = typer.Option(..., "--hypothesis", help="Hypothesis name being judged"),
+    verdict: str = typer.Option(
+        ...,
+        "--verdict",
+        help="One-line conclusion AGAINST the pre-registered criteria "
+        "(e.g. 'FAILED at pre-registered 24h horizon')",
+    ),
+    prereg_id: str = typer.Option(
+        "", "--prereg-id", help="Pre-registration id the verdict is measured against"
+    ),
+    params: str = typer.Option(
+        "{}", "--params", help="JSON dict of run parameters (construction, lookback, ...)"
+    ),
+    out_dir: str = typer.Option(
+        "artifacts/research/verdicts", "--out-dir", help="Report output directory"
+    ),
+) -> None:
+    """Wrap an evaluator result into an ATTESTED verdict report (ADR 0012 product).
+
+    Writes ``<ts>_<hypothesis>.json`` (canonical payload + SHA-256 attestation any
+    third party can recompute) and a human ``.md`` twin. The verdict is thereby
+    auditable: prereg-linked pass bar, code version, deterministic content hash.
+    Read-only research output; gates nothing.
+    """
+    import json as _json
+    from datetime import UTC, datetime
+
+    from app.research.verdict_report import (
+        build_verdict_report,
+        resolve_code_version,
+        write_verdict_report,
+    )
+
+    src = Path(from_json)
+    if not src.is_file():
+        console.print(f"[red]verdict-report:[/red] no such file: {from_json}")
+        raise typer.Exit(2)
+    try:
+        result = _json.loads(src.read_text(encoding="utf-8"))
+        params_dict = _json.loads(params)
+    except ValueError as exc:
+        console.print(f"[red]verdict-report:[/red] invalid JSON input: {exc}")
+        raise typer.Exit(2) from exc
+
+    report = build_verdict_report(
+        result,
+        hypothesis=hypothesis,
+        prereg_id=prereg_id or None,
+        verdict=verdict,
+        params=params_dict,
+        code_version=resolve_code_version(),
+        generated_at=datetime.now(UTC),
+    )
+    json_path, md_path = write_verdict_report(report, Path(out_dir))
+    att = report["attestation"]
+    console.print(f"[green]verdict-report written[/green] {json_path}")
+    console.print(f"markdown twin: {md_path}")
+    console.print(f"attestation: {att['algo']}:{att['hash']}")
+    if not prereg_id:
+        console.print(
+            "[yellow]note:[/yellow] no --prereg-id — this verdict is marked EXPLORATORY "
+            "(pass bar not provably fixed before data)."
+        )
 
 
 @trading_app.command("hypothesis-eval")
@@ -1064,22 +1218,50 @@ def trading_news_eval(
     ),
     max_docs: int = typer.Option(50_000, "--max-docs", help="Hard cap on documents pulled"),
     timeframe: str = typer.Option("1h", "--timeframe", help="OHLCV timeframe (1h|4h|1d)"),
-    cost_bps: float = typer.Option(20.0, "--cost-bps", help="Round-trip cost floor (bps)"),
+    cost_bps: float = typer.Option(
+        0.0, "--cost-bps", help="Venue round-trip cost floor in bps (0 = auto from CostModel)"
+    ),
     max_concentration: float = typer.Option(
         0.8, "--max-concentration", help="Max single-symbol share for ACTIONABLE"
     ),
     source: str = typer.Option("", "--source", help="Only evaluate this source_name"),
+    hedge: bool = typer.Option(
+        False,
+        "--hedge",
+        help="Beta=1 excess return vs BTC/USDT — strips the common market move "
+        "that dominates absolute altcoin returns (BTC events excluded)",
+    ),
+    hedge_leg_cost_bps: float = typer.Option(
+        10.0, "--hedge-leg-cost-bps", help="Extra round-trip cost of the BTC hedge leg"
+    ),
+    micro: bool = typer.Option(
+        False,
+        "--micro",
+        help="1m event-time construction: horizons 1/5/15/30/60min, entry within "
+        "5min of publish — where news alpha would live if it exists at all",
+    ),
+    max_events: int = typer.Option(
+        1200, "--max-events", help="Micro mode: cap events (most recent kept) to bound 1m fetches"
+    ),
+    tiered_costs: bool = typer.Option(
+        True,
+        "--tiered-costs/--flat-cost",
+        help="Per-symbol cost = venue floor + liquidity surcharge from measured turnover",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
 ) -> None:
     """Score whether a source's DIRECTIONAL news (bullish/bearish) carries a
     tradeable forward return on the mentioned asset (ADR 0012 truth harness).
 
     A pre-registered, orthogonal, non-price hypothesis. Entry is the first OHLCV
-    open AFTER publish (no look-ahead); returns at 1h/4h/24h/72h are side-adjusted
-    so ``mean>0`` means the direction paid, then the conservative ACTIONABLE gate
-    (clears cost AND bootstrap-significant AND not single-symbol) is applied per
-    source. Read-only over the fill-independent news corpus + public Binance OHLCV;
-    a positive verdict is a HYPOTHESIS — trust/edge promotion stays operator-gated.
+    open AFTER publish (no look-ahead); side-adjusted so ``mean>0`` means the
+    direction paid; the conservative ACTIONABLE gate (clears the per-symbol cost
+    bar AND bootstrap-significant AND not single-symbol) is applied per source,
+    plus an IVW cross-source pooled estimate per horizon. Constructions:
+    ``--hedge`` = beta=1 excess vs BTC (kills market-beta noise), ``--micro`` =
+    1m grid over the first hour (event-time realism). Read-only over the
+    fill-independent news corpus + public Binance OHLCV; a positive verdict is a
+    HYPOTHESIS — trust/edge promotion stays operator-gated.
     """
     import asyncio
     import json as _json
@@ -1090,15 +1272,46 @@ def trading_news_eval(
     from app.market_data.binance_adapter import BinanceAdapter
     from app.market_data.history_loader import load_ohlcv_history
     from app.market_data.kline_windows import interval_to_ms
-    from app.research.news_outcomes import NEWS_HORIZONS_S, build_news_outcomes, load_news_events
+    from app.research.liquidity_cost import cost_map_for_series
+    from app.research.news_outcomes import (
+        DEFAULT_HEDGE_SYMBOL,
+        DEFAULT_MAX_ENTRY_LAG_S,
+        DEFAULT_MICRO_MAX_ENTRY_LAG_S,
+        MICRO_HORIZONS_S,
+        MICRO_TIMEFRAME,
+        NEWS_HORIZONS_S,
+        build_news_outcomes,
+        load_news_events,
+        merge_event_windows,
+    )
     from app.research.news_signal_eval import evaluate_news, render
-    from app.research.runner import build_fetch
+    from app.research.runner import _resolve_cost_bps, build_fetch
     from app.storage.db.session import build_session_factory
     from app.storage.repositories.document_repo import DocumentRepository
 
+    tf = MICRO_TIMEFRAME if micro else timeframe
+    horizons = MICRO_HORIZONS_S if micro else NEWS_HORIZONS_S
+    entry_lag_s = DEFAULT_MICRO_MAX_ENTRY_LAG_S if micro else DEFAULT_MAX_ENTRY_LAG_S
+    hedge_sym = DEFAULT_HEDGE_SYMBOL if hedge else None
+    base_cost = cost_bps if cost_bps > 0 else _resolve_cost_bps()
+    if hedge:
+        base_cost += hedge_leg_cost_bps
+
     since = datetime.now(UTC) - timedelta(days=lookback_days) if lookback_days > 0 else None
-    interval_ms = interval_to_ms(timeframe)
-    max_h = max(NEWS_HORIZONS_S)
+    interval_ms = interval_to_ms(tf)
+    max_h = max(horizons)
+
+    async def _fetch_windows(fetch: Any, sym: str, entries_ms: list[int]) -> list[Any]:
+        """Fetch 1m candles for merged per-event windows (bursts collapse to few calls)."""
+        windows = merge_event_windows(
+            [(ms - interval_ms, ms + max_h * 1000 + interval_ms) for ms in entries_ms],
+            gap_ms=30 * interval_ms,
+        )
+        candles: list[Any] = []
+        for start_ms, end_ms in windows:
+            hist = await load_ohlcv_history(sym, tf, start_ms, end_ms, fetch)
+            candles.extend(hist.candles)
+        return candles
 
     async def _run() -> dict[str, Any]:
         settings = get_settings()
@@ -1116,25 +1329,75 @@ def trading_news_eval(
         dropped_syms = len(counts) - len(kept)
         events = [e for e in events if e.symbol in kept]
 
+        n_truncated = 0
+        if micro and len(events) > max_events:
+            n_truncated = len(events) - max_events
+            events = events[-max_events:]  # events are time-ascending: keep most recent
+
+        n_hedge_skipped = sum(1 for e in events if hedge_sym and e.symbol == hedge_sym)
+
         fetch = build_fetch(BinanceAdapter().get_ohlcv)
         series: dict[str, Any] = {}
         for sym in sorted(kept):
-            ts = [e.entry_ts for e in events if e.symbol == sym]
-            if not ts:
+            ts_ms = [int(e.entry_ts.timestamp() * 1000) for e in events if e.symbol == sym]
+            if not ts_ms:
                 continue
-            start_ms = int(min(ts).timestamp() * 1000) - interval_ms
-            end_ms = int(max(ts).timestamp() * 1000) + max_h * 1000 + interval_ms
-            hist = await load_ohlcv_history(sym, timeframe, start_ms, end_ms, fetch)
-            series[sym] = hist.candles
+            if micro:
+                series[sym] = await _fetch_windows(fetch, sym, ts_ms)
+            else:
+                start_ms = min(ts_ms) - interval_ms
+                end_ms = max(ts_ms) + max_h * 1000 + interval_ms
+                hist = await load_ohlcv_history(sym, tf, start_ms, end_ms, fetch)
+                series[sym] = hist.candles
+        if hedge_sym is not None:
+            # The hedge series must cover EVERY event's grid points, whatever symbol.
+            all_ms = [int(e.entry_ts.timestamp() * 1000) for e in events if e.symbol != hedge_sym]
+            if all_ms:
+                if micro:
+                    series[hedge_sym] = await _fetch_windows(fetch, hedge_sym, all_ms)
+                else:
+                    hist = await load_ohlcv_history(
+                        hedge_sym,
+                        tf,
+                        min(all_ms) - interval_ms,
+                        max(all_ms) + max_h * 1000 + interval_ms,
+                        fetch,
+                    )
+                    series[hedge_sym] = hist.candles
 
-        outcomes = build_news_outcomes(events, series)
-        res = evaluate_news(outcomes, cost_bps=cost_bps, max_concentration=max_concentration)
+        outcomes = build_news_outcomes(
+            events,
+            series,
+            horizons=horizons,
+            max_entry_lag_s=entry_lag_s,
+            hedge_symbol=hedge_sym,
+        )
+        cost_map = (
+            cost_map_for_series(series, interval_ms // 1000, base_cost) if tiered_costs else None
+        )
+        res = evaluate_news(
+            outcomes,
+            horizons=horizons,
+            cost_bps=base_cost,
+            max_concentration=max_concentration,
+            cost_by_symbol=cost_map,
+        )
         res["_meta"] = {
+            "construction": f"hedged_vs_{hedge_sym}" if hedge_sym else "spot",
             "n_events_scored": len(events),
+            "n_events_truncated": n_truncated,
+            "n_hedge_symbol_skipped": n_hedge_skipped,
             "n_outcomes": len(outcomes),
             "n_symbols": len(kept),
             "n_symbols_dropped": dropped_syms,
-            "timeframe": timeframe,
+            "timeframe": tf,
+            "base_cost_bps": round(base_cost, 2),
+            "cost_tiering": bool(cost_map),
+            "cost_bps_range": (
+                [round(min(cost_map.values()), 1), round(max(cost_map.values()), 1)]
+                if cost_map
+                else None
+            ),
         }
         return res
 
@@ -1146,17 +1409,29 @@ def trading_news_eval(
         return
 
     print(
-        f"news-eval: {meta['n_events_scored']} directional events -> "
+        f"news-eval [{meta['construction']}]: {meta['n_events_scored']} directional events -> "
         f"{meta['n_outcomes']} outcomes over {meta['n_symbols']} symbols "
-        f"(tf={meta['timeframe']}, cost={cost_bps:.0f}bps)"
+        f"(tf={meta['timeframe']}, base cost={meta['base_cost_bps']}bps"
+        + (f", per-symbol {meta['cost_bps_range']}" if meta["cost_bps_range"] else "")
+        + ")"
     )
     if meta["n_symbols_dropped"] > 0:
         print(
             f"note: {meta['n_symbols_dropped']} lower-volume symbol(s) omitted by "
             f"--max-symbols={max_symbols} (not silently — raise the cap to include them)"
         )
+    if meta["n_events_truncated"] > 0:
+        print(
+            f"note: {meta['n_events_truncated']} oldest event(s) truncated by "
+            f"--max-events={max_events} (micro mode; raise the cap to include them)"
+        )
+    if meta["n_hedge_symbol_skipped"] > 0:
+        print(
+            f"note: {meta['n_hedge_symbol_skipped']} event(s) ON the hedge symbol "
+            "excluded (cannot hedge against itself)"
+        )
     print()
-    print(render(res, min_n=min_n))
+    print(render(res, horizons=horizons, min_n=min_n))
     print()
     print(
         "news-eval: every result is a HYPOTHESIS — trust/edge promotion stays "

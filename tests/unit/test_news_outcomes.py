@@ -13,6 +13,7 @@ from app.research.news_outcomes import (
     forward_returns_for_event,
     index_series,
     load_news_events,
+    merge_event_windows,
     sentiment_to_side,
     timeframe_interval_s,
 )
@@ -244,3 +245,123 @@ def test_timeframe_interval_s() -> None:
 
 def test_news_horizons_are_hour_grid_aligned() -> None:
     assert all(h % 3600 == 0 for h in NEWS_HORIZONS_S)
+
+
+# ── hedged construction (beta=1 excess vs BTC) ──────────────────────────────
+
+
+def _series_sym(
+    symbol: str,
+    n: int,
+    *,
+    base: float = 100.0,
+    step: float = 0.1,
+    start: datetime = _T0,
+) -> list[OHLCV]:
+    out: list[OHLCV] = []
+    for i in range(n):
+        ts = (start + timedelta(hours=i)).isoformat()
+        px = base + i * step
+        out.append(
+            OHLCV(
+                symbol=symbol,
+                timestamp_utc=ts,
+                timeframe="1h",
+                open=px,
+                high=px,
+                low=px,
+                close=px,
+                volume=1.0,
+            )
+        )
+    return out
+
+
+def test_hedged_returns_subtract_hedge_leg() -> None:
+    asset = index_series(_series(80))  # 10bps per step at entry
+    flat_hedge = index_series(_series_sym("BTC/USDT", 80, base=200.0, step=0.0))
+    fwd = forward_returns_for_event(_event("long"), asset[0], asset[1], hedge=flat_hedge)
+    assert fwd is not None
+    # flat hedge (0 return) leaves the asset return untouched
+    assert round(fwd[3600], 1) == 10.0
+
+    same_slope = index_series(_series(80))  # identical relative path
+    fwd0 = forward_returns_for_event(_event("long"), asset[0], asset[1], hedge=same_slope)
+    assert fwd0 is not None
+    assert round(fwd0[3600], 4) == 0.0  # excess return vanishes
+
+
+def test_hedged_short_side_flips_excess_sign() -> None:
+    asset = index_series(_series(80))
+    flat_hedge = index_series(_series_sym("BTC/USDT", 80, base=200.0, step=0.0))
+    fwd = forward_returns_for_event(_event("short"), asset[0], asset[1], hedge=flat_hedge)
+    assert fwd is not None
+    assert round(fwd[3600], 1) == -10.0
+
+
+def test_hedged_drops_event_without_hedge_entry_candle() -> None:
+    asset = index_series(_series(80))
+    late_hedge = index_series(_series_sym("BTC/USDT", 40, start=_T0 + timedelta(hours=40)))
+    assert forward_returns_for_event(_event("long"), asset[0], asset[1], hedge=late_hedge) is None
+
+
+def test_hedged_missing_hedge_horizon_is_none_only_there() -> None:
+    asset = index_series(_series(80))
+    short_hedge = index_series(_series_sym("BTC/USDT", 2, base=200.0, step=0.0))
+    fwd = forward_returns_for_event(_event("long"), asset[0], asset[1], hedge=short_hedge)
+    assert fwd is not None
+    assert fwd[3600] is not None  # hedge candle at +1h exists
+    assert fwd[14400] is None  # hedge series too short at +4h
+
+
+def test_build_news_outcomes_hedged_skips_hedge_symbol_events() -> None:
+    events = [
+        _event("long", ts=_T0 + timedelta(hours=1), symbol="ETH/USDT"),
+        _event("long", ts=_T0 + timedelta(hours=2), symbol="BTC/USDT"),  # skipped
+    ]
+    series = {
+        "ETH/USDT": _series_sym("ETH/USDT", 80),
+        "BTC/USDT": _series_sym("BTC/USDT", 80, base=200.0, step=0.0),
+    }
+    out = build_news_outcomes(events, series, hedge_symbol="BTC/USDT")
+    assert [o["symbol"] for o in out] == ["ETH/USDT"]
+
+
+def test_build_news_outcomes_hedged_requires_hedge_series() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="hedge series missing"):
+        build_news_outcomes(
+            [_event("long", symbol="ETH/USDT")],
+            {"ETH/USDT": _series_sym("ETH/USDT", 10)},
+            hedge_symbol="BTC/USDT",
+        )
+
+
+# ── merge_event_windows ──────────────────────────────────────────────────────
+
+
+def test_merge_event_windows_merges_overlaps_and_gaps() -> None:
+    assert merge_event_windows([]) == []
+    assert merge_event_windows([(0, 10)]) == [(0, 10)]
+    # overlapping + unsorted input
+    assert merge_event_windows([(5, 15), (0, 10)]) == [(0, 15)]
+    # disjoint stays disjoint without gap tolerance
+    assert merge_event_windows([(0, 10), (20, 30)]) == [(0, 10), (20, 30)]
+    # gap tolerance bridges near windows
+    assert merge_event_windows([(0, 10), (20, 30)], gap_ms=10) == [(0, 30)]
+    # containment collapses
+    assert merge_event_windows([(0, 100), (10, 20)]) == [(0, 100)]
+
+
+def test_micro_constants_shape() -> None:
+    from app.research.news_outcomes import (
+        DEFAULT_MICRO_MAX_ENTRY_LAG_S,
+        MICRO_HORIZONS_S,
+        MICRO_TIMEFRAME,
+    )
+
+    assert MICRO_TIMEFRAME == "1m"
+    assert all(h % 60 == 0 for h in MICRO_HORIZONS_S)
+    assert max(MICRO_HORIZONS_S) == 3600
+    assert DEFAULT_MICRO_MAX_ENTRY_LAG_S <= 600
