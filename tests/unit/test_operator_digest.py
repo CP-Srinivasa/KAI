@@ -157,6 +157,56 @@ def test_degrades_honestly_without_data() -> None:
     assert "Cache fehlt" in msg
 
 
+# ── Threshold-getriggerte Meilenstein-Nudges (2026-07-01) ────────────────────
+# Ohne milestone_state feuert alles wie früher (Backward-Compat, oben getestet).
+# MIT State feuert der FÄLLIG-Nudge nur bei materieller Änderung / Wochenkadenz.
+
+
+def test_v5_faellig_suppressed_when_recently_reminded() -> None:
+    state = {"v5": {"last_iso": "2026-06-20", "day": 9}}
+    msg = _compose(today=date(2026, 6, 21), milestone_state=state)
+    assert "V5-Auswertung FÄLLIG" not in msg
+    assert "V5-Auswertung ruht" in msg
+    assert state["v5"]["last_iso"] == "2026-06-20"  # not re-fired → unchanged
+
+
+def test_v5_faellig_refires_after_cadence_and_advances_state() -> None:
+    state = {"v5": {"last_iso": "2026-06-01", "day": 0}}
+    msg = _compose(today=date(2026, 6, 21), milestone_state=state)
+    assert "V5-Auswertung FÄLLIG" in msg
+    assert state["v5"]["last_iso"] == "2026-06-21"  # advanced on fire
+
+
+def test_edge_faellig_suppressed_without_material_delta() -> None:
+    state = {"edge": {"last_iso": "2026-06-12", "last_n": 74}}
+    msg = _compose(
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 74,
+            "autonomous_generator_verdict": "NO_GO",
+        },
+        milestone_state=state,
+    )
+    assert "EDGE-REPORT FÄLLIG" not in msg
+    assert "Edge-Report ruht" in msg
+    assert state["edge"]["last_n"] == 74  # unchanged
+
+
+def test_edge_faellig_refires_on_material_delta_and_advances_state() -> None:
+    state = {"edge": {"last_iso": "2026-06-12", "last_n": 74}}
+    msg = _compose(
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 90,  # +16 >= gate//2 (15)
+            "autonomous_generator_verdict": "NO_GO",
+        },
+        milestone_state=state,
+    )
+    assert "EDGE-REPORT FÄLLIG" in msg
+    assert "n=90≥30" in msg
+    assert state["edge"]["last_n"] == 90  # advanced on fire
+
+
 def test_message_respects_telegram_limit() -> None:
     huge = {f"source_{i}": {"fills": i, "closes": i, "pnl_usd": 1.0} for i in range(400)}
     msg = _compose(fills_by_source=huge)
