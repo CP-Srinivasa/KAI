@@ -148,3 +148,59 @@ def test_canonical_edge_id_tracks_the_gate_bars() -> None:
     # A different sample floor or confidence is a different commitment → different id.
     assert canonical_edge_prereg_id(min_n=200, confidence=0.95) != base
     assert canonical_edge_prereg_id(min_n=100, confidence=0.99) != base
+
+
+# ── machine-readable gate (part of the claim identity) ──────────────────────
+
+
+def test_gate_changes_claim_identity_and_none_preserves_old_ids() -> None:
+    from app.research.prereg_ledger import prereg_key
+
+    base = {
+        "name": "h",
+        "direction": "neutral",
+        "horizon": "1d",
+        "success_criteria": "x",
+        "sample_size_target": 100,
+    }
+    ungated = prereg_key(**base)
+    gated = prereg_key(
+        **base, gate={"level": "overall", "horizon_s": 86400, "n_min": 100, "p_min": 0.95}
+    )
+    stricter = prereg_key(
+        **base, gate={"level": "overall", "horizon_s": 86400, "n_min": 100, "p_min": 0.99}
+    )
+    assert ungated != gated
+    assert gated != stricter  # any threshold change = a different claim
+    assert prereg_key(**base) == ungated  # gate=None keeps free-text-era ids
+
+
+def test_registration_round_trips_gate_through_json() -> None:
+    import json as _json
+
+    from app.research.prereg_ledger import PreRegistration, register
+
+    gate = {
+        "level": "pooled",
+        "horizon_s": 86400,
+        "n_min": 300,
+        "p_min": 0.95,
+        "i2_max": 0.5,
+        "k_min": 8,
+    }
+    entry = register(
+        name="h",
+        direction="neutral",
+        horizon="1d",
+        success_criteria="x",
+        sample_size_target=300,
+        created_at_utc="2026-07-02T00:00:00+00:00",
+        gate=gate,
+    )
+    loaded = PreRegistration.from_dict(_json.loads(entry.to_json()))
+    assert loaded.gate == gate
+    assert loaded.prereg_id == entry.prereg_id
+    # legacy rows without the field stay loadable
+    legacy = _json.loads(entry.to_json())
+    legacy.pop("gate")
+    assert PreRegistration.from_dict(legacy).gate is None

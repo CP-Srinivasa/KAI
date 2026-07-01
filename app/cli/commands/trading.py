@@ -852,6 +852,12 @@ def trading_prereg_register(
         "--force-dead-family",
         help="Explicit operator override: register despite a terminal-dead family",
     ),
+    gate_json: str = typer.Option(
+        "",
+        "--gate-json",
+        help="Machine-checkable pass bar as JSON (see app.research.prereg_gate); "
+        "enables mechanical `trading prereg-check` verdicts",
+    ),
     ledger_path: str = typer.Option(
         str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
     ),
@@ -864,12 +870,15 @@ def trading_prereg_register(
     later edge claim can be checked against what was committed in advance.
     Re-registering an identical claim is a no-op-by-identity (same ``prereg_id``) but
     still records the new ``created_at_utc`` as a distinct row. ``--family`` applies
-    the codified stop rule: dead families don't silently refill the backlog.
+    the codified stop rule: dead families don't silently refill the backlog. With
+    ``--gate-json`` the pass bar is part of the claim identity and later verdicts
+    are computed mechanically (`trading prereg-check`), no human transcription.
     """
     import json as _json
     from datetime import UTC, datetime
 
     from app.research.hypothesis_families import get_family, is_terminal_dead
+    from app.research.prereg_gate import validate_gate
     from app.research.prereg_ledger import DIRECTIONS, PreRegistrationLedger, register
 
     direction_norm = direction.strip().lower()
@@ -879,6 +888,14 @@ def trading_prereg_register(
     if sample_target <= 0:
         console.print("[red]prereg refused:[/red] --sample-target must be > 0")
         raise typer.Exit(2)
+    gate: dict[str, Any] | None = None
+    if gate_json:
+        try:
+            gate = _json.loads(gate_json)
+            validate_gate(gate)
+        except ValueError as exc:
+            console.print(f"[red]prereg refused:[/red] invalid --gate-json: {exc}")
+            raise typer.Exit(2) from exc
     if family:
         fam = get_family(family)
         if fam is None:
@@ -907,6 +924,7 @@ def trading_prereg_register(
         success_criteria=success_criteria,
         sample_size_target=sample_target,
         created_at_utc=datetime.now(UTC).isoformat(),
+        gate=gate,
     )
     ledger = PreRegistrationLedger(Path(ledger_path))
     already = ledger.is_registered(entry.prereg_id)
@@ -3207,6 +3225,8 @@ def trading_source_intelligence(
         console.print(ptbl)
 
 
-# Registriert die truth-/compliance-/capital-Kommandos auf trading_app — eigenes
-# Modul (ADR 0013), damit weder diese Datei noch der God-File app/cli/main.py wächst.
-from app.cli.commands import truth_compliance  # noqa: E402,F401
+# Registriert die truth-/compliance-/capital-Kommandos (ADR 0013) sowie
+# prereg-check / prereg-maturity / verdict-anchor (mechanische Verdikt-Kette)
+# auf trading_app — eigene Module, damit weder diese Datei noch der God-File
+# app/cli/main.py wächst.
+from app.cli.commands import research_verdicts, truth_compliance  # noqa: E402,F401

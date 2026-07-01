@@ -20,6 +20,7 @@ from typing import Any
 
 from app.observability.l2_evidence_eval import moving_block_bootstrap_p_mean_positive
 from app.research.news_outcomes import NEWS_HORIZONS_S
+from app.research.news_stories import DEFAULT_STORY_WINDOW_S, cluster_stories, dedup_stats
 from app.research.shadow_evidence_eval import (
     DEFAULT_COST_BPS,
     DEFAULT_MAX_CONCENTRATION,
@@ -147,8 +148,16 @@ def evaluate_news(
     cost_bps: float = DEFAULT_COST_BPS,
     max_concentration: float = DEFAULT_MAX_CONCENTRATION,
     cost_by_symbol: dict[str, float] | None = None,
+    story_window_s: float = DEFAULT_STORY_WINDOW_S,
 ) -> dict[str, Any]:
-    """Overall + per-source + cross-source-pooled directional-news evaluation."""
+    """Overall + story-level + per-source + cross-source-pooled evaluation.
+
+    ``stories`` is the CLUSTER-ROBUST headline: cross-source coverage of the same
+    (symbol, side) within ``story_window_s`` collapses to one observation (first
+    event), so syndicated news cannot inflate the effective sample. ``overall``/
+    ``pooled`` stay on raw outcomes for comparison — the gap between the two IS
+    the duplication pressure, reported in ``stories_meta``.
+    """
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for o in outcomes:
         by_source[str(o.get("source", "unknown"))].append(o)
@@ -163,6 +172,7 @@ def evaluate_news(
         for src, rows in by_source.items()
     }
     pooled = {h: pool_sources(by_source, h) for h in horizons}
+    stories = cluster_stories(outcomes, window_s=story_window_s)
     return {
         "cost_bps": round(cost_bps, 2),
         "overall": evaluate_cohort(
@@ -172,6 +182,14 @@ def evaluate_news(
             max_concentration=max_concentration,
             cost_by_symbol=cost_by_symbol,
         ),
+        "stories": evaluate_cohort(
+            stories,
+            horizons=horizons,
+            cost_bps=cost_bps,
+            max_concentration=max_concentration,
+            cost_by_symbol=cost_by_symbol,
+        ),
+        "stories_meta": {**dedup_stats(outcomes, stories), "window_s": story_window_s},
         "per_source": per_source,
         "pooled": pooled,
     }
@@ -187,6 +205,16 @@ def render(
     cost = res.get("cost_bps", DEFAULT_COST_BPS)
     lines = [f"## Directional-news forward return (base cost={cost}bps, side-adjusted)"]
     lines.append(_render_cohort("ALL sources", res["overall"], horizons))
+    if "stories" in res:
+        sm = res.get("stories_meta", {})
+        lines.append(
+            _render_cohort(
+                f"STORIES (deduped: {sm.get('n_raw', '?')} raw -> "
+                f"{sm.get('n_stories', '?')} stories, ratio {sm.get('dedup_ratio', '?')})",
+                res["stories"],
+                horizons,
+            )
+        )
     pooled = res.get("pooled") or {}
     pooled_lines = [
         f"| {_horizon_label(h)} | {p['k_sources']} | {p['n_total']} | "

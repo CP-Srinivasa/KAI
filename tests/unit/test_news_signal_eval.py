@@ -184,3 +184,21 @@ def test_evaluate_news_includes_pooled_block_and_render_shows_it() -> None:
     assert res["pooled"][_H]["k_sources"] == 2
     out = render(res, min_n=10)
     assert "Pooled across sources" in out
+
+
+# ── story-level cohort (cluster-robust headline) ─────────────────────────────
+
+
+def test_evaluate_news_stories_block_dedupes_syndication() -> None:
+    # Two sources covering the SAME two stories -> stories cohort halves n.
+    outcomes = []
+    for src in ("a", "b"):
+        outcomes.append(_outcome(50.0, symbol="ETH/USDT", source=src, i=0))
+        outcomes.append(_outcome(50.0, symbol="SOL/USDT", source=src, i=1))
+    res = evaluate_news(outcomes, cost_bps=20.0)
+    assert res["overall"]["n"] == 4
+    assert res["stories"]["n"] == 2
+    assert res["stories_meta"]["dedup_ratio"] == 0.5
+    assert res["stories_meta"]["max_story_members"] == 2
+    out = render(res, min_n=1)
+    assert "STORIES (deduped: 4 raw -> 2 stories" in out

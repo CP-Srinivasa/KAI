@@ -1,0 +1,17 @@
+[Unit]
+Description=KAI Prereg Maturity Check — weekly schedule
+
+[Timer]
+# Weekly cadence: out-of-sample cohorts grow by tens of events per week, so a
+# Monday-morning count is ample. Deliberately NO `Requires=` here (a Requires=
+# on a timer can strand it; Timer-Requires cascade lesson, #414).
+# Enabled at deploy time via `systemctl enable --now kai-prereg-maturity.timer`.
+OnCalendar=Mon *-*-* 05:23:00
+# Persistent: if the Pi was down on Monday, run once on next boot rather than
+# waiting a full week.
+Persistent=true
+AccuracySec=1h
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target
