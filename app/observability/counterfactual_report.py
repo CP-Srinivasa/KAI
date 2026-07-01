@@ -7,7 +7,8 @@ against the settled Binance 1m kline. This module aggregates that append-only
 stream into an operator-auditable summary: how many comparisons drifted beyond
 threshold, how many are data-quality-suspect (a glitch, never counted as drift),
 how many the entry-priceability gate *would* have rejected, plus the drift
-distribution and per-symbol / per-source breakdowns.
+distribution and per-symbol / per-source breakdowns (each carrying a SIGNED
+drift bias that exposes a systematic venue skew the |abs| percentiles hide).
 
 READ-ONLY diagnostics — touches no runtime, no execution state, no env. Mirrors
 the build/render/to_dict shape of :mod:`app.alerts.blocked_outcome_report` and
@@ -61,20 +62,35 @@ def _is_suspect(row: dict[str, Any]) -> bool:
 
 
 def _breakdown(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    buckets: dict[str, dict[str, int]] = defaultdict(
+    counts: dict[str, dict[str, int]] = defaultdict(
         lambda: {"total": 0, "drift_exceeded": 0, "data_quality_suspect": 0}
     )
+    # SIGNED drift per bucket (non-suspect, numeric only): the mean of the signed
+    # drift_to_range_bps reveals a SYSTEMATIC venue bias — a source that
+    # consistently prices above (+) or below (-) the settled range — which the
+    # |abs| percentiles alone cannot show (a symmetric ±X spread and a one-sided
+    # +X bias have the same p50).
+    signed: dict[str, list[float]] = defaultdict(list)
     for row in rows:
         raw = row.get(key)
         name = raw.strip() if isinstance(raw, str) and raw.strip() else "unknown"
-        bucket = buckets[name]
+        bucket = counts[name]
         bucket["total"] += 1
         suspect = _is_suspect(row)
         if row.get("drift_exceeded") is True and not suspect:
             bucket["drift_exceeded"] += 1
         if suspect:
             bucket["data_quality_suspect"] += 1
-    return [{key: name, **counts} for name, counts in sorted(buckets.items())]
+        else:
+            drift = _num(row.get("drift_to_range_bps"))
+            if drift is not None:
+                signed[name].append(drift)
+    out: list[dict[str, Any]] = []
+    for name in sorted(counts):
+        vals = signed[name]
+        bias = round(sum(vals) / len(vals), 4) if vals else 0.0
+        out.append({key: name, **counts[name], "signed_drift_bps": bias})
+    return out
 
 
 @dataclass
@@ -174,7 +190,8 @@ def render_counterfactual_report(report: CounterfactualReport) -> str:
         for row in rows:
             lines.append(
                 f"  {row[key]}: total={row['total']} drift_exceeded={row['drift_exceeded']} "
-                f"suspect={row['data_quality_suspect']}"
+                f"suspect={row['data_quality_suspect']} "
+                f"signed_bias={row['signed_drift_bps']:+.1f}bps"
             )
         lines.append("")
     return "\n".join(lines).rstrip()
