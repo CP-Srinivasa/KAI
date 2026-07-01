@@ -16,8 +16,10 @@ Stages (24h), Shadow-Real-Funnel (#175) und D-227-Blocked-Outcomes — plus die
 
 Versand über die etablierten ``ALERT_TELEGRAM_TOKEN``/``ALERT_TELEGRAM_CHAT_ID``
 Env-Variablen (gleicher Vertrag wie pi_health_digest.sh). ``--dry-run`` druckt
-die Nachricht nur (Test-/Lokal-Pfad, kein Netz). Read-only: der Digest ändert
-nie Zustand, er berichtet ihn.
+die Nachricht nur (Test-/Lokal-Pfad, kein Netz). Read-only gegenüber KAI-Zustand;
+persistiert nur die eigene Reminder-Kadenz (operator_digest_milestone_state.json),
+um tägliches FÄLLIG-Rauschen zu vermeiden — und nur bei echtem Versand, nicht bei
+``--dry-run``.
 """
 
 from __future__ import annotations
@@ -54,6 +56,90 @@ V5_REVIEW_AFTER_DAYS = 7
 EDGE_GATE_MIN_RESOLVED = 30
 # Telegram hard limit is 4096 chars — truncate honestly instead of failing.
 _TELEGRAM_LIMIT = 4000
+
+# Once a milestone threshold is crossed, re-nudge only on MATERIAL new evidence or
+# the weekly cadence — NOT every single day. A daily "FÄLLIG" that never changes is
+# zero-information noise; this trades daily nagging for state-delta triggering
+# (ADR-0012 attention-hygiene, 2026-07-01). State lives in its own bookkeeping file.
+MILESTONE_CADENCE_DAYS = 7
+_MILESTONE_STATE_PATH = _ARTIFACTS / "operator_digest_milestone_state.json"
+
+
+def _days_between(iso_a: str | None, iso_b: str) -> int | None:
+    """Whole days from date ``iso_a`` to ``iso_b``; None if a is missing/unparseable."""
+    if not iso_a:
+        return None
+    try:
+        a = date.fromisoformat(iso_a[:10])
+        b = date.fromisoformat(iso_b[:10])
+    except (ValueError, TypeError):
+        return None
+    return (b - a).days
+
+
+def v5_reminder_due(
+    *,
+    v5_day: int,
+    state: dict[str, Any],
+    today_iso: str,
+    after_days: int = V5_REVIEW_AFTER_DAYS,
+    cadence_days: int = MILESTONE_CADENCE_DAYS,
+) -> bool:
+    """Fire the V5 FÄLLIG nudge only past the review window AND (first time OR the
+    weekly cadence has elapsed). No cheap per-day change signal exists for V5, so
+    cadence is the trigger — it stops the daily repeat, not the reminder itself."""
+    if v5_day < after_days:
+        return False
+    last_iso = state.get("last_iso")
+    if not last_iso:
+        return True
+    days_since = _days_between(str(last_iso), today_iso)
+    return days_since is None or days_since >= cadence_days
+
+
+def edge_reminder_due(
+    *,
+    gen_resolved: int,
+    gate: int,
+    state: dict[str, Any],
+    today_iso: str,
+    min_delta: int,
+    cadence_days: int = MILESTONE_CADENCE_DAYS,
+) -> bool:
+    """Fire the EDGE-REPORT FÄLLIG nudge only at/above the gate AND (first crossing
+    OR >= ``min_delta`` NEW closes since the last nudge OR the weekly cadence
+    elapsed). Sitting at the same n day after day stays quiet."""
+    if gen_resolved < gate:
+        return False
+    last_n = state.get("last_n")
+    if last_n is None:
+        return True
+    try:
+        if gen_resolved - int(last_n) >= min_delta:
+            return True
+    except (TypeError, ValueError):
+        return True
+    last_iso = state.get("last_iso")
+    days_since = _days_between(str(last_iso) if last_iso else None, today_iso)
+    return days_since is None or days_since >= cadence_days
+
+
+def _load_milestone_state(path: Path = _MILESTONE_STATE_PATH) -> dict[str, Any]:
+    """Read reminder-cadence bookkeeping (never raises; {} if absent/corrupt)."""
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _save_milestone_state(state: dict[str, Any], path: Path = _MILESTONE_STATE_PATH) -> None:
+    """Persist reminder-cadence bookkeeping (best-effort; never raises)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, sort_keys=True, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("could not persist milestone state to %s", path)
 
 
 # ── Collectors (read-only) ───────────────────────────────────────────────────
@@ -429,8 +515,16 @@ def compose_digest_message(
     edge_discovery: dict[str, Any] | None = None,
     source_lifecycle: dict[str, Any] | None = None,
     source_discovery: dict[str, Any] | None = None,
+    milestone_state: dict[str, Any] | None = None,
 ) -> str:
-    """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
+    """Baut die EINE lesbare Operator-Nachricht. Testbar.
+
+    ``milestone_state`` (Reminder-Kadenz-Bookkeeping) steuert die threshold-
+    getriggerten FÄLLIG-Nudges: fehlt es (``None``), feuert jeder Meilenstein wie
+    früher bei jeder Schwellenüberschreitung; wird es übergeben, feuert der Nudge
+    nur bei materieller Änderung / Wochenkadenz und wird bei Feuer in-place
+    fortgeschrieben (der Aufrufer persistiert es).
+    """
     lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
 
     # Runtime / Modus (D-233).
@@ -538,15 +632,27 @@ def compose_digest_message(
     else:
         lines.append("🧲 *V5-Evidence:* Cache fehlt")
 
-    # ── Meilensteine (Auto-Erkennung, Operator-Vorgabe 2026-06-11) ──
+    # ── Meilensteine (Auto-Erkennung; threshold-getriggert seit 2026-07-01) ──
     lines.append("")
     lines.append("🎯 *Meilensteine:*")
+    state = milestone_state if milestone_state is not None else {}
+    today_iso = today.isoformat()
+
     v5_day = (today - v5_activated_on).days
-    if v5_day >= V5_REVIEW_AFTER_DAYS:
+    v5_state = state.get("v5") if isinstance(state.get("v5"), dict) else {}
+    if v5_reminder_due(v5_day=v5_day, state=v5_state, today_iso=today_iso):
         lines.append(
             f"  ➡️ *V5-Auswertung FÄLLIG* (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}): "
             "Shadow-Logs (funding/oi_evidence_shadow.jsonl) gegen Outcomes auswerten, "
             "dann trust-Entscheidung (0.5 → ?)."
+        )
+        if milestone_state is not None:
+            milestone_state["v5"] = {"last_iso": today_iso, "day": v5_day}
+    elif v5_day >= V5_REVIEW_AFTER_DAYS:
+        last = v5_state.get("last_iso", "?")
+        lines.append(
+            f"  • V5-Auswertung ruht (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}; zuletzt erinnert "
+            f"{last}, nächster Nudge nach {MILESTONE_CADENCE_DAYS}d)"
         )
     else:
         lines.append(f"  • V5-Messphase: Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}")
@@ -561,11 +667,28 @@ def compose_digest_message(
     gate = generator_edge.get("min_resolved", EDGE_GATE_MIN_RESOLVED)
     gen_resolved = generator_edge.get("autonomous_generator_resolved")
     if isinstance(gen_resolved, int):
-        if gen_resolved >= gate:
+        edge_state = state.get("edge") if isinstance(state.get("edge"), dict) else {}
+        min_delta = max(1, gate // 2)
+        if edge_reminder_due(
+            gen_resolved=gen_resolved,
+            gate=gate,
+            state=edge_state,
+            today_iso=today_iso,
+            min_delta=min_delta,
+        ):
             lines.append(
                 f"  ➡️ *EDGE-REPORT FÄLLIG*: autonomous_generator resolved n={gen_resolved}≥{gate} "
                 "(Edge-Gate erreicht) — `trading generator-edge` / `trading edge-report` für "
                 f"belastbares Verdict fahren. [{shadow_ctx}]"
+            )
+            if milestone_state is not None:
+                milestone_state["edge"] = {"last_iso": today_iso, "last_n": gen_resolved}
+        elif gen_resolved >= gate:
+            last_n = edge_state.get("last_n", "?")
+            lines.append(
+                f"  • Edge-Report ruht: n={gen_resolved}≥{gate} ohne materiellen Zuwachs seit "
+                f"letzter Erinnerung (n={last_n}); Nudge bei +{min_delta} Closes oder "
+                f"{MILESTONE_CADENCE_DAYS}d · {shadow_ctx}"
             )
         else:
             verdict = generator_edge.get("autonomous_generator_verdict", "?")
@@ -689,6 +812,7 @@ def main(argv: list[str] | None = None) -> int:
         v5_activated_on = date.fromisoformat(
             os.environ.get("APP_V5_EVIDENCE_ACTIVATED_AT", "2026-06-11")
         )
+        milestone_state = _load_milestone_state()
         message = compose_digest_message(
             today=datetime.now(UTC).date(),
             runtime=collect_runtime(),
@@ -704,6 +828,7 @@ def main(argv: list[str] | None = None) -> int:
             source_lifecycle=collect_source_lifecycle(),
             source_discovery=collect_source_discovery(),
             v5_activated_on=v5_activated_on,
+            milestone_state=milestone_state,
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")
@@ -711,7 +836,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(message)
         return 0
-    return 0 if send_telegram(message) else 1
+    if send_telegram(message):
+        _save_milestone_state(milestone_state)  # advance cadence only on a real send
+        return 0
+    return 1
 
 
 if __name__ == "__main__":
