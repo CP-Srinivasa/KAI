@@ -226,18 +226,10 @@ if (( counter >= 4 )); then
 fi
 write_counter "$counter" "$pipeline_marker"
 
-# NewsData.io every 3rd run (~30 min).
-newsdata_marker="$ROOT/artifacts/.newsdata_counter"
-counter=$(read_counter "$newsdata_marker")
-counter=$((counter + 1))
-if (( counter >= 3 )); then
-    counter=0
-    write_log "newsdata fetch starting"
-    "$PYTHON" -m app.cli.main pipeline newsdata "crypto bitcoin ethereum solana" \
-        --language en --category business --size 10 --top-n 3 >/dev/null 2>&1 || true
-    write_log "newsdata done"
-fi
-write_counter "$counter" "$newsdata_marker"
+# NewsData.io ingestion RETIRED 2026-07-01 (ADR 0012): 4252 ingested docs, 0
+# directional (100% neutral) = pure classifier load with no signal. The pipeline
+# code (run_newsdata_pipeline / `pipeline newsdata`) stays available for manual
+# use; only the scheduled fetch is removed. Re-enable = restore this block.
 
 # YouTube ingestion every 12th run (~2h).
 youtube_marker="$ROOT/artifacts/.youtube_counter"

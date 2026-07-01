@@ -268,3 +268,78 @@ async def test_source_activity_empty_store(session_factory) -> None:
     async with session_factory() as session:
         repo = DocumentRepository(session)
         assert await repo.source_activity() == []
+
+
+@pytest.mark.asyncio
+async def test_list_directional_news_events_filters_orders_and_windows(session_factory) -> None:
+    from app.research.news_outcomes import load_news_events
+    from app.storage.models.document import CanonicalDocumentModel
+
+    def _doc(**kw):
+        base = {"document_type": "news", "status": "analyzed", "market_scope": "crypto"}
+        base.update(kw)
+        return CanonicalDocumentModel(**base)
+
+    async with session_factory.begin() as session:
+        session.add_all(
+            [
+                _doc(
+                    id="d1",
+                    url="u1",
+                    title="BTC up",
+                    source_name="cointelegraph",
+                    sentiment_label="bullish",
+                    tickers=["BTC/USDT"],
+                    published_at=datetime(2026, 6, 15, tzinfo=UTC),
+                    directional_confidence=0.8,
+                ),
+                _doc(
+                    id="d2",
+                    url="u2",
+                    title="ETH down",
+                    source_name="decrypt",
+                    sentiment_label="bearish",
+                    tickers=["ETH/USDT"],
+                    published_at=datetime(2026, 6, 20, tzinfo=UTC),
+                    directional_confidence=0.5,
+                ),
+                _doc(  # excluded: neutral
+                    id="d3",
+                    url="u3",
+                    title="meh",
+                    sentiment_label="neutral",
+                    tickers=["BTC/USDT"],
+                    published_at=datetime(2026, 6, 16, tzinfo=UTC),
+                ),
+                _doc(  # passes coarse SQL filter, dropped by load_news_events (empty tickers)
+                    id="d4",
+                    url="u4",
+                    title="vague bull",
+                    source_name="empty",
+                    sentiment_label="bullish",
+                    tickers=[],
+                    published_at=datetime(2026, 6, 17, tzinfo=UTC),
+                ),
+            ]
+        )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        allrows = await repo.list_directional_news_events(since=None)
+        strict = await repo.list_directional_news_events(min_confidence=0.7)
+        windowed = await repo.list_directional_news_events(since=datetime(2026, 6, 18, tzinfo=UTC))
+
+    # coarse SQL filter: drops neutral (sentiment), keeps directional; empty-ticker
+    # doc slips through here and is dropped by the authority (load_news_events).
+    assert all(r["sentiment_label"] != "neutral" for r in allrows)
+    assert "cointelegraph" in {r["source_name"] for r in allrows}
+    # min_confidence keeps only the 0.8 doc (NULL confidence excluded)
+    assert [r["source_name"] for r in strict] == ["cointelegraph"]
+    # since-window drops docs before the cutoff
+    assert [r["source_name"] for r in windowed] == ["decrypt"]
+    # the pure event loader is the authority: only real directional+ticker survive
+    events = load_news_events(allrows)
+    assert [(e.symbol, e.side) for e in events] == [
+        ("BTC/USDT", "long"),
+        ("ETH/USDT", "short"),
+    ]
