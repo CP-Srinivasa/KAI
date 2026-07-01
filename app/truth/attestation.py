@@ -24,8 +24,12 @@ def canonicalize(payload: Mapping[str, Any]) -> str:
 
     The same logical content always yields byte-identical output regardless of
     key insertion order — the precondition for a recomputable content hash.
+    NaN/Infinity have no canonical JSON form and fail loud (``ValueError``)
+    instead of silently hashing non-JSON.
     """
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
 
 
 def compute_attestation(payload: Mapping[str, Any]) -> dict[str, Any]:

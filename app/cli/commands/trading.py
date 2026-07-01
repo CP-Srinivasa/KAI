@@ -523,6 +523,11 @@ def trading_canonical_edge(
         0.0, "--p-threshold-bps", help="Threshold T for the P(mu_net > T) figure"
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+    attest: bool = typer.Option(
+        False,
+        "--attest",
+        help="Report zusätzlich im Truth-Attestation-Ledger verankern (hash-chained)",
+    ),
 ) -> None:
     """Canonical edge — the ONE defensible edge answer over the REAL generator.
 
@@ -551,6 +556,15 @@ def trading_canonical_edge(
         min_sample=min_sample,
         source_allowlist=CANONICAL_EDGE_SOURCES,
     )
+    if attest:
+        from app.truth.ledger import append_attestation
+
+        attested = append_attestation("canonical_edge_report", None, report.to_dict())
+        typer.secho(
+            f"[truth] canonical-edge report attestiert: seq={attested['seq']} "
+            f"payload_hash={attested['payload_hash'][:16]}…",
+            err=True,
+        )
     if as_json:
         print(_json.dumps(report.to_dict(), indent=2))
     else:
@@ -3191,3 +3205,8 @@ def trading_source_intelligence(
                 "ja" if p["eligible"] else "—",
             )
         console.print(ptbl)
+
+
+# Registriert die truth-/compliance-/capital-Kommandos auf trading_app — eigenes
+# Modul (ADR 0013), damit weder diese Datei noch der God-File app/cli/main.py wächst.
+from app.cli.commands import truth_compliance  # noqa: E402,F401
