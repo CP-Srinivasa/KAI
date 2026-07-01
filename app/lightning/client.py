@@ -21,6 +21,12 @@ from typing import Any
 
 import httpx
 
+# OpenChannelSync (POST /v1/channels) blocks while lnd runs the funding workflow
+# with the remote peer — coin selection, commitment negotiation, funding-tx build —
+# which legitimately takes tens of seconds. The regular per-request timeout is
+# sized for reads and would abort mid-funding with an ambiguous outcome.
+OPEN_CHANNEL_TIMEOUT_SECONDS = 120.0
+
 
 class LightningUnavailableError(RuntimeError):
     """Raised when the lnd node cannot be reached or returns an error."""
@@ -110,7 +116,9 @@ class LndRestClient:
             async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.get(url, headers=self._headers)
         except httpx.HTTPError as exc:
-            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+            raise LightningUnavailableError(
+                f"lnd request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if resp.status_code != 200:
             raise LightningUnavailableError(
                 f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
@@ -170,20 +178,25 @@ class LndRestClient:
     # Requires a SCOPE-MINIMAL macaroon (invoices / channel-open) — NEVER the
     # readonly macaroon, NEVER admin. Read-only Phase-1 deployments never reach
     # these (the value layer refuses while pay_enabled is False).
-    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def _post(
+        self, path: str, body: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
+        effective_timeout = self._timeout if timeout is None else timeout
         try:
             if self._transport is not None:
                 client_kwargs: dict[str, Any] = {
                     "transport": self._transport,
-                    "timeout": self._timeout,
+                    "timeout": effective_timeout,
                 }
             else:
-                client_kwargs = {"verify": self._verify, "timeout": self._timeout}
+                client_kwargs = {"verify": self._verify, "timeout": effective_timeout}
             async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.post(url, headers=self._headers, json=body)
         except httpx.HTTPError as exc:
-            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+            raise LightningUnavailableError(
+                f"lnd request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if resp.status_code != 200:
             raise LightningUnavailableError(
                 f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
@@ -222,14 +235,22 @@ class LndRestClient:
     async def open_channel(
         self, *, node_pubkey_hex: str, local_funding_sat: int, sat_per_vbyte: int = 0
     ) -> dict[str, Any]:
-        """POST /v1/channels — open a channel (SPENDS on-chain; irreversible)."""
+        """POST /v1/channels — open a channel (SPENDS on-chain; irreversible).
+
+        OpenChannelSync blocks while lnd negotiates funding with the remote peer
+        (tens of seconds); the default read timeout would cut the response off
+        mid-funding and leave the caller unable to tell "failed" from "still
+        funding" — so this call always gets the extended timeout.
+        """
         body: dict[str, Any] = {
             "node_pubkey_string": node_pubkey_hex,
             "local_funding_amount": str(int(local_funding_sat)),
         }
         if sat_per_vbyte > 0:
             body["sat_per_vbyte"] = str(int(sat_per_vbyte))
-        return await self._post("/v1/channels", body)
+        return await self._post(
+            "/v1/channels", body, timeout=max(self._timeout, OPEN_CHANNEL_TIMEOUT_SECONDS)
+        )
 
     async def _delete(self, path: str) -> dict[str, Any]:
         """HTTP DELETE for the lnd REST write surface (e.g. close channel)."""
@@ -245,7 +266,9 @@ class LndRestClient:
             async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.delete(url, headers=self._headers)
         except httpx.HTTPError as exc:
-            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+            raise LightningUnavailableError(
+                f"lnd request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if resp.status_code != 200:
             raise LightningUnavailableError(
                 f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"

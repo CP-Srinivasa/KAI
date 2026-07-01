@@ -358,3 +358,58 @@ async def test_get_channels_fail_closed_on_error(monkeypatch) -> None:
     status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
     assert status.state == "unavailable"
     assert status.channels == []
+
+
+# --- client: open_channel timeout escalation + honest transport errors -----------
+
+
+class _KwargsCapturingAsyncClient(httpx.AsyncClient):
+    """Records the ctor kwargs so tests can assert the effective timeout."""
+
+    captured: list[dict] = []
+
+    def __init__(self, **kwargs) -> None:
+        type(self).captured.append(dict(kwargs))
+        super().__init__(**kwargs)
+
+
+async def test_open_channel_uses_extended_timeout(monkeypatch) -> None:
+    """OpenChannelSync blocks for the whole funding workflow — the read-sized
+    default timeout (10s) would abort mid-funding with an ambiguous outcome."""
+    from app.lightning.client import OPEN_CHANNEL_TIMEOUT_SECONDS
+
+    _KwargsCapturingAsyncClient.captured = []
+    monkeypatch.setattr(httpx, "AsyncClient", _KwargsCapturingAsyncClient)
+    transport = _routing_transport(
+        {"/v1/channels": httpx.Response(200, json={"funding_txid_bytes": "aa"})}
+    )
+    client = LndRestClient(base_url="https://x:8080", macaroon_hex="ab", transport=transport)
+    await client.open_channel(node_pubkey_hex="02aa", local_funding_sat=100_000)
+    assert _KwargsCapturingAsyncClient.captured[-1]["timeout"] == OPEN_CHANNEL_TIMEOUT_SECONDS
+
+
+async def test_add_invoice_keeps_default_timeout(monkeypatch) -> None:
+    _KwargsCapturingAsyncClient.captured = []
+    monkeypatch.setattr(httpx, "AsyncClient", _KwargsCapturingAsyncClient)
+    transport = _routing_transport(
+        {"/v1/invoices": httpx.Response(200, json={"payment_request": "lnbc1"})}
+    )
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=transport, timeout=10.0
+    )
+    await client.add_invoice(value_sat=10)
+    assert _KwargsCapturingAsyncClient.captured[-1]["timeout"] == 10.0
+
+
+async def test_transport_error_message_names_exception_class() -> None:
+    """str(httpx.ReadTimeout("")) is empty — the error must still say WHAT failed
+    (regression: value-layer showed 'lnd request failed: ' with no detail)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("")
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    with pytest.raises(LightningUnavailableError, match="ReadTimeout"):
+        await client.open_channel(node_pubkey_hex="02aa", local_funding_sat=100_000)
