@@ -77,6 +77,15 @@ class LightningSettings(BaseSettings):
     # ``APP_LN_REPUTATION_INTERVAL_SECONDS``. 900s (15min) — node health moves
     # slowly, so this is ample.
     reputation_interval_seconds: int = Field(default=900, gt=0)
+    # RaspiBlitz info mirror (dashboard "Node & Chain"): read-only system snapshot
+    # (CPU/temp/mem/SSD + bitcoind/lnd) pulled over a FORCED-COMMAND ssh key that
+    # can only run the info script on the node (no shell, no pty, no sudo surface).
+    # Default OFF; fail-soft — the panel shows "n/v" when disabled/unreachable.
+    # Env ``APP_LN_BLITZ_INFO_ENABLED`` / ``..._SSH_TARGET`` / ``..._SSH_KEY_PATH``.
+    blitz_info_enabled: bool = Field(default=False)
+    blitz_info_ssh_target: str = Field(default="admin@192.168.178.51")
+    blitz_info_ssh_key_path: str = Field(default="")
+    blitz_info_timeout_seconds: float = Field(default=25.0, gt=0)
 
     @property
     def base_url(self) -> str:

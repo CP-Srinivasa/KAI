@@ -1,8 +1,8 @@
 // @data-source: /dashboard/api/ln/channels
-import { Waypoints, ShieldCheck, ShieldAlert, Power, Zap, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { Waypoints, ShieldCheck, ShieldAlert, Power, Zap, ArrowDownLeft, ArrowUpRight, Hourglass } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
-import { fetchLnChannels, type LnChannels, type LnChannel } from "@/lib/api";
+import { fetchLnChannels, type LnChannels, type LnChannel, type LnPendingChannel } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 
 // Per-Channel-Aufschlüsselung (Phase 1, read-only, default-off). Zeigt EHRLICH
@@ -56,6 +56,28 @@ function ChannelRow({ ch }: { ch: LnChannel }) {
   );
 }
 
+function PendingRow({ ch }: { ch: LnPendingChannel }) {
+  return (
+    <div className="rounded-sm border border-warn/30 bg-warn/5 px-2.5 py-2 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 min-w-0">
+          <Hourglass size={10} className="text-warn shrink-0" />
+          <span className="truncate font-mono text-2xs text-fg-subtle" title={ch.remote_pubkey}>
+            {shortKey(ch.remote_pubkey || "—")}
+          </span>
+        </span>
+        <span className="font-mono tabular-nums text-2xs text-warn">{fmtSats(ch.capacity_sat)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-2 text-2xs text-fg-subtle">
+        <span>wartet auf Funding-Bestätigungen</span>
+        <span className="truncate font-mono" title={ch.channel_point}>
+          {ch.channel_point ? `${ch.channel_point.slice(0, 10)}…` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function ChannelsPanel() {
   const polling = usePolling<LnChannels>(
     (signal) => fetchLnChannels(signal),
@@ -65,8 +87,9 @@ export function ChannelsPanel() {
 
   const stateBadge =
     data == null ? null : data.state === "ok" ? (
-      <Badge tone="pos" dot>
+      <Badge tone={data.num_pending > 0 ? "warn" : "pos"} dot>
         <ShieldCheck size={10} /> {data.num_channels} Channels
+        {data.num_pending > 0 ? ` · ${data.num_pending} pending` : ""}
       </Badge>
     ) : data.state === "disabled" ? (
       <Badge tone="muted" dot>
@@ -127,10 +150,18 @@ export function ChannelsPanel() {
         </div>
       )}
 
-      {data?.state === "ok" && data.num_channels === 0 && (
+      {data?.state === "ok" && data.num_channels === 0 && data.num_pending === 0 && (
         <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
           Node erreichbar, aber <span className="text-fg">keine offenen Channels</span>. Inbound/Outbound
           entstehen erst, wenn der Operator (gated) Liquidität aufbaut.
+        </div>
+      )}
+
+      {data?.state === "ok" && data.num_pending > 0 && (
+        <div className="space-y-1.5 pb-2">
+          {data.pending.map((ch) => (
+            <PendingRow key={ch.channel_point || ch.remote_pubkey} ch={ch} />
+          ))}
         </div>
       )}
 

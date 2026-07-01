@@ -86,6 +86,18 @@ class LightningChannel:
 
 
 @dataclass(frozen=True)
+class LightningPendingChannel:
+    """A channel whose funding tx is broadcast but not yet sufficiently confirmed
+    (lnd ``pendingchannels.pending_open_channels``). Surfaced so a fresh open is
+    never invisible between broadcast and activation."""
+
+    remote_pubkey: str
+    capacity_sat: int
+    local_sat: int
+    channel_point: str
+
+
+@dataclass(frozen=True)
 class LightningChannels:
     """Per-channel breakdown snapshot. ``state`` mirrors the node adapter:
     ``disabled`` (feature off), ``unavailable`` (enabled but unreachable), ``ok``."""
@@ -93,6 +105,7 @@ class LightningChannels:
     state: str
     reachable: bool
     channels: list[LightningChannel] = field(default_factory=list)
+    pending: list[LightningPendingChannel] = field(default_factory=list)
     reason: str = ""
 
     @classmethod
@@ -243,7 +256,27 @@ async def get_channels(cfg: LightningSettings | None = None) -> LightningChannel
             )
         )
     items.sort(key=lambda c: (not c.active, -c.capacity_sat))
-    return LightningChannels(state="ok", reachable=True, channels=items)
+
+    # Pending opens best-effort: a failure here must not hide the OPEN channels
+    # (the pending list is additive display truth, not a gating input).
+    pending: list[LightningPendingChannel] = []
+    try:
+        raw_pending = await client.pending_channels()
+        for entry in raw_pending.get("pending_open_channels", []) or []:
+            ch = entry.get("channel") if isinstance(entry, dict) else None
+            if not isinstance(ch, dict):
+                continue
+            pending.append(
+                LightningPendingChannel(
+                    remote_pubkey=str(ch.get("remote_node_pub", "")),
+                    capacity_sat=_amt_sat(ch.get("capacity")),
+                    local_sat=_amt_sat(ch.get("local_balance")),
+                    channel_point=str(ch.get("channel_point", "")),
+                )
+            )
+    except Exception:  # noqa: BLE001 — pending view is best-effort by design
+        pass
+    return LightningChannels(state="ok", reachable=True, channels=items, pending=pending)
 
 
 async def get_fee_report(cfg: LightningSettings | None = None) -> LightningFeeReport:
