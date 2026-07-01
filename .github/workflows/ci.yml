@@ -42,7 +42,9 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
-    needs: lint
+    # Bewusst OHNE needs:lint — Tests ist mit Abstand der längste Job (Kritischer
+    # Pfad); die Serialisierung hinter Lint kostete ~40s Wallclock pro PR und
+    # sparte nur im (seltenen) Lint-Rot-Fall Compute.
     services:
       postgres:
         image: postgres:16-alpine
@@ -72,9 +74,20 @@ jobs:
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.lock') }}
-      - run: pip install --no-cache-dir -r requirements.lock
+      # Determinismus kommt aus dem Lock-File; der pip-Wheel-Cache (Step oben)
+      # darf greifen — --no-cache-dir hatte ihn wirkungslos gemacht.
+      - run: pip install -r requirements.lock
       - run: pip install -e . --no-deps
-      - run: pytest tests/ -v --cov=app --cov-report=xml
+      # -n auto: alle Runner-Kerne; --dist loadfile: Tests derselben Datei bleiben
+      # im selben Worker (Modul-Fixtures/DB-Setups kollidieren nicht über Dateien
+      # hinweg). -q überstimmt das -v aus addopts (Vollprotokoll bringt in CI
+      # nichts und kostet Log-I/O; Failures bleiben voll sichtbar).
+      # tests/benchmarks läuft als EIGENER Step NACH dem xdist-Lauf: p95-Latenz-
+      # Asserts (ADR 0003, <50ms) unter xdist-Parallellast wären Flake-Kandidaten —
+      # die Messung braucht ruhige Kerne, wie im bisherigen Single-Thread-Lauf.
+      # Bewusst im selben (required) Tests-Job: das Latenz-Gate bleibt merge-blockend.
+      - run: pytest tests/ -q -n auto --dist loadfile --ignore=tests/benchmarks --cov=app --cov-report=xml
+      - run: pytest tests/benchmarks -q
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
