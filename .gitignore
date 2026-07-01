@@ -91,6 +91,7 @@ monitor/source_rotation_state.json
 monitor/source_proposals.jsonl
 monitor/source_discovery_runs.jsonl
 monitor/source_probation_state.json
+monitor/generator_edge_watch_state.json
 
 # L3 audit-integrity anchor records (runtime output of kai-integrity-anchor.timer)
 monitor/integrity/
