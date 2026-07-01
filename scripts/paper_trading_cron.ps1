@@ -294,23 +294,10 @@ if ($pipelineCounter -ge 4) {
 }
 $pipelineCounter | Out-File -Encoding utf8 $pipelineMarker
 
-# NewsData.io fetch (every 3rd run = ~30 min)
-$newsdataMarker = Join-Path $ProjectRoot "artifacts\.newsdata_counter"
-$newsdataCounter = 0
-if (Test-Path $newsdataMarker) { $newsdataCounter = [int](Get-Content $newsdataMarker -ErrorAction SilentlyContinue) }
-$newsdataCounter++
-if ($newsdataCounter -ge 3) {
-    $newsdataCounter = 0
-    Write-Log "newsdata fetch starting"
-    try {
-        $output = & $Python -m app.cli.main pipeline newsdata "crypto bitcoin ethereum solana" `
-            --language en --category business --size 10 --top-n 3 2>&1 | Out-String
-        Write-Log "newsdata done"
-    } catch {
-        Write-Log "newsdata ERROR: $_"
-    }
-}
-$newsdataCounter | Out-File -Encoding utf8 $newsdataMarker
+# NewsData.io ingestion RETIRED 2026-07-01 (ADR 0012): 4252 ingested docs, 0
+# directional (100% neutral) = pure classifier load with no signal. The pipeline
+# code (run_newsdata_pipeline / `pipeline newsdata`) stays available for manual
+# use; only the scheduled fetch is removed. Re-enable = restore this block.
 
 # YouTube channel ingestion (every 12th run = ~2h)
 $youtubeMarker = Join-Path $ProjectRoot "artifacts\.youtube_counter"

@@ -308,6 +308,54 @@ class DocumentRepository:
         result = await self._session.execute(stmt)
         return [_from_model(m) for m in result.scalars().all()]
 
+    async def list_directional_news_events(
+        self,
+        *,
+        since: datetime | None = None,
+        min_confidence: float = 0.0,
+        limit: int = 50_000,
+    ) -> list[dict[str, Any]]:
+        """Read-only projection of DIRECTIONAL documents for news-signal evaluation.
+
+        Returns lightweight dicts (``source_name``, ``sentiment_label``, ``tickers``,
+        ``published_at``, ``directional_confidence``) for documents that carry a
+        non-neutral sentiment, a ticker list, and a publish time — the raw material
+        :func:`app.research.news_outcomes.load_news_events` filters into events.
+        Time-ascending so the downstream moving-block bootstrap stays autocorr-safe.
+        """
+        stmt = (
+            select(
+                CanonicalDocumentModel.source_name,
+                CanonicalDocumentModel.sentiment_label,
+                CanonicalDocumentModel.tickers,
+                CanonicalDocumentModel.published_at,
+                CanonicalDocumentModel.directional_confidence,
+            )
+            .where(
+                CanonicalDocumentModel.sentiment_label.is_not(None),
+                CanonicalDocumentModel.sentiment_label != "neutral",
+                CanonicalDocumentModel.tickers.is_not(None),
+                CanonicalDocumentModel.published_at.is_not(None),
+            )
+            .order_by(CanonicalDocumentModel.published_at.asc())
+            .limit(limit)
+        )
+        if since is not None:
+            stmt = stmt.where(CanonicalDocumentModel.published_at >= since)
+        if min_confidence > 0.0:
+            stmt = stmt.where(CanonicalDocumentModel.directional_confidence >= min_confidence)
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "source_name": r.source_name,
+                "sentiment_label": r.sentiment_label,
+                "tickers": r.tickers,
+                "published_at": r.published_at,
+                "directional_confidence": r.directional_confidence,
+            }
+            for r in result.all()
+        ]
+
     async def list(
         self,
         source_id: str | None = None,

@@ -1050,6 +1050,120 @@ def trading_hypothesis_eval(
     )
 
 
+@trading_app.command("news-eval")
+def trading_news_eval(
+    lookback_days: int = typer.Option(
+        120, "--lookback-days", help="Only score news published within this window (0=all)"
+    ),
+    min_confidence: float = typer.Option(
+        0.0, "--min-confidence", help="Min directional_confidence to include an event"
+    ),
+    min_n: int = typer.Option(20, "--min-n", help="Min events for a source to be shown"),
+    max_symbols: int = typer.Option(
+        40, "--max-symbols", help="Cap distinct symbols (by event count) to bound OHLCV fetches"
+    ),
+    max_docs: int = typer.Option(50_000, "--max-docs", help="Hard cap on documents pulled"),
+    timeframe: str = typer.Option("1h", "--timeframe", help="OHLCV timeframe (1h|4h|1d)"),
+    cost_bps: float = typer.Option(20.0, "--cost-bps", help="Round-trip cost floor (bps)"),
+    max_concentration: float = typer.Option(
+        0.8, "--max-concentration", help="Max single-symbol share for ACTIONABLE"
+    ),
+    source: str = typer.Option("", "--source", help="Only evaluate this source_name"),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+) -> None:
+    """Score whether a source's DIRECTIONAL news (bullish/bearish) carries a
+    tradeable forward return on the mentioned asset (ADR 0012 truth harness).
+
+    A pre-registered, orthogonal, non-price hypothesis. Entry is the first OHLCV
+    open AFTER publish (no look-ahead); returns at 1h/4h/24h/72h are side-adjusted
+    so ``mean>0`` means the direction paid, then the conservative ACTIONABLE gate
+    (clears cost AND bootstrap-significant AND not single-symbol) is applied per
+    source. Read-only over the fill-independent news corpus + public Binance OHLCV;
+    a positive verdict is a HYPOTHESIS — trust/edge promotion stays operator-gated.
+    """
+    import asyncio
+    import json as _json
+    from collections import Counter
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.settings import get_settings
+    from app.market_data.binance_adapter import BinanceAdapter
+    from app.market_data.history_loader import load_ohlcv_history
+    from app.market_data.kline_windows import interval_to_ms
+    from app.research.news_outcomes import NEWS_HORIZONS_S, build_news_outcomes, load_news_events
+    from app.research.news_signal_eval import evaluate_news, render
+    from app.research.runner import build_fetch
+    from app.storage.db.session import build_session_factory
+    from app.storage.repositories.document_repo import DocumentRepository
+
+    since = datetime.now(UTC) - timedelta(days=lookback_days) if lookback_days > 0 else None
+    interval_ms = interval_to_ms(timeframe)
+    max_h = max(NEWS_HORIZONS_S)
+
+    async def _run() -> dict[str, Any]:
+        settings = get_settings()
+        factory = build_session_factory(settings.db)
+        async with factory() as session:
+            rows = await DocumentRepository(session).list_directional_news_events(
+                since=since, min_confidence=min_confidence, limit=max_docs
+            )
+        events = load_news_events(rows)
+        if source:
+            events = [e for e in events if e.source == source]
+
+        counts = Counter(e.symbol for e in events)
+        kept = {s for s, _ in counts.most_common(max_symbols)}
+        dropped_syms = len(counts) - len(kept)
+        events = [e for e in events if e.symbol in kept]
+
+        fetch = build_fetch(BinanceAdapter().get_ohlcv)
+        series: dict[str, Any] = {}
+        for sym in sorted(kept):
+            ts = [e.entry_ts for e in events if e.symbol == sym]
+            if not ts:
+                continue
+            start_ms = int(min(ts).timestamp() * 1000) - interval_ms
+            end_ms = int(max(ts).timestamp() * 1000) + max_h * 1000 + interval_ms
+            hist = await load_ohlcv_history(sym, timeframe, start_ms, end_ms, fetch)
+            series[sym] = hist.candles
+
+        outcomes = build_news_outcomes(events, series)
+        res = evaluate_news(outcomes, cost_bps=cost_bps, max_concentration=max_concentration)
+        res["_meta"] = {
+            "n_events_scored": len(events),
+            "n_outcomes": len(outcomes),
+            "n_symbols": len(kept),
+            "n_symbols_dropped": dropped_syms,
+            "timeframe": timeframe,
+        }
+        return res
+
+    res = asyncio.run(_run())
+    meta = res.pop("_meta")
+
+    if as_json:
+        print(_json.dumps({**res, "meta": meta}, indent=2, default=str))
+        return
+
+    print(
+        f"news-eval: {meta['n_events_scored']} directional events -> "
+        f"{meta['n_outcomes']} outcomes over {meta['n_symbols']} symbols "
+        f"(tf={meta['timeframe']}, cost={cost_bps:.0f}bps)"
+    )
+    if meta["n_symbols_dropped"] > 0:
+        print(
+            f"note: {meta['n_symbols_dropped']} lower-volume symbol(s) omitted by "
+            f"--max-symbols={max_symbols} (not silently — raise the cap to include them)"
+        )
+    print()
+    print(render(res, min_n=min_n))
+    print()
+    print(
+        "news-eval: every result is a HYPOTHESIS — trust/edge promotion stays "
+        "operator- AND edge-gated (no auto-activation)."
+    )
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
