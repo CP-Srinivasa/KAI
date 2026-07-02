@@ -171,6 +171,68 @@ def attested_subject_ids(path: Path, kind: str | None = None) -> set[str]:
     return out
 
 
+def chain_tip(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
+    """Public read of the ledger head — ``{"record_hash", "seq"}`` (genesis if empty).
+
+    The tip ``record_hash`` transitively commits the ENTIRE chain (each record embeds
+    the prior ``record_hash``), so anchoring the tip anchors every record before it.
+    """
+    record_hash, seq = _chain_tip(path)
+    return {"record_hash": record_hash, "seq": seq}
+
+
+def attest_verdict_reports(
+    *,
+    verdicts_dir: Path | None = None,
+    truth_path: Path = DEFAULT_TRUTH_LEDGER_PATH,
+    audit: KaiAuditService | None = None,
+    mirror_audit: bool = True,
+) -> dict[str, Any]:
+    """Attest every attested verdict report not yet in the truth ledger (idempotent).
+
+    Scans the verdict-report directory and chains each report's payload into the
+    truth ledger, deduped by the report's own attestation hash. This binds the
+    falsification VERDICTS ("we tested H under pre-registered criteria and it
+    passed/failed") into the same tamper-evident chain as the pre-registrations they
+    resolve — so the platform's core claim can no longer drift after the fact.
+    Corrupt/foreign files are skipped (never crash a run).
+    """
+    from app.research.verdict_report import DEFAULT_VERDICTS_DIR
+
+    src_dir = verdicts_dir or DEFAULT_VERDICTS_DIR
+    if not src_dir.is_dir():
+        return {"total": 0, "attested": 0, "skipped": 0, "ledger": str(truth_path)}
+
+    already = attested_subject_ids(truth_path, kind="verdict")
+    attested = skipped = 0
+    for path in sorted(src_dir.glob("*.json")):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            payload = report["payload"]
+            att_hash = str(report["attestation"]["hash"])
+        except (ValueError, KeyError, OSError):
+            continue  # skip corrupt/foreign files — an unreadable report is not a verdict
+        if att_hash in already:
+            skipped += 1
+            continue
+        append_attestation(
+            "verdict",
+            att_hash,
+            payload,
+            path=truth_path,
+            audit=audit,
+            mirror_audit=mirror_audit,
+        )
+        already.add(att_hash)
+        attested += 1
+    return {
+        "total": attested + skipped,
+        "attested": attested,
+        "skipped": skipped,
+        "ledger": str(truth_path),
+    }
+
+
 def attest_prereg_ledger(
     *,
     prereg_path: Path | None = None,
@@ -218,6 +280,8 @@ __all__ = [
     "TruthLedgerError",
     "append_attestation",
     "attest_prereg_ledger",
+    "attest_verdict_reports",
     "attested_subject_ids",
+    "chain_tip",
     "verify_ledger",
 ]
