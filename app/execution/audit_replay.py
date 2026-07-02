@@ -20,10 +20,10 @@ from pathlib import Path
 from app.core.symbol_guard import untradeable_reason
 from app.execution.models import (
     LifecycleTransition,
-    OrderLifecycleState,
     PaperPosition,
     validate_lifecycle_transition,
 )
+from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,10 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             sym = _coerce_str(payload.get("symbol"))
             if sym is None or sym not in positions:
                 continue
-            existing = positions[sym]
+            # ``pos`` is definitely present here (guarded by ``sym in positions``);
+            # kept distinct from the maybe-absent ``existing`` in the order_filled
+            # handler below so both stay honestly typed (no shared Optional name).
+            pos = positions[sym]
             raw_tiers = payload.get("tiers")
             tiers: list[tuple[float, float]] = []
             if isinstance(raw_tiers, list):
@@ -268,9 +271,9 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                     if p is None or q is None or p <= 0 or q <= 0:
                         continue
                     tiers.append((p, q))
-            initial_qty = _coerce_float(payload.get("initial_quantity")) or existing.quantity
-            existing.take_profit_tiers = sorted(tiers, key=lambda t: t[0])
-            existing.initial_quantity = initial_qty
+            initial_qty = _coerce_float(payload.get("initial_quantity")) or pos.quantity
+            pos.take_profit_tiers = sorted(tiers, key=lambda t: t[0])
+            pos.initial_quantity = initial_qty
             continue
 
         if event_type == "position_partial_closed":
@@ -279,9 +282,9 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             sym = _coerce_str(payload.get("symbol"))
             if sym is None or sym not in positions:
                 continue
-            existing = positions[sym]
+            pos = positions[sym]
             raw_remaining = payload.get("remaining_tiers")
-            remaining: list[tuple[float, float]] = []
+            remaining_tiers: list[tuple[float, float]] = []
             if isinstance(raw_remaining, list):
                 for entry in raw_remaining:
                     if not isinstance(entry, dict):
@@ -290,33 +293,33 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                     q = _coerce_float(entry.get("qty_share"))
                     if p is None or q is None or p <= 0 or q <= 0:
                         continue
-                    remaining.append((p, q))
-            existing.take_profit_tiers = sorted(remaining, key=lambda t: t[0])
+                    remaining_tiers.append((p, q))
+            pos.take_profit_tiers = sorted(remaining_tiers, key=lambda t: t[0])
             continue
 
         if event_type == "position_adjusted":
             sym = _coerce_str(payload.get("symbol"))
             if sym is None or sym not in positions:
                 continue
-            existing = positions[sym]
+            pos = positions[sym]
             new_sl = _coerce_float(payload.get("stop_loss"))
             new_tp = _coerce_float(payload.get("take_profit"))
             positions[sym] = PaperPosition(
-                symbol=existing.symbol,
-                quantity=existing.quantity,
-                avg_entry_price=existing.avg_entry_price,
-                stop_loss=new_sl if new_sl is not None else existing.stop_loss,
-                take_profit=new_tp if new_tp is not None else existing.take_profit,
-                opened_at=existing.opened_at,
-                realized_pnl_usd=existing.realized_pnl_usd,
-                position_side=existing.position_side,
-                take_profit_tiers=list(existing.take_profit_tiers),
-                initial_quantity=existing.initial_quantity,
-                correlation_id=existing.correlation_id,
-                leverage=existing.leverage,
-                source=existing.source,
-                document_id=existing.document_id,
-                regime=existing.regime,
+                symbol=pos.symbol,
+                quantity=pos.quantity,
+                avg_entry_price=pos.avg_entry_price,
+                stop_loss=new_sl if new_sl is not None else pos.stop_loss,
+                take_profit=new_tp if new_tp is not None else pos.take_profit,
+                opened_at=pos.opened_at,
+                realized_pnl_usd=pos.realized_pnl_usd,
+                position_side=pos.position_side,
+                take_profit_tiers=list(pos.take_profit_tiers),
+                initial_quantity=pos.initial_quantity,
+                correlation_id=pos.correlation_id,
+                leverage=pos.leverage,
+                source=pos.source,
+                document_id=pos.document_id,
+                regime=pos.regime,
             )
             continue
 
