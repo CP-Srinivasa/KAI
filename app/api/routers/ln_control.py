@@ -29,6 +29,7 @@ from app.core.settings import get_settings
 from app.lightning import value_layer as vl
 from app.lightning.control_gate import plan_hash, verify_capital_confirm
 from app.lightning.demand_evaluator import evaluate_l402_demand
+from app.lightning.ops_ledger import spent_today_sat
 from app.lightning.policy import PolicyStore, evaluate_policy
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,9 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         body.action,
         amount_sat=amount,
         recipient=recipient,
-        spent_today_sat=0,  # TODO: sum today's executed sends from the ops ledger
+        # Gesamtaudit-P0 geschlossen: Tages-Cap zählt jetzt die real executed,
+        # wert-abfließenden Sends des UTC-Tages aus dem Ops-Ledger.
+        spent_today_sat=spent_today_sat(),
         available_balance_sat=available,
         envelope=envelope,
     )
