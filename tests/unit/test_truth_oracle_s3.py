@@ -38,6 +38,7 @@ def test_mint_rate_limit_caps_minting(monkeypatch) -> None:
             l402_mint_per_min=2,
             l402_mint_budget_per_min=100,
             pay_enabled=False,  # mint path unprovisioned → 503, but rate-limit fires first
+            tls_cert_path="test-tls.pem",
         )
     )
     monkeypatch.setattr(to, "get_settings", lambda: fake)

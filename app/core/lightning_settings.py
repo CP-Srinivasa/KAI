@@ -10,7 +10,7 @@ plan, macaroon-permission matrix and threat model.
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -86,6 +86,24 @@ class LightningSettings(BaseSettings):
     blitz_info_ssh_target: str = Field(default="admin@192.168.178.51")
     blitz_info_ssh_key_path: str = Field(default="")
     blitz_info_timeout_seconds: float = Field(default=25.0, gt=0)
+
+    @model_validator(mode="after")
+    def _require_tls_cert_when_enabled(self) -> LightningSettings:
+        """Boot-time guardrail (mirrors ``validate_mode_guardrails`` in settings.py).
+
+        An enabled Lightning client with an empty ``tls_cert_path`` makes the lnd REST
+        client (``app.lightning.client``: ``verify = tls_cert_path or False``) silently
+        DISABLE TLS verification — exposing the macaroon and all node traffic to a MITM
+        on the LAN/overlay. Refuse to construct rather than fail open. A disabled client
+        (``enabled=False``) never touches the node, so it is unaffected.
+        """
+        if self.enabled and not self.tls_cert_path.strip():
+            raise ValueError(
+                "APP_LN_ENABLED=true requires APP_LN_TLS_CERT_PATH (path to the lnd "
+                "tls.cert). An empty cert path silently disables TLS verification in "
+                "the lnd REST client — refusing to boot fail-open."
+            )
+        return self
 
     @property
     def base_url(self) -> str:

@@ -117,7 +117,9 @@ async def test_full_l402_demand_flow_in_process(tmp_path, monkeypatch) -> None: 
     fake_client = MagicMock()
     fake_client.list_invoices = AsyncMock(return_value=[settled])
     with patch("app.lightning.earnings_booking._build_client", return_value=fake_client):
-        booked = await book_oracle_earnings(path=earnings_p, cfg=LightningSettings(enabled=True))
+        booked = await book_oracle_earnings(
+            path=earnings_p, cfg=LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        )
     assert booked == 1
 
     # 5) the evaluator joins both ledgers — the round-trip is visible end-to-end

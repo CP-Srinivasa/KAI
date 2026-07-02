@@ -27,7 +27,7 @@ from app.lightning.value_layer import (
 
 
 def _cfg(pay_enabled: bool) -> LightningSettings:
-    return LightningSettings(enabled=True, pay_enabled=pay_enabled)
+    return LightningSettings(enabled=True, pay_enabled=pay_enabled, tls_cert_path="test-tls.pem")
 
 
 _SENDS = [

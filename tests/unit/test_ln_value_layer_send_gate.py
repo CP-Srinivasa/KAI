@@ -16,7 +16,7 @@ from app.lightning.value_layer import _assert_send_allowed
 
 
 def _cfg(pay_enabled: bool) -> LightningSettings:
-    return LightningSettings(enabled=True, pay_enabled=pay_enabled)
+    return LightningSettings(enabled=True, pay_enabled=pay_enabled, tls_cert_path="test-tls.pem")
 
 
 def test_gate_disabled_when_kill_switch_off() -> None:

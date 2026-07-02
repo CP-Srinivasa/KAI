@@ -61,7 +61,9 @@ async def test_books_only_settled_oracle_invoices(tmp_path: Path) -> None:
     ]
     p = tmp_path / "earn.jsonl"
     with patch("app.lightning.earnings_booking._build_client", return_value=_fake_client(invoices)):
-        booked = await book_oracle_earnings(path=p, cfg=LightningSettings(enabled=True))
+        booked = await book_oracle_earnings(
+            path=p, cfg=LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        )
     assert booked == 1
     rows = read_recent_ln_earnings(p, limit=0)
     assert len(rows) == 1
@@ -75,8 +77,12 @@ async def test_second_run_is_idempotent(tmp_path: Path) -> None:
     invoices = [{"memo": "kai-oracle:x", "settled": True, "r_hash": rh, "amt_paid_sat": 100}]
     p = tmp_path / "earn.jsonl"
     with patch("app.lightning.earnings_booking._build_client", return_value=_fake_client(invoices)):
-        first = await book_oracle_earnings(path=p, cfg=LightningSettings(enabled=True))
-        second = await book_oracle_earnings(path=p, cfg=LightningSettings(enabled=True))
+        first = await book_oracle_earnings(
+            path=p, cfg=LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        )
+        second = await book_oracle_earnings(
+            path=p, cfg=LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        )
     assert first == 1 and second == 0  # same settled invoice never double-booked
 
 
