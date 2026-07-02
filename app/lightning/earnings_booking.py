@@ -59,4 +59,28 @@ async def book_oracle_earnings(
     return record_settled_invoices(relevant, source=source, path=path)
 
 
-__all__ = ["book_oracle_earnings"]
+# Alle KAI-Inbound-Memo-Präfixe. "kai-pay:" = LNbits-Pay-Link-/Lightning-Address-
+# Zahlungen (G2, ADR 0013): LNbits fundet über UNSER lnd, seine Invoices erscheinen
+# in list_invoices — Buchung braucht daher weder LNbits-API noch Webhook, nur den
+# Prefix in der Pay-Link-Description.
+_BOOKING_SOURCES: tuple[tuple[str, str], ...] = (
+    ("kai-oracle:", "oracle-l402"),
+    ("kai-pay:", "lnurlp"),
+)
+
+
+async def book_all_earnings(
+    *,
+    path: Path | None = None,
+    cfg: LightningSettings | None = None,
+) -> dict[str, int]:
+    """Book every known KAI inbound memo-prefix; returns newly-booked count per source."""
+    counts: dict[str, int] = {}
+    for memo_prefix, source in _BOOKING_SOURCES:
+        counts[source] = await book_oracle_earnings(
+            memo_prefix=memo_prefix, source=source, path=path, cfg=cfg
+        )
+    return counts
+
+
+__all__ = ["book_all_earnings", "book_oracle_earnings"]

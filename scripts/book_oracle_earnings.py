@@ -13,15 +13,17 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.lightning.earnings_booking import book_oracle_earnings
+from app.lightning.earnings_booking import book_all_earnings
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger("kai.earnings-booking")
 
 
 async def _main() -> int:
-    booked = await book_oracle_earnings()
-    _log.info("[ln-earnings-booking] booked=%d", booked)
+    # Bucht ALLE KAI-Inbound-Präfixe: kai-oracle:* (L402) + kai-pay:* (LNbits
+    # Pay-Link/Lightning-Address, G2 ADR 0013) — idempotent über dieselbe Maschinerie.
+    counts = await book_all_earnings()
+    _log.info("[ln-earnings-booking] booked=%s", counts)
     return 0
 
 
