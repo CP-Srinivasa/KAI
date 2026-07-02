@@ -1,0 +1,28 @@
+[Unit]
+Description=KAI min_turnover Calibration Check — verify the eligibility turnover floor still fits the live Binance distribution (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Read-only: ONE public Binance REST call (24h ticker, no key). Recomputes the
+# p80-p90 turnover band and checks whether the live DEFAULT_MIN_TURNOVER_USD
+# floor still sits inside it. NEVER changes code — on drift it appends a
+# recommendation to artifacts/min_turnover_calibration.jsonl and logs WARNING.
+# No "-" prefix: the script is internally fail-soft (returns 0 on network/parse
+# errors), so a non-zero exit is a real bug worth surfacing via failed-units.
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/min_turnover_calibration_check.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+# Tiny: one REST call + in-memory percentile math.
+MemoryMax=128M
+CPUQuota=50%

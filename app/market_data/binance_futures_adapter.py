@@ -1,0 +1,414 @@
+"""Binance USD-M Futures public-REST market data adapter (V25-D).
+
+Endpoint: GET https://fapi.binance.com/fapi/v1/ticker/24hr
+
+Why a separate Binance-Futures adapter (vs. the existing spot adapter in
+binance_adapter.py): the premium Telegram channel posts Bybit-Futures pairs
+with leveraged tickers (1000LUNCUSDT, etc.) that Binance Spot does not
+list — but Binance Futures does, with a 1:1 symbol convention to Bybit
+Linear. This adapter is the second-tier provider after Bybit in the
+fallback cascade so any signal that survives Bybit-resolve still has a
+matching reference price on Binance.
+
+Symbol convention: KAI canonical 'BTC/USDT' → 'BTCUSDT'.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
+
+from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.models import (
+    OHLCV,
+    FundingRateSnapshot,
+    LongShortRatioSnapshot,
+    OpenInterestSnapshot,
+    Ticker,
+)
+from app.market_data.oi_zscore import oi_change_zscore
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_BASE_URL = "https://fapi.binance.com"
+# Mirror of oi_zscore's minimum; requesting fewer points can never yield a z.
+_MIN_OI_POINTS = 3
+
+
+def _normalize_symbol(raw_symbol: str) -> str:
+    candidate = raw_symbol.strip().upper()
+    if not candidate:
+        return ""
+    for sep in ("/", "-", ":"):
+        if sep in candidate:
+            base, _, quote = candidate.partition(sep)
+            return f"{base}{quote}"
+    return candidate
+
+
+def _canonical_symbol(raw_symbol: str) -> str:
+    candidate = raw_symbol.strip().upper()
+    if "/" in candidate:
+        return candidate
+    for quote in ("USDT", "USDC", "BUSD", "USD", "BTC", "ETH"):
+        if candidate.endswith(quote) and len(candidate) > len(quote):
+            return f"{candidate[: -len(quote)]}/{quote}"
+    return candidate
+
+
+def _opt_float(raw: Any) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ms_to_iso(raw: Any) -> str | None:
+    if raw in (None, ""):
+        return None
+    try:
+        ms = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+
+
+class BinanceFuturesAdapter(BaseMarketDataAdapter):
+    """Read-only Binance USD-M futures price source."""
+
+    def __init__(
+        self,
+        *,
+        freshness_threshold_seconds: float = 120.0,
+        timeout_seconds: int = 10,
+        base_url: str = _DEFAULT_BASE_URL,
+    ) -> None:
+        self._freshness = freshness_threshold_seconds
+        self._timeout = timeout_seconds
+        self._base = base_url
+        self.last_error: str | None = None
+
+    @property
+    def adapter_name(self) -> str:
+        return "binance_futures"
+
+    async def get_ticker(self, symbol: str) -> Ticker | None:
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
+                    f"{self._base}/fapi/v1/ticker/24hr",
+                    params={"symbol": sym},
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            # Binance returns 400 with code -1121 for invalid symbol
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            row = resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
+        if not isinstance(row, dict) or "lastPrice" not in row:
+            self.last_error = "unexpected_payload"
+            return None
+        try:
+            last = float(row.get("lastPrice", 0.0) or 0.0)
+            volume = float(row.get("volume", 0.0) or 0.0)
+            change = float(row.get("priceChangePercent", 0.0) or 0.0)
+            bid = float(row.get("bidPrice", last) or last)
+            ask = float(row.get("askPrice", last) or last)
+        except (TypeError, ValueError):
+            self.last_error = "ticker_parse_error"
+            return None
+        if last <= 0:
+            self.last_error = "non_positive_price"
+            return None
+        ts_ms = row.get("closeTime")
+        if isinstance(ts_ms, (int, float)) and ts_ms > 0:
+            source_ts = datetime.fromtimestamp(int(ts_ms) / 1000, tz=UTC).isoformat()
+        else:
+            source_ts = datetime.now(UTC).isoformat()
+        return Ticker(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=source_ts,
+            bid=bid,
+            ask=ask,
+            last=last,
+            volume_24h=volume,
+            change_pct_24h=change,
+        )
+
+    async def get_price(self, symbol: str) -> float | None:
+        ticker = await self.get_ticker(symbol)
+        return ticker.last if ticker is not None else None
+
+    async def get_funding_rate(self, symbol: str) -> FundingRateSnapshot | None:
+        """Funding-Rate via ``GET /fapi/v1/premiumIndex?symbol=...``.
+
+        Felder: ``lastFundingRate`` (Fraction), ``nextFundingTime``
+        (ms-epoch), ``markPrice``, ``indexPrice``, ``time`` (ms-epoch).
+
+        Fail-safe: jeder Transport-/HTTP-/Parse-/Miss-Fall ⇒ ``None``.
+        Niemals Exception nach oben (kein neuer Flaschenhals im Refresh).
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
+                    f"{self._base}/fapi/v1/premiumIndex",
+                    params={"symbol": sym},
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            row = resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
+        if not isinstance(row, dict) or "lastFundingRate" not in row:
+            self.last_error = "unexpected_payload"
+            return None
+        raw_rate = row.get("lastFundingRate")
+        if raw_rate is None or raw_rate == "":
+            self.last_error = "no_funding_rate"
+            return None
+        try:
+            rate = float(raw_rate)  # Binance liefert bereits Fraction
+        except (TypeError, ValueError):
+            self.last_error = "funding_parse_error"
+            return None
+        mark_price = _opt_float(row.get("markPrice"))
+        index_price = _opt_float(row.get("indexPrice"))
+        next_funding = _ms_to_iso(row.get("nextFundingTime"))
+        observed = _ms_to_iso(row.get("time")) or datetime.now(UTC).isoformat()
+        return FundingRateSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            rate=rate,
+            mark_price=mark_price,
+            index_price=index_price,
+            next_funding_time_utc=next_funding,
+            source="binance",
+        )
+
+    async def get_funding_rate_history(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+        *,
+        page_limit: int = 1000,
+        max_pages: int = 12,
+    ) -> list[tuple[int, float]]:
+        """Historical settled funding via ``GET /fapi/v1/fundingRate``.
+
+        Returns the realised funding settlements in ``[start_ms, end_ms]`` as
+        ``(settlement_ms, rate)`` tuples, oldest-first and de-duplicated by
+        settlement time. ``rate`` is a fraction per 8h interval (Binance native).
+
+        The endpoint is public (no auth), ascending by ``fundingTime`` and capped
+        at ``page_limit`` rows; with the 8h cadence ~3/day this paginates forward
+        by advancing ``startTime`` past the last settlement seen. Fail-safe: any
+        transport/HTTP/parse error stops paging and returns what was gathered
+        (possibly empty) — never raises, so research backfill degrades to
+        "no funding" rather than crashing.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return []
+        start = int(start_ms)
+        end = int(end_ms)
+        if end < start:
+            return []
+        collected: dict[int, float] = {}
+        cursor = start
+        for _ in range(max(1, max_pages)):
+            rows = await self._get_json(
+                "/fapi/v1/fundingRate",
+                {
+                    "symbol": sym,
+                    "startTime": str(cursor),
+                    "endTime": str(end),
+                    "limit": str(page_limit),
+                },
+            )
+            if not isinstance(rows, list) or not rows:
+                break
+            last_ft = cursor
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                rate = _opt_float(row.get("fundingRate"))
+                raw_ft = row.get("fundingTime")
+                try:
+                    ft_ms = int(raw_ft)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+                if rate is None or ft_ms < start or ft_ms > end:
+                    continue
+                collected[ft_ms] = rate
+                if ft_ms > last_ft:
+                    last_ft = ft_ms
+            if len(rows) < page_limit:
+                break  # last page (Binance returns < limit when exhausted)
+            nxt = last_ft + 1
+            if nxt <= cursor:
+                break  # no forward progress → stop (defensive against loops)
+            cursor = nxt
+        return [(ms, collected[ms]) for ms in sorted(collected)]
+
+    async def get_open_interest(
+        self, symbol: str, *, interval: str = "1h", window: int = 24
+    ) -> OpenInterestSnapshot | None:
+        """Open-Interest + change-z-score (Goal V5 Phase 2).
+
+        Series source: ``GET /futures/data/openInterestHist?period=<interval>``
+        which returns a list ordered **oldest-first**, each row
+        ``{"sumOpenInterest": "<coins>", "sumOpenInterestValue": "<usd>",
+        "timestamp": <ms>}``. The latest level + timestamp come from the last
+        element; the freshest *spot* level (``/fapi/v1/openInterest``) is not
+        needed for the z-score and would only add a second round-trip — the
+        hist tail (≤ ``interval`` old) is sufficient for the snapshot.
+
+        ``open_interest`` is the latest ``sumOpenInterest`` in **base coins**
+        (Binance native unit). The z-score is unit-free.
+
+        Fail-safe: any transport/HTTP/parse/empty case ⇒ ``None``. Never raises.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        limit = max(_MIN_OI_POINTS, int(window))
+        rows = await self._get_json(
+            "/futures/data/openInterestHist",
+            {"symbol": sym, "period": interval, "limit": str(limit)},
+        )
+        if rows is None:
+            return None
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_open_interest"
+            return None
+        # Binance hist is oldest-first → use as-is for the change-series.
+        series: list[float] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            oi = _opt_float(row.get("sumOpenInterest"))
+            if oi is not None:
+                series.append(oi)
+        if not series:
+            self.last_error = "oi_parse_error"
+            return None
+        tail = rows[-1] if isinstance(rows[-1], dict) else {}
+        latest_oi = _opt_float(tail.get("sumOpenInterest")) or series[-1]
+        observed = _ms_to_iso(tail.get("timestamp")) or datetime.now(UTC).isoformat()
+        zscore = oi_change_zscore(series)
+        return OpenInterestSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            open_interest=latest_oi,
+            oi_change_zscore=zscore,
+            source="binance",
+        )
+
+    async def get_long_short_ratio(
+        self, symbol: str, *, interval: str = "1h"
+    ) -> LongShortRatioSnapshot | None:
+        """Long/Short-Account-Ratio (Goal V5 Phase 3).
+
+        Source: ``GET /futures/data/globalLongShortAccountRatio?period=<interval>``
+        which returns a list ordered **oldest-first**, each row
+        ``{"longAccount": "<0..1>", "shortAccount": "<0..1>",
+        "longShortRatio": "<x>", "timestamp": <ms>}``. We take the **last**
+        element (freshest bucket). ``longAccount`` is already a *fraction*
+        (Anteil long-Accounts) — no ×100, no double scaling.
+
+        Fail-safe: any transport/HTTP/parse/empty case ⇒ ``None``. Never raises.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        rows = await self._get_json(
+            "/futures/data/globalLongShortAccountRatio",
+            {"symbol": sym, "period": interval, "limit": "1"},
+        )
+        if rows is None:
+            return None
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_account_ratio"
+            return None
+        tail = rows[-1] if isinstance(rows[-1], dict) else {}
+        ratio = _opt_float(tail.get("longAccount"))
+        if ratio is None:
+            self.last_error = "ls_ratio_parse_error"
+            return None
+        observed = _ms_to_iso(tail.get("timestamp")) or datetime.now(UTC).isoformat()
+        return LongShortRatioSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            long_account_ratio=ratio,
+            source="binance",
+        )
+
+    async def _get_json(self, path: str, params: dict[str, str]) -> Any:
+        """Fail-safe GET → parsed JSON (list|dict) or ``None``. Never raises."""
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(f"{self._base}{path}", params=params)
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
+
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
+        del symbol, timeframe, limit
+        return []

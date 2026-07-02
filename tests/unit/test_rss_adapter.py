@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import feedparser
@@ -110,3 +113,35 @@ def test_feedparser_parses_sample() -> None:
     feed = feedparser.parse(SAMPLE_RSS)
     assert len(feed.entries) == 2
     assert feed.entries[0].title == "Bitcoin hits new high"
+
+
+@pytest.mark.asyncio
+async def test_published_at_is_utc_not_local_shifted() -> None:
+    """Regression (data-quality): ``published_parsed`` is a UTC ``struct_time``;
+    it MUST be read via ``calendar.timegm`` (UTC), never ``time.mktime`` (local),
+    or ``published_at`` is shifted by the host TZ offset.
+
+    SAMPLE_RSS pubDate is ``2024-01-01 12:00:00 +0000`` (UTC). The test forces a
+    non-UTC host TZ (Europe/Berlin = UTC+1 in January) so a regression back to
+    ``time.mktime`` is caught even on a UTC CI runner. Also pins the
+    None-handling for the second item, which carries no pubDate.
+    """
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset unavailable (non-Unix); cannot force TZ shift")
+    prev_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "Europe/Berlin"
+        time.tzset()
+        adapter = _make_adapter()
+        with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+            result = await adapter.fetch()
+        # timegm → exact UTC; time.mktime under Berlin would yield 11:00:00Z.
+        assert result.documents[0].published_at == datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        # second item has no pubDate → published_at stays None (no fabrication)
+        assert result.documents[1].published_at is None
+    finally:
+        if prev_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = prev_tz
+        time.tzset()

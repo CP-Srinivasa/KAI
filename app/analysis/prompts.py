@@ -45,8 +45,10 @@ spam_probability:
   1.0 = spam, clickbait, or extremely low quality
 
 affected_assets:
-  List specific tickers or names (e.g. ["BTC", "ETH", "MSTR", "BlackRock"]).
-  Only include what is directly discussed.
+  List specific tradeable crypto pairs (e.g. ["BTC/USDT", "ETH/USDT", "SOL/USDT"]).
+  Use /USDT suffix for all crypto assets. Only include assets that are DIRECTLY
+  affected by the event. Do NOT include equity tickers (COIN, MSTR, IBIT, HOOD,
+  MARA) — only crypto assets tradeable on exchanges.
 
 affected_sectors:
   E.g. ["DeFi", "Layer1", "CeFi", "Regulation", "Mining", "ETF", "Macro", "Banking"].
@@ -62,16 +64,47 @@ short_reasoning:
 bull_case / bear_case / neutral_case:
   Optional scenario analysis. Only provide if meaningful.
 
+directional_confidence:
+  0.0 = no directional signal at all
+  1.0 = extremely strong, concrete directional catalyst
+  Calibrate carefully:
+  - 0.8-1.0: Concrete institutional action (ETF launch, major acquisition, protocol exploit)
+  - 0.5-0.7: Plausible directional catalyst but uncertain timing/magnitude
+  - 0.2-0.4: Vague narrative, opinion piece, or already-priced-in information
+  - 0.0-0.1: Pure reporting of past events, no forward-looking signal
+
+event_timing:
+  Classify the temporal nature of the information:
+  - forward_catalyst: Announces a NEW event that hasn't been priced in yet
+    (e.g. "Morgan Stanley to launch Bitcoin ETF next week")
+  - backward_report: Reports on something that ALREADY happened and is likely
+    priced in (e.g. "Bitcoin ETFs drew $2.5B last month", "Crypto rallied 9%")
+  - ongoing_trend: Describes a continuing development without a clear catalyst
+    (e.g. "Institutional adoption continues to grow")
+  - speculative: Opinion, prediction, or hype without concrete event basis
+    (e.g. "Bitcoin could reach $100K", "Crypto starts 2026 STRONG!")
+
 recommended_priority:
   1 = low priority, 10 = immediate review required.
   Use 8-10 only for breaking news or major structural events.
+  IMPORTANT: A high priority requires BOTH high impact AND forward_catalyst timing.
+  Backward reports and speculation should never exceed priority 6.
 
 actionable:
   true only if this warrants immediate consideration for trading/position review.
+  Backward reports and speculative articles are NOT actionable.
 
 tags:
   Thematic tags (e.g. ["bitcoin", "etf", "sec", "regulation", "institutional"]).
   Keep to 2-6 relevant tags.
+
+already_priced_in:
+  If current market context is provided below, assess whether the news is likely
+  ALREADY reflected in the current price (backward_report, well-known trend) or
+  whether it represents a GENUINE NEW catalyst not yet priced in.
+  Consider the 24h and 7d price changes — if the asset already moved significantly
+  in the direction the news suggests, the information may be stale.
+  Set directional_confidence LOW (< 0.3) for already-priced-in information.
 
 Be objective. Do not let brand familiarity bias your scores.
 Avoid extreme values unless clearly justified by the content.
@@ -86,6 +119,33 @@ Document Title: {title}
 
 Analyze this document and return the structured analysis.
 """
+
+
+def _format_market_context(market_context: dict[str, Any]) -> str:
+    """Render market context dict into a human-readable prompt section."""
+    lines = ["Current Market Context:"]
+    assets: list[dict[str, Any]] = market_context.get("assets", [])
+    for asset in assets:
+        symbol = asset.get("symbol", "?")
+        price = asset.get("price")
+        chg_24h = asset.get("change_pct_24h")
+        chg_7d = asset.get("change_pct_7d")
+        parts = [f"  {symbol}:"]
+        if price is not None:
+            parts.append(f"${price:,.2f}")
+        if chg_24h is not None:
+            parts.append(f"24h {chg_24h:+.1f}%")
+        if chg_7d is not None:
+            parts.append(f"7d {chg_7d:+.1f}%")
+        lines.append(" | ".join(parts))
+    regime = market_context.get("regime")
+    if regime:
+        lines.append(f"  Market regime: {regime}")
+    lines.append(
+        "  Consider: Is the news above ALREADY reflected in these price moves, "
+        "or is it a genuinely new catalyst?"
+    )
+    return "\n".join(lines)
 
 
 def format_user_prompt(
@@ -104,6 +164,10 @@ def format_user_prompt(
         source_type = context.get("source_type")
         if source_type:
             context_parts.append(f"Source type: {source_type}")
+
+        market_context = context.get("market_context")
+        if isinstance(market_context, dict) and market_context:
+            context_parts.append(_format_market_context(market_context))
     context_section = "\n".join(context_parts) if context_parts else ""
     return USER_PROMPT_V1.format(
         title=title,

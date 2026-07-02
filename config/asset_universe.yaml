@@ -1,0 +1,434 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KAI Asset-Universe Overlay
+# ─────────────────────────────────────────────────────────────────────────────
+# Adds the trading dimensions the watchlist (monitor/watchlists.yml) does NOT
+# carry: trade horizon, sector, narrative, risk/liquidity/volatility tiers,
+# tradability, data quality and correlation group.
+#
+# Contract (see app/trading/asset_universe.py):
+#   * symbol keys are the canonical BASE asset (BTC, not BTC/USDT).
+#   * Any field omitted for an asset falls back to `defaults` below.
+#   * `defaults` deliberately uses "unknown" for the qualitative tiers so a
+#     symbol that nobody curated is surfaced as NOT-evaluable instead of being
+#     silently estimated. Fallbacks never invent a tier.
+#   * tradable: true | false | unknown  (false = not tradable on the paper
+#     crypto venue, e.g. equities/ETFs — kept as research-only context).
+#
+# Vocabularies (validated softly — unknown strings are accepted but flagged):
+#   horizon            : short_term | mid_term | long_term_reserve | unknown
+#   risk_tier          : low | medium | high | extreme | unknown
+#   liquidity_tier     : very_low | low | medium | high | very_high | unknown
+#   volatility_tier    : very_low | low | medium | high | very_high | unknown
+#   data_quality       : low | medium | high | unknown
+#   lifecycle          : active | pre_ipo | ipo_pending | delisted | unknown
+#                        (pre_ipo/ipo_pending/delisted = watch-only, NEVER an order)
+#   focus_field        : canonical disruptive field (see app/trading/focus_fields.py):
+#                        ai | dna_sequencing | gene_editing | multiomics | robotics |
+#                        ev | space | communications | energy_storage | fintech |
+#                        additive_manufacturing | blockchain | unknown
+#                        Omit to let it be inferred from sector/narrative/tags; set
+#                        explicitly only to override a wrong inference.
+#
+# asset_class (reserve_stable | reserve_core | tradable_short | research |
+# watch_only | unknown) is DERIVED, never hand-set — see _derive_asset_class.
+#
+# This file is operator-curated config, NOT generated. It is intentionally
+# small and explicit — extend it as the universe grows.
+
+version: 1
+
+defaults:
+  horizon: unknown
+  sector: unknown
+  narrative: unknown
+  risk_tier: unknown
+  liquidity_tier: unknown
+  volatility_tier: unknown
+  data_quality: unknown
+  tradable: unknown
+  correlation_group: unknown
+
+# Concentration limits for the SHORT-TERM trading sleeve (percent of short-term
+# gross exposure). long_term_reserve positions are excluded from these caps —
+# that is the whole point of the short/long separation. See DiversificationGuard.
+limits:
+  max_single_asset_pct: 25.0
+  max_btc_eth_short_term_pct: 40.0
+  max_sector_pct: 45.0
+  max_narrative_pct: 45.0
+  max_correlation_group_pct: 50.0
+  max_exchange_pct: 100.0          # paper engine is single-venue; permissive on purpose
+  max_stablecoin_quote_pct: 100.0  # all paper pairs quote in USDT today; permissive
+  # Thematic focus-field cap (S3). 100.0 = observational/off: the focus_field
+  # cluster is reported but never breaches. After observing the shadow
+  # distribution (e.g. /api/diversification/overview → universe_summary), lower
+  # this to enforce thematic spread — a focus_field breach is advisory (advise
+  # alternatives + penalise the scan), never a hard cycle block. A sensible
+  # first enforce value once observed is ~55–65 ("blockchain" spans most crypto,
+  # so too low a value breaches constantly).
+  max_focus_field_pct: 100.0
+
+assets:
+  # ── Crypto majors / store-of-value (reserve-eligible) ──────────────────────
+  BTC:
+    horizon: long_term_reserve
+    sector: store_of_value
+    narrative: digital_gold
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: medium
+    data_quality: high
+    tradable: true
+    correlation_group: btc_beta
+  ETH:
+    horizon: long_term_reserve
+    sector: smart_contract_l1
+    narrative: programmable_settlement
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: eth_beta
+
+  # ── Crypto L1 / L2 / infra (short-term tradable, diversification carriers) ──
+  SOL:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: high_throughput_l1
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  BNB:
+    horizon: mid_term
+    sector: exchange_token
+    narrative: cex_ecosystem
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: true
+    correlation_group: exchange_token
+  XRP:
+    horizon: short_term
+    sector: payments
+    narrative: cross_border_settlement
+    focus_field: blockchain   # crypto payments rail, not a fintech equity
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: payments_alts
+  ADA:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: academic_l1
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  AVAX:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: subnet_l1
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  LINK:
+    horizon: short_term
+    sector: oracle_infra
+    narrative: data_oracle
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: defi_infra
+  DOT:
+    horizon: short_term
+    sector: interoperability
+    narrative: parachain_l0
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  MATIC:
+    horizon: short_term
+    sector: l2_scaling
+    narrative: eth_scaling
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: eth_beta
+  DOGE:
+    horizon: short_term
+    sector: meme
+    narrative: meme_speculation
+    risk_tier: extreme
+    liquidity_tier: high
+    volatility_tier: very_high
+    data_quality: medium
+    tradable: true
+    correlation_group: meme
+
+  # ── Stablecoins (reserve / liquidity, NOT a directional short-term trade) ──
+  USDT:
+    horizon: long_term_reserve
+    sector: stablecoin
+    narrative: dollar_liquidity
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: very_low
+    data_quality: high
+    tradable: false
+    correlation_group: stablecoin
+  USDC:
+    horizon: long_term_reserve
+    sector: stablecoin
+    narrative: regulated_dollar
+    risk_tier: low
+    liquidity_tier: very_high
+    volatility_tier: very_low
+    data_quality: high
+    tradable: false
+    correlation_group: stablecoin
+
+  # ── Equities (research-only on the crypto paper venue: tradable=false) ─────
+  MSTR:
+    horizon: mid_term
+    sector: fintech
+    narrative: btc_treasury_proxy
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  COIN:
+    horizon: mid_term
+    sector: fintech
+    narrative: exchange_equity
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: exchange_token
+  MARA:
+    horizon: mid_term
+    sector: mining
+    narrative: btc_miner
+    focus_field: blockchain
+    lifecycle: active
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  RIOT:
+    horizon: mid_term
+    sector: mining
+    narrative: btc_miner
+    focus_field: blockchain
+    lifecycle: active
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  NVDA:
+    horizon: long_term_reserve
+    sector: semiconductors
+    narrative: ai_compute
+    focus_field: ai
+    lifecycle: active
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: ai_equity
+  HOOD:
+    horizon: mid_term
+    sector: fintech
+    narrative: retail_brokerage
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+  SQ:
+    horizon: mid_term
+    sector: fintech
+    narrative: payments_fintech
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+  PYPL:
+    horizon: mid_term
+    sector: fintech
+    narrative: payments_fintech
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+
+  # ── ETFs (research-only on the crypto paper venue: tradable=false) ─────────
+  IBIT:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    focus_field: blockchain
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  FBTC:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    focus_field: blockchain
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  GBTC:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    focus_field: blockchain
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  BITO:
+    horizon: mid_term
+    sector: etf_wrapper
+    narrative: btc_futures_etf
+    focus_field: blockchain
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  ARKW:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: innovation_etf
+    focus_field: ai
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: innovation_etf
+
+  # ── Disruptive-tech research equities (listed, NOT venue-tradable) ─────────
+  # tradable=false → research/context only. lifecycle=active → they ARE listed,
+  # so asset_class derives to "research" (not watch_only). They populate the
+  # focus-field taxonomy with real, data-verifiable names. No order ever routes
+  # here because the paper venue is crypto-only (tradable=false hard gate).
+  TSLA:
+    horizon: mid_term
+    sector: electric_vehicles
+    narrative: ev_robotics
+    focus_field: ev
+    lifecycle: active
+    risk_tier: high
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: ev_equity
+  ISRG:
+    horizon: long_term_reserve
+    sector: robotics
+    narrative: surgical_robotics
+    focus_field: robotics
+    lifecycle: active
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: robotics_equity
+  ILMN:
+    horizon: mid_term
+    sector: genomics
+    narrative: dna_sequencing
+    focus_field: dna_sequencing
+    lifecycle: active
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: genomics_equity
+  CRSP:
+    horizon: mid_term
+    sector: gene_editing
+    narrative: crispr_therapeutics
+    focus_field: gene_editing
+    lifecycle: active
+    risk_tier: extreme
+    liquidity_tier: medium
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: biotech_equity
+  RKLB:
+    horizon: mid_term
+    sector: aerospace
+    narrative: small_launch
+    focus_field: space
+    lifecycle: active
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: space_equity
+
+  # ── Pre-IPO / not-yet-listed (WATCH-ONLY: research, never an order) ────────
+  # tradable=false AND lifecycle=pre_ipo → asset_class derives to "watch_only".
+  # No price/fundamental tiers are asserted (the instrument is not publicly
+  # traded — claiming liquidity/volatility would be fabricated data). It stays
+  # not-evaluable until it lists and real data exists. This is the SpaceX rule:
+  # observe and research only; release for trading after listing + verifiable data.
+  SPACEX:
+    horizon: long_term_reserve
+    sector: aerospace
+    narrative: launch_and_satellites
+    focus_field: space
+    lifecycle: pre_ipo
+    tradable: false
+    correlation_group: space_equity
+    data_quality: low

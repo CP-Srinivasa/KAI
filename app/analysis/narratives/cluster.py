@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.enums import NarrativeLabel
-from app.research.signals import SignalCandidate
+from app.core.signals import SignalCandidate
 
 _CLUSTER_ID_PREFIX = "nc"
 _VALID_DIRECTIONS = frozenset({"bullish", "bearish", "neutral", "mixed"})

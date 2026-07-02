@@ -5,8 +5,8 @@ import pytest
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline
+from app.core.briefs import ResearchBriefBuilder
 from app.core.enums import SentimentLabel
-from app.research.briefs import ResearchBriefBuilder
 from tests.unit.factories import make_document
 
 

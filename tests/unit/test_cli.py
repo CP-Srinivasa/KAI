@@ -56,56 +56,6 @@ def test_cli_help() -> None:
     assert "trading-bot" in result.output.lower() or "Usage" in result.output
 
 
-def test_sources_classify_rss() -> None:
-    result = runner.invoke(app, ["sources", "classify", "https://cointelegraph.com/rss"])
-    assert result.exit_code == 0
-    assert "rss_feed" in result.output
-
-
-def test_sources_classify_youtube() -> None:
-    result = runner.invoke(app, ["sources", "classify", "https://www.youtube.com/@Bankless"])
-    assert result.exit_code == 0
-    assert "youtube_channel" in result.output
-
-
-def test_sources_classify_apple_podcast() -> None:
-    result = runner.invoke(
-        app,
-        ["sources", "classify", "https://podcasts.apple.com/de/podcast/x/id123"],
-    )
-    assert result.exit_code == 0
-    assert "requires_api" in result.output
-
-
-def test_podcasts_resolve() -> None:
-    result = runner.invoke(app, ["podcasts", "resolve"])
-    assert result.exit_code == 0
-    assert "Resolved" in result.output
-    assert "Unresolved" in result.output
-
-
-def test_youtube_resolve() -> None:
-    result = runner.invoke(app, ["youtube", "resolve"])
-    assert result.exit_code == 0
-    assert "channels" in result.output.lower() or "handle" in result.output.lower()
-
-
-def test_query_validate() -> None:
-    result = runner.invoke(app, ["query", "validate", "bitcoin AND (ethereum OR solana) NOT scam"])
-    assert result.exit_code == 0
-    assert "✓ Valid Syntax!" in result.output
-    assert "AST" in result.output
-    # Check that part of the parsed AST structure is shown
-    assert "AND(" in result.output
-    assert "NOT(" in result.output
-
-
-def test_query_validate_fail() -> None:
-    result = runner.invoke(app, ["query", "validate", "bitcoin AND"])
-    assert result.exit_code == 1
-    assert "Syntax Error" in result.output
-
-
 def test_ingest_rss_dry_run_skips_storage(monkeypatch) -> None:
     docs = [
         CanonicalDocument(url="https://example.com/article-1", title="Bitcoin rises"),
@@ -411,17 +361,21 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
         CanonicalDocument(
             url="https://example.com/article-1?utm_source=rss",
             title="Bitcoin ETF approved",
-            raw_text="Bitcoin ETF approval drives the market.",
+            raw_text=(
+                "Bitcoin ETF approval drives the market with strong institutional demand signals."
+            ),
         ),
         CanonicalDocument(
             url="https://example.com/article-1",
             title="Bitcoin ETF Approved",
-            raw_text="Bitcoin ETF approval drives the market.",
+            raw_text=(
+                "Bitcoin ETF approval drives the market with strong institutional demand signals."
+            ),
         ),
         CanonicalDocument(
             url="https://example.com/article-2",
             title="Ethereum upgrade ships",
-            raw_text="Ethereum ships its latest upgrade.",
+            raw_text=("Ethereum ships its latest upgrade with significant network improvements."),
         ),
     ]
 
@@ -521,7 +475,14 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
 
     class FakeKeywordEngine:
         def match(self, text: str) -> list[object]:
-            return []
+            from app.analysis.keywords.engine import KeywordHit
+
+            hits: list[object] = []
+            if "Bitcoin" in text or "BTC" in text:
+                hits.append(KeywordHit(canonical="BTC", category="crypto", occurrences=1))
+            if "Ethereum" in text or "ETH" in text:
+                hits.append(KeywordHit(canonical="ETH", category="crypto", occurrences=1))
+            return hits
 
         def match_tickers(self, text: str) -> list[str]:
             return ["BTC"] if "Bitcoin" in text else ["ETH"]
@@ -593,9 +554,4 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
     assert {ticker for doc in stored_docs for ticker in doc.tickers} == {"BTC", "ETH"}
 
 
-# NOTE: Research command tests have been migrated to tests/unit/cli/:
-#   test_research_core.py     — watchlists, brief, dataset-export, signals
-#   test_research_companion.py — evaluate-datasets, benchmark-companion, companion pipeline
-#   test_research_readiness.py — readiness, gate, drift, artifacts, runbook, review-journal
-#   test_research_operator.py  — escalation, blocking, decision-pack, daily-summary, backtest
-#   test_research_trading.py   — signal-handoff, handoff-acknowledge, consumer-ack
+# NOTE: Default CLI surface checks live in tests/unit/cli/test_default_cli_surface.py.

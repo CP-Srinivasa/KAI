@@ -1,0 +1,18 @@
+[Unit]
+Description=Trigger KAI Auto-Annotate Blocked every 6 hours (D-227)
+# NO `Requires=kai-server.service` here ON PURPOSE. `Requires=` on a *timer* makes
+# `systemctl stop kai-server` deactivate this timer too (Requires= stop-propagation)
+# and it is NOT restarted when the server returns — silently dead until reboot. The
+# kai-server dependency lives on the paired .service (After= + Requires=), which still
+# gates the actual work. Do not re-add Requires= here.
+
+[Timer]
+# 45 min after boot first-run, then every 6h. Offset from kai-auto-annotate.timer
+# so CoinGecko calls do not stack immediately after boot.
+OnBootSec=45min
+OnUnitActiveSec=6h
+AccuracySec=2min
+Unit=kai-auto-annotate-blocked.service
+
+[Install]
+WantedBy=timers.target

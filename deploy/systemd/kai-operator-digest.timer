@@ -1,0 +1,15 @@
+# Daily operator digest at 07:30 local — before the operator's day starts,
+# after the overnight crons (D-227 pull is at 08:15 and reads its own data;
+# the digest computes from the same sources directly). Installed but NOT
+# enabled by default — enabling is a deliberate operator step.
+[Unit]
+Description=KAI Operator-Digest — daily 07:30 (off by default)
+Requires=kai-operator-digest.service
+
+[Timer]
+OnCalendar=*-*-* 07:30:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

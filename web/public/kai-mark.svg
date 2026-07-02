@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="KAI">
+  <title>KAI</title>
+  <g fill="currentColor" fill-rule="evenodd">
+    <!-- K stem -->
+    <rect x="22" y="18" width="16" height="92" rx="2"/>
+    <!-- K upper diagonal — pierces top edge as chevron -->
+    <path d="M38 64 L96 6 L110 22 L52 80 Z"/>
+    <!-- K lower diagonal -->
+    <path d="M38 64 L82 110 L66 110 L30 72 Z"/>
+  </g>
+</svg>

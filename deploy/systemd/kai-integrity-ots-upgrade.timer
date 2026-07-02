@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger KAI L3 OTS proof upgrade every 6h (mining lands hours after submit)
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:40:00 UTC
+AccuracySec=10min
+Persistent=true
+Unit=kai-integrity-ots-upgrade.service
+
+[Install]
+WantedBy=timers.target

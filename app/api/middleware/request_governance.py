@@ -8,7 +8,9 @@ Provides:
 
 Security invariants:
 - Read-only output (no mutation)
-- Fail-closed on audit write errors (log, don't crash)
+- Body-size enforcement is fail-closed (oversized requests get 413 before routing)
+- Audit logging is best-effort / non-blocking: a write error is logged, the
+  request still proceeds (the audit trail is not on the request's critical path)
 - No trading semantics
 - No execution side effects
 """
@@ -62,14 +64,27 @@ class APIErrorResponse:
         }
 
 
-def _extract_client_ip(request: Request) -> str:
-    """Return the best-effort client IP address from the request."""
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+def _extract_client_ip(
+    request: Request,
+    *,
+    trusted_proxies: frozenset[str] = frozenset(),
+) -> str:
+    """Return the client IP address from the request.
+
+    Only trusts X-Forwarded-For when the direct peer is in *trusted_proxies*.
+    This prevents IP spoofing via forged headers from untrusted clients.
+    """
     if request.client is not None:
-        return request.client.host
-    return "unknown"
+        peer_ip = request.client.host
+    else:
+        return "unknown"
+
+    if trusted_proxies and peer_ip in trusted_proxies:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+
+    return peer_ip
 
 
 class RequestGovernanceMiddleware(BaseHTTPMiddleware):
@@ -107,8 +122,10 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         client_ip = _extract_client_ip(request)
 
-        # Enforce body-size limit for methods that carry a body
+        # Enforce body-size limit for methods that carry a body.
         if request.method in ("POST", "PUT", "PATCH"):
+            # Fast path: reject early when an honest Content-Length already
+            # declares an oversized body (avoids reading the stream at all).
             content_length_str = request.headers.get("Content-Length")
             if content_length_str is not None:
                 try:
@@ -116,31 +133,30 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
                 except ValueError:
                     content_length = 0
                 if content_length > self._max_body_bytes:
-                    error_response = JSONResponse(
-                        status_code=413,
-                        content={
-                            "error": {
-                                "code": "request_body_too_large",
-                                "message": (
-                                    f"Request body exceeds maximum allowed size "
-                                    f"({self._max_body_bytes} bytes)"
-                                ),
-                                "request_id": request_id,
-                            },
-                            "execution_enabled": False,
-                            "write_back_allowed": False,
-                        },
-                        headers={_REQUEST_ID_HEADER: request_id},
-                    )
-                    self._write_audit(
-                        request_id=request_id,
-                        method=request.method,
-                        path=str(request.url.path),
-                        status_code=413,
-                        duration_ms=0.0,
-                        client_ip=client_ip,
-                    )
-                    return error_response
+                    return self._too_large(request, request_id, client_ip)
+
+            # Robust path (AUDIT-A6): Content-Length is advisory — chunked
+            # transfer omits it and a hostile client can understate it. Read the
+            # body through a HARD byte cap and reject as soon as it is exceeded,
+            # then cache it so downstream handlers (incl. the TradingView webhook
+            # via request.body()) see the same bytes without a second read.
+            body = b""
+            over_limit = False
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > self._max_body_bytes:
+                    over_limit = True
+                    break
+            if over_limit:
+                return self._too_large(request, request_id, client_ip)
+            # Re-prime the request so body()/json() AND stream() consumers work.
+            request._body = body
+            request._stream_consumed = False
+
+            async def _replay_receive() -> dict[str, Any]:
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            request._receive = _replay_receive
 
         start = time.monotonic()
         response = await call_next(request)
@@ -163,6 +179,33 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         )
 
         return response
+
+    def _too_large(self, request: Request, request_id: str, client_ip: str) -> JSONResponse:
+        """Build the 413 response + audit the rejection. Single source so the
+        Content-Length fast path and the streaming hard cap stay consistent."""
+        self._write_audit(
+            request_id=request_id,
+            method=request.method,
+            path=str(request.url.path),
+            status_code=413,
+            duration_ms=0.0,
+            client_ip=client_ip,
+        )
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": {
+                    "code": "request_body_too_large",
+                    "message": (
+                        f"Request body exceeds maximum allowed size ({self._max_body_bytes} bytes)"
+                    ),
+                    "request_id": request_id,
+                },
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+            headers={_REQUEST_ID_HEADER: request_id},
+        )
 
     def _write_audit(
         self,

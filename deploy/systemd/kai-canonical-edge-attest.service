@@ -1,0 +1,21 @@
+[Unit]
+Description=KAI canonical-edge Report taeglich attestieren (Truth-Ledger, ADR 0012/0013)
+# Read-only ueber die Audit-JSONLs + append-only Truth-Ledger. --attest verankert
+# den Report hash-verkettet; Exit 2 (live_orders_attempted>0) laesst die Unit
+# bewusst FAILEN -> failed-units-Smoke/Watchdog schlagen an (Tripwire, kein Bug).
+# KEIN Requires= auf andere kai-Units (memory kai_timer_requires_cascade_20260624).
+After=kai-server.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/trading-bot trading canonical-edge --json --attest
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

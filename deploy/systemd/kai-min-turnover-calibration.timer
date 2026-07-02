@@ -1,0 +1,19 @@
+[Unit]
+Description=KAI min_turnover Calibration Check — monthly schedule
+
+[Timer]
+# Monthly cadence: the Binance turnover distribution drifts slowly, so a band
+# re-check on the 1st of each month is ample. The same-named .service is
+# auto-activated when the timer fires — deliberately NO `Requires=` here
+# (a Requires= on a timer can strand it; Timer-Requires cascade lesson, #414).
+# NOT enabled by default: the operator runs
+# `systemctl enable --now kai-min-turnover-calibration.timer`.
+OnCalendar=*-*-01 04:17:00
+# Persistent: if the Pi was down on the 1st, run once on next boot rather than
+# waiting a full month.
+Persistent=true
+AccuracySec=1h
+RandomizedDelaySec=20min
+
+[Install]
+WantedBy=timers.target

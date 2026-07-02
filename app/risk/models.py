@@ -23,6 +23,86 @@ class RiskLimits:
     kill_switch_enabled: bool
     min_signal_confidence: float
     min_signal_confluence_count: int
+    atr_multiplier: float = 2.0
+    tp_atr_multiplier: float = 4.0
+    regime_filter_enabled: bool = True
+    regime_sma_period: int = 200
+    # DS-20260528-V2: reject orders whose notional falls below this floor.
+    # Guards against dust fills when sizing equity (remaining cash) is depleted.
+    min_notional_usd: float = 10.0
+    # DS-20260529-V2: hard upper cap on a single position's notional, expressed
+    # as % of equity. A tight stop (small ATR) yields huge units → notional can
+    # exceed the diversification asset-cap (25%) and the whole order is rejected,
+    # deadlocking the loop. This clamps notional to keep first positions tradeable.
+    # <= 0 disables the cap (backward-compatible). Productive source is Settings (20).
+    # Default 20.0 mirrors the productive Settings default so RiskLimits() built
+    # without args (legacy unit tests) gets the safe, enforced behaviour too.
+    max_position_size_pct: float = 20.0
+    # NEO-V1 (2026-06-01): cost-aware SL geometry gate. The paper venue's
+    # round-trip taker fee (~1.2% = 2x60bps) can exceed the ATR-derived stop
+    # distance (~0.8-1.0%), making a stopped trade a structurally guaranteed net
+    # loss. Reject when |entry-SL|/entry < min_sl_cost_multiple * round_trip_fee.
+    #   round_trip_fee_pct: total round-trip cost in PERCENT (entry+exit fees).
+    #     Sprint B (CostModel): the PRODUCTIVE value is derived from the CostModel
+    #     paper venue (10 bp/side -> 0.2%) and injected via Settings ->
+    #     _build_risk_limits_from_settings. This standalone dataclass default
+    #     (1.2) only ever matters when the gate is OFF (min_sl_cost_multiple=0.0,
+    #     the dataclass default below), so it cannot affect productive gating. It
+    #     is intentionally NOT the source of truth — do not read fees from here.
+    #   min_sl_cost_multiple: factor k. <= 0 DISABLES the gate (backward-compatible
+    #     default — legacy unit tests build RiskLimits without this field). The
+    #     productive value lives in Settings (RISK_MIN_SL_COST_MULTIPLE, default
+    #     1.5). k=1.5 => min SL ~1.8%. OPERATOR-SIGN-OFF PARAMETER.
+    round_trip_fee_pct: float = 1.2
+    min_sl_cost_multiple: float = 0.0
+    # Paper-Learning sizing patch (2026-06-18): collect MORE paper outcomes for
+    # edge measurement without raising the daily notional cap. Both <=0 = OFF
+    # (default → backward-compatible; legacy RiskLimits() unaffected). Apply only
+    # on the risk-based path (premium signal-leverage untouched). Productive
+    # values injected from Settings (RISK_*), OPERATOR-SIGN-OFF.
+    #   min_stop_pct_for_sizing: floor (in %) on the stop distance USED FOR SIZING
+    #     so a tight ATR stop cannot inflate notional; the REAL stop is unchanged.
+    min_stop_pct_for_sizing: float = 0.0
+    #   max_notional_per_trade_usd: absolute per-trade notional ceiling (USD) so a
+    #     few trades cannot exhaust the daily budget. Smaller than the % cap.
+    max_notional_per_trade_usd: float = 0.0
+    # Sprint 2026-06-02 — reward/risk + risk-budget gates. ALL default-OFF
+    # (disabled sentinel) so this is a strict no-op for existing callers and
+    # tests; productive values are injected from Settings and are
+    # OPERATOR-SIGN-OFF parameters. Evaluation is fail-closed: when a gate is
+    # ENABLED but the inputs needed to evaluate it (targets / leverage / entry /
+    # SL) are missing or non-positive, the order is rejected rather than waved
+    # through. See app/risk/engine.py Gate 10.
+    #   min_rr: minimum reward/risk on the nearest target. <= 0 disables.
+    min_rr: float = 0.0
+    #   min_avg_rr: minimum reward/risk averaged over all targets. <= 0 disables.
+    min_avg_rr: float = 0.0
+    #   max_signal_risk_pct: max UN-leveraged stop distance |entry-SL|/entry*100.
+    #     <= 0 disables.
+    max_signal_risk_pct: float = 0.0
+    #   max_leveraged_risk_pct: max stop distance * leverage (the "Risk 42%"
+    #     figure a 10x channel reports). <= 0 disables.
+    max_leveraged_risk_pct: float = 0.0
+    #   min_net_edge_bps: minimum cost-adjusted edge on the nearest target,
+    #     net of the round-trip fee, in basis points. None disables. Uses
+    #     round_trip_fee_pct (the SAME cost the engine/CostModel charge).
+    min_net_edge_bps: float | None = None
+    #   min_target_distance_pct: nearest target must be at least this far from
+    #     entry (favourable direction), in percent. <= 0 disables.
+    min_target_distance_pct: float = 0.0
+    #   gates_mode: staged rollout for the Gate-10 reward/risk gates ONLY (the
+    #     legacy gates 1-9 always enforce). One of:
+    #       "off"     — Gate 10 not evaluated at all.
+    #       "audit"   — Gate 10 computed; sets would_reject + reason codes on the
+    #                   result for observability, but does NOT block the order.
+    #       "enforce" — Gate 10 violations block risk-increasing entries.
+    #     Default "audit": safe-by-default — even if an operator sets a threshold
+    #     it is observed (would_reject) before it ever starves the book. Going to
+    #     "enforce" is a deliberate, separate operator action. NOTE: this is the
+    #     denominator-safe definition — max_leveraged_risk_pct is
+    #     stop_distance_pct * leverage (signal geometry risk), NOT
+    #     account-equity-at-risk.
+    gates_mode: str = "audit"
 
 
 @dataclass(frozen=True)
@@ -37,6 +117,16 @@ class RiskCheckResult:
     reason: str
     violations: list[str] = field(default_factory=list)
     details: dict[str, object] = field(default_factory=dict)
+    # Stable machine-grade codes mapped from `violations` (see
+    # app/risk/reason_codes.py). Additive: `violations` stays the human contract.
+    reason_codes: list[str] = field(default_factory=list)
+    # Gate-10 audit surface. In "audit" mode the reward/risk gate fills these but
+    # does NOT add to `violations` (so `approved` is unaffected). In "enforce"
+    # mode the same violations ALSO appear in `violations`/`reason_codes`. This
+    # lets a report measure reject-rate/false-positives before enforcing.
+    would_reject: bool = False
+    would_reject_violations: list[str] = field(default_factory=list)
+    would_reject_codes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

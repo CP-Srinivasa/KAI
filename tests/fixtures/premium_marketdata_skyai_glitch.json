@@ -1,0 +1,62 @@
+{
+  "symbol": "SKYAI/USDT",
+  "ticks": [
+    {
+      "timestamp_ms": 1717833600000,
+      "price": 0.356,
+      "bid": 0.355,
+      "ask": 0.357,
+      "volume": 120000.0,
+      "depth": 15000.0,
+      "available": true,
+      "is_stale": false,
+      "provider": "bybit"
+    },
+    {
+      "timestamp_ms": 1717833660000,
+      "price": null,
+      "bid": null,
+      "ask": null,
+      "volume": 0.0,
+      "depth": 0.0,
+      "available": false,
+      "is_stale": true,
+      "provider": "bybit",
+      "error": "provider_unavailable"
+    },
+    {
+      "timestamp_ms": 1717833720000,
+      "price": 0.356,
+      "bid": 0.355,
+      "ask": 0.357,
+      "volume": 125000.0,
+      "depth": 14800.0,
+      "available": true,
+      "is_stale": false,
+      "provider": "bybit"
+    },
+    {
+      "timestamp_ms": 1717833780000,
+      "price": 101.94,
+      "bid": 101.90,
+      "ask": 101.98,
+      "volume": 500.0,
+      "depth": 10.0,
+      "available": true,
+      "is_stale": false,
+      "provider": "bybit"
+    },
+    {
+      "timestamp_ms": 1717833840000,
+      "price": 0.356,
+      "bid": 0.355,
+      "ask": 0.357,
+      "volume": 130000.0,
+      "depth": 15200.0,
+      "available": true,
+      "is_stale": false,
+      "provider": "bybit"
+    }
+  ],
+  "description": "Glitch dataset representing SKYAI pricing sequence: stable, missing, recovery, outlier glitch tick, recovery."
+}

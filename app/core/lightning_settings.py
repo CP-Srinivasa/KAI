@@ -1,0 +1,92 @@
+"""Lightning (RaspiBlitz/lnd) integration settings.
+
+Extracted from ``app.core.settings`` (god-file ratchet, D-234): the read-only
+Lightning client configuration lives here; ``settings.py`` re-exports
+``LightningSettings`` so existing imports keep working.
+
+See KAI-mirror/kai_lightning_integration_plan_20260614.md for the full phased
+plan, macaroon-permission matrix and threat model.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class LightningSettings(BaseSettings):
+    """RaspiBlitz/lnd Lightning-node integration (KAI as read-only client first).
+
+    Default-off, shadow-first, fail-closed — the trading loop is never blocked by
+    Lightning availability. KAI is a *client* of the RaspiBlitz node; no KAI code
+    runs on the node and only scope-minimal macaroons ever leave it (NEVER admin).
+
+      - ``enabled=False`` (default): no Lightning surface is consulted anywhere.
+      - ``enabled=True`` (Phase 1): read-only access via ``readonly.macaroon`` over
+        the lnd REST API (getinfo/channelbalance/feereport). Pure observation.
+
+    Phases 3+ (invoice/pay) live behind their OWN flags + the capital gate — this
+    settings object stays read-only on purpose. ``pay_enabled`` is a placeholder
+    kill-switch that defaults False and is NOT wired to any send path yet.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_LN_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    # lnd REST endpoint on the RaspiBlitz node (LAN, later WireGuard overlay IP).
+    host: str = Field(default="192.168.178.51")
+    rest_port: int = Field(default=8080, ge=1, le=65535)
+    # Hex-encoded macaroon OR a path to the macaroon file. Phase 1 = readonly.
+    macaroon_path: str = Field(default="", repr=False)
+    macaroon_hex: str = Field(default="", repr=False)
+    # Path to lnd tls.cert (used to verify the node's self-signed TLS).
+    tls_cert_path: str = Field(default="")
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    # Placeholder kill-switch for the future send path (Phase 4). Not wired yet.
+    pay_enabled: bool = Field(default=False)
+    # Receive-side capability (capital-free): mint inbound BOLT11 invoices. Decoupled
+    # from ``pay_enabled`` so "Empfangen vor Senden" can be enabled WITHOUT un-gating
+    # any spend path. Default OFF; flipped independently for the L402 demand probe.
+    # Env ``APP_LN_RECEIVE_ENABLED``.
+    receive_enabled: bool = Field(default=False)
+    # L402 Truth-API (UC-3/UC-4): pay-per-call paywall over KAI's sovereign truth.
+    # Default OFF; ``l402_secret`` signs the access tokens (HMAC) and MUST be set
+    # before enabling. Env ``APP_LN_L402_ENABLED`` / ``APP_LN_L402_SECRET``.
+    l402_enabled: bool = Field(default=False)
+    l402_secret: str = Field(default="", repr=False)
+    l402_default_price_sat: int = Field(default=10, ge=1)
+    # S-002 receive-side DoS guard: cap L402 invoice MINTS per window. dry-run does
+    # NOT protect the receive side (every unpaid request mints a real invoice), so
+    # these caps MUST be in force before L402 is enabled. Per-key (ip:scope) and a
+    # global budget per 60s window; <=0 disables that dimension.
+    l402_mint_per_min: int = Field(default=5, ge=0)
+    l402_mint_budget_per_min: int = Field(default=60, ge=0)
+    # B-005 capital-confirm 2nd factor (HOTP) for irreversible value-layer POSTs.
+    # ``hotp_seed_path`` empty (default) → no confirm is possible → no capital
+    # execute can ever pass needs_confirm (safe-by-default). Operator provisions the
+    # base32 seed (mode 600) only at G1.
+    hotp_seed_path: str = Field(default="", repr=False)
+    hotp_journal_path: str = Field(default="artifacts/ln_hotp_journal.jsonl")
+    # Node-reputation telemetry capture cadence (read-only uptime/connectivity/
+    # routing-income trend → its own shadow stream ``artifacts/ln_reputation.jsonl``;
+    # no capital path). Only runs when ``enabled``. Env
+    # ``APP_LN_REPUTATION_INTERVAL_SECONDS``. 900s (15min) — node health moves
+    # slowly, so this is ample.
+    reputation_interval_seconds: int = Field(default=900, gt=0)
+    # RaspiBlitz info mirror (dashboard "Node & Chain"): read-only system snapshot
+    # (CPU/temp/mem/SSD + bitcoind/lnd) pulled over a FORCED-COMMAND ssh key that
+    # can only run the info script on the node (no shell, no pty, no sudo surface).
+    # Default OFF; fail-soft — the panel shows "n/v" when disabled/unreachable.
+    # Env ``APP_LN_BLITZ_INFO_ENABLED`` / ``..._SSH_TARGET`` / ``..._SSH_KEY_PATH``.
+    blitz_info_enabled: bool = Field(default=False)
+    blitz_info_ssh_target: str = Field(default="admin@192.168.178.51")
+    blitz_info_ssh_key_path: str = Field(default="")
+    blitz_info_timeout_seconds: float = Field(default=25.0, gt=0)
+
+    @property
+    def base_url(self) -> str:
+        return f"https://{self.host}:{self.rest_port}"

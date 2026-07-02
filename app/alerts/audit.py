@@ -2,17 +2,44 @@
 
 Sprint 21 — provides an append-only log of fired alerts for the Readiness Summary
 without mutating the KAI core database or tracking state within the Engine.
+
+AHR-1 — adds operator outcome annotations (hit / miss / inconclusive) stored in
+a separate JSONL file so hit-rate can be computed without live price data.
 """
 
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Literal
+
+import portalocker
+
+from app.audit.stream_validation import AlertAuditStreamRow
+from app.core.file_lock import append_lock
+from app.signals.models import SignalProvenance
+from app.storage.jsonl_io import read_jsonl_tolerant
+
+
+def _read_jsonl_tolerant(path: Path) -> list[dict[str, Any]]:
+    """Backward-compat wrapper around :func:`app.storage.jsonl_io.read_jsonl_tolerant`.
+
+    Kept as a private name so existing intra-module callers and tests that
+    monkey-patch this symbol continue to work. New code should import
+    :func:`read_jsonl_tolerant` directly. NEO-P-002 D (D-156h) retry policy
+    is owned by the shared utility as of D-194.
+    """
+    return read_jsonl_tolerant(path)
+
 
 # Default JSONL filename for alert audits
 ALERT_AUDIT_JSONL_FILENAME = "alert_audit.jsonl"
 # Backwards-compatibility alias
 ALTER_AUDIT_JSONL_FILENAME = ALERT_AUDIT_JSONL_FILENAME
+
+ALERT_OUTCOMES_JSONL_FILENAME = "alert_outcomes.jsonl"
+
+OutcomeLabel = Literal["hit", "miss", "inconclusive"]
 
 
 def _resolve_audit_path(path: Path) -> Path:
@@ -35,15 +62,152 @@ class AlertAuditRecord:
     message_id: str | None
     is_digest: bool
     dispatched_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    # Prediction fields (enrichment for hit-rate metric)
+    sentiment_label: str | None = None
+    affected_assets: list[str] = field(default_factory=list)
+    priority: int | None = None
+    actionable: bool | None = None
+    directional_eligible: bool | None = None
+    directional_block_reason: str | None = None
+    directional_blocked_assets: list[str] = field(default_factory=list)
+    title_hash: str | None = None
+    normalized_title: str | None = None
+    source_name: str | None = None
+    # F3-V-0 (2026-05-24) — LLM-confidence in the directional classification
+    # (0.0..1.0). Persisted so the confidence-threshold-recalibration analysis
+    # (F3) can correlate gate-pass confidence values with outcome hit/miss.
+    # Currently used by the eligibility gate as bullish>=0.8 / bearish>=0.95.
+    directional_confidence: float | None = None
+    # D-125 / SAT-C-PROV-20260422-001 — persisted provenance so the quality-bar
+    # phase has a beglaubigte Zuordnung instead of relying on analysis-time
+    # DB joins in provenance_metrics._load_doc_metadata.
+    provenance: SignalProvenance | None = None
 
     def to_json_dict(self) -> dict[str, object]:
-        return {
+        d: dict[str, object] = {
             "document_id": self.document_id,
             "channel": self.channel,
             "message_id": self.message_id,
             "is_digest": self.is_digest,
             "dispatched_at": self.dispatched_at,
         }
+        if self.sentiment_label is not None:
+            d["sentiment_label"] = self.sentiment_label
+        if self.affected_assets:
+            d["affected_assets"] = self.affected_assets
+        if self.priority is not None:
+            d["priority"] = self.priority
+        if self.actionable is not None:
+            d["actionable"] = self.actionable
+        if self.directional_eligible is not None:
+            d["directional_eligible"] = self.directional_eligible
+        if self.directional_block_reason is not None:
+            d["directional_block_reason"] = self.directional_block_reason
+        if self.directional_blocked_assets:
+            d["directional_blocked_assets"] = self.directional_blocked_assets
+        if self.title_hash is not None:
+            d["title_hash"] = self.title_hash
+        if self.normalized_title is not None:
+            d["normalized_title"] = self.normalized_title
+        if self.source_name is not None:
+            d["source_name"] = self.source_name
+        if self.directional_confidence is not None:
+            d["directional_confidence"] = self.directional_confidence
+        if self.provenance is not None:
+            d["provenance"] = self.provenance.to_dict()
+        return d
+
+
+@dataclass(frozen=True)
+class AlertOutcomeAnnotation:
+    """Operator-supplied outcome for a dispatched alert.
+
+    ``outcome`` is one of:
+    - ``"hit"``           — predicted direction materialised.
+    - ``"miss"``          — predicted direction did not materialise.
+    - ``"inconclusive"``  — outcome ambiguous; excluded from hit-rate.
+    """
+
+    document_id: str
+    outcome: OutcomeLabel
+    annotated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    asset: str | None = None
+    note: str | None = None
+    # D-125 / SAT-C-PROV-20260422-001 — provenance at outcome-write time.
+    # Writers resolve this from the originating AlertAuditRecord (or the TV
+    # pending-signal row for synthetic ``tv:`` ids) so backdated annotations
+    # can't drift away from the source attribution they were made against.
+    provenance: SignalProvenance | None = None
+    # 2026-05-25 DS-V-MW-Multi-Window-Outcome: which sub-window the alert
+    # triggered hit in. One of "1h"/"4h"/"24h"/"72h"/"168h" or None when
+    # outcome != "hit" or annotation predates the multi-window patch.
+    hit_at_window: str | None = None
+
+    def to_json_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
+            "document_id": self.document_id,
+            "outcome": self.outcome,
+            "annotated_at": self.annotated_at,
+        }
+        if self.asset is not None:
+            d["asset"] = self.asset
+        if self.note is not None:
+            d["note"] = self.note
+        if self.provenance is not None:
+            d["provenance"] = self.provenance.to_dict()
+        if self.hit_at_window is not None:
+            d["hit_at_window"] = self.hit_at_window
+        return d
+
+
+def _resolve_outcomes_path(path: Path) -> Path:
+    if path.is_dir():
+        return path / ALERT_OUTCOMES_JSONL_FILENAME
+    return path
+
+
+def append_outcome_annotation(
+    annotation: AlertOutcomeAnnotation,
+    output_path: str | Path,
+) -> None:
+    """Append an operator outcome annotation to the outcomes JSONL file.
+
+    V-DB5 audit B-K2 (2026-05-09): portalocker-Append-Lock schliesst die
+    Restluecke gegen parallele Writer. Der V-DB5 Auto-Annotate-Run-Lock
+    (`auto_annotator._acquire_run_lock`) deckt nur den Auto-Annotator-Pfad
+    ab; manuelle ``annotate``-CLI und ``alerts-blocked-annotate`` koennen
+    weiterhin parallel zur Auto-Annotation in dieselbe JSONL schreiben.
+    Pattern konsistent mit ``app.audit.kai_audit_service.append_event``.
+    """
+    p = _resolve_outcomes_path(Path(output_path))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(annotation.to_json_dict())
+    with portalocker.Lock(p, mode="a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def load_outcome_annotations(
+    input_path: str | Path,
+) -> list[AlertOutcomeAnnotation]:
+    """Load operator outcome annotations from the outcomes JSONL file."""
+    p = _resolve_outcomes_path(Path(input_path))
+    annotations: list[AlertOutcomeAnnotation] = []
+    for data in _read_jsonl_tolerant(p):
+        try:
+            annotations.append(
+                AlertOutcomeAnnotation(
+                    document_id=data["document_id"],
+                    outcome=data["outcome"],
+                    annotated_at=data.get("annotated_at", datetime.now(UTC).isoformat()),
+                    asset=data.get("asset"),
+                    note=data.get("note"),
+                    provenance=SignalProvenance.from_dict(data.get("provenance")),
+                    hit_at_window=data.get("hit_at_window"),
+                )
+            )
+        except KeyError:
+            continue
+    return annotations
 
 
 def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> None:
@@ -54,8 +218,78 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
     """
     p = _resolve_audit_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record.to_json_dict()) + "\n")
+    payload = record.to_json_dict()
+    AlertAuditStreamRow.model_validate(payload)
+    with append_lock(p):
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
+    _publish_alert_fired(record)
+
+
+def _publish_alert_fired(record: AlertAuditRecord) -> None:
+    # NEO-P-005: fire-and-forget SSE publish. Import lazy to avoid a cycle
+    # between app.alerts and app.api, and to keep audit usable in contexts
+    # where the FastAPI app is never built (CLI, tests).
+    try:
+        from app.api.event_hub import get_default_event_hub
+
+        get_default_event_hub().publish(
+            "alert_fired",
+            {
+                "document_id": record.document_id,
+                "channel": record.channel,
+                "is_digest": record.is_digest,
+                "sentiment": record.sentiment_label,
+                "priority": record.priority,
+                "assets": record.affected_assets,
+                "dispatched_at": record.dispatched_at,
+            },
+        )
+    except Exception:  # noqa: BLE001 — audit must never fail on a broadcast issue
+        pass
+
+
+def latest_provenance_by_document_id(
+    input_path: str | Path,
+) -> dict[str, SignalProvenance]:
+    """Return a {document_id: SignalProvenance} map from the audit JSONL.
+
+    For documents with multiple audit rows (re-dispatches, digest+single)
+    the LAST occurrence wins — matches the convention in
+    ``provenance_metrics`` where the latest provenance is treated as
+    authoritative. Rows without provenance are skipped (so callers see
+    ``KeyError``/``dict.get is None`` for legacy untagged rows and can
+    fall back to the analysis-time DB join).
+    """
+    p = _resolve_audit_path(Path(input_path))
+    out: dict[str, SignalProvenance] = {}
+    for data in _read_jsonl_tolerant(p):
+        if not isinstance(data, dict):
+            continue
+        doc_id = data.get("document_id")
+        if not isinstance(doc_id, str):
+            continue
+        prov = SignalProvenance.from_dict(data.get("provenance"))
+        if prov is not None:
+            out[doc_id] = prov
+    return out
+
+
+def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:
+    """Stream ``document_id`` values without instantiating AlertAuditRecord per row.
+
+    ~10x cheaper than ``load_alert_audits`` when callers only need dedup-keys
+    (tv-bridge idempotency-check, alerts ingestion guards). Malformed lines
+    are skipped silently — same policy as ``load_alert_audits``; half-written
+    last lines are retried once (NEO-P-002 D) via ``_read_jsonl_tolerant``.
+    """
+    p = _resolve_audit_path(Path(input_path))
+    ids: set[str] = set()
+    for data in _read_jsonl_tolerant(p):
+        doc_id = data.get("document_id") if isinstance(data, dict) else None
+        if isinstance(doc_id, str):
+            ids.add(doc_id)
+    return ids
 
 
 def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
@@ -65,24 +299,29 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
     ``<dir>/ALERT_AUDIT_JSONL_FILENAME``) or a full file path.
     """
     p = _resolve_audit_path(Path(input_path))
-    if not p.exists():
-        return []
-
     records: list[AlertAuditRecord] = []
-    lines = p.read_text(encoding="utf-8").strip().splitlines()
-    for line in lines:
-        if not line.strip():
-            continue
+    for data in _read_jsonl_tolerant(p):
         try:
-            data = json.loads(line)
             record = AlertAuditRecord(
                 document_id=data["document_id"],
                 channel=data["channel"],
                 message_id=data.get("message_id"),
                 is_digest=data.get("is_digest", False),
                 dispatched_at=data["dispatched_at"],
+                sentiment_label=data.get("sentiment_label"),
+                affected_assets=data.get("affected_assets", []),
+                priority=data.get("priority"),
+                actionable=data.get("actionable"),
+                directional_eligible=data.get("directional_eligible"),
+                directional_block_reason=data.get("directional_block_reason"),
+                directional_blocked_assets=data.get("directional_blocked_assets", []),
+                title_hash=data.get("title_hash"),
+                normalized_title=data.get("normalized_title"),
+                source_name=data.get("source_name"),
+                directional_confidence=data.get("directional_confidence"),
+                provenance=SignalProvenance.from_dict(data.get("provenance")),
             )
             records.append(record)
-        except (json.JSONDecodeError, KeyError):
+        except KeyError:
             continue
     return records

@@ -1,156 +1,107 @@
-# KAI (Robotron)
+# KAI (Repo-/Paketname: `ai_analyst_trading_bot`)
 
-KAI is a modular, security-first, audit-first AI analysis and operator platform.
-Default runtime remains `paper`/`shadow` with fail-closed controls.
+**KAI ist ein modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse** — kein einfacher Trading-Bot und keine Blackbox. KAI trennt Datenaufnahme, Analyse, Risiko, Entscheidung, Audit, Sicherheit, Benutzerinteraktion und optionale Ausführung klar voneinander, mit Watchdog-Kontrolle und SENTR-Sicherheit. Die vollständige Identitäts- und Zielbild-Definition (inkl. Schichtenmodell und Reifegrade) ist die Single Source of Truth in **[`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md)**.
 
-## Current Phase
+`ai_analyst_trading_bot` ist der Legacy-/Repository-/Paketname; `Robotron` ist ein interner Codename — beide sind nicht die fachliche Produktidentität.
 
-- phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active)`
-- technical baseline: `1619 passed, ruff clean, CI green` | runtime: paper/shadow, fail-closed
+**Heute live (Paper-First, Live-Execution disabled):** crypto/market intelligence pipeline —
+RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild beschrieben und gegated — siehe `docs/KAI_IDENTITY.md`.
 
-## Phase-5 Focus
+## Current State (2026-05-29)
 
-Phase 4 (signal quality calibration, 11 sprints PH4A-PH4K) is formally closed (D-87, 2026-03-24).
-Phase 5 investigates signal reliability and trust from the PH5A reliability baseline:
+| Field | Value |
+|---|---|
+| Phase | Re-entry + Stabilisierung (post-PHASE-5-suspension) |
+| Status | `ACTIVE` — Re-Entry vollzogen; `RE_ENTRY_MODE` live |
+| Source of truth | Pi 5 (`ubuntu@192.168.178.23`), live seit 2026-05-07 |
+| Active workstream | Asset-Reserve/Fokusfeld-Layer (D-228/S3), Dispatch-Recall-Proxy (D-227), Diversification enforce (D-226) |
+| Live execution | OFF — paper/approval-mode only; Live-Gates ungeöffnet |
 
-- PH5A closed (D-89): reliability baseline — LLM-error-proxy 27.5% (19/69), priority-mean 3.96, tag-fill 100%
-- PH5B active (D-92, §84): cluster the 19 LLM-error-proxy docs, classify root causes, recommend fixes
-- Alert Integration active: `analyze-pending` now dispatches alerts (Phase 4 of CLI pipeline) with `--no-alerts` flag
-- CI hardened: all 5 jobs green, `hypothesis` + `pytest-mock` in dev-deps, bandit B324 fixed
-- CoinGecko active as default market data provider (free tier, ~1min delayed, no API key required)
-- Paper-trading loop active: `run-once` command available, fail-closed on live
-- Freshness enforcement active: stale market data → cycle skipped with explicit STALE_DATA audit entry
+See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (Asset-Reserve + Fokusfeld-Taxonomie + Enforce-Cap), **D-227** (Dispatch-Recall-Proxy + tunable bullish gate), **D-226** (Asset-Diversification enforce). Der frühere `SUSPENDED`-Zustand (D-125, TradingView-Pivot) ist seit dem Re-Entry am 2026-05-07 abgelöst.
 
-## Core Principles
+## Stack at a Glance
 
-- simple but powerful
-- security first
-- fail closed, not fail open
-- no hidden side effects
-- no unverified critical execution
-- live default-off
-
-## Prerequisites
-
-- Python 3.12+
-- PostgreSQL (for DB-backed features; tests run without it)
-- `.env` file based on `.env.example`
+| Component | Status |
+|---|---|
+| FastAPI server (`app/api/main.py`) | in-process RSS scheduler + position monitor |
+| Telegram operator bot | polling, admin-chat approval flow |
+| Cloudflare Named Tunnel | `kai-trader.org` (live, auto-started by `scripts/server_start.sh`) |
+| Paper-trading cron (Windows Task Scheduler) | every 10 min — BTC/USDT + ETH/USDT paper cycles, monitor, bridge, freshness check, liveness watchdog |
+| Agent worker | SENTR · Watchdog · Architect · DALI · Neo · SATOSHI (Claude Code only) |
+| Dashboard SPA | React under `/dashboard/` · mobile-friendly |
 
 ## Quick Start
 
 ```bash
-pip install -e ".[dev]"
-cp .env.example .env        # edit as needed
-python -m pytest            # 1619+ tests
+bash scripts/server_start.sh              # full stack (API + tunnel + agent-worker + cron status)
+bash scripts/server_status.sh             # health + sources + log tail
+bash scripts/server_stop.sh               # clean stop
+bash scripts/server_restart.sh            # stop + start
+```
+
+Opt-outs: `KAI_TUNNEL=0` · `KAI_AGENT_WORKER=0` · `KAI_CRON=0` · `KAI_BIND_LAN=1`
+
+Local access: `http://127.0.0.1:8000/dashboard/`
+Remote access: `https://kai-trader.org/dashboard/` (if WARP paused on client — see memory `reference_cloudflare_warp_conflict.md`)
+
+## Daily Operator Commands
+
+```bash
+# Health + diagnostics
+python -m app.cli.main alerts ops-status                   # operator summary (positions, backlog, alert-rate, cycles)
+python -m app.cli.main alerts pending-annotations          # directional alerts awaiting outcome
+python -m app.cli.main alerts tv4-quality-bar              # per-source precision with Wilson 95% CI
+
+# Pipeline manual trigger (cron does this automatically every 10/30/40 min)
+python -m app.cli.main pipeline run-all --top-n 1          # all active RSS feeds in one pass
+python -m app.cli.main pipeline newsdata "..." --size 10   # NewsData.io batch
+python -m app.cli.main pipeline twitter --top-n 5          # X/Twitter social feed
+
+# Paper trading (cron default: every 10 min)
+python -m app.cli.main trading run-once --symbol BTC/USDT --mode paper --provider coingecko
+python -m app.cli.main trading monitor-positions --provider coingecko
+python -m app.cli.main trading operator-signal-bridge-tick
+
+# Alerts + annotation
+python -m app.cli.main alerts auto-annotate                # resolves directional alerts via price check
+python -m app.cli.main alerts annotate <document_id> <hit|miss|inconclusive>
+python -m app.cli.main alerts hold-report                  # forward-precision + hold-gate metrics
+python -m app.cli.main alerts backfill-provenance --dry-run
+
+# Daily strategy (cron runs bootstrap; operator reviews + fills)
+python -m app.cli.main daily-strategy bootstrap            # idempotent skeleton for today
+```
+
+## Safety Minimum (non-negotiable)
+
+- **No live execution path.** Paper + approval-mode only. Operator approves each filled signal.
+- **Fail-closed by default.** Stale market data → cycle skipped (not silently executed).
+- **No secrets in repo** (`.gitignore` protects `.env*`, DB files, artifacts).
+- **Approval-mode pflicht** for operator-signal bridge (`EXECUTION_OPERATOR_SIGNAL_APPROVAL_ENABLED=true`).
+- **Trust-boundary `monitor/*`**: operator-curated files govern trusted-author bypass, keyword extraction, source whitelists — file-system ACL is the trust line. See AGENTS.md § Operator-Trust-Boundary.
+
+## TradingView Pivot (D-125)
+
+TV-1..TV-4 stages audit-only, fail-closed, gated by shared-token + HMAC. TV-4b bridge writes TV events to `alert_audit.jsonl` for Auto-Annotator resolve. See memory `project_tv_pivot.md` for the 5 non-negotiable conditions. Scheduler is opt-in via `TRADINGVIEW_BRIDGE_SCHEDULER_ENABLED=true`.
+
+## Canonical Living Docs
+
+- `docs/KAI_IDENTITY.md` — **Single Source of Truth** für Projektidentität + Zielbild-Schichtenmodell
+- `AGENTS.md` — operator constraints, current phase state, agent roster
+- `RUNBOOK.md` — daily operator procedure, dashboard, agent chat
+- `DECISION_LOG.md` — compact decision history (D-1..D-188)
+- `CLAUDE.md` — execution directive for all coding agents
+- `docs/contracts.md` — core contracts and invariants
+
+Historical governance artifacts archived in `docs/archive/`.
+
+## Development
+
+```bash
+pip install -e .                                           # editable install
+python -m pytest                                           # ~1946 tests baseline
 python -m ruff check .
-uvicorn app.api.main:app --reload
+cd web && npm install && npm run build                     # dashboard SPA
 ```
 
-## Environment Variables (Key)
-
-| Variable | Default | Description |
-|---|---|---|
-| `APP_ENV` | `development` | Set to `production` to disable Swagger/ReDoc and tighten defaults |
-| `APP_API_KEY` | `` | Bearer token for API auth. Leave empty for local dev only. |
-| `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated allowed CORS origins. Set explicitly for production. |
-| `DB_URL` | `postgresql+asyncpg://...` | Database connection string |
-| `APP_MARKET_DATA_PROVIDER` | `coingecko` | Market data source: `coingecko` (real, free-tier) or `mock` (dev/test only — logs WARNING) |
-| `OPENAI_API_KEY` | — | Required for LLM analysis |
-| `OPERATOR_TELEGRAM_BOT_TOKEN` | — | Telegram operator bot token |
-| `OPERATOR_ADMIN_CHAT_IDS` | — | Comma-separated admin Telegram chat IDs |
-
-Full variable reference: `.env.example`
-
-## Production Notes
-
-Setting `APP_ENV=production` activates:
-- Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) are **disabled**
-- CORS origins should be set via `APP_CORS_ALLOWED_ORIGINS` (no wildcard by default)
-
-`APP_API_KEY` must be set to a strong random token in production:
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-## Daily Operator Flow (Canonical)
-
-```bash
-trading-bot research daily-summary
-trading-bot research readiness-summary
-trading-bot research decision-pack-summary
-trading-bot research paper-positions-summary
-trading-bot research paper-exposure-summary
-trading-bot research trading-loop-status
-trading-bot research trading-loop-recent-cycles
-trading-bot research review-journal-summary
-trading-bot research resolution-summary
-trading-bot research alert-audit-summary
-```
-
-## Optional Guarded Single Cycle (Paper/Shadow)
-
-```bash
-trading-bot research trading-loop-run-once --mode paper --symbol BTC/USDT
-```
-
-## Operator API
-
-All `/operator/*` routes require Bearer auth (`APP_API_KEY`).
-
-Key read endpoints:
-- `GET /operator/status` — system status
-- `GET /operator/health` — health check
-- `GET /operator/positions` — paper positions
-- `GET /operator/exposure` — exposure summary
-- `GET /operator/trading-loop/status` — trading loop state
-- `GET /operator/trading-loop/recent-cycles` — recent cycle history
-- `POST /operator/trading-loop/run-once` — guarded paper/shadow cycle (fail-closed on live)
-
-Dashboard: `GET /dashboard/` — read-only operator summary.
-
-## Active vs. Experimental Features
-
-### Active (production default)
-
-| Feature | Status | Notes |
-|---|---|---|
-| Rule-based analysis pipeline | ✅ active | keyword scoring, signal generation |
-| CoinGecko market data | ✅ active | free tier, ~1min delayed, 10 symbols |
-| Paper trading loop | ✅ active | fail-closed, paper/shadow only |
-| Operator API (`/operator/*`) | ✅ active | Bearer auth required |
-| Telegram operator bot | ✅ active | HMAC-verified webhooks |
-| CLI `research` surface | ✅ active | daily-summary, readiness, positions etc. |
-| Alerting (Telegram/Email) | ✅ active | threshold-based, dry-run default |
-
-### Experimental (not in default operator workflow)
-
-| Feature | Status | Activation |
-|---|---|---|
-| Companion ML pipeline | 🔬 experimental | No model deployed. Requires `COMPANION_MODEL_ENDPOINT`. CLI: `benchmark-companion`, `check-promotion`, `record-promotion` |
-| Multi-path inference (A/B/C) | 🔬 experimental | Requires companion model + `route-activate` MCP tool |
-| ABCInferenceEnvelope | 🔬 experimental | Only active in `primary_with_shadow` / `control` route modes |
-| Shadow inference | 🔬 experimental | Needs active route profile with shadow paths |
-| Upgrade cycle / promotion | 🔬 experimental | Part of companion ML pipeline |
-
-### Not introduced (by design)
-
-- Event sourcing
-- Multi-tenant support
-- Kafka / message queue infrastructure
-
-These are not planned for the current phase.
-
-## Documentation Index
-
-- [PHASE_PLAN.md](PHASE_PLAN.md)
-- [SPRINT_LEDGER.md](SPRINT_LEDGER.md)
-- [DECISION_LOG.md](DECISION_LOG.md)
-- [RISK_REGISTER.md](RISK_REGISTER.md) — aktive technische Schulden und Risiken (V-1..V-9)
-- [SECURITY.md](SECURITY.md)
-- [RUNBOOK.md](RUNBOOK.md)
-- [ONBOARDING.md](ONBOARDING.md)
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [CANONICAL_SURFACE_INVENTORY.md](CANONICAL_SURFACE_INVENTORY.md)
-- [KAI_AUDIT_TRAIL.md](KAI_AUDIT_TRAIL.md) — Audit-Verlauf und Befund-Abschluss
-- [ASSUMPTIONS.md](ASSUMPTIONS.md)
-- [CHANGELOG.md](CHANGELOG.md)
+See `CLAUDE.md` for architecture rules and agent collaboration contracts.

@@ -92,6 +92,29 @@ class TestRSSFeed:
         r = classifier.classify("https://www.btc-echo.de/feed")
         assert r.source_type == SourceType.RSS_FEED
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Real operator-seeded feeds (#507) whose feed URL carries the
+            # /rss/ or /feeds/ marker as a path SEGMENT rather than as the
+            # terminal suffix. Before the segment patterns these fell through
+            # to website/news_domain and the collect_rss_feed guard refused
+            # them — silently dropping valid, verified RSS feeds.
+            "https://www.ecb.europa.eu/rss/press.html",  # /rss/ segment, .html tail
+            "https://www.federalreserve.gov/feeds/press_all.xml",  # /feeds/ segment
+            "https://www.cftc.gov/RSS/RSSENF/rssenf.xml",  # /RSS/ segment (case-insensitive)
+            "https://www.cftc.gov/RSS/RSSGP/rssgp.xml",
+            # /rss/ segment must win over a known news_domain (cointelegraph.com):
+            # the pre-filtered tag feed is a real feed, dedup handles overlap.
+            "https://cointelegraph.com/rss/tag/ethereum",
+            "https://cointelegraph.com/rss/tag/regulation",
+        ],
+    )
+    def test_rss_feed_url_segments(self, classifier, url):
+        r = classifier.classify(url)
+        assert r.source_type == SourceType.RSS_FEED
+        assert r.status == SourceStatus.ACTIVE
+
 
 class TestPodcastLandingPage:
     @pytest.mark.parametrize(
@@ -162,6 +185,21 @@ class TestWebsite:
         r = classifier.classify("https://some-random-site.com")
         assert r.source_type == SourceType.WEBSITE
         assert r.status == SourceStatus.ACTIVE
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Tight segment patterns must NOT fire on lookalike paths: the
+            # marker must be a slash-delimited segment, not a substring. These
+            # stay website (feedparser would reject them anyway, but we keep the
+            # classifier itself from over-broadening).
+            "https://example.com/rssfeed",  # no slash after rss
+            "https://example.com/feedback/article",  # 'feed' + 'back', not /feed(s)/
+        ],
+    )
+    def test_rss_segment_no_false_positive(self, classifier, url):
+        r = classifier.classify(url)
+        assert r.source_type == SourceType.WEBSITE
 
 
 class TestEdgeCases:

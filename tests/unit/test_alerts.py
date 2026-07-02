@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
+import httpx
 import pytest
 
+from app.alerts.audit import load_alert_audits
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
@@ -31,7 +34,7 @@ from app.alerts.formatters import (
     format_telegram_digest,
     format_telegram_message,
 )
-from app.alerts.service import AlertService, _build_alert_message
+from app.alerts.service import AlertService, _build_alert_message, _log_result
 from app.alerts.threshold import ThresholdEngine
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import MarketScope, SentimentLabel
@@ -87,6 +90,13 @@ def _dry_run_settings(**overrides) -> AlertSettings:
     defaults = {
         "dry_run": True,
         "min_priority": 7,
+        "telegram_enabled": False,
+        "telegram_token": "",
+        "telegram_chat_id": "",
+        "email_enabled": False,
+        "email_host": "",
+        "email_from": "",
+        "email_to": "",
     }
     defaults.update(overrides)
     return AlertSettings(**defaults)
@@ -297,6 +307,53 @@ def test_format_email_subject_contains_priority():
     assert "KAI Alert" in subject
 
 
+# ── D-150: P10 high-conviction tier markers ──────────────────────────────────
+
+
+def test_format_telegram_message_p10_prefix():
+    """Priority=10 alerts prepend the HIGH-CONVICTION marker line."""
+    msg = _make_alert_msg(priority=10, title="BTC Break")
+    text = format_telegram_message(msg)
+    assert "HIGH-CONVICTION" in text
+    assert "🔥" in text
+    # Prefix must come before the priority line
+    assert text.index("HIGH-CONVICTION") < text.index("Priority 10/10")
+
+
+def test_format_telegram_message_p9_no_prefix():
+    """Priority=9 (critical but sub-threshold) does NOT trigger the marker."""
+    msg = _make_alert_msg(priority=9, title="ETH Surge")
+    text = format_telegram_message(msg)
+    assert "HIGH-CONVICTION" not in text
+
+
+def test_format_telegram_digest_p10_item_prefix():
+    """P10 entries in the digest are prefixed with 🔥."""
+    msgs = [
+        _make_alert_msg(priority=7, title="Regular alert"),
+        _make_alert_msg(priority=10, title="Conviction alert"),
+    ]
+    text = format_telegram_digest(msgs, "last hour")
+    conviction_line = next(line for line in text.splitlines() if "Conviction alert" in line)
+    regular_line = next(line for line in text.splitlines() if "Regular alert" in line)
+    assert conviction_line.startswith("🔥")
+    assert not regular_line.startswith("🔥")
+
+
+def test_format_email_subject_p10_tag():
+    """P10 email subjects include [HIGH-CONVICTION] tag."""
+    msg = _make_alert_msg(priority=10, title="Deep-conviction event")
+    subject = format_email_subject(msg)
+    assert "[HIGH-CONVICTION]" in subject
+    assert "P10" in subject
+
+
+def test_format_email_subject_p9_no_tag():
+    msg = _make_alert_msg(priority=9, title="Normal high-priority")
+    subject = format_email_subject(msg)
+    assert "HIGH-CONVICTION" not in subject
+
+
 def test_format_email_body_contains_title():
     msg = _make_alert_msg(title="Test Title", explanation="Important event.")
     body = format_email_body(msg)
@@ -342,6 +399,88 @@ async def test_telegram_dry_run_digest():
     result = await ch.send_digest([_make_alert_msg()], "last hour")
     assert result.success is True
     assert result.message_id == "dry_run"
+
+
+@pytest.mark.asyncio
+async def test_telegram_non_dry_run_splits_long_messages(monkeypatch):
+    settings = _dry_run_settings(
+        dry_run=False,
+        telegram_enabled=True,
+        telegram_token="tok",
+        telegram_chat_id="123",
+    )
+    ch = TelegramAlertChannel(settings)
+    posted_texts: list[str] = []
+    request = httpx.Request("POST", "https://api.telegram.org")
+    response = httpx.Response(200, json={"result": {"message_id": 42}}, request=request)
+
+    class _FakeClient:
+        def __init__(self, *, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]):
+            posted_texts.append(str(json["text"]))
+            return response
+
+    monkeypatch.setattr("app.alerts.channels.telegram.httpx.AsyncClient", _FakeClient)
+
+    long_explanation = "X" * 9000
+    result = await ch.send(_make_alert_msg(explanation=long_explanation))
+
+    assert result.success is True
+    assert len(posted_texts) >= 2
+    assert all(len(chunk) <= 4096 for chunk in posted_texts)
+
+
+@pytest.mark.asyncio
+async def test_telegram_non_dry_run_retries_on_429(monkeypatch):
+    settings = _dry_run_settings(
+        dry_run=False,
+        telegram_enabled=True,
+        telegram_token="tok",
+        telegram_chat_id="123",
+    )
+    ch = TelegramAlertChannel(settings)
+    request = httpx.Request("POST", "https://api.telegram.org")
+    responses = [
+        httpx.Response(
+            429,
+            json={"ok": False, "parameters": {"retry_after": 1}},
+            request=request,
+        ),
+        httpx.Response(200, json={"result": {"message_id": 99}}, request=request),
+    ]
+    sleeps: list[float] = []
+
+    class _FakeClient:
+        def __init__(self, *, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]):
+            return responses.pop(0)
+
+    async def _fake_sleep(seconds: float):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.alerts.channels.telegram.httpx.AsyncClient", _FakeClient)
+    monkeypatch.setattr("app.alerts.channels.telegram.asyncio.sleep", _fake_sleep)
+
+    result = await ch.send(_make_alert_msg())
+
+    assert result.success is True
+    assert sleeps == [1]
 
 
 def test_telegram_is_enabled_false_by_default():
@@ -440,8 +579,8 @@ async def test_process_document_below_threshold_returns_empty():
     assert deliveries == []
 
 
-async def test_process_document_above_threshold_dispatches():
-    service = AlertService.from_settings(_app_settings_dry_run())
+async def test_process_document_above_threshold_dispatches(tmp_path: Path):
+    service = _make_isolated_service(tmp_path)
     doc = CanonicalDocument(url="https://example.com/high", title="High priority doc")
     result = _make_high_result()
     deliveries = await service.process_document(doc, result)
@@ -450,13 +589,191 @@ async def test_process_document_above_threshold_dispatches():
     assert all(d.success for d in deliveries)
 
 
-async def test_process_document_spam_excluded():
-    service = AlertService.from_settings(_app_settings_dry_run())
+async def test_process_document_spam_excluded(tmp_path: Path):
+    service = _make_isolated_service(tmp_path)
     doc = CanonicalDocument(url="https://example.com/spam", title="Spam doc")
     result = _make_high_result()
     deliveries = await service.process_document(doc, result, spam_probability=0.99)
     # Spam should be excluded at threshold level
     assert deliveries == []
+
+
+# ── D-114: Title-based dedup ────────────────────────────────────────────────
+
+
+def _make_isolated_service(tmp_path: Path) -> AlertService:
+    """Build AlertService with isolated audit dir (no cross-contamination)."""
+    s = _dry_run_settings()
+    channels: list[BaseAlertChannel] = [
+        TelegramAlertChannel(s),
+        EmailAlertChannel(s),
+    ]
+    threshold = ThresholdEngine(min_priority=s.min_priority)
+    return AlertService(channels=channels, threshold=threshold, audit_dir=tmp_path)
+
+
+async def test_duplicate_title_skipped_within_session(tmp_path: Path):
+    """Second document with identical title is skipped (session dedup)."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique title for dedup test A")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="Unique title for dedup test A")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2  # dispatched
+    assert deliveries2 == []  # duplicate, skipped
+
+
+async def test_duplicate_title_normalized_match(tmp_path: Path):
+    """Title normalization catches case/punctuation variants."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique Dedup Normalized Test!")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="unique dedup normalized test")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert deliveries2 == []
+
+
+async def test_different_titles_both_dispatched(tmp_path: Path):
+    """Different titles are not deduped."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="Ethereum staking rewards restructured",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="Federal Reserve holds rates unchanged",
+    )
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2
+
+
+async def test_empty_title_not_deduped(tmp_path: Path):
+    """Documents with empty titles are never treated as duplicates."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2
+
+
+async def test_audit_record_contains_title_hash(tmp_path: Path):
+    """Audit records include title_hash for cross-run dedup."""
+    service = _make_isolated_service(tmp_path)
+    doc = CanonicalDocument(url="https://example.com/th", title="Test Title Hash Unique")
+    result = _make_high_result()
+    await service.process_document(doc, result)
+
+    from app.normalization.cleaner import title_hash as compute_title_hash
+
+    records = load_alert_audits(tmp_path)
+    matching = [r for r in records if r.document_id == str(doc.id)]
+    assert any(r.title_hash == compute_title_hash("Test Title Hash Unique") for r in matching)
+
+
+async def test_cross_run_dedup_via_audit_trail(tmp_path: Path):
+    """Title hashes persist in audit JSONL and block duplicates across runs."""
+    result = _make_high_result()
+
+    # Run 1: dispatch an alert
+    service1 = _make_isolated_service(tmp_path)
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Cross run dedup test title")
+    deliveries1 = await service1.process_document(doc1, result)
+    assert len(deliveries1) == 2
+
+    # Run 2: new service instance, same audit dir — should load hash from trail
+    service2 = _make_isolated_service(tmp_path)
+    doc2 = CanonicalDocument(url="https://b.com/2", title="Cross run dedup test title")
+    deliveries2 = await service2.process_document(doc2, result)
+    assert deliveries2 == []
+
+
+# ── D-114: Fuzzy dedup (Jaccard word-overlap) ──────────────────────────────
+
+
+async def test_fuzzy_dedup_catches_reworded_story(tmp_path: Path):
+    """Near-duplicate cross-source titles are caught by Jaccard overlap."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="Morgan Stanley sets spot bitcoin ETF fee at 0.14 percent undercutting rivals",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="Morgan Stanley sets 0.14 percent Bitcoin ETF fee lowest in market",
+    )
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert deliveries2 == []  # fuzzy match
+
+
+async def test_fuzzy_dedup_allows_genuinely_different_stories(tmp_path: Path):
+    """Different stories with low word overlap are not deduped."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="Tether convinces Big Four firm to handle first full audit of USDT",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="Ripple joins Singapore sandbox to test RLUSD in trade finance",
+    )
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2  # different stories, both dispatched
+
+
+async def test_fuzzy_dedup_cross_run_via_normalized_title(tmp_path: Path):
+    """Fuzzy dedup persists via normalized_title in audit trail."""
+    result = _make_high_result()
+
+    # Run 1
+    service1 = _make_isolated_service(tmp_path)
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="CFTC chief launches innovation task force focused on crypto framework",
+    )
+    await service1.process_document(doc1, result)
+
+    # Run 2 — reworded version of same story
+    service2 = _make_isolated_service(tmp_path)
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="CFTC unveils innovation task force focused on crypto AI prediction markets",
+    )
+    deliveries2 = await service2.process_document(doc2, result)
+    assert deliveries2 == []  # fuzzy match from audit trail
 
 
 # ── AlertService.send_digest ──────────────────────────────────────────────────
@@ -508,6 +825,44 @@ def test_build_alert_message_priority_matches_score():
     result = _make_high_result()
     msg = _build_alert_message(doc, result, spam_probability=0.0)
     assert 7 <= msg.priority <= 10
+
+
+def test_log_result_marks_directional_crypto_assets_eligible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("app.alerts.service._WORKSPACE_ROOT", tmp_path)
+    # eligibility.py blocks naked assets ("BTC" without /USDT) since the
+    # naked-asset gate was added; supply the trading pair the gate expects.
+    msg = _make_alert_msg(sentiment_label="bullish", affected_assets=["BTC/USDT"])
+    delivery = AlertDeliveryResult(channel="telegram", success=True, message_id="1")
+
+    _log_result(delivery, message=msg)
+
+    records = load_alert_audits(tmp_path / "artifacts")
+    assert len(records) == 1
+    assert records[0].directional_eligible is True
+    assert records[0].affected_assets == ["BTC/USDT"]
+    assert records[0].directional_block_reason is None
+
+
+def test_log_result_blocks_non_crypto_directional_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("app.alerts.service._WORKSPACE_ROOT", tmp_path)
+    msg = _make_alert_msg(
+        sentiment_label="bearish",
+        affected_assets=["OpenAI", "Disney", "Sora"],
+    )
+    delivery = AlertDeliveryResult(channel="telegram", success=True, message_id="2")
+
+    _log_result(delivery, message=msg)
+
+    records = load_alert_audits(tmp_path / "artifacts")
+    assert len(records) == 1
+    assert records[0].directional_eligible is False
+    assert records[0].affected_assets == []
+    # D-142: bearish is blocked before asset resolution is reached
+    assert records[0].directional_block_reason == "bearish_directional_disabled"
 
 
 # ── BaseAlertChannel ABC ──────────────────────────────────────────────────────

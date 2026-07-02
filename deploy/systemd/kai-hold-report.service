@@ -1,0 +1,21 @@
+[Unit]
+Description=KAI Hold-Metrics + Forward-Replay Nightly
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+# B-1 (2026-05-07): Re-evaluiert historische Alerts mit aktuellen Gates
+# (D-134 forward_precision_simulation in app/alerts/hold_metrics.py).
+# Sample-Velocity-Hebel: erschliesst forward_resolved aus alert_audit.jsonl
+# ohne auf neue Alerts warten zu muessen.
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main alerts hold-report
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true

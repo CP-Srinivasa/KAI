@@ -6,7 +6,7 @@ import pytest
 import yaml  # type: ignore[import-untyped]
 
 from app.analysis.keywords.watchlist import WatchlistEntry
-from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
+from app.core.watchlists import WatchlistRegistry, parse_watchlist_type
 from tests.unit.factories import make_document
 
 

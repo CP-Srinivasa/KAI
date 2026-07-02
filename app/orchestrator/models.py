@@ -15,6 +15,14 @@ class CycleStatus(StrEnum):
     NO_SIGNAL = "no_signal"
     RISK_REJECTED = "risk_rejected"
     SIZE_REJECTED = "size_rejected"
+    CONSENSUS_REJECTED = "consensus_rejected"
+    PRIORITY_REJECTED = "priority_rejected"  # D-182: priority below paper_min_priority
+    DIVERSIFICATION_REJECTED = "diversification_rejected"  # concentration cap breach (enforce mode)
+    KYT_REJECTED = "kyt_rejected"  # KYT hold/block/manual_review (enforce mode), DS-20260529
+    COOLDOWN_REJECTED = "cooldown_rejected"  # NEO-V2: per-symbol post-stop cooldown active
+    CHURN_REJECTED = "churn_rejected"  # Sprint E: churn-killer rate/turnover limit (Goal §5)
+    ENTRY_MODE_BLOCKED = "entry_mode_blocked"  # Goal 2026-06-01: Entry-Safety-Mode (disabled)
+    PAPER_CAP_REACHED = "paper_cap_reached"  # Goal 2026-06-10: max_daily_paper_entries reached
     ORDER_FAILED = "order_failed"
     ERROR = "error"
 
@@ -95,6 +103,40 @@ class LoopStatusSummary:
             "auto_loop_enabled": self.auto_loop_enabled,
             "execution_enabled": self.execution_enabled,
             "write_back_allowed": self.write_back_allowed,
+        }
+
+
+@dataclass(frozen=True)
+class PriorityGateSummary:
+    """D-184: operator visibility for the D-182 priority-tier gate.
+
+    Counts over a rolling window so the dashboard can surface *why* no new
+    paper fills land when the gate is raised. Without this, the operator
+    sees "no new trades" without context.
+    """
+
+    threshold: int  # current EXECUTION_PAPER_MIN_PRIORITY (1 = gate off)
+    gate_active: bool  # True iff threshold > 1
+    window_hours: int
+    total_cycles: int  # all cycles in window
+    priority_rejected: int  # cycles blocked by the priority gate
+    other_rejected: int  # risk/size/consensus/order_failed/error
+    completed: int  # status == COMPLETED
+    window_start_utc: str  # ISO, inclusive lower bound
+    audit_path: str
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "report_type": "priority_gate_summary",
+            "threshold": self.threshold,
+            "gate_active": self.gate_active,
+            "window_hours": self.window_hours,
+            "total_cycles": self.total_cycles,
+            "priority_rejected": self.priority_rejected,
+            "other_rejected": self.other_rejected,
+            "completed": self.completed,
+            "window_start_utc": self.window_start_utc,
+            "audit_path": self.audit_path,
         }
 
 

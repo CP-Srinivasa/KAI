@@ -1,21 +1,175 @@
-﻿# CHANGELOG.md
+## 2026-06-12 - HYPE-S1: Sentiment-Überhitzung als vierte Bayes-Evidence (default-off, shadow-first)
 
-## 2026-03-24 - PH5B ready to close; PH5C narrow filter definition is next
+Operationalisiert den Leitsatz „ein starkes Asset bekommt nicht automatisch ein Buy-Signal": medial überhitzte Assets (abnormale Mention-Velocity × Quellen-Breite × Sentiment-Einseitigkeit) erzeugen eine contrarian-Evidence GEGEN neue Long-Einstiege — Posterior sinkt, Kelly-Sizing schrumpft, ggf. kein Signal. Datenbasis sind ausschließlich KAIs EIGENE analysierte Dokumente (Sentiment + crypto_assets-Tags) — keine neue externe Quelle. Identische V5-Disziplin: default-off, entkoppelter Disk-Refresh, Shadow-Log, trust 0.5.
 
-- PH5B cluster analysis artifacts are complete and ready for formal review closeout.
-- All 19 LLM-error-proxy cases belong to the `EMPTY_MANUAL` cluster.
-- Root cause is empty/manual placeholder content, not model failure.
-- Recommended next sprint is `PH5C_FILTER_BEFORE_LLM_BASELINE` as a narrow pre-LLM filter intervention.
-- Guardrail: do not open broader model-quality work before PH5C is assessed.
+- **`app/risk/hype_score.py`** (neu, rein/IO-frei): `compute_hype_score` — Velocity vs. EIGENE Baseline (7d→6h-Fenster, min 5 Mentions Floor, 5×-Sättigung) × Amplifikation aus Quellen-Breite + Einseitigkeit; `aggregate_hype_inputs` (pures Bucketing). Alle Komponenten im Ergebnis ausgewiesen.
+- **`app/signals/bayesian_confidence.py`**: neuer `EvidenceKind.SENTIMENT_OVERHEAT` (Stärke 0.6, tanh-Calibrator wie Funding/LS — gleiche contrarian-Familie) + Factory `build_sentiment_overheat_evidence`. **dampen_only-Sicherheitsvertrag (S1-Default): Hype dämpft nur Longs, begründet NIE Shorts** (direction_aligned=0 → Engine verwirft, bleibt im Audit sichtbar).
+- **`app/signals/hype_snapshot_store.py` / `hype_wiring.py`** (neu): atomarer JSON-Store (Key = Base-Asset, `BTC/USDT`→`BTC`), TTL-Staleness-Gate (default 2h), Shadow-Log loggt AUCH nicht-emittierte Beiträge (`evidence_emitted=false`) — Datenbasis für die Trust-/Schwellwert-Entscheidung nach ~7d. Emission erst ab `min_score_for_evidence` (default 0.3).
+- **`app/signals/composite_evidence_wiring.py`**: vierte Quelle (Reihenfolge Funding → OI → LS → Hype), Alt-Aufrufer (3-arg) byte-identisch; neu `build_composite_evidence_provider_from_settings(settings)` als Settings-Level-Einstieg.
+- **`scripts/hype_snapshot_refresh.py`** + **`deploy/systemd/kai-hype-refresh.{service,timer}`** (neu, Timer NICHT enabled): bounded DB-Aggregation (Spalten-Subset, Row-Limit, 120s-Deadline), 15-min-Kadenz; 0 Assets ⇒ alte Snapshot-Datei bleibt (kein Leerschreiben).
+- **S7-Ratchet-Extraktion**: `app/core/evidence_settings.py` (neu) bündelt Funding/OI/LS/Hype-Settings (explizite Re-Exports aus `app.core.settings`); `settings.py` 1744→1644, `trading_loop.py` 2251→2246 (Composite-Auswahl ins Wiring-Modul verschoben). Baseline entsprechend gesenkt.
+- **Tests**: 47 neue/erweiterte grün (Score-Floor/Sättigung/kalte Baseline, Aggregations-Bucketing, default-off, Staleness, dampen_only, Engine-Posterior-Senkung, Composite-4-Quellen-Kette + 3-arg-No-Regression, Settings-Re-Export + env-Prefix). ruff + format + mypy (418 files) clean.
+- **Bewusst NICHT in S1**: Aktien/IPO-Datenpfad (neue Asset-Klasse), Unlock-/Lockup-Kalender (neue Datenquelle, S3 nach source-scout), symmetrische pro-Short-Nutzung, gestaffelte Tranchen-Entries, jede Gate-/Live-Änderung.
+
+
+## 2026-06-08 - D-227 Block-Reason Suppression-Quality (read-only)
+
+Vervollständigt die Über-Blocking-Achsen-Trias: Reconciliation prüfte *overall*+*by_sentiment* (#202), Source-Cross-Check *by_source* (#205) — dieser Block prüft **by_block_reason**: *welche Gate-Regel* über-blockt. Eine Regel, deren *unterdrückte* Alerts später oft treffen, killt gute Alerts (Über-Blocking); treffen sie meist nicht, ist die Suppression kalibriert. Rein read-only.
+
+- **`app/alerts/d227_blockreason_quality.py`** (neu, rein/IO-frei): `assess_blockreason_quality(blocked_report, min_sample=20, over_block_threshold_pct=50.0)` → per block_reason blocked-Recall + Verdict (`OVER_BLOCKING_REASON` ≥ Schwelle, `CALIBRATED_REASON`, `INSUFFICIENT_DATA`), **worst-first gerankt** + Liste der über-blockenden Regeln. `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-blockreason-quality --json/--out-json`; `--json`-stdout rein.
+- **Tests**: 5 grün (over-blocking/calibrated/insufficient/worst-first-Ranking/render). ruff + format + mypy clean; CLI-Surface-Test grün.
+
+## 2026-06-08 - D-227 blocked vs Source-Reliability per-source Cross-Check (read-only)
+
+Nächster Diagnoseblock: schließt die **per-source**-Lücke der D-227-vs-hit_rate-Reconciliation (dispatched hit_rate hat keine by_source-Achse). Cross-Check des blocked-outcome-Recalls je Quelle (D-227, `hit_miss_by_source`) gegen die Source-Reliability-Tiers (FS-3, #203). Deckt **Über-Blocking guter Quellen** auf: trifft eine `trusted`/`neutral`-Quelle in ihren *blockierten* Alerts oft, unterdrückt das Gate Quellen, denen das System sonst vertraut. Rein read-only.
+
+- **`app/alerts/d227_source_reliability_crosscheck.py`** (neu, rein/IO-frei): `crosscheck_blocked_vs_reliability(blocked_report, reliability_report, min_sample=20, over_block_threshold_pct=50.0)` → per-source blocked-recall vs tier/point_estimate. Verdicts fail-closed: `INSUFFICIENT_DATA` (blocked < min_sample), `SOURCE_UNRATED` (kein/insufficient Reliability), `OVER_BLOCKED_GOOD_SOURCE` (good tier ∧ blocked-recall ≥ Schwelle), `SUPPRESSION_CALIBRATED`. `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-source-crosscheck --json/--out-json` baut beide Reports (`build_blocked_outcome_report` + `build_source_reliability_report`); `--json`-stdout rein.
+- **Tests**: 7 grün (over-blocked-good, calibrated low/good-miss, insufficient, unrated/insufficient-tier, render). ruff + format + mypy clean; CLI-Surface-Test grün (kein „hit-rate"-Token).
+
+## 2026-06-08 - D-227 vs hit_rate Reconciliation (read-only Diagnose)
+
+Nächster Diagnoseblock: Cross-Check des blocked-outcome-Stroms (D-227, unterdrückte Alerts) gegen den dispatched hit_rate-Strom. Deckt **Über-Blocking** auf — wenn blockierte Alerts so oft treffen wie dispatchte, hat das Block-Gate gute Alerts unterdrückt. Rein read-only, kein Runtime/Env/Flag.
+
+- **`app/alerts/d227_hitrate_reconciliation.py`** (neu, rein/IO-frei): `reconcile_d227_vs_hitrate(blocked_report, hitrate_report, min_sample=20, tolerance_pct=5.0)` vergleicht overall + per-sentiment blocked-precision vs dispatched hit-rate. Verdicts fail-closed: `INSUFFICIENT_DATA` (eine Seite < min_sample), `OVER_BLOCKING_SUSPECT` (blocked ≥ dispatched − tolerance), `SUPPRESSION_CALIBRATED` (blocked klar darunter). `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-reconcile --json/--out-json` baut beide Reports (`build_blocked_outcome_report` + `compute_hit_rate(build_outcomes_from_records(...))`) und serviert die Reconciliation; `--json`-stdout rein (wrote-Notiz auf stderr).
+- **Tests**: 6 grün (insufficient/over-blocking/calibrated overall + per-sentiment, fehlende Sentiment-Seite → insufficient, Render). ruff + format + mypy clean.
+
+## 2026-06-08 - D-227 Outcome-Report: persistenter Artifact-Emitter (read-only)
+
+Folge-Block zum D-227-Outcome-Report-Kern (in p7 via #196). Macht den Report als Zeitreihe pullbar — wie der Shadow-Report. Rein read-only, kein Runtime/Env/Flag.
+
+- **`app/alerts/blocked_outcome_report.py`**: neuer reiner Writer `write_blocked_outcome_report(report, out_path=BLOCKED_OUTCOME_REPORT_PATH)` schreibt den gebauten Report als Pretty-JSON (mkdir parents), kanonischer Pfad `artifacts/blocked_outcome_report.json`. Schreibt nur ein Report-Artefakt — kein Execution-/Env-Touch.
+- **`app/cli/main.py`**: `alerts blocked-outcome-report --out-json <path>` persistiert zusätzlich; bei `--json` bleibt **stdout reines JSON** (die „wrote …"-Notiz geht nach stderr).
+- **Tests**: Writer round-trippt zu validem JSON ohne Fabrikation, Default-Pfad unter `artifacts/`. 3 grün; ruff + format + mypy clean.
+
+## 2026-06-08 - Premium-Fastlane fail-closed Bypass-Defaults + Entry-Mode-Override-Preflight (Issue #181, P0)
+
+Follow-up zum #179-Incident (ADR 0006). Die Fastlane-Bypass-Kaskade defaultete vollständig `True`, sodass `PREMIUM_FASTLANE_ENABLED=true` den globalen Kill-Switch `entry_mode=disabled` durch einen einzigen Flag-Flip neutralisierte. Behoben: fail-closed Defaults + zweistufiger expliziter Override.
+
+- **`app/core/settings.py`**: Alle sieben `bypass_*`-Defaults von `True` → **`False`** (fail-closed). Neuer unabhängiger Arm `PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE` (default `False`). Enabling der Fastlane relaxt für sich genommen kein Gate mehr.
+- **`app/execution/premium_fastlane.py`**: Neue reine SSOT-Funktion `fastlane_entry_mode_override(settings) -> (allowed, refusal_code)`. `fastlane_status.overrides_classic_block` meldet nur noch `True`, wenn der zweistufige Override real scharf ist (Dashboard-Wahrheit == Laufzeit).
+- **`app/execution/envelope_to_paper_bridge.py`**: Preflight-Gate am Entry-Mode-Bypass — Bypass nur bei vollständig scharfem Zwei-Flag-Arm; sonst fail-closed in `rejected_entry_mode` + Refusal-Record `premium_fastlane_entry_mode_override_refused` mit Reason-Code. Neuer Result-Counter `fastlane_entry_mode_override_refused`.
+- **`app/risk/reason_codes.py`**: Neuer `ExecutionBlockerCode.FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED`.
+- **Tests**: `test_premium_fastlane_settings` (Defaults jetzt fail-closed), zwei neue Bridge-Tests — `disabled`+`FASTLANE_ENABLED=true` ohne Arm → 0 Fills/0 Orders/0 Positionen (Issue §4); einzelnes Bypass-Flag ohne Override → fail-closed + Refusal-Record (Issue §7). Abhängige Tests auf explizites Arming umgestellt. 44 Premium-Fastlane-Tests + 80 angrenzende grün; ruff + ruff-format + mypy clean.
+- **Bewusst nicht in diesem PR** (Issue §5/§8, durch fail-closed-Posture nicht-dringlich): Per-Source-Limits/max trades-h/notional-day; Remodelling als expliziter `entry_mode`-Enum (`premium_paper_limited`). Siehe ADR 0006.
+
+## 2026-06-08 - NEO-P-002-r3 Phase 3: In-Loop-Funnel-Achsen (Issue #175)
+
+Folge zu Phase 2 (Real-Analysen-Feeder): die Phase-2-Funnel zeigte nur Pre-Loop-Selektion + terminale `by_cycle_status`. Sie konnte nicht erklären, **wo im Loop/Generator** ein Real-Kandidat starb. Damit `real_resolved=0` *erklärbar* bleibt (nie still als `EDGE_NEGATIVE`).
+
+- **`app/observability/shadow_inloop_funnel.py`** (neu, rein): `classify_cycle(status, notes)` mappt jeden injizierten Zyklus-Terminal (`CycleStatus`) auf eine In-Loop-Achse; `build_inloop_funnel(cycles)` liefert die kumulativen Achsen (`real_analyses_seen`/`eligible_for_shadow`/`priority_rejected`/`sentiment_rejected`/`non_directional`/`directional_accepted`/`reached_signal_generator`/`generator_returned_none`/`shadow_candidate_written`/`resolver_resolved_real`) + eine `rejected_funnel`-Aufschlüsselung. **Reine Instrumentierung** — kein Loop-Verhalten geändert (keine Directional-Gate-Lockerung, keine Priority-Threshold-Änderung, kein D-182-Bypass).
+- **`app/observability/shadow_real_feed.py`**: sammelt `(status, notes)` je injiziertem Zyklus und ergänzt einen `in_loop`-Block im Funnel-Record — **getrennt** von den Feeder-Level-`counts`.
+- **`app/observability/shadow_candidate_ledger.py`**: `build_shadow_report(..., inloop_funnel=None)` surfaced `in_loop_funnel` + `rejected_funnel`; **diagnostisch only**, ändert `primary_class` nicht → `real_resolved=0` bleibt `INSUFFICIENT_DATA`.
+- **Invarianten**: Default-OFF (Flag unverändert), keine Fills/Positionen/Orders, `entry_mode` disabled; Report trennt Feeder-Level vs In-Loop.
+- **Tests**: `test_shadow_inloop_funnel.py` (15: Klassifizierer je Achse, Zero-Candidate/rejected/success-Pfade, Mixed-Counts, Report surfaced `rejected_funnel` ∧ bleibt INSUFFICIENT, Report ohne Funnel unverändert). 86 Shadow-Tests grün; ruff + format + mypy clean.
+
+## 2026-06-08 - Truth-Layer v2: Dashboard-MetricRegistry-Verdrahtung (Issue #170 Part A)
+
+Folge-Verdrahtung zu #162 (formale `MetricRegistry`, ohne Live-Read-Pfad): die kanonischen skalaren Dashboard-Metriken werden jetzt **additiv** über die Registry serviert — eine Berechnungsquelle, Frontend rendert nur, nie selbst rechnen.
+
+- **`app/observability/dashboard_metric_registry.py`** (neu, rein/IO-frei): `build_dashboard_metric_registry(values)` deklariert die kanonischen skalaren Truth-Metriken (live-sourced: `paper_fills_with_pnl`, `paper_fills_recent_24h`, `priority_tier_lift_pct`, `source_reliability_trusted_count`) + die noch ungebundenen Risiko-Skalare (`pnl_realized/unrealized`, `fees`, `exposure_gross/net`, `drawdown_max`, `var`, `cvar`, `sharpe`, `sortino`, `win_rate`). Jede Definition `frontend_calculation_allowed=False`. `reconcile_dashboard_snapshot()` vergleicht Contract-Werte gegen die SSOT → Drift = Warning, kein Hard-Fail.
+- **`app/api/routers/dashboard.py`**: Truth-Contract-Endpoint baut die Registry aus **denselben** bereits berechneten Werten (kein zweiter Pfad), serviert `metric_registry` (verbatim `MetricResponse` je Metrik) + `metric_registry_reconciliation`; Contract-Version `1` → **`2`**. Ungebundene Risiko-Skalare servieren ehrlich `degraded` (value withheld), nie eine Fantasiezahl.
+- **Tests**: `test_dashboard_metric_registry.py` (Frontend-Guard fail-closed, live-sourced servt Wert, unsourced → degraded, Builder pur, Reconcile within/drift/unsourced-never-ok) + erweiterter `test_api_dashboard` (Version 2, Registry-Wert == Contract-Wert, `var_usd` degraded, Reconciliation within-tolerance). 27 grün; ruff + format + mypy clean.
+- **Bewusst nicht (Issue #170 Teil B)**: Generator-Edge-Collector (Side-Channel-Feeder für IC/Brier) bleibt geparkt — sinnvoll **erst nach dem NEO-P-002-r3-Feeder** (sonst `real_resolved≈0`, Canary-Artefakt). Die Risiko-Skalar-Bindings (var/cvar/sharpe/sortino aus Equity-Return-Serie) sind als `degraded` deklariert und folgen mit der Plumbing.
+
+## 2026-06-08 - SENTR Governance-Gates produktiv verdrahtet (Issue #165)
+
+Folge-Sprint zu PR #164 (Gate-Primitive standalone): Verdrahtung in den Decision-Journal-Pfad — additiv, fail-closed, kein `entry_mode`-Change.
+
+- **`app/security/governance/registry_store.py`** (neu): append-only JSONL-Persistenz unter `artifacts/governance/` für Model-/Prompt-Registry (keyed `(id, version)`, last-write-wins) + Decision-Governance-Audit-Sidecar. Loader fail-closed (unbekannt → `None` → Gate refuse; malformed Row übersprungen). `save_*`-Writer **operator/CLI-only** — Agenten haben keinen Import-Pfad, `mutate_registry` bleibt forbidden.
+- **`app/orchestrator/governed_decision.py`** (neu): `authorize_and_append_decision(...)` führt `authorize_productive_decision` + `validate_decision_audit` als **Hard-Gate vor dem Append** aus. Pass → Journal-Record + `DecisionRegistryReference` (inkl. `registry_hash`) in den Sidecar (keyed `decision_id`). Fail → Refusal-Audit-Record, **kein** Journal-Record, `GovernanceRejectedError`. `resolve_and_append_decision(...)` löst Entries aus den persistierten Registries auf. Sidecar statt Record-Mutation, weil `DecisionRecord` `extra=forbid, frozen` ist → additiv + Legacy-tolerant.
+- **`app/agents/worker.py`**: SENTR-Worker-Mode `governance-audit` (read-only Report über Journal + Sidecar: governed/refused/ungoverned-legacy-Counts, Severity trackt Refusals; analog `sentr kyt-review`).
+- **Invarianten**: Agenten kein Registry-Mutationsrecht (Test pinnt `mutate_registry` forbidden + Capability-Gate denied); Gates pure/read-only; `EXECUTION_ENTRY_MODE` unberührt; bestehendes `append_decision_jsonl` unverändert (Back-compat).
+- **Tests**: `test_governance_registry_store` + `test_governed_decision` + `test_worker_governance_audit` (18 neu) + bestehende 38 Gate-Cases grün = 56; ruff + format + mypy clean. Doku `docs/security/governance_gates.md` § Integration aktualisiert (follow-up → wired).
+
+## 2026-06-08 - Cross-Exchange Per-Venue-Quote-Plumbing (Issue #169)
+
+Folge-Sprint zu PR #168 (pure Weighted-Median-Validierung, nicht verdrahtet, weil `MarketDataPoint` keine Mikrostruktur trägt). Diese PR liefert den Plumbing-Kern — additiv, default-OFF, **keine Execution-Beeinflussung**.
+
+- **`app/market_data/venue_trust.py`** (neu): statischer Venue-Trust-SSOT (`venue_trust_score(provider_id) → [0,1]`), fail-closed (unbekannte Venue → konservativ niedrig `0.3`, nie hoher Default). Item #2.
+- **`app/market_data/quote_builder.py`** (neu): `build_provider_quote(point, microstructure, now_ms)` mappt `MarketDataPoint` + optionale `Microstructure` (bid/ask/depth/latency) auf `ProviderQuote`. Trust aus dem SSOT, `timestamp_ms` aus ISO oder Freshness (nie als „now" erfunden). **Keine gefakte Mikrostruktur**: fehlt bid/ask/depth → Venue wird *ausgeschlossen* (None), nicht mit Zero-Spread-Full-Credit reingemogelt. Item #1.
+- **`app/market_data/cross_exchange_aggregator.py`** (neu): `aggregate_and_validate(asset_id, venue_inputs, ...)` baut N Venue-Quotes für *dasselbe* Symbol, droppt Venues ohne Mikrostruktur, ruft `validate_cross_exchange` und liefert Funnel-Zähler (providers_in/quotes_built/excluded). `run_cross_exchange_validation(..., settings)` gated hinter Default-OFF-Flag → `disabled`-Envelope ohne Median-Run solange aus. **No-Execution-Invariante**: importiert nichts aus execution/orchestrator/risk, `influences_execution=False`. Items #3+#4.
+- **`app/core/settings.py`**: `cross_exchange_validation_enabled` (default False, env `APP_CROSS_EXCHANGE_VALIDATION_ENABLED`).
+- **Tests**: `test_cross_exchange_plumbing.py` (13: Trust-SSOT known/unknown, Quote-Mapping + honest exclusion + Timestamp-Ableitung, Aggregation + Funnel, Flag-OFF/ON-Invariante) + 14 bestehende Validierungs-Tests grün = 27; ruff + format + mypy clean.
+- **Bewusst nicht (Issue #169 §1-Adapter / §5)**: reale bid/ask/depth aus den Live-Exchange-APIs in `bybit`/`okx`/`binance_futures`-Adaptern (Network-Layer-Umbau) + Kalibrierung der `CrossExchangeConfig`-Defaults gegen reale Tick/Spread/Depth-Verteilungen — beides braucht Live-API-Arbeit + reale Daten und ist nicht im sicheren Scope dieser PR. Bis dahin schließt die Aggregation Venues ohne Mikrostruktur ehrlich aus (heute alle → inert), `entry_mode` bleibt disabled.
+
+## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
+
+Negative kostenbereinigte Live-Edge bestätigt (Pi 2026-06-01: P(mu_net>0)=0%, net ≈ −69 bps/notional, n=22). Antwort: messbares Entry-Gate statt Bauchgefühl. Default-Verhalten im Paper-Betrieb unverändert ausser dem Churn-Throttle; vollständig über Env rückrollbar; nie Auto-Live. Siehe `DECISION_LOG.md` D-229 für die volle Begründung.
+
+- **Sprint A — Entry-Safety-Mode** (`app/core/enums.py`, `app/core/settings.py`, `app/orchestrator/trading_loop.py`, `app/orchestrator/models.py`): `EntryMode`-Enum (DISABLED/PAPER/PROBE/LIVE_LIMITED/LIVE_NORMAL), env `EXECUTION_ENTRY_MODE`, Default **PAPER** (nie live). DISABLED stoppt autonome Loop-Entries vor dem Market-Data-Fetch (`CycleStatus.ENTRY_MODE_BLOCKED`). Fail-closed: ein Live-Entry-Mode auf nicht-live Venue wird abgelehnt. Promoted/Operator-Signale sind bewusst NICHT vom Gate erfasst.
+- **Sprint B — CostModel single source** (`app/execution/cost_model.py`, `app/execution/fees.py`, `app/risk/engine.py`): per-side Fees als Quelle, round-trip stets abgeleitet (kein driftbarer Standalone-Wert), maker/taker pro Seite. Paper-Default realistische 10 bp/Seite (statt Worst-Case 60); Worst-Case bleibt als separate Fallback-Schicht bei korruptem/fehlendem YAML. V1-Cost-Geometry-Gate, paper-Engine und Backtest leiten dieselbe round-trip-Kostenbasis aus EINEM Modell ab. Open-Fill-Fees sind von closed-round-trip-Fees getrennt (fixt den +433-vs-−283-Accounting-Bug).
+- **Sprint C — Edge-Diagnostik** (`app/observability/edge_report.py`): side-adjusted return (long/short), net_bps = gross − CostModel-round-trip, bootstrap `P(mu_net>0)` (winrate ist nicht das Urteil), getrennte Buckets closed-PnL / open-MTM / fees_open / fees_closed, Churn-Metriken, ehrliche forward-return-Coverage (Gaps als `no_historical_minute_bars`, nie erfunden).
+- **Sprint D — Edge-Release-Policy** (`app/risk/edge_release_policy.py`): mappt P/net auf die EntryMode-Leiter, DISABLED bei insufficient/n<min_n/P<0.5, PAPER ohne realen net-Edge, LIVE_* nur mit Operator-Sign-off, LIVE_NORMAL zusätzlich OOS-stabil und **nie** auto-promotet. JSON-serialisierbares Decision-Objekt + Operator-Render.
+- **Sprint E — Churn-Killer** (`app/orchestrator/trading_loop.py`): Entry-Throttle (per-Symbol Trades/h, Notional-Turnover/h, Cooldown nach jedem Close inkl. `take`), tighter PROBE-Cap, `RISK_CHURN_*`-Envs (alle 0 = inert). **Hard-Invariante**: Exits (`monitor_positions`/`close_position`) werden NIE vom Churn-Killer oder Entry-Gate blockiert.
+- **Sprint F — Akzeptanz + Doku**: a–g-Traceability gegen bestehende Sprint-Tests verifiziert (keine Redundanz erfunden); neuer Integrations-Akzeptanztest `tests/unit/test_goal_acceptance_20260601.py` (E2E: disabled→ENTRY_MODE_BLOCKED, paper+Churn→CHURN_REJECTED während Exit schliesst, negative Verteilung→DISABLED via `trading edge-gate`, CostModel single-source gate-fee==report-fee); DECISION_LOG D-229 + dieser CHANGELOG + Runbook `docs/strategy/entry_safety_runbook_20260601.md`.
+- **CLI**: `trading edge-report` (Sprint-C-Diagnostik, read-only) und `trading edge-gate` (Sprint-D-Verdict DISABLED/PAPER/PROBE/LIVE_LIMITED/LIVE_NORMAL + Begründung, read-only — ändert `entry_mode` NICHT).
+
+## 2026-05-28 - Premium-Signal Analytics (/goal sprint)
+
+- **Created** `app/observability/premium_signal_analytics.py` (pure, IO-free): eingesetztes Kapital + Anteil am freien Kapital, PnL absolut/prozentual, Per-Target-Status (hit/missed/pending/unknown), Entry-Status + Wartezeit, Trade-Ergebnis, Source-Quality (Wilson-LB über das Trail-Fenster), Analyse-Hinweise.
+- **Extended** `premium_signal_trail.TrailEntry` mit optionalem `analytics`-Block; `build_trail` berechnet ihn pro Signal + Source-Quality im 2. Pass. `/api/premium-signals/trail` reicht ihn unverändert durch (backward-compatible).
+- **Frontend**: neue Komponente `web/src/components/panels/PremiumSignalAnalytics.tsx` (Kapital-/Ergebnis-/Entry-/Quellen-Kacheln, Target-Stepper, Hinweise), eingebunden in `PremiumSignalTrail` mit Fallback auf die alte Detail-Row. TS-Typen in `api.ts` erweitert.
+- **Annahmen** (dokumentiert im Modul-Docstring): `available_capital_at_entry` = freies Cash vor erstem Entry-Fill (aus `portfolio_cash`); Entry-Timing-Schwellen 300s/3600s; Target-„hit" nur bei belastbarer Preis-Evidenz; fehlende Daten werden NIE erfunden, sondern als „nicht verfügbar"/„nicht bewertbar" gezeigt.
+- **Tests**: 34 neue Unit-Tests in `test_premium_signal_analytics.py` (Kapital, %, fehlende/0-Basis, Targets hit/missed/pending/unknown, Entry on-time/waited/late/missed, win/loss/break_even/unknown PnL, internal/external, Source-Quality, incomplete data). Premium-Bereich: `55 passed`; ruff + mypy clean; `tsc -b` + `vite build` grün.
+- **Follow-up (Live-Daten)**: per-Trade-PnL-Fallback aus Fill-Preisen, wenn die Paper-Engine kein `trade_pnl_usd` liefert (Legacy-Close-Pfad) — nur bei vollständigem Close, transparent via `final_pnl_source: engine|fills`. Behebt „unknown"-Ergebnisse für reale abgeschlossene Premium-Trades (z.B. CYS/TRUTH/US: alle Targets hit, PnL war zuvor nicht ausgewiesen). +3 Tests.
+
+---
+
+## 2026-03-24 – 2026-05-28 — Sprint history consolidated in DECISION_LOG (gap notice)
+
+> **Doku-Hinweis (AUDIT-A17):** Zwischen `2026-03-24` und `2026-05-28` wurde der CHANGELOG nicht fortlaufend gepflegt. Die vollständige, evidenzbelegte Entscheidungs- und Sprint-Historie für diesen Zeitraum steht im **`DECISION_LOG.md`** (D-125 … D-228-S3) sowie in den Operator-Memos. Wichtigste Meilensteine dieser Periode: Pi-5-Cutover + Re-Entry (2026-05-07), Phase-0-Security-Stack, Premium-Signal-Pipeline (P0–P2), DuckDB-Pivot, Adaptive-Learning/Regime/Bayes-Stack, Asset-Diversification enforce (D-226), Dispatch-Recall-Proxy (D-227), Asset-Reserve/Fokusfeld-Layer (D-228/S3). Ab hier ist der CHANGELOG wieder append-only.
+
+---
+
+## 2026-03-24 - Alert hit-rate metric (first quality metric)
+
+- **Enriched** `AlertAuditRecord` with prediction fields (sentiment_label, affected_assets, priority, actionable)
+- **Created** `app/alerts/hit_rate.py`: AlertOutcome, classify_hit, build_outcomes_from_records, compute_hit_rate
+- **Added** CLI command: `kai alerts hit-rate` with per-sentiment/per-asset breakdowns
+- **Tests**: 20 new tests in `test_alert_hit_rate.py`
+- Baseline: `1079 passed, ruff clean`
+
+---
+
+## 2026-03-24 - Companion code extraction to companion-ml branch
+
+- **Extracted**: ~80 companion-only files removed from main dev path.
+- **Archived**: `companion-ml` branch preserves all extracted code.
+- **Scope**: 16 research modules, 4 CLI command modules, 5 agent tool modules, `mcp_server.py`, 2 API routers, 26+ test files.
+- **Keepers**: `signals.py`, `watchlists.py`, `briefs.py` in `app/core/`, re-exported via `app/research/__init__.py`.
+- Baseline: `1046 passed, ruff clean`.
+
+---
+
+## 2026-03-24 - PH5C executed; strategic hold active (D-97)
+
+- **Strategic hold imposed (D-97)**: No new companion-ML sprint, decision, or invariant until alert-precision + paper-trading metrics are clearly positive.
+- Baseline: `1046 passed, ruff clean`.
+
+---
+
+## 2026-03-24 - PH5C filter baseline set to pending final freeze
+
+- Canonical state set to `current_sprint = PH5C_FILTER_BEFORE_LLM_BASELINE (pending final freeze)`.
+- Next required step set to `PH5C_STATUS_FREEZE`.
+- PH5B findings accepted; PH5B remains closed.
+- `EMPTY_MANUAL` confirmed as root cause of the PH5B low-signal cluster.
+- Governance conflict remains between execution-ready and status-freeze states; execution stays blocked.
+- Baseline unified to `1609 passed, ruff clean`.
+
+---
+
+
 - Baseline: `1609 passed, ruff clean`.
 
 ---
 
 ## 2026-03-24 - CI hardened (N-8); all 5 jobs green
 
-- `codecov/codecov-action@v4 Ã¢Â†Â’ @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` Ã¢Â€Â” Node 20 warnings eliminated.
 - `hypothesis>=6.0.0` + `pytest-mock>=3.14.0` added to `[dev]` extras (were installed locally but missing from CI).
-- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes Ã¢Â€Â” CWE-327 false positive resolved).
 - ruff format pass over 138 files (no logic changes).
 - Duplicate `asyncio.run(run())` in `send_digest` CLI command removed (pre-existing copy/paste bug).
 - Baseline: `1609 passed, ruff clean`. CI: 5/5 green.
@@ -24,7 +178,6 @@
 
 ## 2026-03-24 - Alert Integration wired into analyze-pending (N-7)
 
-- `app/cli/main.py`: Phase 4 added to `analyze_pending()` Ã¢Â€Â” after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
 - `--no-alerts` flag suppresses Phase 4 entirely.
 - `Alerts dispatched: N` printed when alerts fire.
 - 3 new tests: `tests/unit/cli/test_analyze_pending_alerts.py` (dispatch, --no-alerts suppression, fail-open).
@@ -34,7 +187,6 @@
 ## 2026-03-24 - MCP compat.py extraction complete (N-6)
 
 - Last 5 inline `@mcp.tool()` definitions extracted from `mcp_server.py` into `app/agents/tools/compat.py`.
-- `mcp_server.py`: 402 Ã¢Â†Â’ 232 lines; 0 inline tool definitions.
 - `test_canonical_read.py` + `test_guarded_write.py` upgraded: trivial alias checks replaced with `mcp.list_tools()` registration verification.
 
 ---
@@ -60,11 +212,8 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-81) Ã¢Â€Â” PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
 
 - PH4J_CLOSE_AND_PH4K_DEFINITION sprint executed: governance sync complete.
-- PH4J formally closed; Ã‚Â§78 is now a closed frozen anchor (D-81).
-- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; Ã‚Â§79 contract candidate.
 - All 10 governance docs aligned: PH4J=closed, PH4K=candidate.
 - No PH4K execution before `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 - Baseline unchanged: `1554 passed, ruff clean`.
@@ -80,11 +229,7 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-79/D-80) Ã¢Â€Â” PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
 
-- PH4J formally closed; Ã‚Â§78 is now a frozen anchor.
-- Tag enrichment confirmed: keyword-hit 4Ã¢Â†Â’7, zero-hit 1Ã¢Â†Â’4, assets-only 0Ã¢Â†Â’4.
-- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW Ã¢Â€Â” operator utility review, not more raw expansion.
 - DB test failures remain on a separate track.
 - Governance state: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (candidate)`, `next_required_step = PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 
@@ -133,9 +278,7 @@
 
 ---
 
-## 2026-03-23 - PH4I contract frozen (Ã‚Â§77 D-77); execution-ready
 
-- Ã‚Â§77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
 - No scoring changes, no I-13 conflict, no actionable expansion.
 - Acceptance criteria locked: market_scope > 0/69; 1538+ passed; ruff clean.
 - Governance state advanced to:
@@ -164,7 +307,6 @@
 
 ## 2026-03-23 - PH4G formally closed; PH4H opened in active definition mode
 
-- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as ÃƒÂ‚Ã‚Â§75 anchor.
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened as active definition sprint.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
@@ -190,10 +332,7 @@
 ## 2026-03-23 - [superseded] Premature PH4G closeout/opening record
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
-- ÃƒÂ‚Ã‚Â§75 is now a frozen immutable anchor.
 - Retained: relevance-floor fallback intervention.
-- Reverted: actionable heuristic (I-13 constraint ÃƒÂ¢Ã¢Â‚Â¬Ã¢Â€Â rule-only priority ceiling ÃƒÂ¢Ã¢Â€Â°Ã‚Â¤ 5).
-- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, ÃƒÂ‚Ã‚Â§76).
 - PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (superseded draft state)`
@@ -279,7 +418,6 @@
 - PH4F (`RULE_INPUT_COMPLETENESS_AUDIT`) opened as diagnostic-only sprint (D-68).
 
 
-
 ## 2026-03-24 - V-4 Dual-Write + DB-primary closeout (D-86)
 
 - `app/orchestrator/trading_loop.py`: `run_cycle()` writes `TradingCycleRecord` + `PortfolioStateRecord` to DB via `session_factory`; DB error is non-fatal.
@@ -298,18 +436,12 @@
 - Phase 5 remains blocked until final closeout sync is complete.
 
 
-
 ## 2026-03-24 - PH5A execution complete (D-89)
 
 - PH5A diagnostic script executed against 69-doc paired set.
 - Key findings:
-  - Fallback rate: 0.0% (0/69) Ã¢Â€Â” pipeline fully functional
-  - LLM error proxy rate: 27.5% (19/69) Ã¢Â€Â” main reliability gap identified
-  - Priority mean: 3.96/10 (highÃ¢Â‰Â¥7: 15, mid 4-6: 23, lowÃ¢Â‰Â¤3: 31)
   - Keyword coverage: 62.3% (43/69)
-  - Tag fill rate: 100.0% (69/69) Ã¢Â€Â” Phase 4 complete
   - Watchlist overlap: 52.2% (36/69)
-  - Actionable rate (Tier3): 0.0% Ã¢Â€Â” I-13 confirmed
 - Artifacts: `artifacts/ph5a_reliability_baseline.json` + `artifacts/ph5a_operator_summary.md`
 - PH5A moved to results-review; PH5A-7 (governance closeout) pending.
 
@@ -328,4 +460,8 @@
 - PH5C sprint opened: PH5C_FILTER_BEFORE_LLM_BASELINE (D-95, par85).
 - Artifacts: artifacts/ph5b/ph5b_cluster_analysis.json + artifacts/ph5b/ph5b_operator_summary.md
 
+## 2026-03-24 - PH5C closed; strategic hold imposed (D-97)
 
+- PH5C stub filter baseline: conservative rule recommended (FP=0, recall=58%).
+- Strategic hold: no new Phase-5 sprints until alert-precision and paper-trading metrics positive.
+- Artifacts: artifacts/ph5c/ph5c_stub_filter_baseline.json + ph5c_operator_summary.md

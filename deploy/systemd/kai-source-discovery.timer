@@ -1,0 +1,15 @@
+[Unit]
+Description=KAI Source-Discovery — fire weekly (Mon 05:00 Pi-local) + on boot if missed
+Requires=kai-source-discovery.service
+
+[Timer]
+# Weekly, Monday 05:00 local (Europe/Berlin) — after the nightly recalc-cycle
+# (04:00) has refreshed source_ranking.json, so the rotation pool is fresh.
+OnCalendar=Mon *-*-* 05:00:00
+# Persistent=true → run once at next boot if the Pi was down during the slot.
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=180s
+
+[Install]
+WantedBy=timers.target

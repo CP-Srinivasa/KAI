@@ -190,7 +190,9 @@ def test_daily_loss_above_limit_triggers_kill_switch(
     """When realized loss exceeds max_daily_loss_pct and kill switch enabled,
     the kill switch must be triggered."""
     # loss_pct is the amount we lose as a percentage of equity
-    assume(loss_pct > limit_pct)  # ensure we breach the limit
+    # Require a meaningful gap to avoid floating-point rounding making them equal
+    # (e.g. 0.001000002 vs 0.001 rounds to same value after pnl/equity*100).
+    assume(loss_pct > limit_pct + 0.01)
 
     engine = RiskEngine(
         _make_limits(

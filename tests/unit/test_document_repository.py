@@ -168,8 +168,8 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
         await repo.update_analysis(
             str(saved.id),
             analysis_result,
-            provider_name="companion",
-            metadata_updates={"ensemble_chain": ["openai", "companion"]},
+            provider_name="shadow",
+            metadata_updates={"ensemble_chain": ["openai", "shadow"]},
         )
 
     async with session_factory() as session:
@@ -180,10 +180,166 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.status == DocumentStatus.ANALYZED
     assert stored.is_duplicate is False
     assert stored.is_analyzed is True
-    assert stored.provider == "companion"
+    assert stored.provider == "shadow"
     assert stored.analysis_source == AnalysisSource.INTERNAL
     assert stored.effective_analysis_source == AnalysisSource.INTERNAL
-    assert stored.metadata["ensemble_chain"] == ["openai", "companion"]
+    assert stored.metadata["ensemble_chain"] == ["openai", "shadow"]
     assert stored.sentiment_label == SentimentLabel.BULLISH
     assert stored.priority_score == analysis_result.recommended_priority
     assert stored.categories == ["defi", "layer1"]
+
+
+@pytest.mark.asyncio
+async def test_source_activity_aggregates_per_source(session_factory) -> None:
+    from datetime import timedelta
+
+    from app.storage.models.document import CanonicalDocumentModel
+
+    now = datetime(2026, 6, 17, 12, 0, 0, tzinfo=UTC)
+    rows = [
+        ("rss", now - timedelta(hours=1)),
+        ("rss", now - timedelta(hours=2)),
+        ("rss", now - timedelta(hours=50)),  # outside the 24h window
+        ("okx", now - timedelta(hours=3)),
+        (None, now - timedelta(hours=4)),  # null source → "unknown"
+    ]
+    async with session_factory.begin() as session:
+        for i, (src, fetched) in enumerate(rows):
+            session.add(
+                CanonicalDocumentModel(
+                    id=f"doc-{i}",
+                    url=f"https://example.com/{i}",
+                    title=f"t{i}",
+                    document_type="news",
+                    source_name=src,
+                    fetched_at=fetched,
+                )
+            )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        result = await repo.source_activity(window_hours=24, now=now)
+
+    by = {r.source_name: r for r in result}
+    assert by["rss"].total == 3 and by["rss"].window_count == 2  # 50h-old excluded
+    assert by["okx"].total == 1 and by["okx"].window_count == 1
+    assert by["unknown"].total == 1  # null source coalesced
+    assert by["rss"].last_fetched_at is not None
+    assert by["rss"].silent is False  # within the 7d silence threshold
+    # newest source first: rss (last fetch 1h ago) before okx (3h ago)
+    assert result[0].source_name == "rss"
+
+
+@pytest.mark.asyncio
+async def test_source_activity_silent_flag(session_factory) -> None:
+    from datetime import timedelta
+
+    from app.storage.models.document import CanonicalDocumentModel
+
+    now = datetime(2026, 6, 17, 12, 0, 0, tzinfo=UTC)
+    rows = [
+        ("fresh", now - timedelta(hours=2)),  # recent → not silent
+        ("dead", now - timedelta(hours=200)),  # > 168h → silent
+    ]
+    async with session_factory.begin() as session:
+        for i, (src, fetched) in enumerate(rows):
+            session.add(
+                CanonicalDocumentModel(
+                    id=f"sil-{i}",
+                    url=f"https://example.com/sil/{i}",
+                    title=f"t{i}",
+                    document_type="news",
+                    source_name=src,
+                    fetched_at=fetched,
+                )
+            )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        result = await repo.source_activity(silent_after_hours=168, now=now)
+
+    by = {r.source_name: r for r in result}
+    assert by["fresh"].silent is False
+    assert by["dead"].silent is True  # nothing in 7 days → went quiet
+
+
+@pytest.mark.asyncio
+async def test_source_activity_empty_store(session_factory) -> None:
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        assert await repo.source_activity() == []
+
+
+@pytest.mark.asyncio
+async def test_list_directional_news_events_filters_orders_and_windows(session_factory) -> None:
+    from app.research.news_outcomes import load_news_events
+    from app.storage.models.document import CanonicalDocumentModel
+
+    def _doc(**kw):
+        base = {"document_type": "news", "status": "analyzed", "market_scope": "crypto"}
+        base.update(kw)
+        return CanonicalDocumentModel(**base)
+
+    async with session_factory.begin() as session:
+        session.add_all(
+            [
+                _doc(
+                    id="d1",
+                    url="u1",
+                    title="BTC up",
+                    source_name="cointelegraph",
+                    sentiment_label="bullish",
+                    tickers=["BTC/USDT"],
+                    published_at=datetime(2026, 6, 15, tzinfo=UTC),
+                    directional_confidence=0.8,
+                ),
+                _doc(
+                    id="d2",
+                    url="u2",
+                    title="ETH down",
+                    source_name="decrypt",
+                    sentiment_label="bearish",
+                    tickers=["ETH/USDT"],
+                    published_at=datetime(2026, 6, 20, tzinfo=UTC),
+                    directional_confidence=0.5,
+                ),
+                _doc(  # excluded: neutral
+                    id="d3",
+                    url="u3",
+                    title="meh",
+                    sentiment_label="neutral",
+                    tickers=["BTC/USDT"],
+                    published_at=datetime(2026, 6, 16, tzinfo=UTC),
+                ),
+                _doc(  # passes coarse SQL filter, dropped by load_news_events (empty tickers)
+                    id="d4",
+                    url="u4",
+                    title="vague bull",
+                    source_name="empty",
+                    sentiment_label="bullish",
+                    tickers=[],
+                    published_at=datetime(2026, 6, 17, tzinfo=UTC),
+                ),
+            ]
+        )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        allrows = await repo.list_directional_news_events(since=None)
+        strict = await repo.list_directional_news_events(min_confidence=0.7)
+        windowed = await repo.list_directional_news_events(since=datetime(2026, 6, 18, tzinfo=UTC))
+
+    # coarse SQL filter: drops neutral (sentiment), keeps directional; empty-ticker
+    # doc slips through here and is dropped by the authority (load_news_events).
+    assert all(r["sentiment_label"] != "neutral" for r in allrows)
+    assert "cointelegraph" in {r["source_name"] for r in allrows}
+    # min_confidence keeps only the 0.8 doc (NULL confidence excluded)
+    assert [r["source_name"] for r in strict] == ["cointelegraph"]
+    # since-window drops docs before the cutoff
+    assert [r["source_name"] for r in windowed] == ["decrypt"]
+    # the pure event loader is the authority: only real directional+ticker survive
+    events = load_news_events(allrows)
+    assert [(e.symbol, e.side) for e in events] == [
+        ("BTC/USDT", "long"),
+        ("ETH/USDT", "short"),
+    ]

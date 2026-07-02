@@ -1,0 +1,26 @@
+[Unit]
+Description=KAI Prereg Maturity Check — count out-of-sample cohorts of open pre-registrations, flag DUE ones (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Read-only: one local document-store query per open hypothesis. A DUE line in
+# the journal means "run the eval now" (the count is an upper-bound proxy),
+# never "the claim passed". Writes nothing but journal output; artifact-free by
+# design so the prereg ledger stays the single source of claim truth.
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading prereg-maturity
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+# Tiny: two SELECT COUNT(*) queries.
+MemoryMax=128M
+CPUQuota=50%

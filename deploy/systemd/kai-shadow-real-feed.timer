@@ -1,0 +1,17 @@
+# Fires the shadow-real feed every 30 min. Installed but NOT enabled by
+# default — enabling is a deliberate operator step AND only has effect once
+# EXECUTION_SHADOW_REAL_GENERATOR=true (otherwise each fire is a cheap,
+# DB-free no-op). 30 min matches the shadow-resolver cadence: fresh analyzed
+# documents become shadow candidates well before their resolution windows.
+[Unit]
+Description=KAI Shadow-Real Feed — fire every 30 min (flag-gated, off by default)
+Requires=kai-shadow-real-feed.service
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=30min
+AccuracySec=1min
+RandomizedDelaySec=60s
+
+[Install]
+WantedBy=timers.target

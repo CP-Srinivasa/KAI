@@ -11,17 +11,17 @@ from typing import Any
 
 import pytest
 
+from app.core.schema_runtime import (
+    SchemaValidationError,
+    validate_config_payload,
+    validate_decision_payload,
+)
 from app.core.settings import (
     AppSettings,
     build_runtime_config_payload,
 )
 from app.core.settings import (
     validate_runtime_config_payload as settings_validate_runtime_config_payload,
-)
-from app.schemas.runtime_validator import (
-    SchemaValidationError,
-    validate_config_payload,
-    validate_decision_payload,
 )
 
 # ---------------------------------------------------------------------------

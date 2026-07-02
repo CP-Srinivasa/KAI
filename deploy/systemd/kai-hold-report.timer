@@ -1,0 +1,13 @@
+[Unit]
+Description=Run KAI hold-metrics + forward-replay nightly at 03:00 UTC
+
+[Timer]
+# B-1 (2026-05-07): 03:00 UTC = 04:00/05:00 Europe/Berlin (DST). Liegt vor
+# kai-daily-strategy.timer (08:00 Europe/Berlin), damit Operator-Morning
+# bereits den frischen Forward-Precision-Stand sieht.
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+Unit=kai-hold-report.service
+
+[Install]
+WantedBy=timers.target

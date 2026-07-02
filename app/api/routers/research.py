@@ -8,10 +8,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_document_repo
+from app.core.briefs import ResearchBrief, ResearchBriefBuilder
 from app.core.settings import AppSettings, get_settings
-from app.research.briefs import ResearchBrief, ResearchBriefBuilder
-from app.research.signals import extract_signal_candidates
-from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
+from app.core.signals import extract_signal_candidates
+from app.core.watchlists import WatchlistRegistry, parse_watchlist_type
 from app.storage.repositories.document_repo import DocumentRepository
 
 router = APIRouter()
@@ -113,3 +113,21 @@ async def get_research_signals(
         watchlist_boosts=watchlist_boosts,
     )
     return [c.to_json_dict() for c in candidates[:limit]]
+
+
+@router.get(
+    "/verdicts",
+    summary="List attested falsification verdicts",
+    description=(
+        "Read-only listing of the platform's attested verdict reports "
+        "(hypothesis, machine verdict, prereg link, SHA-256 attestation hash). "
+        "Each hash is recomputable from the report's canonical payload — "
+        "verifiable truth, no trust required."
+    ),
+)
+async def list_verdicts(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[dict[str, Any]]:
+    from app.research.verdict_report import list_verdict_reports
+
+    return list_verdict_reports()[:limit]

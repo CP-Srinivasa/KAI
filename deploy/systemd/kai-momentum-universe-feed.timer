@@ -1,0 +1,19 @@
+[Unit]
+Description=KAI Momentum-Universe-Feed — feed universe symbols into PAPER (hourly ramp)
+
+[Timer]
+# Hourly ticks + per-snapshot dedup (key = snapshot_ts:symbol) → each universe
+# symbol is fed once per 12h universe snapshot; with max_per_run the top-N ramps
+# in over a few ticks (Pi-safe, measured). The same-named .service is
+# auto-activated when the timer fires — deliberately NO `Requires=` (Timer-
+# Requires cascade lesson #414). NOT enabled by default: the operator runs
+# `systemctl enable --now kai-momentum-universe-feed.timer` after flipping
+# MOMENTUM_UNIVERSE_FEED_ENABLED=true.
+OnBootSec=20min
+OnUnitActiveSec=1h
+Persistent=true
+AccuracySec=2min
+RandomizedDelaySec=3min
+
+[Install]
+WantedBy=timers.target

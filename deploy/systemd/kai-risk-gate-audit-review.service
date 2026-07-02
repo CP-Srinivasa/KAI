@@ -1,0 +1,17 @@
+[Unit]
+Description=KAI Risk-Gate Audit-Window Review (read-only enforce-readiness; 2026-06-04 window)
+After=kai-server.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/risk_gate_audit_review.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

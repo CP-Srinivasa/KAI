@@ -1,0 +1,12 @@
+[Unit]
+Description=Trigger KAI systemd Timer Health Probe daily at 04:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 UTC
+AccuracySec=2min
+Persistent=true
+Unit=kai-pi-health.service
+
+[Install]
+WantedBy=timers.target
+

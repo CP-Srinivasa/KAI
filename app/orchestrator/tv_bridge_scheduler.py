@@ -1,0 +1,121 @@
+"""Periodic TradingView -> AlertAudit bridge scheduler (D-156c).
+
+Runs ``persist_tv_events_as_alert_audits`` on a fixed interval so newly
+arrived TV-webhook events land in ``alert_audit.jsonl`` without operator
+intervention.  The auto-annotator picks them up on its own schedule
+(``alerts auto-annotate``), closing the TV-4 Quality-Bar loop:
+
+    TV webhook -> pending_signals -> [this scheduler] -> alert_audit
+                                                        -> auto-annotator
+                                                        -> tv4-quality-bar
+
+Mirrors :class:`PositionMonitorScheduler` (APScheduler, ``max_instances=1``,
+fail-closed ticks).  The bridge is idempotent, so a failed tick just defers
+work to the next one.
+
+Smoke events are filtered by default (same heuristic as
+``provenance_metrics._summarize_tv_pipeline``) to keep the TV precision
+bucket free of test-payload noise.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+_JOB_ID = "tv_bridge"
+
+
+class TVBridgeScheduler:
+    """Schedules periodic TV-event -> alert_audit bridging."""
+
+    def __init__(
+        self,
+        *,
+        interval_seconds: int,
+        artifacts_dir: str | Path = "artifacts",
+        include_smoke: bool = False,
+        hmac_secret: str = "",
+    ) -> None:
+        self._interval_seconds = interval_seconds
+        self._artifacts_dir = Path(artifacts_dir)
+        self._include_smoke = include_smoke
+        self._hmac_secret = hmac_secret
+        self._scheduler = AsyncIOScheduler()
+
+    def start(self) -> None:
+        self._scheduler.add_job(
+            self._tick,
+            trigger="interval",
+            seconds=self._interval_seconds,
+            id=_JOB_ID,
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.start()
+        logger.info(
+            "tv_bridge_scheduler_started",
+            interval_seconds=self._interval_seconds,
+            artifacts_dir=str(self._artifacts_dir),
+            include_smoke=self._include_smoke,
+        )
+
+    def stop(self) -> None:
+        # NEO-F-005: wait=False is intentional — an in-flight tick may log a
+        # CancelledError, which is harmless because the bridge is idempotent
+        # (doc_id dedup). A blocking wait=True could stall FastAPI shutdown
+        # behind a multi-second JSONL scan.
+        self._scheduler.shutdown(wait=False)
+        logger.info("tv_bridge_scheduler_stopped")
+
+    async def _tick(self) -> None:
+        from app.alerts.tv_bridge import persist_tv_events_as_alert_audits
+
+        try:
+            # AUDIT-A1: persist_tv_events_as_alert_audits does a synchronous full
+            # read of two JSONL files + a write. Running it inline in this async
+            # tick would block the FastAPI event loop for the scan duration as
+            # the audit log grows — the same event-loop wedge class that hit RSS
+            # full-text extraction (#104). Offload to a worker thread so HTTP +
+            # Telegram stay responsive while the bridge runs.
+            counts = await asyncio.to_thread(
+                persist_tv_events_as_alert_audits,
+                tv_pending_path=self._artifacts_dir / "tradingview_pending_signals.jsonl",
+                alert_audit_path=self._artifacts_dir / "alert_audit.jsonl",
+                include_smoke=self._include_smoke,
+                hmac_secret=self._hmac_secret,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("tv_bridge_tick_failed", error=str(exc))
+            return
+
+        if counts.get("written", 0) > 0:
+            logger.info("tv_bridge_tick_complete", **counts)
+        else:
+            logger.debug("tv_bridge_tick_complete", **counts)
+
+        # TV→paper feed (2026-06-22): emit bridge envelopes for FRESH TV alerts so
+        # the next bridge fill-tick turns them into paper positions in time. Gated
+        # by ALERT_TRADINGVIEW_PAPER_FEED_ENABLED (no-op when off); fail-soft so a
+        # feed error never breaks the scheduler tick.
+        try:
+            from app.observability.tradingview_paper_feeder import run_from_settings
+
+            tv = await run_from_settings()
+            if tv.get("emitted"):
+                logger.info(
+                    "tv_paper_feed_tick",
+                    emitted=tv.get("emitted"),
+                    unmappable=tv.get("unmappable"),
+                    no_price=tv.get("no_price"),
+                    short_skipped=tv.get("short_skipped"),
+                )
+        except Exception as exc:  # noqa: BLE001 — never break the scheduler tick
+            logger.error("tv_paper_feed_tick_failed", error=str(exc))

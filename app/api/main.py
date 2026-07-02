@@ -1,19 +1,72 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+# 2026-05-09 KAI-Live Phase 2.6: Voice-Audio (Whisper-Upload) wurde bei >1 MB
+# mit 413 Request Entity Too Large abgelehnt — Starlette's default MultiPart-
+# Parser cap (1 MB). 50 MB matched das OpenAI-Whisper-Hard-Limit (25 MB) plus
+# Reserve. Override muss VOR dem ersten App-Boot greifen.
+try:
+    from starlette.formparsers import MultiPartParser
+
+    MultiPartParser.max_file_size = 50 * 1024 * 1024
+    MultiPartParser.max_part_size = 50 * 1024 * 1024
+except Exception as exc:  # pragma: no cover
+    # Don't fail app boot if Starlette internals move — but never swallow it
+    # silently: a no-op override means uploads >1 MB start 413-ing again with
+    # no trace. Log it so the regression is visible (F-11).
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "MultiPart upload-limit override failed (Starlette internals changed?); "
+        "uploads >1MB may be rejected with 413: %s",
+        exc,
+    )
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
+from app.analysis.factory import create_provider
+from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
-from app.api.routers import alerts, dashboard, health, operator, query, research, sources
-from app.core.logging import configure_logging
+from app.api.middleware.security_headers import setup_security_headers
+from app.api.routers import (
+    agents,
+    alerts,
+    dashboard,
+    diversification,
+    events,
+    health,
+    health_premium_pipeline,
+    kai,
+    kyt,
+    ln_control,
+    node_blitz,
+    operator,
+    premium_signals,
+    query,
+    research,
+    signals,
+    sources,
+    tradingview,
+    truth_oracle,
+)
+from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
-from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
+from app.messaging.context_builder import make_context_provider
+from app.messaging.telegram_bot import TelegramOperatorBot, TelegramPoller
+from app.messaging.text_intent import TextIntentProcessor
+from app.messaging.voice_transcriber import VoiceTranscriber
+from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
+from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
-from app.storage.document_ingest import persist_fetch_result
+
+_logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -23,18 +76,169 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     app.state.session_factory = build_session_factory(settings.db)
 
-    async def persist_result(result: FetchResult) -> None:
-        await persist_fetch_result(app.state.session_factory, result)
+    # Build analysis components for full-pipeline mode
+    keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
+    provider = None
+    if settings.pipeline_provider:
+        provider = create_provider(settings.pipeline_provider, settings)
+        if provider is None:
+            _logger.warning(
+                "pipeline_provider_unavailable",
+                provider=settings.pipeline_provider,
+                hint="API key missing? Falling back to rule-based analysis only.",
+            )
+        else:
+            _logger.info(
+                "pipeline_provider_ready",
+                provider=settings.pipeline_provider,
+                cls=type(provider).__name__,
+            )
 
     app.state.rss_scheduler = RSSScheduler(
         app.state.session_factory,
-        persist_result=persist_result,
+        interval_minutes=settings.pipeline_interval_minutes,
+        keyword_engine=keyword_engine,
+        provider=provider,
     )
     app.state.rss_scheduler.start()
+
+    app.state.position_monitor_scheduler = None
+    if settings.execution.position_monitor_enabled:
+        app.state.position_monitor_scheduler = PositionMonitorScheduler(
+            interval_seconds=settings.execution.position_monitor_interval_seconds,
+            provider=settings.market_data_provider,
+        )
+        app.state.position_monitor_scheduler.start()
+
+    app.state.tv_bridge_scheduler = None
+    if settings.tradingview.bridge_scheduler_enabled:
+        app.state.tv_bridge_scheduler = TVBridgeScheduler(
+            interval_seconds=settings.tradingview.bridge_scheduler_interval_seconds,
+            include_smoke=settings.tradingview.bridge_scheduler_include_smoke,
+            hmac_secret=settings.tradingview.bridge_hmac_secret,
+        )
+        app.state.tv_bridge_scheduler.start()
+
+    # L1 sovereign on-chain fee-truth capture (read-only shadow; no capital path).
+    app.state.chain_fee_shadow_scheduler = None
+    if settings.chain.enabled:
+        from app.orchestrator.chain_fee_shadow_scheduler import ChainFeeShadowScheduler
+
+        app.state.chain_fee_shadow_scheduler = ChainFeeShadowScheduler(
+            interval_seconds=settings.chain.fee_shadow_interval_seconds,
+        )
+        app.state.chain_fee_shadow_scheduler.start()
+
+    # Lightning node-reputation telemetry capture (read-only; no capital path).
+    app.state.ln_reputation_scheduler = None
+    if settings.lightning.enabled:
+        from app.orchestrator.ln_reputation_scheduler import LnReputationScheduler
+
+        app.state.ln_reputation_scheduler = LnReputationScheduler(
+            interval_seconds=settings.lightning.reputation_interval_seconds,
+        )
+        app.state.ln_reputation_scheduler.start()
+
+    # P0 automation link: drive the LONG-only technical-paper feeder on an
+    # interval (PAPER only, doubly gated — scheduler_enabled here + the feeder's
+    # own enabled check; all feeder filters stay in force; fail-soft).
+    app.state.technical_paper_scheduler = None
+    if settings.technical_paper.scheduler_enabled:
+        from app.orchestrator.technical_paper_scheduler import TechnicalPaperScheduler
+
+        app.state.technical_paper_scheduler = TechnicalPaperScheduler(
+            interval_seconds=settings.technical_paper.scheduler_interval_seconds,
+        )
+        app.state.technical_paper_scheduler.start()
+
+    # Telegram operator bot — receives commands and free text via long-polling
+    op = settings.operator
+    text_processor = None
+    voice_transcriber = None
+    if op.telegram_polling_enabled and settings.providers.openai_api_key:
+        text_processor = TextIntentProcessor(
+            api_key=settings.providers.openai_api_key,
+            model=settings.providers.openai_model,
+            timeout=settings.providers.openai_timeout,
+        )
+        voice_transcriber = VoiceTranscriber(
+            bot_token=op.telegram_bot_token,
+            openai_api_key=settings.providers.openai_api_key,
+            timeout=settings.providers.openai_timeout,
+        )
+        _logger.info("text_and_voice_processor_ready", model=settings.providers.openai_model)
+
+    # Context provider — feeds recent analyses into LLM prompts
+    context_provider = make_context_provider(app.state.session_factory)
+
+    bot = TelegramOperatorBot(
+        bot_token=op.telegram_bot_token,
+        admin_chat_ids=op.admin_chat_id_list,
+        audit_log_path=op.command_audit_log,
+        dry_run=op.telegram_dry_run,
+        text_processor=text_processor,
+        voice_transcriber=voice_transcriber,
+        context_provider=context_provider,
+        signal_handoff_log_path=op.signal_handoff_log,
+        signal_exchange_outbox_log_path=op.signal_exchange_outbox_log,
+        signal_append_decision_enabled=op.signal_append_decision_enabled,
+        signal_auto_run_enabled=op.signal_auto_run_enabled,
+        signal_auto_run_mode=op.signal_auto_run_mode,
+        signal_auto_run_provider=op.signal_auto_run_provider,
+        signal_forward_to_exchange_enabled=op.signal_forward_to_exchange_enabled,
+        signal_exchange_sent_log_path=op.signal_exchange_sent_log,
+        signal_exchange_dead_letter_log_path=op.signal_exchange_dead_letter_log,
+        dashboard_url=op.telegram_dashboard_url,
+        signal_approval_enabled=settings.execution.operator_signal_approval_enabled,
+        signal_approval_ttl_minutes=settings.execution.operator_signal_approval_ttl_minutes,
+        signal_approval_hmac_secret=settings.execution.operator_signal_approval_hmac_secret,
+    )
+    poller = TelegramPoller(
+        bot,
+        poll_interval=op.telegram_poll_interval_seconds,
+        long_poll_timeout=op.telegram_long_poll_timeout_seconds,
+    )
+    app.state.telegram_bot = bot
+    app.state.telegram_poller = poller
+    if op.telegram_polling_enabled:
+        poller.start()
+        _logger.info(
+            "telegram_poller_start_requested",
+            polling_enabled=True,
+            bot_configured=bot.is_configured,
+            dry_run=op.telegram_dry_run,
+        )
+    else:
+        _logger.info(
+            "telegram_poller_disabled",
+            polling_enabled=False,
+            dry_run=op.telegram_dry_run,
+        )
+
     try:
         yield
     finally:
-        app.state.rss_scheduler.stop()
+        # NEO-F-001: getattr-based teardown so a start()-exception earlier in
+        # lifespan (before a later attribute is ever assigned) does not mask
+        # the original error with a misleading AttributeError in finally.
+        _poller = getattr(app.state, "telegram_poller", None)
+        if _poller is not None:
+            _poller.stop()
+        _rss = getattr(app.state, "rss_scheduler", None)
+        if _rss is not None:
+            _rss.stop()
+        _pm = getattr(app.state, "position_monitor_scheduler", None)
+        if _pm is not None:
+            _pm.stop()
+        _tvb = getattr(app.state, "tv_bridge_scheduler", None)
+        if _tvb is not None:
+            _tvb.stop()
+        _cfs = getattr(app.state, "chain_fee_shadow_scheduler", None)
+        if _cfs is not None:
+            _cfs.stop()
+        _tps = getattr(app.state, "technical_paper_scheduler", None)
+        if _tps is not None:
+            _tps.stop()
 
 
 def create_app() -> FastAPI:
@@ -72,15 +276,76 @@ def create_app() -> FastAPI:
         RequestGovernanceMiddleware,
         max_body_bytes=settings.max_request_body_bytes,
     )
-    setup_auth(app, settings.api_key, settings.env)  # attach bearer-token middleware before startup
+    setup_auth(
+        app,
+        settings.api_key,
+        settings.env,
+        cf_allowed_emails=[
+            e.strip() for e in settings.cf_access_allowed_emails.split(",") if e.strip()
+        ],
+        tv_webhook_enabled=settings.tradingview.webhook_enabled,
+        l402_enabled=settings.lightning.l402_enabled,
+        rate_limit_threshold=settings.auth_rate_limit_threshold,
+        rate_limit_window_seconds=settings.auth_rate_limit_window_seconds,
+        api_key_next=settings.api_key_next,
+    )  # attach auth middleware (CF-Access + Bearer) before startup
+
+    # Security headers (SENTR-F-007). Added last so the headers wrap all
+    # downstream responses including static SPA and router JSON.
+    setup_security_headers(
+        app,
+        enabled=settings.security_headers_enabled,
+        csp_report_only=settings.security_headers_csp_report_only,
+        hsts_max_age=settings.security_headers_hsts_max_age,
+        extra_csp_script_src=settings.security_headers_extra_csp_script_src,
+        allow_tradingview=settings.security_headers_allow_tradingview,
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def _root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/dashboard/", status_code=307)
 
     app.include_router(health.router)
+    # 2026-05-14 P0 #4: End-to-End-Pipeline-Healthcheck. Wird vom Operator-
+    # Dashboard + kai-premium-healthcheck.timer konsumiert. Separater Router
+    # damit der triviale /health (Server-Liveness) ohne DBus-Dependency bleibt.
+    app.include_router(health_premium_pipeline.router)
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)
     app.include_router(research.router, prefix="/research", tags=["research"])
     app.include_router(operator.router)
+    app.include_router(agents.router)
+    app.include_router(signals.router)
+    app.include_router(tradingview.router)
     app.include_router(dashboard.router)
+    app.include_router(events.router)
+    app.include_router(kai.router)
+    app.include_router(kyt.router)
+    # 2026-05-12 Sprint E: Premium-Signal Operator-Actions (5 idempotente
+    # POST-Endpoints + 1 GET für pending-envelopes — Datenquelle für UI-Buttons).
+    app.include_router(premium_signals.router)
+    app.include_router(diversification.router)
+    app.include_router(truth_oracle.router)
+    app.include_router(ln_control.router)
+    app.include_router(node_blitz.router)
+
+    # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
+    # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
+    # vor diesem Catch-all-Mount.
+    _spa_dir = Path("web/dist")
+    if _spa_dir.is_dir():
+        app.mount(
+            "/dashboard",
+            StaticFiles(directory=str(_spa_dir), html=True),
+            name="dashboard_spa",
+        )
+    else:
+        _logger.warning(
+            "dashboard_spa_build_missing",
+            path=str(_spa_dir),
+            hint="Run `npm run build` in web/ to produce the SPA bundle.",
+        )
 
     return app
 

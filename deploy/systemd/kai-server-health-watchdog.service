@@ -1,0 +1,22 @@
+[Unit]
+Description=KAI kai-server Health Watchdog — restart on /health unresponsiveness (event-loop wedge recovery)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=-/home/kai/ai_analyst_trading_bot/.env
+# Complements pi_service_watchdog (which only catches is-active failures): this
+# probes /health and restarts kai-server after N consecutive unresponsive polls,
+# so an event-loop wedge (process active but starved) auto-recovers in minutes.
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m scripts.kai_server_health_watchdog --apply --threshold 3 --cooldown-s 300
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=90
+
+MemoryMax=128M
+CPUQuota=25%

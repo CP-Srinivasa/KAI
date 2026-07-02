@@ -1,0 +1,375 @@
+<#
+  Paper Trading Cron - runs BTC/USDT + ETH/USDT cycles every invocation.
+  Scheduled via Windows Task Scheduler (every 10 minutes).
+
+  Usage (manual):  powershell -ExecutionPolicy Bypass -File scripts\paper_trading_cron.ps1
+
+  Install task:    Run the schtasks command at the bottom of this file, or:
+                   scripts\paper_trading_cron.ps1 -Install
+  Remove task:     schtasks /Delete /TN "KAI-PaperTrading" /F
+#>
+
+param(
+    [switch]$Install
+)
+
+$ErrorActionPreference = "Continue"
+$ProjectRoot = "C:\Users\sasch\.local\bin\ai_analyst_trading_bot"
+$LogFile = Join-Path $ProjectRoot "artifacts\paper_trading_cron.log"
+$Python = "python"
+
+# -- Install mode -------------------------------------------------------------
+if ($Install) {
+    $scriptPath = Join-Path $ProjectRoot "scripts\paper_trading_cron.ps1"
+    $action = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+
+    # Delete existing task if present
+    schtasks /Delete /TN "KAI-PaperTrading" /F 2>$null
+
+    # Create: every 10 minutes, run whether user is logged on or not.
+    # /RL HIGHEST = run with highest privileges (needed for wake-from-sleep)
+    # /RU requires the current user's password (prompted by schtasks).
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    schtasks /Create `
+        /TN "KAI-PaperTrading" `
+        /TR $action `
+        /SC MINUTE /MO 10 `
+        /ST (Get-Date -Format "HH:mm") `
+        /RU $currentUser `
+        /RL HIGHEST `
+        /F
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Task 'KAI-PaperTrading' installed (every 10 min, runs whether logged on or not)."
+        Write-Host ""
+        Write-Host "IMPORTANT: To enable wake-from-sleep, open Task Scheduler GUI:"
+        Write-Host "  1. Open taskschd.msc"
+        Write-Host "  2. Find KAI-PaperTrading"
+        Write-Host "  3. Properties > Conditions > check 'Wake the computer to run this task'"
+        Write-Host "  4. Properties > Settings > check 'Run task as soon as possible after a scheduled start is missed'"
+        Write-Host ""
+        Write-Host "View:   schtasks /Query /TN KAI-PaperTrading"
+        Write-Host "Delete: schtasks /Delete /TN KAI-PaperTrading /F"
+    } else {
+        Write-Host "ERROR: Failed to create scheduled task." -ForegroundColor Red
+        Write-Host "Try running this script as Administrator." -ForegroundColor Yellow
+    }
+    exit
+}
+
+# -- Helpers ------------------------------------------------------------------
+function Write-Log($msg) {
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$ts  $msg" | Out-File -Append -Encoding utf8 $LogFile
+}
+
+function Run-Cycle($symbol) {
+    try {
+        $output = & $Python -m app.cli.main trading run-once `
+            --symbol $symbol `
+            --mode paper `
+            --provider coingecko `
+            --analysis-profile conservative 2>&1 | Out-String
+
+        # Extract key fields
+        $cycleId = if ($output -match "cycle_id=(\S+)") { $Matches[1] } else { "unknown" }
+        $status  = if ($output -match "status=(\S+)")   { $Matches[1] } else { "unknown" }
+        $fill    = if ($output -match "fill_simulated=(\S+)") { $Matches[1] } else { "unknown" }
+
+        Write-Log "$symbol  cycle=$cycleId  status=$status  fill=$fill"
+    } catch {
+        Write-Log "$symbol  ERROR: $_"
+    }
+}
+
+function Monitor-Positions {
+    try {
+        $output = & $Python -m app.cli.main trading monitor-positions `
+            --provider coingecko 2>&1 | Out-String
+        $checked   = if ($output -match "checked=(\S+)")        { $Matches[1] } else { "0" }
+        $triggered = if ($output -match "triggered=(\S+)")      { $Matches[1] } else { "0" }
+        $nomd      = if ($output -match "no_market_data=(\S+)") { $Matches[1] } else { "0" }
+        Write-Log "monitor  checked=$checked  triggered=$triggered  no_market_data=$nomd"
+    } catch {
+        Write-Log "monitor  ERROR: $_"
+    }
+}
+
+function Bridge-Tick {
+    try {
+        $output = & $Python -m app.cli.main trading operator-signal-bridge-tick 2>&1 | Out-String
+        if ($output -match "enabled=False") {
+            return  # fail-closed: silent when disabled
+        }
+        $filled   = if ($output -match "filled=(\S+)")            { $Matches[1] } else { "0" }
+        $pending  = if ($output -match "newly_pending=(\S+)")     { $Matches[1] } else { "0" }
+        $repend   = if ($output -match "re_pending=(\S+)")        { $Matches[1] } else { "0" }
+        $expired  = if ($output -match "expired=(\S+)")           { $Matches[1] } else { "0" }
+        $rejrisk  = if ($output -match "rejected_risk=(\S+)")     { $Matches[1] } else { "0" }
+        Write-Log "bridge  filled=$filled  pending=$pending  repending=$repend  expired=$expired  rejrisk=$rejrisk"
+    } catch {
+        Write-Log "bridge  ERROR: $_"
+    }
+}
+
+function Entry-Watch {
+    try {
+        $output = & $Python -m app.cli.main trading operator-signal-entry-watch `
+            --duration-seconds 55 `
+            --poll-interval-seconds 5 2>&1 | Out-String
+        if ($output -match "enabled=False") {
+            return  # fail-closed: silent when disabled
+        }
+        $triggered = if ($output -match "triggered=(\S+)") { $Matches[1] } else { "0" }
+        $filled    = if ($output -match "bridge_filled=(\S+)") { $Matches[1] } else { "0" }
+        $held      = if ($output -match "held=(\S+)") { $Matches[1] } else { "0" }
+        $stale     = if ($output -match "stale_or_unavailable=(\S+)") { $Matches[1] } else { "0" }
+        Write-Log "entry-watch  triggered=$triggered  bridge_filled=$filled  held=$held  stale=$stale"
+    } catch {
+        Write-Log "entry-watch  ERROR: $_"
+    }
+}
+
+# -- Server watchdog ---------------------------------------------------------
+# Limitation: effective only while the laptop is awake AND Task Scheduler fires.
+# Laptop-offline (lid closed / hibernate) cannot be covered here — rely on the
+# external uptime probe (UptimeRobot → kai-trader.org/health) for that class.
+# See DECISION_LOG D-188.
+function Write-WatchdogIncident($event, $detail) {
+    # UTF-8 no-BOM: Add-Content -Encoding utf8 prepends BOM on PS 5.1, which
+    # breaks strict JSONL parsers (json.loads fails on line 1). Use .NET
+    # UTF8Encoding($false) to write raw UTF-8 without BOM.
+    $incidentFile = Join-Path $ProjectRoot "artifacts\watchdog_incidents.jsonl"
+    $record = [ordered]@{
+        ts      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        event   = $event
+        detail  = $detail
+        host    = $env:COMPUTERNAME
+    } | ConvertTo-Json -Compress
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::AppendAllText($incidentFile, $record + "`n", $utf8NoBom)
+}
+
+function Ensure-Server {
+    try {
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
+            -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        if ($health.StatusCode -eq 200) { return }
+    } catch {}
+
+    # Server is down — full-stack restart via server_start.sh (includes
+    # Telegram poller, RSSScheduler, PositionMonitor, Agent-Worker, Tunnel).
+    # The prior bare uvicorn restart dropped all of those silently.
+    Write-Log "SERVER DOWN - full-stack restart via server_start.sh"
+    $pidFilePath = Join-Path $ProjectRoot ".server.pid"
+    $pidFileExists = Test-Path $pidFilePath
+    $pidFromFile = if ($pidFileExists) { (Get-Content $pidFilePath -ErrorAction SilentlyContinue | Select-Object -First 1) } else { $null }
+    Write-WatchdogIncident "server_down_detected" @{
+        pid_file_exists = $pidFileExists
+        pid_from_file   = $pidFromFile
+    }
+
+    # First try a clean stop (removes zombie PID-file, kills residual procs).
+    $bashExe = "C:\Program Files\Git\bin\bash.exe"
+    if (-not (Test-Path $bashExe)) { $bashExe = "bash" }
+
+    & $bashExe -c "cd '$($ProjectRoot -replace '\\','/')' && scripts/server_stop.sh" 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+
+    # Full-stack start (Ignore-Output — logs land in logs/server.log via script).
+    $startOut = & $bashExe -c "cd '$($ProjectRoot -replace '\\','/')' && scripts/server_start.sh" 2>&1 | Out-String
+    Write-Log "server_start.sh output (first 500 chars): $($startOut.Substring(0, [Math]::Min(500, $startOut.Length)))"
+
+    Start-Sleep -Seconds 5
+    try {
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
+            -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        if ($health.StatusCode -eq 200) {
+            Write-Log "SERVER restarted OK (full stack)"
+            Write-WatchdogIncident "server_restart_ok" @{ method = "server_start.sh" }
+        } else {
+            Write-Log "SERVER restart FAILED (status $($health.StatusCode))"
+            Write-WatchdogIncident "server_restart_failed" @{
+                status = $health.StatusCode
+                method = "server_start.sh"
+            }
+        }
+    } catch {
+        Write-Log "SERVER restart FAILED: $_"
+        Write-WatchdogIncident "server_restart_failed" @{
+            error  = "$_"
+            method = "server_start.sh"
+        }
+    }
+}
+
+# -- Main ---------------------------------------------------------------------
+Set-Location $ProjectRoot
+
+Write-Log "--- cron start ---"
+
+# Ensure the FastAPI server (+ Telegram bot poller) is running.
+Ensure-Server
+
+# Close SL/TP-triggered positions first so new cycles don't compete for slots.
+Monitor-Positions
+
+# Turn accepted operator-signal envelopes into paper fills.
+# Fail-closed: silent no-op unless EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true.
+Bridge-Tick
+Entry-Watch
+
+Run-Cycle "BTC/USDT"
+Start-Sleep -Seconds 15
+Run-Cycle "ETH/USDT"
+
+# Auto-annotate pending directional alerts (every 6th run = ~hourly)
+$marker = Join-Path $ProjectRoot "artifacts\.annotate_counter"
+$counter = 0
+if (Test-Path $marker) { $counter = [int](Get-Content $marker -ErrorAction SilentlyContinue) }
+$counter++
+if ($counter -ge 6) {
+    $counter = 0
+    Write-Log "auto-annotate starting"
+    try {
+        $output = & $Python -m app.cli.main alerts auto-annotate 2>&1 | Out-String
+        $annotated = if ($output -match "(\d+) annotated") { $Matches[1] } else { "0" }
+        Write-Log "auto-annotate done: $annotated annotations"
+    } catch {
+        Write-Log "auto-annotate ERROR: $_"
+    }
+}
+$counter | Out-File -Encoding utf8 $marker
+
+# Daily briefing + health check (once per day, first run after 07:50)
+$hour = (Get-Date).Hour
+$minute = (Get-Date).Minute
+$briefingMarker = Join-Path $ProjectRoot "artifacts\.briefing_date"
+$today = Get-Date -Format "yyyy-MM-dd"
+$lastBriefing = if (Test-Path $briefingMarker) { Get-Content $briefingMarker -ErrorAction SilentlyContinue } else { "" }
+if ($hour -ge 8 -and $lastBriefing -ne $today) {
+    Write-Log "daily-briefing starting"
+    try {
+        $briefing = & $Python -m app.cli.main alerts daily-briefing --notify 2>&1 | Out-String
+        Write-Log "briefing:`n$briefing"
+        $health = & $Python -m app.cli.main alerts health-check --notify 2>&1 | Out-String
+        Write-Log "health-check: $($health.Trim())"
+    } catch {
+        Write-Log "daily-briefing ERROR: $_"
+    }
+    $today | Out-File -Encoding utf8 $briefingMarker
+}
+
+# Daily strategy review skeleton (once per day, first run after 08:00).
+# Writes artifacts/daily_strategy/<today>.md with live metrics + empty
+# Pflicht-Sektionen, plus a Telegram ping. Idempotent — second call same
+# day is a no-op. See feedback_daily_strategy_session_start.md memory.
+$strategyMarker = Join-Path $ProjectRoot "artifacts\.daily_strategy_date"
+$lastStrategy = if (Test-Path $strategyMarker) { Get-Content $strategyMarker -ErrorAction SilentlyContinue } else { "" }
+if ($hour -ge 8 -and $lastStrategy -ne $today) {
+    Write-Log "daily-strategy bootstrap starting"
+    try {
+        $stratOutput = & $Python -m app.cli.main daily-strategy bootstrap 2>&1 | Out-String
+        Write-Log "daily-strategy: $($stratOutput.Trim())"
+    } catch {
+        Write-Log "daily-strategy ERROR: $_"
+    }
+    $today | Out-File -Encoding utf8 $strategyMarker
+}
+
+# Pipeline run-all (every 4th run = ~40 min, ingests all active RSS feeds)
+$pipelineMarker = Join-Path $ProjectRoot "artifacts\.pipeline_counter"
+$pipelineCounter = 0
+if (Test-Path $pipelineMarker) { $pipelineCounter = [int](Get-Content $pipelineMarker -ErrorAction SilentlyContinue) }
+$pipelineCounter++
+if ($pipelineCounter -ge 4) {
+    $pipelineCounter = 0
+    Write-Log "pipeline run-all starting"
+    try {
+        $output = & $Python -m app.cli.main pipeline run-all --top-n 1 2>&1 | Out-String
+        Write-Log "pipeline run-all done"
+    } catch {
+        Write-Log "pipeline run-all ERROR: $_"
+    }
+}
+$pipelineCounter | Out-File -Encoding utf8 $pipelineMarker
+
+# NewsData.io ingestion RETIRED 2026-07-01 (ADR 0012): 4252 ingested docs, 0
+# directional (100% neutral) = pure classifier load with no signal. The pipeline
+# code (run_newsdata_pipeline / `pipeline newsdata`) stays available for manual
+# use; only the scheduled fetch is removed. Re-enable = restore this block.
+
+# YouTube channel ingestion (every 12th run = ~2h)
+$youtubeMarker = Join-Path $ProjectRoot "artifacts\.youtube_counter"
+$youtubeCounter = 0
+if (Test-Path $youtubeMarker) { $youtubeCounter = [int](Get-Content $youtubeMarker -ErrorAction SilentlyContinue) }
+$youtubeCounter++
+if ($youtubeCounter -ge 12) {
+    $youtubeCounter = 0
+    $channelFile = Join-Path $ProjectRoot "monitor\youtube_channels.txt"
+    if (Test-Path $channelFile) {
+        $channels = Get-Content $channelFile | Where-Object { $_ -match "^https" }
+        $ytTotal = 0
+        foreach ($ch in $channels) {
+            try {
+                $output = & $Python -m app.cli.main pipeline youtube $ch `
+                    --max-results 3 --top-n 1 2>&1 | Out-String
+                $ytTotal++
+            } catch {
+                Write-Log "youtube ERROR for $($ch): $_"
+            }
+        }
+        Write-Log "youtube done: $ytTotal channels processed"
+    }
+}
+$youtubeCounter | Out-File -Encoding utf8 $youtubeMarker
+
+# TV-4 bridge: process promoted TradingView signals (every run)
+try {
+    $tvOutput = & $Python -m app.cli.main tradingview run 2>&1 | Out-String
+    if ($tvOutput -match "(\d+) signals processed") {
+        Write-Log "tv4-bridge: $($Matches[1]) signals processed"
+    }
+} catch {
+    Write-Log "tv4-bridge ERROR: $_"
+}
+
+# X/Twitter social feed (every 6th run = ~hourly)
+$twitterMarker = Join-Path $ProjectRoot "artifacts\.twitter_counter"
+$twitterCounter = 0
+if (Test-Path $twitterMarker) { $twitterCounter = [int](Get-Content $twitterMarker -ErrorAction SilentlyContinue) }
+$twitterCounter++
+if ($twitterCounter -ge 6) {
+    $twitterCounter = 0
+    Write-Log "twitter fetch starting"
+    try {
+        $output = & $Python -m app.cli.main pipeline twitter --top-n 5 2>&1 | Out-String
+        Write-Log "twitter done"
+    } catch {
+        Write-Log "twitter ERROR: $_"
+    }
+}
+$twitterCounter | Out-File -Encoding utf8 $twitterMarker
+
+# Dashboard freshness self-test (cheap loopback probes, no DB writes).
+# External-edge probe (D-212) auto-activates when KAI_FRESHNESS_EXTERNAL_BASE
+# is in the environment. Laptop-cron stays loopback-only by default; set the
+# env-var to add the public-edge probe on top. No CLI arg needed.
+# Logs to artifacts/freshness_status.json + logs/freshness_check.log.
+try {
+    $output = & $Python "$ProjectRoot\scripts\freshness_check.py" 2>&1 | Out-String
+    $overall = if ($output -match "KAI Freshness \((\w+)\)") { $Matches[1] } else { "?" }
+    Write-Log "freshness: $overall"
+    if ($overall -eq "CRIT" -or $overall -eq "WARN") {
+        # Capture the per-probe lines so the cron log shows what drifted.
+        foreach ($line in ($output -split "`n")) {
+            if ($line -match "^\s*\[(WARN|CRIT|DOWN)\]") {
+                Write-Log "  $($line.Trim())"
+            }
+        }
+    }
+} catch {
+    Write-Log "freshness ERROR: $_"
+}
+
+Write-Log "--- cron end ---"

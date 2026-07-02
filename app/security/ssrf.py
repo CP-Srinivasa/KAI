@@ -9,22 +9,35 @@ Blocked:
 - Loopback: 127.0.0.0/8, ::1
 - Link-local / cloud metadata: 169.254.0.0/16 (AWS, GCP, Azure metadata)
 - Multicast: 224.0.0.0/4
+- IPv4-mapped IPv6 (``::ffff:127.0.0.1``) and other non-global IPv6 — the
+  mapped IPv4 is unwrapped and re-checked, and a property catch-all blocks
+  any private/loopback/link-local/reserved/multicast/unspecified address that
+  is not in the explicit network lists.
 - Missing or empty host
 
 Usage:
-    from app.security.ssrf import validate_url
-    validate_url(url)          # raises SSRFError on violation
+    from app.security.ssrf import validate_url, ssrf_redirect_hook
+    validate_url(url)          # raises SecurityError on violation
+
+    # When following redirects, re-validate every hop — the initial-URL check
+    # alone is bypassed by a 3xx Location pointing at an internal host:
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        event_hooks={"response": [ssrf_redirect_hook]},
+    ) as client:
+        ...
 """
 
 from __future__ import annotations
 
 import ipaddress
 import socket
+from typing import Any
 from urllib.parse import urlparse
 
 from app.core.errors import SecurityError
 
-__all__ = ["validate_url", "is_safe_url", "SecurityError"]
+__all__ = ["validate_url", "is_safe_url", "ssrf_redirect_hook", "SecurityError"]
 
 # Private and reserved IPv4 networks — never reachable from the internet
 _BLOCKED_NETWORKS_V4: tuple[ipaddress.IPv4Network, ...] = (
@@ -52,6 +65,53 @@ _BLOCKED_NETWORKS_V6: tuple[ipaddress.IPv6Network, ...] = (
 )
 
 _ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _check_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, url: str) -> None:
+    """Raise SecurityError if ``ip`` is private/reserved/internal.
+
+    Three layers, in order:
+    1. IPv4-mapped IPv6 (``::ffff:a.b.c.d``) is unwrapped to its IPv4 form so a
+       literal like ``::ffff:127.0.0.1`` cannot smuggle loopback past the v6
+       checks (the mapped address is in none of the blocked v6 networks).
+    2. Explicit network lists (documentation/TEST-NET ranges that the stdlib
+       property flags do not all cover).
+    3. Property catch-all — blocks anything non-global that a future address
+       class might add without us editing the explicit lists.
+    """
+    # 1. Unwrap IPv4-mapped IPv6 and re-dispatch as IPv4.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        _check_ip(ip.ipv4_mapped, url)
+        return
+
+    # 2. Explicit network lists.
+    if isinstance(ip, ipaddress.IPv4Address):
+        for network in _BLOCKED_NETWORKS_V4:
+            if ip in network:
+                raise SecurityError(
+                    f"URL '{url}' resolves to private/reserved IP {ip} "
+                    f"({network}) — SSRF protection blocked this request."
+                )
+    else:
+        for net6 in _BLOCKED_NETWORKS_V6:
+            if ip in net6:
+                raise SecurityError(
+                    f"URL '{url}' resolves to private/reserved IPv6 {ip} "
+                    f"({net6}) — SSRF protection blocked this request."
+                )
+
+    # 3. Property catch-all — defence in depth against ranges not listed above.
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        raise SecurityError(
+            f"URL '{url}' resolves to non-global IP {ip} — SSRF protection blocked this request."
+        )
 
 
 def validate_url(url: str) -> None:
@@ -92,21 +152,7 @@ def validate_url(url: str) -> None:
             ip = ipaddress.ip_address(raw_ip)
         except ValueError:
             continue
-
-        if isinstance(ip, ipaddress.IPv4Address):
-            for network in _BLOCKED_NETWORKS_V4:
-                if ip in network:
-                    raise SecurityError(
-                        f"URL '{url}' resolves to private/reserved IP {ip} "
-                        f"({network}) — SSRF protection blocked this request."
-                    )
-        elif isinstance(ip, ipaddress.IPv6Address):
-            for net6 in _BLOCKED_NETWORKS_V6:
-                if ip in net6:
-                    raise SecurityError(
-                        f"URL '{url}' resolves to private/reserved IPv6 {ip} "
-                        f"({net6}) — SSRF protection blocked this request."
-                    )
+        _check_ip(ip, url)
 
 
 def is_safe_url(url: str) -> bool:
@@ -116,3 +162,35 @@ def is_safe_url(url: str) -> bool:
         return True
     except SecurityError:
         return False
+
+
+async def ssrf_redirect_hook(response: Any) -> None:
+    """httpx ``response`` event hook that re-runs SSRF validation on redirects.
+
+    ``validate_url`` only guards the *initial* URL. With ``follow_redirects=True``
+    an attacker-controlled (or compromised) source can answer with a ``3xx``
+    ``Location: http://169.254.169.254/...`` (or ``http://127.0.0.1/...``) and
+    reach an internal host that the first check never saw. Registering this hook
+    validates the redirect target *before* httpx dispatches the next request:
+
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            event_hooks={"response": [ssrf_redirect_hook]},
+        ) as client:
+            ...
+
+    Relative ``Location`` values are resolved against the current URL. A blocked
+    target raises ``SecurityError``, which aborts the redirect chain. The hook is
+    header-only — it never reads the (still-unconsumed) response body.
+    """
+    if not getattr(response, "is_redirect", False):
+        return
+    location = response.headers.get("location")
+    if not location:
+        return
+    # Resolve relative redirects against the URL that produced this response.
+    try:
+        target = str(response.url.join(location))
+    except Exception:  # noqa: BLE001 — malformed Location is itself a rejection
+        raise SecurityError(f"malformed redirect Location: {location!r}") from None
+    validate_url(target)

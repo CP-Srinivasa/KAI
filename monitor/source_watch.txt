@@ -1,0 +1,26 @@
+# ============================================================
+# V-DB4c 2026-05-08: Source-Watch-Liste (Soft-Confidence-Adjuster)
+# ============================================================
+# Sources die hier gelistet sind, bekommen einen Priority-Modifier von -1
+# in der Eligibility-Berechnung. Damit landen ihre Alerts auf einer Stufe
+# tiefer, was den LOW_PRIORITY-Gate (P<=7 → block) härter greifen laesst.
+#
+# Effekt:
+# - Source mit P9-Alert auf Watch-Liste → effektiv P8 → bleibt eligible (keine
+#   Aenderung gegenueber heute), aber relative Gewichtung sinkt.
+# - Source mit P8-Alert auf Watch-Liste → effektiv P7 → wird BLOCKED.
+# - Source mit P7-Alert ist eh schon geblockt.
+#
+# Format: ein Source-Name pro Zeile (lower-case, wie source_name in den Audits).
+# Zeilen mit `#` sind Kommentare.
+#
+# Kuration: Operator pflegt nach Sicht auf das Per-Source-Precision-Panel
+# (Dashboard, V-DB4a). Wenn eine Source Wilson-Lower <50% bei n>=20 zeigt,
+# Eintrag hier hinzufügen mit Begründung im Kommentar darüber.
+#
+# Hard-Blocks (Source komplett aus directional-Pool entfernen) gehen weiter
+# ueber `_LOW_PRECISION_SOURCES` in app/alerts/eligibility.py — das ist eine
+# Operator-Decision mit Decision-Journal-Eintrag, kein File-Edit.
+# ============================================================
+
+# (Bislang keine Eintraege — Per-Source-Tile beobachten und nach Bedarf hinzufuegen.)

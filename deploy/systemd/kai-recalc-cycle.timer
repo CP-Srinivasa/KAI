@@ -1,0 +1,17 @@
+[Unit]
+Description=KAI Recalc-Cycle — fire daily at 04:00 Pi-local time
+Requires=kai-recalc-cycle.service
+
+[Timer]
+# Daily at 04:00 local time — after midnight alert-audit-stream is quiet,
+# before paper-trading-cron next morning peak. Pi-local timezone (Europe/Berlin).
+OnCalendar=*-*-* 04:00:00
+# Persistent=true → wenn der Pi während des Schedule-Slots aus war (Reboot/Outage),
+# führt der Service beim nächsten Boot einmal aus statt 24h zu warten.
+Persistent=true
+AccuracySec=1min
+# Randomized delay so parallel timer-services don't all hammer the disk at 04:00:00.
+RandomizedDelaySec=120s
+
+[Install]
+WantedBy=timers.target

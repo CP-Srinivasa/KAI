@@ -1,60 +1,130 @@
 import logging
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from app.cli.commands.trading import trading_app
-from app.cli.research import (
-    extract_runbook_command_refs,
-    get_invalid_research_command_refs,
-    get_provisional_research_command_names,
-    get_registered_research_command_names,
-    get_research_command_inventory,
-    research_app,
+from app.alerts.audit import (
+    AlertAuditRecord,
+    AlertOutcomeAnnotation,
+    OutcomeLabel,
+    append_outcome_annotation,
+    load_alert_audits,
+    load_outcome_annotations,
+)
+from app.alerts.eligibility import evaluate_directional_eligibility
+from app.alerts.hold_metrics import build_hold_metrics_report, write_hold_metrics_report
+from app.alerts.offline_baseline import (
+    build_offline_baseline_report,
+    write_offline_baseline_report,
 )
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
-from app.ingestion.classifier import classify_url
-from app.ingestion.resolvers.podcast import load_and_resolve_podcasts
-from app.ingestion.resolvers.youtube import load_youtube_channels
-from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
+from app.ingestion.rss.service import RSSCollectedFeed
+from app.messaging.exchange_relay import (
+    build_signal_pipeline_status,
+    relay_exchange_outbox_once,
+)
 from app.storage.db.session import build_session_factory
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
-__all__ = [
-    "app",
-    "extract_runbook_command_refs",
-    "get_invalid_research_command_refs",
-    "get_provisional_research_command_names",
-    "get_registered_research_command_names",
-    "get_research_command_inventory",
-]
+__all__ = ["app"]
 
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
 
-sources_app = typer.Typer(help="Source management commands", no_args_is_help=True)
-podcasts_app = typer.Typer(help="Podcast resolution commands", no_args_is_help=True)
-youtube_app = typer.Typer(help="YouTube resolution commands", no_args_is_help=True)
-query_app = typer.Typer(help="Query commands", no_args_is_help=True)
+
+def _safe_text(text: str) -> str:
+    """Replace characters unencodable by the Windows legacy console (cp1252)."""
+    if sys.platform != "win32":
+        return text
+    try:
+        text.encode(sys.stdout.encoding or "utf-8")
+        return text
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(sys.stdout.encoding or "cp1252", errors="replace").decode(
+            sys.stdout.encoding or "cp1252"
+        )
+
+
+def _build_primary_provider() -> Any:
+    """Build Ensemble (OpenAI -> Gemini -> Grok) provider with fallback. None if unconfigured."""
+    settings = get_settings()
+    providers: list[Any] = []
+    if settings.providers.openai_api_key:
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+
+        providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+
+        providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
+    if settings.providers.xai_fallback_enabled and settings.providers.xai_api_key:
+        from app.integrations.xai.provider import GrokAnalysisProvider
+
+        providers.append(GrokAnalysisProvider.from_settings(settings.providers))
+    if not providers:
+        return None
+    if len(providers) == 1:
+        return providers[0]
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    return EnsembleProvider(providers)
+
+
+def _maybe_gemini_shadow() -> Any:
+    """Return shadow analysis provider, preferring Anthropic/Claude for independent signal."""
+    settings = get_settings()
+    if settings.providers.anthropic_api_key:
+        from app.integrations.anthropic.provider import AnthropicAnalysisProvider
+
+        return AnthropicAnalysisProvider.from_settings(settings.providers)
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+
+        return GeminiAnalysisProvider.from_settings(settings.providers)
+    return None
+
+
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
+analyze_app = typer.Typer(help="Analysis commands", no_args_is_help=True)
+signals_app = typer.Typer(help="Signal commands", no_args_is_help=True)
+query_app = typer.Typer(help="Compatibility alias for analysis commands", no_args_is_help=True)
 alerts_app = typer.Typer(help="Alert commands", no_args_is_help=True)
 
-app.add_typer(sources_app, name="sources")
-app.add_typer(podcasts_app, name="podcasts")
-app.add_typer(youtube_app, name="youtube")
-app.add_typer(query_app, name="query")
 app.add_typer(ingest_app, name="ingest")
-app.add_typer(pipeline_app, name="pipeline")
+app.add_typer(pipeline_app, name="pipeline", hidden=True)
+app.add_typer(analyze_app, name="analyze")
+app.add_typer(signals_app, name="signals")
+app.add_typer(query_app, name="query", hidden=True)
 app.add_typer(alerts_app, name="alerts")
-app.add_typer(research_app, name="research")
+
+# Lazy import to avoid heavy trading deps at top-level
+from app.cli.commands.audit import audit_app  # noqa: E402
+from app.cli.commands.daily_strategy import daily_strategy_app  # noqa: E402
+from app.cli.commands.ingestion import ingestion_app  # noqa: E402
+from app.cli.commands.learning import learning_app  # noqa: E402
+from app.cli.commands.source import source_app  # noqa: E402
+from app.cli.commands.trading import trading_app  # noqa: E402
+from app.cli.commands.tradingview import tradingview_app  # noqa: E402
+from app.cli.commands.universe import universe_app  # noqa: E402
+
 app.add_typer(trading_app, name="trading")
+app.add_typer(tradingview_app, name="tradingview")
+app.add_typer(daily_strategy_app, name="daily-strategy")
+app.add_typer(ingestion_app, name="ingestion")
+app.add_typer(learning_app, name="learning")
+app.add_typer(source_app, name="source")
+app.add_typer(audit_app, name="audit")
+app.add_typer(universe_app, name="momentum-universe")
 
 
 @app.callback()
@@ -63,309 +133,7 @@ def main() -> None:
     configure_logging(settings.log_level)
 
 
-# ── sources ──────────────────────────────────────────────────────────────────
-
-
-@sources_app.command("classify")
-def sources_classify(
-    url: str = typer.Argument(..., help="URL to classify"),
-) -> None:
-    """Classify a single URL into its SourceType."""
-    result = classify_url(url)
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Field")
-    table.add_column("Value")
-    table.add_row("URL", url)
-    table.add_row("Source Type", result.source_type.value)
-    table.add_row("Status", result.status.value)
-    table.add_row("Notes", result.notes or "—")
-    console.print(table)
-
-
-# ── podcasts ─────────────────────────────────────────────────────────────────
-
-
-@podcasts_app.command("resolve")
-def podcasts_resolve() -> None:
-    """Resolve all podcast sources from monitor/podcast_feeds_raw.txt."""
-    settings = get_settings()
-    monitor_dir = Path(settings.monitor_dir)
-    resolved, unresolved = load_and_resolve_podcasts(monitor_dir)
-
-    console.print(f"\n[bold green]Resolved ({len(resolved)}):[/bold green]")
-    for src in resolved:
-        console.print(f"  [green]✓[/green] {src.resolved_url}")
-        if src.notes:
-            console.print(f"    [dim]{src.notes}[/dim]")
-
-    console.print(f"\n[bold yellow]Unresolved ({len(unresolved)}):[/bold yellow]")
-    for src in unresolved:
-        console.print(f"  [yellow]✗[/yellow] {src.raw_url} [{src.status.value}]")
-        if src.notes:
-            console.print(f"    [dim]{src.notes}[/dim]")
-
-
-# ── youtube ──────────────────────────────────────────────────────────────────
-
-
-@youtube_app.command("resolve")
-def youtube_resolve() -> None:
-    """Resolve and normalize YouTube channels from monitor/youtube_channels.txt."""
-    settings = get_settings()
-    monitor_dir = Path(settings.monitor_dir)
-    channels = load_youtube_channels(monitor_dir)
-
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Handle")
-    table.add_column("Type")
-    table.add_column("Normalized URL")
-    table.add_column("Notes")
-
-    for ch in channels:
-        table.add_row(ch.handle or "?", ch.channel_type, ch.normalized_url, ch.notes or "")
-
-    console.print(table)
-    console.print(f"\n[bold]{len(channels)} channels[/bold] (deduplicated)")
-
-
-# ── query ─────────────────────────────────────────────────────────────────────
-
-
-@query_app.command("validate")
-def query_validate(
-    query: str = typer.Argument(..., help="Query string to validate"),
-) -> None:
-    """Validate a query string against the DSL parser."""
-    from app.core.query import QueryParser, QueryParserError
-
-    console.print(f"[bold green]Query received:[/bold green] {query}\n")
-    try:
-        parser = QueryParser(query)
-        ast = parser.parse()
-        console.print("[bold blue]✓ Valid Syntax! AST:[/bold blue]")
-        console.print(f"[cyan]{ast}[/cyan]")
-    except QueryParserError as err:
-        console.print(f"[bold red]✗ Syntax Error:[/bold red] {err}")
-        raise typer.Exit(1) from err
-
-
-@query_app.command("analyze-pending")
-def analyze_pending(
-    limit: int = typer.Option(50, help="Max documents to analyze"),
-    provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
-    no_alerts: bool = typer.Option(False, "--no-alerts", help="Skip alert dispatch after analysis"),
-) -> None:
-    """Run the analysis pipeline on all pending (unanalyzed) documents."""
-    import asyncio
-
-    async def run() -> None:
-        settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-
-        from app.analysis.factory import create_provider
-        from app.analysis.keywords.engine import KeywordEngine
-        from app.analysis.pipeline import AnalysisPipeline
-        from app.core.enums import DocumentStatus
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
-
-        console.print("[bold]Initializing Analysis Engine...[/bold]")
-        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        try:
-            provider_obj = create_provider(provider, settings)
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            raise typer.Exit(1) from e
-
-        if not provider_obj:
-            console.print(
-                f"[yellow]Warning:[/yellow] No API key found for provider '{provider}'."
-                " LLM Analysis will be skipped."
-            )
-        else:
-            console.print(
-                f"[cyan]Using LLM Provider:[/cyan]"
-                f" {provider_obj.provider_name} ({provider_obj.model})"
-            )
-
-        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
-        session_factory = build_session_factory(settings.db)
-
-        # Phase 1: Read pending docs — session committed immediately after fetch
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.get_pending_documents(limit=limit)
-
-        if not docs:
-            console.print("[green]No pending documents to analyze.[/green]")
-            return
-
-        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
-
-        # Phase 2: Run analysis pipeline — LLM HTTP calls happen outside any DB session
-        results = await pipeline.run_batch(docs)
-
-        # Phase 3: Write results — new session, no LLM calls inside
-        success_count = 0
-        error_count = 0
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-
-            for res in results:
-                if not res.success:
-                    console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass  # best-effort — do not mask the original error
-                    continue
-
-                # apply_to_document() merges entities + scores + priority onto doc
-                res.apply_to_document()
-
-                # I-12: analysis_result=None MUST NOT produce status=ANALYZED
-                # In normal operation this is unreachable (fallback always builds a result),
-                # but defensive guard prevents silent data corruption on future code changes.
-                if res.analysis_result is None:
-                    console.print(
-                        f"[yellow]Skipped {res.document.id}:"
-                        " no analysis result (no provider configured?)[/yellow]"
-                    )
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass
-                    continue
-
-                try:
-                    await repo.update_analysis(
-                        str(res.document.id),
-                        res.analysis_result,
-                        provider_name=res.document.provider,
-                        metadata_updates=res.trace_metadata,
-                    )
-                    success_count += 1
-                except Exception as e:
-                    console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass  # best-effort — do not mask the original error
-
-        console.print(
-            f"[bold green]Analysis complete![/bold green] "
-            f"{success_count} success, {error_count} failed."
-        )
-
-        # Phase 4: Alert dispatch — outside DB session, fail-open
-        if not no_alerts and success_count > 0:
-            from app.alerts.service import AlertService
-
-            alert_service = AlertService.from_settings(settings)
-            alert_count = 0
-            for res in results:
-                if not res.success or res.analysis_result is None:
-                    continue
-                try:
-                    deliveries = await alert_service.process_document(
-                        res.document,
-                        res.analysis_result,
-                        spam_probability=res.document.spam_probability or 0.0,
-                    )
-                    if deliveries:
-                        alert_count += 1
-                except Exception as exc:
-                    logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)
-
-            if alert_count:
-                console.print(f"[cyan]Alerts dispatched: {alert_count}[/cyan]")
-
-    asyncio.run(run())
-
-
-# ── query list ────────────────────────────────────────────────────────────────
-
-
-@query_app.command("list")
-def query_list(
-    limit: int = typer.Option(20, help="Max documents to return"),
-    min_priority: int = typer.Option(1, help="Minimum priority score filter (1-10)"),
-    source_id: str = typer.Option(None, help="Filter by source ID"),
-    asset: str = typer.Option(None, help="Filter to specific asset/ticker (e.g. BTC)"),
-    watchlist: str = typer.Option(None, help="Filter using a named watchlist tag (e.g. defi)"),
-) -> None:
-    """List analyzed documents sorted by priority score (highest first)."""
-    import asyncio
-
-    async def run() -> None:
-        from app.research.watchlists import WatchlistRegistry
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
-
-        settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-        session_factory = build_session_factory(settings.db)
-
-        # Resolve watchlist symbols
-        allowed_assets = set()
-        if asset:
-            allowed_assets.add(asset.upper())
-        if watchlist:
-            registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
-            allowed_assets.update(s.upper() for s in registry.get_watchlist(watchlist))
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.list(
-                is_analyzed=True,
-                source_id=source_id,
-                limit=limit * 5 if allowed_assets else limit,  # Grab more if filtering in-memory
-            )
-
-        filtered = [d for d in docs if (d.priority_score or 0) >= min_priority]
-
-        if allowed_assets:
-            filtered = [
-                d
-                for d in filtered
-                if any(t.upper() in allowed_assets for t in (d.tickers + d.crypto_assets))
-            ]
-
-        filtered.sort(key=lambda d: d.priority_score or 0, reverse=True)
-        filtered = filtered[:limit]
-
-        if not filtered:
-            console.print("[yellow]No analyzed documents found.[/yellow]")
-            return
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Pri", style="bold", width=4)
-        table.add_column("Rel", width=5)
-        table.add_column("Imp", width=5)
-        table.add_column("Sentiment", width=10)
-        table.add_column("Source", width=10)
-        table.add_column("Title")
-
-        for doc in filtered:
-            pri = str(doc.priority_score or "–")
-            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
-            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
-            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            source = (doc.source_id or "–")[:10]
-            table.add_row(pri, rel, imp, sentiment, source, doc.title or "–")
-
-        console.print(table)
-        console.print(f"\n[bold]{len(filtered)} documents[/bold] (min priority {min_priority})")
-
-    asyncio.run(run())
-
-
-# ── ingest ────────────────────────────────────────────────────────────────────
+# ── ingest rss ────────────────────────────────────────────────────────────────
 
 
 @ingest_app.command("rss")
@@ -437,7 +205,9 @@ async def _collect_rss_feed(
     source_name: str,
 ) -> RSSCollectedFeed:
     settings = get_settings()
-    return await collect_rss_feed(
+    from app.pipeline.service import collect_feed_for_pipeline
+
+    return await collect_feed_for_pipeline(
         url=url,
         source_id=source_id,
         source_name=source_name,
@@ -456,7 +226,7 @@ async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> Inges
     return await persist_fetch_result(session_factory, result, dry_run=dry_run)
 
 
-# ── pipeline ──────────────────────────────────────────────────────────────────
+# ── pipeline run ──────────────────────────────────────────────────────────────
 
 
 @pipeline_app.command("run")
@@ -472,27 +242,26 @@ def pipeline_run(
 
     async def run() -> None:
         from app.analysis.keywords.engine import KeywordEngine
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
         from app.pipeline.service import run_rss_pipeline
 
         settings = get_settings()
         monitor_dir = Path(settings.monitor_dir)
 
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
-        else:
-            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
+        provider = _build_primary_provider()
+        if provider is None:
+            console.print("[yellow]Warning:[/yellow] No LLM API key — analysis skipped.")
 
         session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
 
         stats = await run_rss_pipeline(
             url,
             session_factory=session_factory,
             keyword_engine=keyword_engine,
             provider=provider,
+            shadow_provider=shadow,
             source_id=source_id,
             source_name=source_name,
             monitor_dir=monitor_dir,
@@ -505,9 +274,15 @@ def pipeline_run(
         console.print(f"  Fetched:   {stats.fetched_count}")
         console.print(f"  Saved:     {stats.saved_count}")
         console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
         console.print(f"  Skipped:   {stats.skipped_count}")
         if stats.failed_count:
             console.print(f"  [red]Failed:  {stats.failed_count}[/red]")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
 
         if dry_run:
             console.print("[dim](dry-run — no data written)[/dim]")
@@ -529,14 +304,586 @@ def pipeline_run(
             rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
             imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
             sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
 
         console.print(table)
 
     asyncio.run(run())
 
 
-# ── alerts ────────────────────────────────────────────────────────────────────
+@pipeline_app.command("run-all")
+def pipeline_run_all(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes; preview only"),
+    top_n: int = typer.Option(3, help="Top results per feed"),
+) -> None:
+    """Fetch, persist, analyze, and score ALL active RSS feeds."""
+    import asyncio
+
+    async def run() -> None:
+        from sqlalchemy import select
+
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_rss_pipeline
+        from app.storage.models.source import SourceModel
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = _build_primary_provider()
+        if provider is None:
+            console.print("[yellow]Warning:[/yellow] No LLM API key — analysis skipped.")
+            return
+
+        shadow = _maybe_gemini_shadow()
+        session_factory = build_session_factory(settings.db)
+
+        # Load active RSS feeds from DB
+        async with session_factory.begin() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        SourceModel.source_id,
+                        SourceModel.provider,
+                        SourceModel.original_url,
+                    ).where(
+                        SourceModel.status == "active",
+                        SourceModel.source_type == "rss_feed",
+                    )
+                )
+            ).all()
+
+        feeds = [(r[0], r[1] or "unknown", r[2]) for r in rows]
+        console.print(f"[bold]Active RSS feeds:[/bold] {len(feeds)}")
+
+        totals = {
+            "fetched": 0,
+            "saved": 0,
+            "analyzed": 0,
+            "alerts": 0,
+            "skipped": 0,
+            "failed": 0,
+        }
+        for source_id, source_name, url in feeds:
+            console.print(f"\n[bold cyan]{source_name}[/bold cyan] ({url[:50]}...)")
+            try:
+                stats = await run_rss_pipeline(
+                    url,
+                    session_factory=session_factory,
+                    keyword_engine=keyword_engine,
+                    provider=provider,
+                    shadow_provider=shadow,
+                    source_id=source_id,
+                    source_name=source_name,
+                    monitor_dir=monitor_dir,
+                    timeout=settings.sources.fetch_timeout,
+                    max_retries=settings.sources.max_retries,
+                    dry_run=dry_run,
+                )
+                totals["fetched"] += stats.fetched_count
+                totals["saved"] += stats.saved_count
+                totals["analyzed"] += stats.analyzed_count
+                totals["alerts"] += stats.alerts_fired_count
+                totals["skipped"] += stats.skipped_count
+                totals["failed"] += stats.failed_count
+                console.print(
+                    f"  fetched={stats.fetched_count} saved={stats.saved_count} "
+                    f"analyzed={stats.analyzed_count} alerts={stats.alerts_fired_count}"
+                )
+                if stats.top_results and top_n > 0:
+                    for res in stats.top_results[:top_n]:
+                        doc = res.document
+                        pri = doc.priority_score or 0
+                        sent = doc.sentiment_label.value if doc.sentiment_label else "–"
+                        console.print(f"    P{pri} {sent:8s} {(doc.title or '–')[:60]}")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"  [red]ERROR:[/red] {exc}")
+                totals["failed"] += 1
+
+        console.print("\n[bold green]All feeds done.[/bold green]")
+        console.print(
+            f"  Fetched: {totals['fetched']}  Saved: {totals['saved']}  "
+            f"Analyzed: {totals['analyzed']}  Alerts: {totals['alerts']}  "
+            f"Failed: {totals['failed']}"
+        )
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("youtube")
+def pipeline_youtube(
+    channel_url: str = typer.Argument(
+        ..., help="YouTube channel URL (e.g. https://youtube.com/@Bankless)"
+    ),
+    source_id: str = typer.Option("youtube", help="Source ID"),
+    source_name: str = typer.Option("YouTube", help="Source name"),
+    max_results: int = typer.Option(5, help="Max videos to fetch per channel"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch YouTube channel videos, extract transcripts, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_youtube_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.youtube_api_key:
+            console.print("[red]Error:[/red] YOUTUBE_API_KEY not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider = _build_primary_provider()
+
+        session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
+
+        stats = await run_youtube_pipeline(
+            channel_url,
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            shadow_provider=shadow,
+            api_key=settings.providers.youtube_api_key,
+            source_id=source_id,
+            source_name=source_name,
+            max_results=max_results,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[bold green]YouTube pipeline complete:[/bold green] {channel_url}")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Title")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("twitter")
+def pipeline_twitter(
+    max_per_user: int = typer.Option(5, help="Max tweets per user"),
+    source_id: str = typer.Option("twitter", help="Source ID"),
+    source_name: str = typer.Option("X/Twitter", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch tweets from watchlist accounts, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_twitter_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.x_bearer_token:
+            console.print("[red]Error:[/red] X_BEARER_TOKEN not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider = _build_primary_provider()
+
+        session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
+
+        stats = await run_twitter_pipeline(
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            shadow_provider=shadow,
+            bearer_token=settings.providers.x_bearer_token,
+            max_per_user=max_per_user,
+            source_id=source_id,
+            source_name=source_name,
+            dry_run=dry_run,
+        )
+
+        console.print("\n[bold green]Twitter pipeline complete[/bold green]")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Author", width=20)
+        table.add_column("Tweet")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(
+                pri,
+                sentiment,
+                _safe_text(doc.author or "–"),
+                _safe_text((doc.title or "–")[:60]),
+            )
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("newsdata")
+def pipeline_newsdata(
+    query: str = typer.Argument(..., help="Search query (e.g. 'crypto bitcoin ethereum')"),
+    source_id: str = typer.Option("newsdata", help="Source ID"),
+    source_name: str = typer.Option("NewsData.io", help="Source name"),
+    language: str = typer.Option("en", help="Language code (en, de, etc.)"),
+    category: str = typer.Option("business", help="Category filter (business, technology, etc.)"),
+    size: int = typer.Option(10, help="Number of articles to fetch"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch articles from NewsData.io API, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_newsdata_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.newsdata_api_key:
+            console.print("[red]Error:[/red] NEWSDATA_API_KEY not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider = _build_primary_provider()
+
+        session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
+
+        stats = await run_newsdata_pipeline(
+            query,
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            shadow_provider=shadow,
+            api_key=settings.providers.newsdata_api_key,
+            source_id=source_id,
+            source_name=source_name,
+            language=language,
+            category=category,
+            size=size,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[bold green]NewsData.io pipeline complete:[/bold green] query='{query}'")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Title")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("messari")
+def pipeline_messari(
+    source_id: str = typer.Option("messari", help="Source ID"),
+    source_name: str = typer.Option("Messari", help="Source name"),
+    limit: int = typer.Option(100, help="Max assets to fetch"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+) -> None:
+    """Fetch Messari asset metrics, analyze, and alert."""
+    import asyncio
+
+    from app.cli.commands.ingestion import run_messari_command_logic
+
+    asyncio.run(run_messari_command_logic(source_id, source_name, limit, dry_run))
+
+
+# ── query analyze-pending ─────────────────────────────────────────────────────
+
+
+@app.command("pipeline-run")
+def pipeline_run_alias(
+    url: str = typer.Argument(..., help="RSS feed URL to process end-to-end"),
+    source_id: str = typer.Option("manual", help="Source ID"),
+    source_name: str = typer.Option("Manual", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes; preview only"),
+    top_n: int = typer.Option(5, help="Top results to display by priority score"),
+) -> None:
+    """Top-level alias for `pipeline run`."""
+    pipeline_run(
+        url=url,
+        source_id=source_id,
+        source_name=source_name,
+        dry_run=dry_run,
+        top_n=top_n,
+    )
+
+
+@analyze_app.command("pending")
+@query_app.command("analyze-pending")
+def analyze_pending(
+    limit: int = typer.Option(50, help="Max documents to analyze"),
+    provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
+    no_alerts: bool = typer.Option(False, "--no-alerts", help="Skip alert dispatch after analysis"),
+) -> None:
+    """Run the analysis pipeline on all pending (unanalyzed) documents."""
+    import asyncio
+
+    async def run() -> None:
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        from app.analysis.factory import create_provider
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.core.enums import DocumentStatus
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        console.print("[bold]Initializing Analysis Engine...[/bold]")
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        try:
+            provider_obj = create_provider(provider, settings)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1) from e
+
+        if not provider_obj:
+            console.print(
+                f"[yellow]Warning:[/yellow] No API key found for provider '{provider}'."
+                " LLM Analysis will be skipped."
+            )
+        else:
+            console.print(
+                f"[cyan]Using LLM Provider:[/cyan]"
+                f" {provider_obj.provider_name} ({provider_obj.model})"
+            )
+
+        from app.market_data.service import create_market_data_adapter
+
+        market_adapter = create_market_data_adapter(provider="coingecko")
+        from pathlib import Path as _Path
+
+        from app.analysis.pipeline import load_trusted_social_handles
+
+        pipeline = AnalysisPipeline(
+            keyword_engine,
+            provider_obj,
+            run_llm=bool(provider_obj),
+            market_data_adapter=market_adapter,
+            trusted_social_handles=load_trusted_social_handles(_Path(get_settings().monitor_dir)),
+        )
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.get_pending_documents(limit=limit)
+
+        if not docs:
+            console.print("[green]No pending documents to analyze.[/green]")
+            return
+
+        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
+
+        results = await pipeline.run_batch(docs)
+
+        success_count = 0
+        error_count = 0
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+
+            for res in results:
+                if not res.success:
+                    console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+                    continue
+
+                res.apply_to_document()
+
+                # I-12: defensive guard — analysis_result=None MUST NOT produce status=ANALYZED
+                if res.analysis_result is None:
+                    console.print(
+                        f"[yellow]Skipped {res.document.id}:"
+                        " no analysis result (no provider configured?)[/yellow]"
+                    )
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+                    continue
+
+                try:
+                    await repo.update_analysis(
+                        str(res.document.id),
+                        res.analysis_result,
+                        provider_name=res.document.provider,
+                        metadata_updates=res.trace_metadata,
+                    )
+                    success_count += 1
+                except Exception as e:
+                    console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+
+        console.print(
+            f"[bold green]Analysis complete![/bold green] "
+            f"{success_count} success, {error_count} failed."
+        )
+
+        if not no_alerts and success_count > 0:
+            from app.alerts.service import AlertService
+
+            alert_service = AlertService.from_settings(settings)
+            alert_count = 0
+            for res in results:
+                if not res.success or res.analysis_result is None:
+                    continue
+                try:
+                    deliveries = await alert_service.process_document(
+                        res.document,
+                        res.analysis_result,
+                        spam_probability=res.document.spam_probability or 0.0,
+                    )
+                    if deliveries:
+                        alert_count += 1
+                except Exception as exc:
+                    logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)
+
+            if alert_count:
+                console.print(f"[cyan]Alerts dispatched: {alert_count}[/cyan]")
+
+    asyncio.run(run())
+
+
+# ── alerts send-test ──────────────────────────────────────────────────────────
+
+
+@signals_app.command("extract")
+def signals_extract(
+    limit: int = typer.Option(50, help="Max signal candidates to display"),
+    min_priority: int = typer.Option(8, help="Minimum effective priority"),
+) -> None:
+    """Extract signal candidates from analyzed documents."""
+    import asyncio
+
+    async def run() -> None:
+        from app.core.signals import extract_signal_candidates
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+        fetch_limit = max(limit * 5, limit)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=fetch_limit)
+
+        candidates = extract_signal_candidates(docs, min_priority=min_priority)
+        console.print(
+            f"[bold]{len(candidates)} signal candidates[/bold] "
+            f"(from {len(docs)} analyzed docs, min_priority={min_priority})"
+        )
+        if not candidates:
+            console.print("[yellow]No signal candidates found.[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Priority", width=8)
+        table.add_column("Direction", width=10)
+        table.add_column("Asset", width=12)
+        table.add_column("Confidence", width=10)
+        table.add_column("Document ID")
+
+        for c in candidates[:limit]:
+            table.add_row(
+                str(c.priority),
+                c.direction_hint,
+                c.target_asset,
+                f"{c.confidence:.2f}",
+                c.document_id,
+            )
+        console.print(table)
+
+    asyncio.run(run())
 
 
 @alerts_app.command("send-test")
@@ -575,10 +922,13 @@ def alerts_send_test() -> None:
             )
             return
         for r in results:
-            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            status = "[green]OK sent[/green]" if r.success else f"[red]FAIL: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
+
+
+# ── alerts evaluate-pending ───────────────────────────────────────────────────
 
 
 @alerts_app.command("evaluate-pending")
@@ -640,89 +990,1474 @@ def alerts_evaluate_pending(
 
         results = await service.send_digest(messages, f"{len(messages)} analyzed documents")
         for r in results:
-            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            status = "[green]OK sent[/green]" if r.success else f"[red]FAIL: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
 
 
-# ---------------------------------------------------------------------------
-# Sprint 29: analyze-pending --shadow-companion flag
-# ---------------------------------------------------------------------------
+def _load_doc_metadata(
+    audits: list[AlertAuditRecord],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Load source and title maps from DB for directional audit docs.
 
-
-@query_app.command("analyze-pending-shadow")
-def analyze_pending_shadow(
-    limit: int = typer.Option(50, help="Max documents to analyze"),
-    shadow_companion: bool = typer.Option(
-        False,
-        "--shadow-companion",
-        help="Run companion model as shadow alongside primary provider (I-55, Sprint 29)",
-    ),
-) -> None:
-    """Analyze pending documents; optionally run shadow companion alongside primary (Sprint 29)."""
+    Returns ``(source_by_doc, title_by_doc)`` — both may be empty dicts on
+    error or when no directional docs are found. Source names are lower-cased.
+    """
     import asyncio
 
-    async def run() -> None:
-        from app.analysis.keywords.engine import KeywordEngine
-        from app.analysis.pipeline import AnalysisPipeline
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
+    directional_doc_ids: set[str] = set()
+    audit_source_fallback: dict[str, str] = {}
+    for rec in audits:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        directional_doc_ids.add(rec.document_id)
+        if rec.source_name:
+            audit_source_fallback[rec.document_id] = rec.source_name.strip().lower()
+
+    if not directional_doc_ids:
+        return {}, {}
+
+    async def _query() -> tuple[dict[str, str], dict[str, str]]:
+        from sqlalchemy import select
+
+        from app.storage.models.document import CanonicalDocumentModel
 
         settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-        provider_obj = None
         session_factory = build_session_factory(settings.db)
-
-        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=False)
-
         async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.get_pending_documents(limit=limit)
+            stmt = select(
+                CanonicalDocumentModel.id,
+                CanonicalDocumentModel.source_name,
+                CanonicalDocumentModel.provider,
+                CanonicalDocumentModel.title,
+            ).where(CanonicalDocumentModel.id.in_(directional_doc_ids))
+            rows = (await session.execute(stmt)).all()
+        sources = {str(row[0]): ((row[1] or row[2] or "unknown").strip().lower()) for row in rows}
+        titles = {str(row[0]): row[3] for row in rows if row[3]}
+        # D-139: doc_ids present in the audit but missing from the
+        # CanonicalDocumentModel table (e.g. purged test batches or
+        # records from legacy pipelines that never persisted the
+        # document) are treated as ``unknown`` source so the forward
+        # simulation's source gate can block them.  Without this,
+        # ``rec.source_name or source_by_doc.get(doc_id)`` returns
+        # ``None`` and the source gate silently passes.
+        # D-156: Prefer audit's own ``source_name`` over ``unknown`` when
+        # the DB has no row — TV-bridge rows (``tv:<event_id>``) never
+        # land in CanonicalDocumentModel but self-declare
+        # ``source_name="tradingview_webhook"``.
+        for doc_id in directional_doc_ids:
+            sources.setdefault(
+                doc_id,
+                audit_source_fallback.get(doc_id, "unknown"),
+            )
+        return sources, titles
 
-        if not docs:
-            console.print("[green]No pending documents to analyze.[/green]")
-            return
+    try:
+        return asyncio.run(_query())
+    except Exception as exc:
+        console.print(f"[yellow]Doc metadata lookup failed:[/yellow] {exc}")
+        return {}, {}
 
+
+@alerts_app.command("hold-report")
+def alerts_hold_report(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    output_dir: str = typer.Option(
+        "artifacts/ph5_hold", help="Output directory for hold report artifacts"
+    ),
+) -> None:
+    """Build and write PH5 hold metrics report from local artifact files."""
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, title_map = _load_doc_metadata(audits)
+    report = build_hold_metrics_report(
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
+        trading_loop_audit_path=artifacts_path / "trading_loop_audit.jsonl",
+        paper_execution_audit_path=artifacts_path / "paper_execution_audit.jsonl",
+        source_by_doc=source_map or None,
+        title_by_doc=title_map or None,
+    )
+    json_out, md_out = write_hold_metrics_report(report, output_dir=Path(output_dir))
+
+    gate = report["hold_gate_evaluation"]
+    hit = report["alert_hit_rate_evidence"]
+    quality = report["signal_quality_validation"]
+    paper = report["paper_trading_evidence"]
+    console.print(f"[green]Report written:[/green] {json_out}")
+    console.print(f"[green]Summary written:[/green] {md_out}")
+    active_prec = quality.get("active_precision_pct")
+    min_active = gate.get("minimum_active_precision_pct_for_gate")
+    console.print(
+        f"[bold]Gate:[/bold] {gate['overall_status']} | "
+        f"resolved directional {hit['resolved_directional_documents']}/"
+        f"{hit['minimum_resolved_directional_alerts_for_gate']} | "
+        f"active precision {active_prec}% / min {min_active}% | "
+        f"paper cycles {paper['loop_metrics']['total_cycles']}"
+    )
+    if gate.get("blocking_reasons"):
+        console.print("[yellow]Blocking:[/yellow] " + ", ".join(gate["blocking_reasons"]))
+    console.print(
+        "[bold]Quality:[/bold] "
+        f"actionable_rate={quality['directional_actionable_rate_pct']}% | "
+        f"precision={quality['resolved_precision_pct']}% | "
+        f"false_positive={quality['resolved_false_positive_rate_pct']}% | "
+        f"priority_corr={quality['priority_hit_correlation']} | "
+        f"real_price_cycles={quality['paper_real_price_cycle_count']}"
+    )
+    console.print("[bold]Validation gaps:[/bold] " + ", ".join(quality["validation_gaps"]))
+
+
+@alerts_app.command("tv-bridge")
+def alerts_tv_bridge(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    include_smoke: bool = typer.Option(
+        False,
+        "--include-smoke",
+        help="Include smoke/test events (default: filtered out)",
+    ),
+) -> None:
+    """Bridge TradingView webhook events into alert_audit.jsonl (D-156).
+
+    Appends synthetic ``AlertAuditRecord`` rows with
+    ``document_id=f"tv:{event_id}"`` so the auto-annotator can resolve
+    TV events as hit/miss. Idempotent — re-runs skip existing rows.
+    Smoke-test events are filtered by default (same heuristic as
+    ``provenance_metrics._summarize_tv_pipeline``).
+
+    Operator flow: ``tv-bridge`` → ``auto-annotate`` → ``tv4-quality-bar``.
+    """
+    from app.alerts.tv_bridge import persist_tv_events_as_alert_audits
+    from app.core.settings import get_settings
+
+    artifacts_path = Path(artifacts_dir)
+    tv_settings = get_settings().tradingview
+    counts = persist_tv_events_as_alert_audits(
+        tv_pending_path=artifacts_path / "tradingview_pending_signals.jsonl",
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        include_smoke=include_smoke,
+        hmac_secret=tv_settings.bridge_hmac_secret,
+    )
+    console.print(
+        f"[green]TV-Bridge:[/green] written={counts['written']} "
+        f"skipped_existing={counts['skipped_existing']} "
+        f"skipped_smoke={counts['skipped_smoke']} "
+        f"skipped_unsupported={counts['skipped_unsupported']} "
+        f"skipped_invalid={counts['skipped_invalid']} "
+        f"skipped_unsigned={counts['skipped_unsigned']} "
+        f"skipped_tampered={counts['skipped_tampered']}"
+    )
+
+
+@alerts_app.command("tv4-quality-bar")
+def alerts_tv4_quality_bar(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    output_path: str = typer.Option(
+        "artifacts/tv4_quality_bar_report.json",
+        help="Output path for the provenance-split JSON report",
+    ),
+) -> None:
+    """TV-4 Quality-Bar — per-source precision with Wilson 95% CI.
+
+    Splits resolved directional alerts by signal source (rss,
+    tradingview_webhook, ...) and reports per-source hit-rate + confidence
+    interval. Surfaces whether the TV-pivot measurably improves, degrades,
+    or leaves precision unchanged. Read-only projection.
+    """
+    from app.alerts.provenance_metrics import (
+        build_provenance_split_report,
+        write_provenance_report,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, _title_map = _load_doc_metadata(audits)
+    report = build_provenance_split_report(
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
+        tradingview_pending_signals_path=artifacts_path / "tradingview_pending_signals.jsonl",
+        source_by_doc=source_map or None,
+    )
+    out = write_provenance_report(report, Path(output_path))
+    console.print(f"[green]TV-4 quality-bar written:[/green] {out}")
+    console.print(
+        f"[bold]Overall:[/bold] resolved={report.overall.resolved} "
+        f"hits={report.overall.hits} "
+        f"hit_rate={report.overall.hit_rate_pct}% "
+        f"CI=[{report.overall.ci_low_pct}%, {report.overall.ci_high_pct}%]"
+    )
+    for metrics in report.by_source:
         console.print(
-            f"[bold]Analyzing {len(docs)} documents (shadow_companion={shadow_companion})...[/bold]"
+            f"  source={metrics.source} resolved={metrics.resolved} "
+            f"hits={metrics.hits} "
+            f"inconclusive={metrics.inconclusive} "
+            f"rate={metrics.hit_rate_pct}% "
+            f"CI=[{metrics.ci_low_pct}%, {metrics.ci_high_pct}%] "
+            f"sufficient={metrics.sample_sufficient}"
+        )
+    tv = report.tradingview_pipeline
+    console.print(
+        f"[bold]TV pipeline:[/bold] pending={tv.pending_events} "
+        f"smoke={tv.smoke_test_events} real={tv.real_events} "
+        f"unique_paths={tv.unique_signal_path_ids}"
+    )
+    console.print(f"[bold]Verdict:[/bold] {report.verdict}")
+    for note in report.notes:
+        console.print(f"  - {note}")
+
+
+@alerts_app.command("backfill-provenance")
+def alerts_backfill_provenance(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run/--apply",
+        help="Dry-run shows counts without touching files. --apply writes.",
+    ),
+) -> None:
+    """Backfill persisted provenance into legacy audit + outcomes JSONL.
+
+    Pre-2026-04-22 rows were written before the ``provenance`` nested dict
+    existed on the writer path. This reads the DB-join source map for RSS
+    rows and the TV pending-signals file for TV rows, then rewrites both
+    JSONL files in place with a best-effort ``SignalProvenance`` attached
+    (timestamped .bak copy, write-temp-then-rename, mtime concurrent-write
+    guard). Idempotent — rows that already carry provenance are untouched.
+    """
+    from app.alerts.provenance_backfill import backfill_provenance
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, _title_map = _load_doc_metadata(audits)
+    secret = get_settings().alerts.provenance_secret
+    if not secret:
+        console.print(
+            "[yellow]ALERT_PROVENANCE_SECRET not set -- backfilled rows will "
+            "carry provenance without provenance_hash (fail-open).[/yellow]"
         )
 
-        results = await pipeline.run_batch(docs)
-        success_count = 0
-        error_count = 0
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            for res in results:
-                if not res.success:
-                    error_count += 1
-                    continue
-                res.apply_to_document()
-                if res.analysis_result is None:
-                    error_count += 1
-                    continue
-                try:
-                    metadata_updates = dict(res.trace_metadata or {})
-                    if shadow_companion:
-                        metadata_updates["shadow_companion_active"] = True
-                    await repo.update_analysis(
-                        str(res.document.id),
-                        res.analysis_result,
-                        provider_name=res.document.provider,
-                        metadata_updates=metadata_updates,
-                    )
-                    success_count += 1
-                except Exception:
-                    error_count += 1
-
+    result = backfill_provenance(
+        artifacts_dir=artifacts_path,
+        secret=secret,
+        source_by_doc=source_map or {},
+        dry_run=dry_run,
+    )
+    mode = "dry-run" if dry_run else "applied"
+    console.print(f"[bold]Provenance backfill ({mode})[/bold]")
+    for file_name, counts in result.items():
+        aborted = counts.get("aborted_concurrent_write")
+        tail = " [red]ABORTED concurrent write[/red]" if aborted else ""
         console.print(
-            f"[bold green]Analysis complete![/bold green] "
-            f"{success_count} success, {error_count} failed."
+            f"  {file_name}: total={counts['total']} "
+            f"augmented={counts['augmented']} "
+            f"already_tagged={counts['already_tagged']} "
+            f"no_source={counts['no_source']}{tail}"
         )
 
-    asyncio.run(run())
+
+@alerts_app.command("analyze-resolved")
+def alerts_analyze_resolved(
+    by: str = typer.Option(
+        "all",
+        "--by",
+        help=("Bucket dimension: all | sentiment | priority | priority-group | asset | source"),
+    ),
+    min_bucket_size: int = typer.Option(
+        3,
+        "--min-bucket-size",
+        help="Hide buckets with fewer resolved alerts than this (noise filter).",
+    ),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    json_out: str | None = typer.Option(
+        None,
+        "--json-out",
+        help="Optional path to write the full feature-analysis report as JSON.",
+    ),
+    include_source: bool = typer.Option(
+        True,
+        "--include-source/--no-source",
+        help=(
+            "Join alert document_ids against canonical_documents.source_name "
+            "for the by-source breakdown. Disable to run offline without DB."
+        ),
+    ),
+) -> None:
+    """Break down resolved directional outcomes by feature bucket (D-141).
+
+    Answers: when label X (asset, sentiment, priority, source) was present,
+    how often did the predicted direction materialise? Read-only analysis
+    over ``alert_audit.jsonl`` + ``alert_outcomes.jsonl`` — no signal or
+    threshold mutation. Use to locate precision hot/cold spots before
+    tuning.
+    """
+    import json as _json
+
+    from app.alerts.feature_analysis import build_feature_analysis
+
+    valid_by = {"all", "sentiment", "priority", "priority-group", "asset", "source"}
+    by_normalized = by.strip().lower()
+    if by_normalized not in valid_by:
+        console.print(
+            f"[red]Invalid --by value[/red]: {by!r}. "
+            f"Expected one of: {', '.join(sorted(valid_by))}."
+        )
+        raise typer.Exit(2)
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    annotations = load_outcome_annotations(artifacts_path)
+
+    if include_source:
+        source_by_doc, title_by_doc = _load_doc_metadata(audits)
+        source_by_doc = source_by_doc or None
+        title_by_doc = title_by_doc or None
+    else:
+        source_by_doc = None
+        title_by_doc = None
+
+    report = build_feature_analysis(
+        audits=audits,
+        annotations=annotations,
+        source_by_doc=source_by_doc,
+        title_by_doc=title_by_doc,
+        min_bucket_size=min_bucket_size,
+    )
+
+    totals = report["totals"]
+    console.print(
+        f"[bold]Resolved directional alerts[/bold]: {totals['resolved']} "
+        f"(hits={totals['hits']} miss={totals['miss']}) | "
+        f"precision={totals['precision_pct']}% | "
+        f"directional_total={totals['directional_alerts']} "
+        f"inconclusive={totals['inconclusive']} "
+        f"unlabeled={totals['unlabeled']}"
+    )
+    console.print(
+        f"[dim]min_bucket_size={report['min_bucket_size']}; "
+        "a single alert contributes to each of its affected assets — "
+        "bucket totals may sum to more than unique resolved.[/dim]"
+    )
+
+    fwd = report.get("forward_simulation")
+    if fwd and fwd["resolved"] > 0:
+        fwd_prec = fwd["precision_pct"]
+        color = "green" if (fwd_prec or 0) >= 60 else "yellow"
+        console.print(
+            f"[bold {color}]Forward simulation[/bold {color}]: "
+            f"{fwd['resolved']} resolved "
+            f"(hits={fwd['hits']} miss={fwd['miss']}) | "
+            f"precision={fwd_prec}% | "
+            f"filtered_out={fwd['filtered_out']}"
+        )
+
+    def _render_bucket(title: str, key: str) -> None:
+        rows = report["buckets"].get(key, [])
+        table = Table(title=title, show_header=True, header_style="bold cyan")
+        table.add_column("Label")
+        table.add_column("Resolved", justify="right")
+        table.add_column("Hits", justify="right")
+        table.add_column("Miss", justify="right")
+        table.add_column("Precision", justify="right")
+        if not rows:
+            table.add_row("[dim](no buckets meet min size)[/dim]", "-", "-", "-", "-")
+        for row in rows:
+            prec = row["precision_pct"]
+            prec_str = "-" if prec is None else f"{prec:.2f}%"
+            table.add_row(
+                str(row["label"]),
+                str(row["resolved"]),
+                str(row["hits"]),
+                str(row["miss"]),
+                prec_str,
+            )
+        console.print(table)
+
+    render_map = {
+        "sentiment": ("By Sentiment", "by_sentiment"),
+        "priority": ("By Priority (exact)", "by_priority"),
+        "priority-group": ("By Priority Group", "by_priority_group"),
+        "asset": ("By Asset", "by_asset"),
+        "source": ("By Source", "by_source"),
+    }
+
+    if by_normalized == "all":
+        for key in ["sentiment", "priority-group", "priority", "asset", "source"]:
+            title, report_key = render_map[key]
+            if key == "source" and "by_source" not in report["buckets"]:
+                continue
+            _render_bucket(title, report_key)
+    else:
+        title, report_key = render_map[by_normalized]
+        if report_key not in report["buckets"]:
+            console.print(
+                f"[yellow]Bucket '{by_normalized}' not available "
+                "(source lookup disabled?).[/yellow]"
+            )
+        else:
+            _render_bucket(title, report_key)
+
+    if json_out:
+        out_path = Path(json_out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        console.print(f"[green]Report written:[/green] {out_path}")
+
+
+@alerts_app.command("baseline-report")
+def alerts_baseline_report(
+    input_path: str = typer.Option(
+        "artifacts/ph4b_tier3_shadow.jsonl", help="Input JSONL dataset path"
+    ),
+    output_dir: str = typer.Option(
+        "artifacts/ph5_baseline", help="Output directory for baseline artifacts"
+    ),
+    threshold_pct: float = typer.Option(5.0, help="Absolute move threshold (percent)"),
+    horizon_hours: int = typer.Option(24, help="Evaluation horizon in hours"),
+    timeout_seconds: int = typer.Option(10, help="CoinGecko request timeout"),
+    max_rows: int | None = typer.Option(None, help="Optional cap on candidate rows"),
+) -> None:
+    """Build offline baseline report from historical CoinGecko move data."""
+    import asyncio
+
+    report = asyncio.run(
+        build_offline_baseline_report(
+            input_path=Path(input_path),
+            threshold_pct=threshold_pct,
+            horizon_hours=horizon_hours,
+            timeout_seconds=timeout_seconds,
+            max_rows=max_rows,
+        )
+    )
+    json_out, md_out = write_offline_baseline_report(
+        report,
+        output_dir=Path(output_dir),
+    )
+
+    console.print(f"[green]Baseline report written:[/green] {json_out}")
+    console.print(f"[green]Baseline summary written:[/green] {md_out}")
+    console.print(
+        f"[bold]Status:[/bold] {report.get('status')} | "
+        f"resolved={report.get('resolved_candidates')} | "
+        f"priority_abs_corr={report.get('priority_abs_move_correlation')}"
+    )
+
+
+@alerts_app.command("pending-annotations")
+def alerts_pending_annotations(
+    limit: int = typer.Option(20, help="Max rows to print"),
+    min_age_hours: float = typer.Option(
+        0.0, help="Only include alerts at least this many hours old"
+    ),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+) -> None:
+    """List directional alerts without outcome annotation (deduped by document_id)."""
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    latest_ann_by_doc = {a.document_id: a.outcome for a in annotations}
+
+    latest_directional_by_doc: dict[str, Any] = {}
+    for rec in records:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        # D-142: Always re-evaluate against current eligibility rules.
+        current_check = evaluate_directional_eligibility(
+            sentiment_label=rec.sentiment_label,
+            affected_assets=list(rec.affected_assets or []),
+        )
+        if current_check.directional_eligible is not True:
+            continue
+        if rec.directional_eligible is False:
+            continue
+        prev = latest_directional_by_doc.get(rec.document_id)
+        if prev is None or rec.dispatched_at > prev.dispatched_at:
+            latest_directional_by_doc[rec.document_id] = rec
+
+    pending = [
+        rec
+        for rec in latest_directional_by_doc.values()
+        if rec.document_id not in latest_ann_by_doc
+    ]
+    if min_age_hours > 0:
+        now = datetime.now(UTC)
+
+        def _is_old_enough(rec: Any) -> bool:
+            try:
+                ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            age_h = (now - ts).total_seconds() / 3600.0
+            return age_h >= min_age_hours
+
+        pending = [rec for rec in pending if _is_old_enough(rec)]
+
+    pending.sort(key=lambda r: r.dispatched_at, reverse=True)
+
+    console.print(
+        f"[bold]{len(pending)} pending directional alerts[/bold] "
+        f"(limit={limit}, total directional={len(latest_directional_by_doc)}, "
+        f"min_age_hours={min_age_hours:g})"
+    )
+    if not pending:
+        console.print("[green]No pending annotations.[/green]")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Document ID")
+    table.add_column("Dispatched At")
+    table.add_column("Age(h)", width=8)
+    table.add_column("Sentiment", width=10)
+    table.add_column("Priority", width=8)
+    table.add_column("Assets")
+    now = datetime.now(UTC)
+    for rec in pending[:limit]:
+        age_h = "-"
+        try:
+            ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            age_h = f"{((now - ts).total_seconds() / 3600.0):.1f}"
+        except ValueError:
+            pass
+        table.add_row(
+            rec.document_id,
+            rec.dispatched_at,
+            age_h,
+            rec.sentiment_label or "-",
+            str(rec.priority) if rec.priority is not None else "-",
+            ", ".join(rec.affected_assets) if rec.affected_assets else "-",
+        )
+    console.print(table)
+
+
+@alerts_app.command("annotate")
+def alerts_annotate(
+    document_id: str = typer.Argument(..., help="Document ID from alert_audit"),
+    outcome: str = typer.Argument(..., help="One of: hit, miss, inconclusive"),
+    asset: str | None = typer.Option(None, help="Optional asset symbol"),
+    note: str | None = typer.Option(None, help="Optional operator note"),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+) -> None:
+    """Append an outcome annotation for a directional alert document."""
+    normalized = outcome.strip().lower()
+    if normalized not in {"hit", "miss", "inconclusive"}:
+        console.print("[red]Invalid outcome.[/red] Use one of: hit, miss, inconclusive.")
+        raise typer.Exit(2)
+
+    existing = [
+        a for a in load_outcome_annotations(Path(artifacts_dir)) if a.document_id == document_id
+    ]
+    if existing:
+        console.print(
+            "[yellow]Existing annotation found for this document. "
+            "A new append-only entry will be used as latest value.[/yellow]"
+        )
+
+    from app.alerts.audit import latest_provenance_by_document_id
+
+    prov_map = latest_provenance_by_document_id(Path(artifacts_dir))
+    annotation = AlertOutcomeAnnotation(
+        document_id=document_id,
+        outcome=cast(OutcomeLabel, normalized),
+        asset=asset,
+        note=note,
+        provenance=prov_map.get(document_id),
+    )
+    append_outcome_annotation(annotation, Path(artifacts_dir))
+    console.print(
+        f"[green]Annotation written.[/green] document_id={document_id} outcome={normalized}"
+    )
+
+
+@alerts_app.command("auto-check")
+def alerts_auto_check(
+    threshold_pct: float = typer.Option(
+        2.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
+    ),
+    horizon_hours: int = typer.Option(
+        24, "--horizon-hours", help="Evaluation window in hours from alert dispatch"
+    ),
+    min_age_hours: float = typer.Option(
+        24.0,
+        "--min-age-hours",
+        help="Only check alerts at least this many hours old (default: 24h window)",
+    ),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--apply", help="Preview only (default) or apply annotations"
+    ),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    timeout_seconds: int = typer.Option(10, help="CoinGecko request timeout"),
+) -> None:
+    """Check pending directional alerts against CoinGecko price moves.
+
+    Preferred path: compare historical price at dispatch vs dispatch+horizon.
+    Fallback path: use ticker 24h move when historical range data is unavailable.
+    """
+    import asyncio
+
+    from app.alerts.price_check import check_alert_price_moves
+
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    annotated_ids = {a.document_id for a in annotations}
+
+    # Filter to pending directional alerts (deduplicated by document_id)
+    latest_by_doc: dict[str, AlertAuditRecord] = {}
+    for rec in records:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        if rec.directional_eligible is False:
+            continue
+        if rec.directional_eligible is None:
+            legacy_check = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=list(rec.affected_assets or []),
+            )
+            if legacy_check.directional_eligible is not True:
+                continue
+        if rec.document_id in annotated_ids:
+            continue
+        prev = latest_by_doc.get(rec.document_id)
+        if prev is None or rec.dispatched_at > prev.dispatched_at:
+            latest_by_doc[rec.document_id] = rec
+
+    pending = list(latest_by_doc.values())
+    if min_age_hours > 0:
+        now = datetime.now(UTC)
+        age_filtered: list[AlertAuditRecord] = []
+        for rec in pending:
+            try:
+                ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            age_h = (now - ts).total_seconds() / 3600.0
+            if age_h >= min_age_hours:
+                age_filtered.append(rec)
+        pending = age_filtered
+
+    if not pending:
+        console.print("[green]No pending directional alerts to check.[/green]")
+        return
+
+    console.print(
+        f"[bold]Checking {len(pending)} pending directional alerts "
+        f"(threshold={threshold_pct}%, horizon={horizon_hours}h, "
+        f"min_age_hours={min_age_hours:g})...[/bold]"
+    )
+
+    results = asyncio.run(
+        check_alert_price_moves(
+            pending,
+            threshold_pct=threshold_pct,
+            horizon_hours=horizon_hours,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No price data available for any alerts.[/yellow]")
+        return
+
+    # Display results table
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Document ID", width=20)
+    table.add_column("Asset", width=8)
+    table.add_column("Sentiment", width=10)
+    table.add_column("Price(T+h)", width=12)
+    table.add_column("Move %", width=8)
+    table.add_column("Mode", width=20)
+    table.add_column("Suggestion", width=14)
+    table.add_column("Reason")
+
+    for r in results:
+        price_str = f"${r.current_price:,.2f}" if r.current_price else "-"
+        change_str = f"{r.change_pct_24h:+.1f}%" if r.change_pct_24h is not None else "-"
+        style = {"hit": "green", "miss": "red", "inconclusive": "yellow"}.get(
+            r.suggested_outcome, ""
+        )
+        table.add_row(
+            r.document_id[:20],
+            r.asset,
+            r.sentiment_label,
+            price_str,
+            change_str,
+            r.evaluation_mode,
+            f"[{style}]{r.suggested_outcome}[/{style}]",
+            r.reason,
+        )
+    console.print(table)
+
+    # Summary
+    hits = sum(1 for r in results if r.suggested_outcome == "hit")
+    misses = sum(1 for r in results if r.suggested_outcome == "miss")
+    inconc = sum(1 for r in results if r.suggested_outcome == "inconclusive")
+    console.print(f"\n[bold]Summary:[/bold] {hits} hits, {misses} misses, {inconc} inconclusive")
+
+    if dry_run:
+        console.print("[dim](dry-run -- use --apply to write annotations)[/dim]")
+        return
+
+    # Apply: deduplicate by document_id, prefer strongest absolute move evidence
+    best_by_doc: dict[str, Any] = {}
+    for r in results:
+        prev = best_by_doc.get(r.document_id)
+        if prev is None:
+            best_by_doc[r.document_id] = r
+            continue
+        prev_abs = abs(prev.observed_move_pct or 0.0)
+        curr_abs = abs(r.observed_move_pct or 0.0)
+        if curr_abs > prev_abs:
+            best_by_doc[r.document_id] = r
+
+    from app.alerts.audit import latest_provenance_by_document_id
+
+    prov_map = latest_provenance_by_document_id(Path(artifacts_dir))
+    applied = 0
+    for r in best_by_doc.values():
+        annotation = AlertOutcomeAnnotation(
+            document_id=r.document_id,
+            outcome=r.suggested_outcome,
+            asset=r.asset,
+            note=f"auto-check ({r.evaluation_mode}, horizon={horizon_hours}h): {r.reason}",
+            provenance=prov_map.get(r.document_id),
+        )
+        append_outcome_annotation(annotation, Path(artifacts_dir))
+        applied += 1
+
+    console.print(f"[green]{applied} annotations written.[/green]")
+
+
+@alerts_app.command("auto-annotate")
+def alerts_auto_annotate(
+    min_age_hours: float = typer.Option(
+        4.0,
+        help="Only annotate alerts older than this (hours)",
+    ),
+    move_threshold: float = typer.Option(
+        1.0,
+        help="Price move threshold in percent (1.0 = 1%%)",
+    ),
+    no_reeval: bool = typer.Option(
+        False,
+        "--no-reeval",
+        help="Skip re-evaluation of prior inconclusive annotations",
+    ),
+    backfill_batch: int = typer.Option(
+        30,
+        "--backfill-batch",
+        help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
+    ),
+    catchup_unannotated: bool = typer.Option(
+        False,
+        "--catchup",
+        help="V-DB4d: also process stale (>72h) unannotated alerts (one-time backlog).",
+    ),
+    catchup_batch: int = typer.Option(
+        50,
+        "--catchup-batch",
+        help="Max stale unannotated alerts per run when --catchup is set.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview without writing annotations",
+    ),
+) -> None:
+    """Auto-annotate directional alerts based on price movement.
+
+    D-132: volatility-adaptive thresholds, inconclusive re-evaluation.
+    D-138: stale inconclusives backfilled with fixed 7d attribution window.
+    V-DB4d: --catchup-Modus fuer Backlog von >72h unannotated alerts.
+    """
+    import asyncio
+
+    from app.alerts.auto_annotator import auto_annotate_pending
+
+    artifacts_dir = Path("artifacts")
+
+    results = asyncio.run(
+        auto_annotate_pending(
+            audit_dir=artifacts_dir,
+            min_age_hours=min_age_hours,
+            move_threshold=move_threshold,
+            reeval_inconclusive=not no_reeval,
+            backfill_batch=backfill_batch,
+            catchup_unannotated=catchup_unannotated,
+            catchup_batch=catchup_batch,
+            dry_run=dry_run,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No pending directional alerts to annotate.[/yellow]")
+        return
+
+    hits = sum(1 for a in results if a.outcome == "hit")
+    misses = sum(1 for a in results if a.outcome == "miss")
+    inconclusive = sum(1 for a in results if a.outcome == "inconclusive")
+
+    for a in results:
+        color = {"hit": "green", "miss": "red", "inconclusive": "yellow"}[a.outcome]
+        console.print(f"[{color}]{a.outcome:>13}[/{color}]  {a.asset}  {a.note}")
+
+    mode = " [dim](dry-run)[/dim]" if dry_run else ""
+    console.print(
+        f"\n[bold]{len(results)} annotated{mode}:[/bold]"
+        f" {hits} hit, {misses} miss, {inconclusive} inconclusive"
+    )
+
+
+@alerts_app.command("auto-annotate-report")
+def alerts_auto_annotate_report(
+    since: str = typer.Option(
+        None,
+        help="Start date in ISO format (e.g. 2026-05-16)",
+    ),
+    until: str = typer.Option(
+        None,
+        help="End date in ISO format (e.g. 2026-05-21)",
+    ),
+    dispatched_window: bool = typer.Option(
+        False,
+        "--dispatched-window",
+        help="Use dispatched_at window filtering instead of annotated_at",
+    ),
+) -> None:
+    """Generate a detailed cohort report for auto-annotated alerts (V5 Follow-up)."""
+    from app.alerts.reporting import generate_cohort_report, parse_utc_timestamp
+
+    artifacts_dir = Path("artifacts")
+
+    since_dt = parse_utc_timestamp(since) if since else None
+    until_dt = parse_utc_timestamp(until) if until else None
+
+    report = generate_cohort_report(
+        audit_dir=artifacts_dir,
+        since=since_dt,
+        until=until_dt,
+        use_dispatched_at=dispatched_window,
+    )
+
+    import json
+
+    console.print(json.dumps(report, indent=2))
+
+
+@alerts_app.command("auto-annotate-blocked")
+def alerts_auto_annotate_blocked(
+    min_age_hours: float = typer.Option(
+        4.0,
+        help="Only annotate blocked alerts older than this (hours)",
+    ),
+    move_threshold: float = typer.Option(
+        1.0,
+        help="Price move threshold in percent (1.0 = 1%%)",
+    ),
+    no_reeval: bool = typer.Option(
+        False,
+        "--no-reeval",
+        help="Skip re-evaluation of prior inconclusive annotations",
+    ),
+    backfill_batch: int = typer.Option(
+        30,
+        "--backfill-batch",
+        help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview without writing annotations",
+    ),
+) -> None:
+    """Resolve would-have-been outcomes for blocked directional alerts.
+
+    D-148: Blocked-Alert Recall Proxy. Same threshold/window logic as
+    ``alerts auto-annotate`` but runs against ``blocked_alerts.jsonl`` and
+    writes ``blocked_outcomes.jsonl``.  Used to measure recall loss caused
+    by the directional eligibility gate.
+    """
+    import asyncio
+
+    from app.alerts.blocked_annotator import auto_annotate_blocked
+
+    artifacts_dir = Path("artifacts")
+
+    results = asyncio.run(
+        auto_annotate_blocked(
+            audit_dir=artifacts_dir,
+            min_age_hours=min_age_hours,
+            move_threshold=move_threshold,
+            reeval_inconclusive=not no_reeval,
+            backfill_batch=backfill_batch,
+            dry_run=dry_run,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No pending blocked alerts to annotate.[/yellow]")
+        return
+
+    hits = sum(1 for a in results if a.outcome == "hit")
+    misses = sum(1 for a in results if a.outcome == "miss")
+    inconclusive = sum(1 for a in results if a.outcome == "inconclusive")
+
+    for a in results:
+        color = {"hit": "red", "miss": "green", "inconclusive": "yellow"}[a.outcome]
+        console.print(f"[{color}]{a.outcome:>13}[/{color}]  {a.asset}  {a.note}")
+
+    mode = " [dim](dry-run)[/dim]" if dry_run else ""
+    console.print(
+        f"\n[bold]{len(results)} blocked-alert outcomes{mode}:[/bold]"
+        f" {hits} would-have-hit (recall loss), {misses} correctly blocked, "
+        f"{inconclusive} inconclusive"
+    )
+
+
+@alerts_app.command("blocked-outcome-report")
+def alerts_blocked_outcome_report(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Artifacts directory or blocked_outcomes.jsonl path",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "",
+        "--out-json",
+        help="Also persist the report JSON to this path (pullable artifact)",
+    ),
+) -> None:
+    """Read-only D-227 blocked outcome idempotency and hit/miss report."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import (
+        build_blocked_outcome_report,
+        render_blocked_outcome_report,
+        write_blocked_outcome_report,
+    )
+
+    report = build_blocked_outcome_report(artifacts_dir)
+    written = write_blocked_outcome_report(report, out_json) if out_json else None
+    if as_json:
+        # stdout stays pure JSON — the persisted-path note goes to stderr only.
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_blocked_outcome_report(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+    if report["raw_events_count"] == 0:
+        raise typer.Exit(1)
+
+
+@alerts_app.command("d227-reconcile")
+def alerts_d227_reconcile(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min resolved count per side before a verdict"
+    ),
+    tolerance_pct: float = typer.Option(
+        5.0, "--tolerance-pct", help="How close blocked may come to dispatched before over-blocking"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only D-227 blocked-outcome vs dispatched recall reconciliation."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_hitrate_reconciliation import (
+        reconcile_d227_vs_hitrate,
+        render_reconciliation,
+    )
+    from app.alerts.hit_rate import build_outcomes_from_records, compute_hit_rate
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    outcomes = build_outcomes_from_records(list(records), annotations=list(annotations))
+    hitrate = compute_hit_rate(outcomes, min_sample=min_sample).to_dict()
+    report = reconcile_d227_vs_hitrate(
+        blocked, hitrate, min_sample=min_sample, tolerance_pct=tolerance_pct
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        # stdout stays pure JSON — the persisted-path note goes to stderr only.
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_reconciliation(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
+@alerts_app.command("d227-source-crosscheck")
+def alerts_d227_source_crosscheck(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    window_days: int = typer.Option(90, "--window-days", help="Source-reliability window"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min blocked-resolved count per source before a verdict"
+    ),
+    over_block_threshold_pct: float = typer.Option(
+        50.0,
+        "--over-block-threshold-pct",
+        help="Blocked recall at/above which a good source over-blocks",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only per-source cross-check: D-227 blocked recall vs source reliability."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_source_reliability_crosscheck import (
+        crosscheck_blocked_vs_reliability,
+        render_crosscheck,
+    )
+    from app.learning.source_reliability import build_source_reliability_report
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    audits = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    source_map, _title_map = _load_doc_metadata(audits)
+    reliability = build_source_reliability_report(
+        list(audits), list(annotations), source_map or {}, window_days=window_days
+    )
+    report = crosscheck_blocked_vs_reliability(
+        blocked,
+        reliability,
+        min_sample=min_sample,
+        over_block_threshold_pct=over_block_threshold_pct,
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_crosscheck(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
+@alerts_app.command("d227-blockreason-quality")
+def alerts_d227_blockreason_quality(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min resolved count per reason before a verdict"
+    ),
+    over_block_threshold_pct: float = typer.Option(
+        50.0,
+        "--over-block-threshold-pct",
+        help="Blocked recall at/above which a reason over-blocks",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only D-227 block-reason suppression-quality (which gate rule over-blocks)."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_blockreason_quality import (
+        assess_blockreason_quality,
+        render_blockreason_quality,
+    )
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    report = assess_blockreason_quality(
+        blocked, min_sample=min_sample, over_block_threshold_pct=over_block_threshold_pct
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_blockreason_quality(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
+@alerts_app.command("daily-briefing")
+def alerts_daily_briefing(
+    lookback_hours: int = typer.Option(
+        24,
+        help="Lookback window in hours",
+    ),
+    notify: bool = typer.Option(
+        False,
+        help="Send briefing via Telegram to operator",
+    ),
+) -> None:
+    """Generate a daily operator briefing from all audit trails."""
+    import asyncio
+
+    from app.alerts.daily_briefing import build_daily_briefing_with_portfolio
+
+    data = asyncio.run(build_daily_briefing_with_portfolio(lookback_hours=lookback_hours))
+    text = data.to_text()
+    console.print(text)
+
+    if notify:
+        from app.alerts.notify import send_operator_notification
+
+        ok = asyncio.run(send_operator_notification(text))
+        if ok:
+            console.print("[green]Telegram notification sent.[/green]")
+
+
+@alerts_app.command("health-check")
+def alerts_health_check(
+    lookback_hours: int = typer.Option(
+        24,
+        help="Lookback window in hours",
+    ),
+    notify: bool = typer.Option(
+        False,
+        help="Send issues via Telegram to operator",
+    ),
+    telegram_on_issue: bool = typer.Option(
+        False,
+        "--telegram-on-issue",
+        help=(
+            "Send Telegram only when issues are found (suppresses healthy-state pings). "
+            "Honors cooldown via .health_check_last_notification state file."
+        ),
+    ),
+    notify_cooldown_minutes: int = typer.Option(
+        30,
+        help="Minimum minutes between Telegram notifications (cooldown anti-spam).",
+    ),
+    min_expected_actionable: int = typer.Option(
+        0,
+        help="P1 floor: warn if fewer than N actionable alerts in window (0=disabled).",
+    ),
+    exit_on_stale: bool = typer.Option(
+        False,
+        "--exit-on-stale",
+        help=(
+            "P2: exit with code 2 when data sources are stale "
+            "(stops false-positive workstation runs from polluting Telegram). "
+            "Override with --allow-stale."
+        ),
+    ),
+    allow_stale: bool = typer.Option(
+        False,
+        "--allow-stale",
+        help="P2: override --exit-on-stale so workstation runs can still execute.",
+    ),
+) -> None:
+    """Run system health checks and report issues (P0+P1+P2 enhanced).
+
+    P0: data-freshness check (avoid sync-lag false-positives like the 2026-05-23
+    workstation-stale incident). P1: actionable + priority_rejected breakdown.
+    P2: hostname detection + exit-on-stale for workstation-redirect.
+    """
+    import asyncio
+    import time
+    from pathlib import Path as _Path
+
+    from app.alerts.health_check import run_health_check_report
+
+    report = run_health_check_report(
+        lookback_hours=lookback_hours,
+        min_expected_actionable=min_expected_actionable,
+    )
+
+    # Structured breakdown (P1+P2) — always shown, even on green probes
+    host_marker = report.hostname or "unknown"
+    location = "Pi" if report.runs_on_pi else "off-Pi"
+    console.print(
+        f"[dim]Window: {lookback_hours}h · host={host_marker} ({location}) · "
+        f"alerts={report.recent_alerts} (actionable={report.recent_actionable_alerts}) · "
+        f"cycles={report.recent_cycles} · "
+        f"re_entry_mode={'on' if report.re_entry_mode_active else 'off'}[/dim]"
+    )
+    if report.cycle_status_breakdown:
+        sorted_items = sorted(report.cycle_status_breakdown.items(), key=lambda x: -x[1])
+        breakdown_str = ", ".join(f"{k}={v}" for k, v in sorted_items)
+        console.print(f"[dim]Cycle breakdown: {breakdown_str}[/dim]")
+    if report.data_sources_stale:
+        console.print(
+            "[yellow bold]⚠ Data sources are stale — probe may be reading "
+            "workstation-mirrored artifacts. Run on Pi for source-of-truth.[/yellow bold]"
+        )
+    # P2: exit semantic — non-authoritative means either stale mtime OR
+    # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
+    if exit_on_stale and not allow_stale and (report.data_sources_stale or not report.runs_on_pi):
+        reason = "stale data" if report.data_sources_stale else "off-Pi host"
+        console.print(
+            f"[red bold]Exit-on-stale: aborting with code 2 ({reason}) — "
+            f"use --allow-stale to override.[/red bold]"
+        )
+        raise typer.Exit(code=2)
+
+    if not report.issues:
+        console.print("[bold green]All systems healthy.[/bold green]")
+        if notify and not telegram_on_issue:
+            from app.alerts.notify import send_operator_notification
+
+            ok = asyncio.run(send_operator_notification("KAI Health Check: All systems healthy."))
+            if ok:
+                console.print("[green]Telegram notification sent.[/green]")
+        return
+
+    for issue in report.issues:
+        color = "red" if issue.severity == "critical" else "yellow"
+        console.print(
+            f"[{color}][{issue.severity.upper()}][/{color}] {issue.component}: {issue.message}"
+        )
+
+    critical = sum(1 for i in report.issues if i.severity == "critical")
+    warnings = sum(1 for i in report.issues if i.severity == "warning")
+    console.print(
+        f"\n[bold]{len(report.issues)} issues:[/bold] {critical} critical, {warnings} warnings"
+    )
+
+    if notify or telegram_on_issue:
+        # Cooldown gate (state file in artifacts/)
+        state_file = _Path("artifacts") / ".health_check_last_notification"
+        now_ts = time.time()
+        if state_file.exists():
+            try:
+                last_ts = float(state_file.read_text(encoding="utf-8").strip())
+            except (ValueError, OSError):
+                last_ts = 0.0
+            elapsed_min = (now_ts - last_ts) / 60.0
+            if elapsed_min < notify_cooldown_minutes:
+                console.print(
+                    f"[dim]Notification suppressed (cooldown: "
+                    f"{elapsed_min:.1f}/{notify_cooldown_minutes}min).[/dim]"
+                )
+                return
+
+        from app.alerts.notify import send_operator_notification
+
+        lines = ["KAI Health Alert"]
+        if report.data_sources_stale:
+            lines.append("[NOTE] data sources stale — Pi-sync may be lagging")
+        lines.append(
+            f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
+            f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
+        )
+        for issue in report.issues:
+            tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
+            lines.append(f"[{tag}] {issue.component}: {issue.message}")
+        text = "\n".join(lines)
+        ok = asyncio.run(send_operator_notification(text))
+        if ok:
+            try:
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                state_file.write_text(str(now_ts), encoding="utf-8")
+            except OSError:
+                pass
+            console.print("[green]Telegram notification sent.[/green]")
+        else:
+            console.print("[yellow]Telegram not configured or send failed.[/yellow]")
+
+
+@alerts_app.command("ops-status")
+def alerts_ops_status(
+    lookback_hours: int = typer.Option(
+        24,
+        help="Lookback window in hours",
+    ),
+) -> None:
+    """Quick operator dashboard — health, cycles, precision at a glance."""
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from app.alerts.daily_briefing import build_daily_briefing
+    from app.alerts.health_check import run_health_check
+
+    artifacts = Path("artifacts")
+    now = datetime.now(UTC)
+
+    # Health check
+    issues = run_health_check(
+        artifacts_dir=artifacts,
+        lookback_hours=lookback_hours,
+    )
+    if issues:
+        health_str = ", ".join(f"{i.component}({i.severity[0].upper()})" for i in issues)
+    else:
+        health_str = "OK"
+
+    # Briefing data
+    data = build_daily_briefing(
+        artifacts_dir=artifacts,
+        lookback_hours=lookback_hours,
+    )
+
+    # Last cron run
+    log_path = artifacts / "paper_trading_cron.log"
+    last_cron = "unknown"
+    if log_path.exists():
+        with log_path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "cron start" in line:
+                    last_cron = line[:19].strip()
+
+    console.print(f"[bold]KAI System Status[/bold] ({now.strftime('%Y-%m-%d %H:%M')} UTC)")
+    console.print(f"  Health:       {health_str}")
+    console.print(f"  Last Cron:    {last_cron}")
+    console.print(
+        f"  Cycles {lookback_hours}h:   "
+        f"{data.cycles_total} total, "
+        f"{data.cycles_completed} completed, "
+        f"{data.fills} fills"
+    )
+    if data.precision_pct is not None:
+        console.print(f"  Precision:    {data.precision_pct:.1f}% ({data.hits}h / {data.misses}m)")
+    else:
+        console.print(f"  Precision:    n/a ({data.hits}h / {data.misses}m)")
+    console.print(
+        f"  Alerts {lookback_hours}h:   "
+        f"{data.alerts_dispatched} dispatched, "
+        f"{data.alerts_directional} directional"
+    )
+    console.print(
+        f"  Annotations:  {data.total_annotations} total, {data.inconclusive} inconclusive"
+    )
+
+
+@alerts_app.command("signal-status")
+def alerts_signal_status(
+    lookback_hours: int = typer.Option(24, help="Lookback window for rolling counters"),
+    handoff_log_path: str | None = typer.Option(
+        None, help="Optional override path for Telegram signal handoff log"
+    ),
+    outbox_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay outbox log"
+    ),
+    sent_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay sent log"
+    ),
+    dead_letter_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay dead-letter log"
+    ),
+) -> None:
+    """Show read-only status for Telegram signal handoff and exchange relay pipeline."""
+    settings = get_settings()
+    op = settings.operator
+
+    payload = build_signal_pipeline_status(
+        handoff_log_path=handoff_log_path or op.signal_handoff_log,
+        outbox_log_path=outbox_log_path or op.signal_exchange_outbox_log,
+        sent_log_path=sent_log_path or op.signal_exchange_sent_log,
+        dead_letter_log_path=dead_letter_log_path or op.signal_exchange_dead_letter_log,
+        lookback_hours=lookback_hours,
+    )
+    console.print("[bold]Signal Pipeline Status[/bold]")
+    console.print(f"lookback_hours={payload['lookback_hours']}")
+    console.print(f"handoff_total={payload['handoff_total']}")
+    console.print(f"handoff_lookback={payload['handoff_lookback']}")
+    console.print(f"outbox_queued_total={payload['outbox_queued_total']}")
+    console.print(f"exchange_sent_total={payload['exchange_sent_total']}")
+    console.print(f"exchange_sent_lookback={payload['exchange_sent_lookback']}")
+    console.print(f"exchange_dead_letter_total={payload['exchange_dead_letter_total']}")
+    console.print(f"exchange_dead_letter_lookback={payload['exchange_dead_letter_lookback']}")
+    execution = payload.get("signal_execution")
+    if isinstance(execution, dict):
+        console.print(f"waiting_for_entry={execution.get('waiting_for_entry', 0)}")
+        console.print(f"positions_open={execution.get('positions_open', 0)}")
+        console.print(f"filled={execution.get('filled', 0)}")
+        console.print(f"expired={execution.get('expired', 0)}")
+        console.print(f"rejected={execution.get('rejected', 0)}")
+    console.print(f"execution_enabled={payload['execution_enabled']}")
+    console.print(f"write_back_allowed={payload['write_back_allowed']}")
+
+
+@alerts_app.command("exchange-relay")
+def alerts_exchange_relay(
+    endpoint: str | None = typer.Option(
+        None, help="Optional override endpoint for signal relay target"
+    ),
+    batch_size: int = typer.Option(100, help="Max queued rows to process per run"),
+    timeout_seconds: int | None = typer.Option(
+        None, help="Optional override relay timeout in seconds"
+    ),
+    max_attempts: int | None = typer.Option(
+        None, help="Optional override max retry attempts before dead-letter"
+    ),
+    outbox_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay outbox log"
+    ),
+    sent_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay sent log"
+    ),
+    dead_letter_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay dead-letter log"
+    ),
+) -> None:
+    """Relay queued Telegram signal rows to configured exchange/API endpoint."""
+    import asyncio
+
+    settings = get_settings()
+    op = settings.operator
+
+    effective_endpoint = (endpoint or op.signal_exchange_relay_endpoint).strip()
+    effective_timeout = timeout_seconds or op.signal_exchange_relay_timeout_seconds
+    effective_attempts = max_attempts or op.signal_exchange_relay_max_attempts
+    effective_outbox = outbox_log_path or op.signal_exchange_outbox_log
+    effective_sent = sent_log_path or op.signal_exchange_sent_log
+    effective_dead = dead_letter_log_path or op.signal_exchange_dead_letter_log
+
+    if not effective_endpoint:
+        console.print(
+            "[yellow]Relay endpoint not configured; rows will be retried/dead-lettered "
+            "based on max_attempts.[/yellow]"
+        )
+
+    stats = asyncio.run(
+        relay_exchange_outbox_once(
+            outbox_path=effective_outbox,
+            sent_log_path=effective_sent,
+            dead_letter_log_path=effective_dead,
+            endpoint=effective_endpoint,
+            api_key=op.signal_exchange_relay_api_key,
+            timeout_seconds=effective_timeout,
+            max_attempts=effective_attempts,
+            batch_size=batch_size,
+        )
+    )
+
+    payload = stats.to_json_dict()
+    console.print("[bold]Exchange Relay Run[/bold]")
+    console.print(f"processed={payload['processed']}")
+    console.print(f"sent={payload['sent']}")
+    console.print(f"requeued={payload['requeued']}")
+    console.print(f"dead_lettered={payload['dead_lettered']}")
+    console.print(f"skipped={payload['skipped']}")
+    console.print(f"execution_enabled={payload['execution_enabled']}")
+    console.print(f"write_back_allowed={payload['write_back_allowed']}")
 
 
 if __name__ == "__main__":

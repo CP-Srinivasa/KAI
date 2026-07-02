@@ -28,6 +28,12 @@ class AlertMessage:
     source_name: str | None = None
     tags: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Score context for directional eligibility evaluation (D-111)
+    sentiment_score: float | None = None
+    impact_score: float | None = None
+    # D-116: LLM directional signal quality fields
+    directional_confidence: float | None = None
+    event_timing: str | None = None
 
 
 @dataclass(frozen=True)

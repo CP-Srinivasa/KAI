@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KAI Stablecoin Risk Registry
+# ─────────────────────────────────────────────────────────────────────────────
+# The liquidity/settlement reserve sleeve (USDT/approved stablecoins) is held to
+# execute trades quickly. A stablecoin is NOT risk-free — it carries depeg,
+# issuer, reserve, transparency, custody, regulatory and liquidity risk. This
+# operator-curated registry makes those dimensions explicit so the reserve is
+# managed, not assumed.
+#
+# Contract (see app/trading/stablecoin_risk.py):
+#   * symbol keys are the canonical BASE asset (USDT, not USDT/USD).
+#   * Every qualitative dimension uses the vocabulary below; anything omitted or
+#     unrecognised is surfaced as "unknown" — NEVER silently treated as safe.
+#   * overall_risk_tier is an OPERATOR JUDGEMENT, not a computed number. We do
+#     not fabricate a precise risk score from incomplete public disclosures.
+#   * This is research/context, not investment advice. Update deliberately as
+#     attestations / regulation / reserve composition change.
+#
+# Vocabularies:
+#   depeg_risk          : low | medium | high | unknown
+#   reserves_quality    : strong | adequate | weak | opaque | unknown
+#                         (cash & T-bills = strong; commercial paper / loans = weaker)
+#   transparency        : audited | attested | self_reported | opaque | unknown
+#   custody_model       : regulated_custodian | mixed | offshore | onchain | unknown
+#   regulatory_status   : regulated | partial | unregulated | unknown
+#   liquidity_tier      : very_high | high | medium | low | unknown
+#   overall_risk_tier   : low | medium | high | unknown
+
+version: 1
+
+stablecoins:
+  USDT:
+    name: Tether USD
+    issuer: Tether Ltd
+    peg_target: USD
+    depeg_risk: medium
+    reserves_quality: adequate
+    transparency: attested        # quarterly attestations, not a full audit
+    custody_model: mixed
+    regulatory_status: partial
+    liquidity_tier: very_high
+    overall_risk_tier: medium
+    notes: >
+      Deepest liquidity / widest venue support, but reserve composition and
+      audit depth remain the main open questions. Attested, not fully audited.
+
+  USDC:
+    name: USD Coin
+    issuer: Circle
+    peg_target: USD
+    depeg_risk: low
+    reserves_quality: strong       # cash + short-dated US Treasuries
+    transparency: attested
+    custody_model: regulated_custodian
+    regulatory_status: regulated
+    liquidity_tier: very_high
+    overall_risk_tier: low
+    notes: >
+      Cash + short T-bill reserves with regulated custodians and monthly
+      attestations. Briefly depegged during the Mar-2023 SVB episode — depeg is
+      low but not zero.
+
+  DAI:
+    name: Dai
+    issuer: MakerDAO / Sky
+    peg_target: USD
+    depeg_risk: medium
+    reserves_quality: adequate     # crypto-collateral + RWA + USDC backing
+    transparency: onchain          # collateral verifiable on-chain
+    custody_model: onchain
+    regulatory_status: unregulated
+    liquidity_tier: high
+    overall_risk_tier: medium
+    notes: >
+      On-chain over-collateralised, but partly backed by centralised
+      stablecoins (USDC), inheriting some of their risk. No single issuer.
+
+  # Example of an asset we deliberately mark as NOT evaluable rather than guess.
+  TUSD:
+    name: TrueUSD
+    issuer: unknown
+    peg_target: USD
+    depeg_risk: unknown
+    reserves_quality: unknown
+    transparency: unknown
+    custody_model: unknown
+    regulatory_status: unknown
+    liquidity_tier: medium
+    overall_risk_tier: unknown
+    notes: >
+      Insufficient verifiable disclosure on file — marked not-evaluable instead
+      of estimated. Do not treat as a safe reserve until curated.

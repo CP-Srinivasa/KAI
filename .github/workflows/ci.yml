@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Nur Mainline: jeder PR-Branch löste sonst ZWEI komplette CI-Läufe aus
+    # (push- + pull_request-Event, ~16 Jobs pro PR) — PRs sind über den
+    # pull_request-Trigger weiterhin voll gegated (Operator-Entscheid 2026-07-01).
+    branches: ["claude/p7/reentry-ia-codex-cycle"]
   pull_request:
     branches: ["**"]
 
@@ -23,14 +26,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
-      - run: ruff check app/ tests/
-      - run: ruff format --check app/ tests/
+      # Lock-File-Migration (DS-20260527-V5): deterministisches Env aus
+      # requirements.lock (universal-cross-platform). Vorher zog `pip install
+      # -e ".[dev]"` LATEST-Versionen aller Deps und war damit offen für
+      # MAL-/CVE-Hidden-Inject-Pattern (MAL-2026-4750-Klasse, fastapi 0.136.3).
+      - run: pip install --no-cache-dir -r requirements.lock
+      - run: pip install -e . --no-deps
+      # S5 repo hygiene (Issue #172): lint gate covers the FULL repo (scripts/,
+      # brand/, monitor/, deploy helpers included) — pre-existing full-ruff
+      # failures were fixed, so any new file is held to the same bar.
+      - run: ruff check .
+      - run: ruff format --check .
+      # S7 god-file ratchet (D-234): the five named god-files may only shrink.
+      # Growth requires an extraction in the same PR - or a conscious,
+      # diff-visible baseline raise the review has to justify.
+      - run: python scripts/godfile_ratchet.py
 
   test:
     name: Tests
     runs-on: ubuntu-latest
-    needs: lint
+    # Bewusst OHNE needs:lint — Tests ist mit Abstand der längste Job (Kritischer
+    # Pfad); die Serialisierung hinter Lint kostete ~40s Wallclock pro PR und
+    # sparte nur im (seltenen) Lint-Rot-Fall Compute.
     services:
       postgres:
         image: postgres:16-alpine
@@ -59,13 +76,46 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-      - run: pip install -e ".[dev]"
-      - run: pytest tests/ -v --cov=app --cov-report=xml
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.lock') }}
+      # Determinismus kommt aus dem Lock-File; der pip-Wheel-Cache (Step oben)
+      # darf greifen — --no-cache-dir hatte ihn wirkungslos gemacht.
+      - run: pip install -r requirements.lock
+      - run: pip install -e . --no-deps
+      # -n auto: alle Runner-Kerne; --dist loadfile: Tests derselben Datei bleiben
+      # im selben Worker (Modul-Fixtures/DB-Setups kollidieren nicht über Dateien
+      # hinweg). -q überstimmt das -v aus addopts (Vollprotokoll bringt in CI
+      # nichts und kostet Log-I/O; Failures bleiben voll sichtbar).
+      # tests/benchmarks läuft im Job "Benchmarks" (parallel, Required-Check).
+      - run: pytest tests/ -q -n auto --dist loadfile --ignore=tests/benchmarks --cov=app --cov-report=xml
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+
+  benchmarks:
+    # ADR-0003-Gate (DuckDB-Query-p95 <50ms) — eigener Job statt Step im Tests-Job:
+    # läuft PARALLEL (die thirty_day_db-Fixture kostete ~3 min im kritischen Pfad)
+    # und single-threaded, damit die p95-Messung nicht durch xdist-Nachbarlast
+    # verfälscht wird. Merge-blockend als Required-Check in der Branch-Protection
+    # (Operator-Entscheid 2026-07-01) — Gate-Härte unverändert.
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: testing
+      TELEGRAM_ENABLED: "false"
+      EMAIL_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.lock') }}
+      - run: pip install -r requirements.lock
+      - run: pip install -e . --no-deps
+      - run: pytest tests/benchmarks -q
 
   security:
     name: Security Scan
@@ -78,8 +128,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit bandit
-      - name: Dependency vulnerability scan (pip-audit)
-        run: pip install -e ".[dev]" && pip-audit
+      - name: Dependency vulnerability scan (pip-audit on lockfile)
+        # Lock-File-Migration (DS-20260527-V5): pip-audit scannt direkt das
+        # requirements.lock statt erst zu installieren. Schneller + deterministisch.
+        # pip-CVEs (CVE-2026-3219 no-fix, CVE-2026-6357 fix-pending in pip 26.1)
+        # ignored — pip ist Build-Tool, keine Project-Dependency.
+        run: pip-audit -r requirements.lock --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
       - name: Static security analysis (bandit)
         run: |
           bandit -r app/ \
@@ -89,6 +143,182 @@ jobs:
             --format txt
         # B101 = assert statements in tests (allowed)
         # B601 = shell injection in paramiko (not used here)
+
+  hygiene:
+    name: Repo Hygiene & Secret Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secrets in tracked files
+        run: |
+          echo "=== Checking for leaked secrets in tracked files ==="
+          FAIL=0
+
+          # Pattern-based secret detection in all tracked files
+          PATTERNS=(
+            'sk-proj-[A-Za-z0-9_-]{20,}'    # OpenAI keys
+            'sk-[A-Za-z0-9]{40,}'            # OpenAI legacy keys
+            'AIzaSy[A-Za-z0-9_-]{33}'        # Google API keys
+            'pub_[a-f0-9]{20,}'              # NewsData.io keys
+            'xoxb-[0-9]{10,}'               # Slack bot tokens
+            'ghp_[A-Za-z0-9]{36}'            # GitHub PATs
+            'AKIA[A-Z0-9]{16}'              # AWS access keys
+            '[0-9]{8,10}:[A-Za-z0-9_-]{35}'  # Telegram bot tokens
+          )
+
+          # Sanitizer-Tests need realistic-looking fake secrets as fixtures
+          # to verify redaction. They are allowlisted from the guard.
+          EXCLUDE_PATHS=(
+            ':!.github/workflows/ci.yml'
+            ':!tests/unit/test_audit_sanitization.py'
+            ':!tests/unit/test_structured_reasoning.py'
+            ':!tests/unit/test_bayes_journal_sanitize.py'
+          )
+
+          for pat in "${PATTERNS[@]}"; do
+            HITS=$(git grep -lP "$pat" -- "${EXCLUDE_PATHS[@]}" 2>/dev/null || true)
+            if [ -n "$HITS" ]; then
+              echo "FAIL: Pattern '$pat' found in: $HITS"
+              FAIL=1
+            fi
+          done
+
+          # Check no .env files are tracked (allow .env.example as template)
+          ENV_FILES=$(git ls-files '.env' '.env.local' '.env.*.local' '.env.production' '.env.staging' 2>/dev/null || true)
+          if [ -n "$ENV_FILES" ]; then
+            echo "FAIL: .env files tracked in git: $ENV_FILES"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::Secrets or .env files detected in repository!"
+            exit 1
+          fi
+          echo "OK: No secrets found in tracked files."
+
+      - name: Gitignore completeness
+        run: |
+          echo "=== Checking .gitignore covers required patterns ==="
+          FAIL=0
+          REQUIRED=(
+            '.env'
+            '*.db'
+            'artifacts/'
+            '__pycache__/'
+            '.mypy_cache/'
+            '.ruff_cache/'
+            'data/'
+            '*.key'
+            '.coverage'
+          )
+          GITIGNORE=$(cat .gitignore 2>/dev/null || echo "")
+
+          for pattern in "${REQUIRED[@]}"; do
+            if ! echo "$GITIGNORE" | grep -qF "$pattern"; then
+              echo "FAIL: .gitignore missing required pattern: $pattern"
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::.gitignore is incomplete — required patterns missing!"
+            exit 1
+          fi
+          echo "OK: .gitignore covers all required patterns."
+
+      - name: No debug artifacts in repo
+        run: |
+          echo "=== Checking for debug/dev artifacts that should not be committed ==="
+          FAIL=0
+
+          # Database files
+          DB_FILES=$(git ls-files '*.db' '*.sqlite' '*.sqlite3' 2>/dev/null || true)
+          if [ -n "$DB_FILES" ]; then
+            echo "FAIL: Database files in repo: $DB_FILES"
+            FAIL=1
+          fi
+
+          # JSONL runtime artifacts
+          JSONL_FILES=$(git ls-files 'artifacts/*.jsonl' '*.jsonl' 2>/dev/null || true)
+          if [ -n "$JSONL_FILES" ]; then
+            echo "FAIL: JSONL artifacts in repo: $JSONL_FILES"
+            FAIL=1
+          fi
+
+          # Python sourcemaps / debug symbols
+          PYC_FILES=$(git ls-files '*.pyc' '*.pyo' '*.pyd' 2>/dev/null || true)
+          if [ -n "$PYC_FILES" ]; then
+            echo "FAIL: Compiled Python files in repo: $PYC_FILES"
+            FAIL=1
+          fi
+
+          # Coverage / profiling artifacts
+          COV_FILES=$(git ls-files '.coverage' 'coverage.xml' 'htmlcov/*' '*.prof' 2>/dev/null || true)
+          if [ -n "$COV_FILES" ]; then
+            echo "FAIL: Coverage/profiling files in repo: $COV_FILES"
+            FAIL=1
+          fi
+
+          # Sourcemap files (JS/CSS - should never appear)
+          MAP_FILES=$(git ls-files '*.map' '*.js.map' '*.css.map' 2>/dev/null || true)
+          if [ -n "$MAP_FILES" ]; then
+            echo "FAIL: Sourcemap files in repo: $MAP_FILES"
+            FAIL=1
+          fi
+
+          # Log files
+          LOG_FILES=$(git ls-files '*.log' 'logs/*' 2>/dev/null || true)
+          if [ -n "$LOG_FILES" ]; then
+            echo "FAIL: Log files in repo: $LOG_FILES"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::Debug artifacts detected in repository!"
+            exit 1
+          fi
+          echo "OK: No debug artifacts found in tracked files."
+
+      - name: pyproject.toml integrity
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate pyproject.toml and check for pinning
+        run: |
+          python3 - <<'PYEOF'
+          import sys, tomllib
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+
+          project = data.get("project", {})
+          deps = project.get("dependencies", [])
+          errors = []
+
+          if not project.get("name"):
+              errors.append("project.name is missing")
+          if not project.get("version"):
+              errors.append("project.version is missing")
+          if not project.get("requires-python"):
+              errors.append("project.requires-python is missing")
+          if not deps:
+              errors.append("project.dependencies is empty")
+
+          # Check no dependency uses == (exact pin) without reason
+          # Exact pins cause upgrade friction; prefer >= with upper bounds
+          for dep in deps:
+              if "==" in dep and ";" not in dep:
+                  errors.append(f"Exact pin detected: {dep} (prefer >= with upper bound)")
+
+          if errors:
+              print("pyproject.toml issues:")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+          print(f"OK: pyproject.toml valid ({len(deps)} dependencies, no exact pins)")
+          PYEOF
 
   type-check:
     name: Type Check
@@ -100,7 +330,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
+      # Lock-File-Migration (DS-20260527-V5): deterministisches Env wie in
+      # lint/test/security.
+      - run: pip install --no-cache-dir -r requirements.lock
+      - run: pip install -e . --no-deps
       - run: mypy app/
 
   pr-check:
@@ -128,4 +361,83 @@ jobs:
               print(f"❌ PR-Template unvollständig. Fehlende Abschnitte: {missing}")
               sys.exit(1)
           print("✅ PR-Template vollständig.")
+          EOF
+
+  web:
+    # AUDIT-A3: Frontend hatte bisher KEIN CI-Gate — TS-Fehler/kaputte Imports
+    # fielen erst beim manuellen Laptop-Build auf. Dieser Job gated web/ analog
+    # zum Backend: deterministisches npm ci + Type-Check (tsc) + Vite-Build.
+    name: Frontend Build & Type-Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint    # tsc -b --noEmit (type-check gate)
+      - run: npm run lint:data-sources  # jedes Panel muss @data-source: deklarieren (DALI #5)
+      - run: npm run build   # tsc -b && vite build (build gate)
+      - run: npm run test    # vitest run (dashboard component/unit tests, happy-dom)
+
+  pr-claims-verify:
+    # Härtet gegen Codex-CI-Drift-Pattern (siehe feedback_codex_ci_drift Memory):
+    # PR-Body claimt "ruff passed" / "tests passed" obwohl CI rot. Dieser Job
+    # parst Body-Claims + cross-checked sie gegen tatsächliche CI-Job-Conclusions.
+    # Nicht-blocking (always emit warnings + exit 0) — Lern-Tool, kein Hindernis.
+    name: PR Claims Cross-Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && always()
+    needs: [lint, test, security, type-check, hygiene]
+    steps:
+      - name: Parse PR-body claims vs CI conclusions
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          TYPE_RESULT: ${{ needs.type-check.result }}
+          HYGIENE_RESULT: ${{ needs.hygiene.result }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          body = os.environ.get("PR_BODY", "") or ""
+          results = {
+              "lint":     os.environ.get("LINT_RESULT", "missing"),
+              "test":     os.environ.get("TEST_RESULT", "missing"),
+              "security": os.environ.get("SECURITY_RESULT", "missing"),
+              "type":     os.environ.get("TYPE_RESULT", "missing"),
+              "hygiene":  os.environ.get("HYGIENE_RESULT", "missing"),
+          }
+          patterns = {
+              "lint":     r"(ruff[\w\s\-]*?(check|format)?[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK))",
+              "test":     r"((pytest|tests?\b)[\s\S]{0,80}?(passed|✓|→\s*passed|grün|grun|\d+\s*passed|\d+/\d+\s*(passed|grün|grun)|OK))",
+              "type":     r"((mypy|type[- ]check)[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK|clean))",
+              "security": r"((pip-audit|security|secret)[\s\S]{0,80}?(passed|✓|→\s*passed|grün|grun|OK|no vulnerabilities|0 vulnerabilities))",
+              "hygiene":  r"((hygiene|secret guard|gitignore)[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK))",
+          }
+          drifts = []
+          claimed_jobs = []
+          for job, pat in patterns.items():
+              if re.search(pat, body, re.IGNORECASE):
+                  claimed_jobs.append(job)
+                  actual = results[job]
+                  if actual not in ("success", "skipped"):
+                      drifts.append(f"{job}: body claims passed but CI conclusion = {actual!r}")
+          if drifts:
+              print("::warning title=PR Body-CI Drift::Body claims do not match CI results")
+              for d in drifts:
+                  print(f"::warning::{d}")
+              print("\nReference: feedback_codex_ci_drift (Memory).")
+              print("This is a NON-BLOCKING warning — fix PR-Body or push CI-fixes.")
+          else:
+              if claimed_jobs:
+                  print(f"OK: PR-Body claims ({', '.join(claimed_jobs)}) match CI results.")
+              else:
+                  print("OK: PR-Body has no testable Quality-Gate-Claims (skipped).")
           EOF

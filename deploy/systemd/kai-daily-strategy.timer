@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily strategy skeleton every morning 08:00 Europe/Berlin
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Europe/Berlin
+Persistent=true
+Unit=kai-daily-strategy.service
+
+[Install]
+WantedBy=timers.target

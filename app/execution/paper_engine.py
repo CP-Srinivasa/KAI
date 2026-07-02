@@ -12,9 +12,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
+from app.audit.stream_validation import PaperExecutionAuditStreamRow
+from app.core.file_lock import append_lock
+from app.core.settings import get_settings
+from app.core.symbol_guard import is_tradeable_symbol
+from app.execution.audit_replay import replay_paper_audit
+from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
+    OrderLifecycleState,
     PaperFill,
     PaperOrder,
     PaperPortfolio,
@@ -22,11 +30,177 @@ from app.execution.models import (
     _new_fill_id,
     _new_order_id,
     _now_utc,
+    make_lifecycle_transition,
 )
+from app.execution.order_intent import ExecutableOrderIntent
+from app.regime.lookup import now_utc_iso, regime_label_at
+from app.signals.models import (
+    IllegalStateTransitionError,
+    SignalState,
+    SignalStateMachine,
+    SignalStateTransition,
+)
+from app.trading.symbol_eligibility import is_canonical_priceable, latest_unpriceable_symbols
 
 logger = logging.getLogger(__name__)
 
 _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
+
+# DS-20260529-V1: close-price circuit breaker. A close whose implied per-trade
+# return exceeds this magnitude is almost never a real move on a 10-min monitor
+# cadence — it is the signature of a price-source disagreement (entry and exit
+# priced by different providers). On 2026-05-28 a delisted "MATIC" instrument on
+# BitMEX (0.40875) vs the real ~0.088 elsewhere closed +364% every cycle and
+# booked +73,548 USD of phantom PnL, whose fake profit then compounded the next
+# position's size. The cross-provider guard in FallbackMarketDataAdapter is the
+# upstream fix; this is the engine-level backstop for single-provider symbols
+# the upstream guard cannot cross-check. Reject (leave the position open) rather
+# than book a phantom close. Env-tunable via MAX_CLOSE_RETURN_PCT (fraction).
+_DEFAULT_MAX_CLOSE_RETURN_PCT = 2.0
+
+
+# ── Lifecycle-Emission-Idempotency (#314) ─────────────────────────────────────
+# Befund 2026-06-18 (Replay-SSOT-KPI): eine SKYAI/USDT-Envelope hatte ihre
+# Order-Open-Sequenz (ORDER_BUILDING→SUBMITTED→ACCEPTED→POSITION_OPEN) DOPPELT im
+# Audit (~30ms auseinander) → 3 „discontinuous"-Lifecycle-Replay-Fehler. Ursache:
+# zwei Engine-Instanzen mit je leerer In-Memory-Map emittierten beide die saubere
+# Sequenz. Der Fill selbst war idempotent dedupt (filled_keys), die
+# lifecycle_transition-Zeilen nicht. Dieser Guard macht die Emission idempotent:
+# eine Open-Phase-Stufe wird nie erneut emittiert, sobald die correlation_id sie
+# bereits erreicht/überschritten hat (Reprocess im selben Prozess + Post-Restart-
+# Reprocess via rehydrate sauber abgefangen). Hinweis: ein ECHT-paralleler zweiter
+# Live-Prozess in denselben Millisekunden (Map beidseitig leer) ist ein
+# Prozess-Singleton-Verstoß und außerhalb dieses Emit-Guards — kai-server läuft
+# als Single-Service genau dafür.
+#
+# Nur der monoton-vorwärts Happy-Path bis POSITION_OPEN bekommt einen Rang;
+# Off-Path-/terminale States (SL_HIT, EXPIRED, CANCELLED, FAILED, REJECTED) und
+# post-open States (PARTIAL_TP_HIT, TP_HIT) stehen NICHT drin und werden nie
+# geguardet — wiederholte PARTIAL_TP_HIT-Tiers bleiben erlaubt.
+_LIFECYCLE_PROGRESSION: tuple[OrderLifecycleState, ...] = (
+    OrderLifecycleState.RECEIVED,
+    OrderLifecycleState.PARSED,
+    OrderLifecycleState.VALIDATED,
+    OrderLifecycleState.WAITING_FOR_ENTRY,
+    OrderLifecycleState.ENTRY_TRIGGERED,
+    OrderLifecycleState.ORDER_BUILDING,
+    OrderLifecycleState.ORDER_SUBMITTED,
+    OrderLifecycleState.ORDER_ACCEPTED,
+    OrderLifecycleState.POSITION_OPEN,
+)
+_PROGRESSION_RANK: dict[OrderLifecycleState, int] = {
+    state: rank for rank, state in enumerate(_LIFECYCLE_PROGRESSION)
+}
+
+
+def _is_redundant_open_transition(
+    current: OrderLifecycleState, to_state: OrderLifecycleState
+) -> bool:
+    """True, wenn ``to_state`` eine Order-Open-Phase-Stufe ist, die ``current``
+    bereits erreicht/überschritten hat — also eine doppelte/rückwärtige
+    (Re-)Emission der Eröffnungssequenz (idempotenter No-op).
+
+    ``to_state`` ohne Rang (post-open/off-path) → nie idempotent-skippen.
+    ``current`` ohne Rang (post-open/terminal) bei Open-Phase-``to_state`` →
+    redundant (die Open-Phase liegt definitiv hinter uns)."""
+    to_rank = _PROGRESSION_RANK.get(to_state)
+    if to_rank is None:
+        return False
+    cur_rank = _PROGRESSION_RANK.get(current)
+    if cur_rank is None:
+        return True
+    return to_rank <= cur_rank
+
+
+def _max_close_return_pct() -> float:
+    raw = os.environ.get("MAX_CLOSE_RETURN_PCT")
+    if raw is None:
+        return _DEFAULT_MAX_CLOSE_RETURN_PCT
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_MAX_CLOSE_RETURN_PCT
+    return value if value > 0 else _DEFAULT_MAX_CLOSE_RETURN_PCT
+
+
+def _position_age_seconds(opened_at: str) -> float | None:
+    """Sekunden seit ``opened_at`` (ISO). None bei unparsebarem Timestamp.
+
+    WP-A (regime-edge-capture): Basis für den regime-konditionierten Time-Stop.
+    """
+    from datetime import UTC, datetime
+
+    try:
+        t = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - t).total_seconds()
+
+
+def _liquidation_price(entry: float, leverage: float | None, side: str) -> float | None:
+    """Isolated-margin liquidation price (A-Fix 2026-06-13).
+
+    A leveraged position is wiped out when an adverse move consumes the margin,
+    i.e. roughly 1/leverage away from entry (maintenance margin ignored —
+    conservative, slightly later than a real exchange). Returns None for
+    spot/1x positions (no liquidation). Long liquidates below entry, short above.
+    """
+    if entry <= 0 or leverage is None or leverage <= 1.0:
+        return None
+    frac = 1.0 / leverage
+    if side == "short":
+        return entry * (1.0 + frac)
+    return entry * (1.0 - frac)
+
+
+def _implied_close_return(
+    entry_price: float, close_price: float, position_side: str
+) -> float | None:
+    """Signed per-trade return a close at ``close_price`` would realize.
+
+    Returns None when prices are non-positive (cannot reason about the move).
+    Long: (close/entry - 1). Short: (entry/close - 1).
+    """
+    if entry_price <= 0 or close_price <= 0:
+        return None
+    if position_side == "short":
+        return entry_price / close_price - 1.0
+    return close_price / entry_price - 1.0
+
+
+class DuplicateOrderError(RuntimeError):
+    """Raised when create_order would re-fill a known idempotency_key.
+
+    Sprint C (2026-05-12) fix gegen Q/USDT-Duplicate-Race: cross-process oder
+    cross-engine-instance run_tick()-Aufrufe können bei identischer envelope-id
+    parallel Fills versuchen. Der idempotency-Check in create_order bricht das
+    sofort ab, schreibt order_created_rejected_duplicate Audit-Event, und
+    Caller (Bridge) muss diese Exception als rejected_fill behandeln statt
+    die Pipeline-Stack zu crashen.
+    """
+
+
+# NEO-P-005: event-types the paper engine broadcasts to the dashboard SSE
+# bus. We map internal audit-names to public event-names so the dashboard can
+# stay stable if the audit schema ever gets a rename.
+_SSE_EVENT_MAP = {
+    "order_filled": "fill_settled",
+    "position_closed": "position_closed",
+}
+
+
+def _publish_paper_event(event_type: str, record: dict[str, object]) -> None:
+    sse_event = _SSE_EVENT_MAP.get(event_type)
+    if sse_event is None:
+        return
+    try:
+        from app.api.event_hub import get_default_event_hub
+
+        get_default_event_hub().publish(sse_event, record)
+    except Exception:  # noqa: BLE001 — publish must never fail the engine
+        pass
 
 
 class PaperExecutionEngine:
@@ -48,6 +222,7 @@ class PaperExecutionEngine:
         slippage_pct: float = 0.05,
         live_enabled: bool = False,
         audit_log_path: str | None = None,
+        regime_max_hold_seconds: dict[str, int] | None = None,
     ) -> None:
         if live_enabled:
             raise ValueError(
@@ -56,8 +231,15 @@ class PaperExecutionEngine:
             )
         self._fee_pct = fee_pct / 100
         self._slippage_pct = slippage_pct / 100
+        # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter Time-Stop.
+        # Default LEER ⇒ AUS ⇒ heutiges Verhalten unverändert. Befund: chop_quiet
+        # revertiert nach ~300s ins Negative, breakout_up läuft länger — also
+        # frühes Schließen NUR für konfigurierte (revertierende) Regimes.
+        self._regime_max_hold: dict[str, int] = dict(regime_max_hold_seconds or {})
         self._portfolio = PaperPortfolio(initial_equity=initial_equity, cash=initial_equity)
         self._filled_keys: set[str] = set()
+        self._partial_fill_ratios: dict[str, float] = {}
+        self._lifecycle_state_by_correlation_id: dict[str, OrderLifecycleState] = {}
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("[PAPER] Engine initialized. equity=%.2f", initial_equity)
@@ -65,6 +247,170 @@ class PaperExecutionEngine:
     @property
     def portfolio(self) -> PaperPortfolio:
         return self._portfolio
+
+    @property
+    def audit_path(self) -> Path:
+        """Read-only path to this engine's audit JSONL.
+
+        NEO-V2: the post-stop cooldown gate reads `position_closed reason=stop`
+        events from exactly the stream this engine writes them to."""
+        return self._audit_path
+
+    @property
+    def state(self) -> str:
+        """PRE-C protocol state: paper mode is always armed for simulation."""
+        return "paper"
+
+    def status(self) -> dict[str, object]:
+        """Read-only PRE-C status snapshot compatible with live_engine.status()."""
+        return {
+            "state": self.state,
+            "open_positions": len(self._portfolio.positions),
+            "cash": self._portfolio.cash,
+            "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+            "filled_idempotency_keys": len(self._filled_keys),
+        }
+
+    def rehydrate_from_audit(self, audit_path: str | Path | None = None) -> bool:
+        """Replay the audit JSONL and replace in-memory portfolio state.
+
+        Necessary for cross-process continuity (e.g. cron-driven runs) where
+        a fresh engine must observe previously opened positions. Returns True
+        on success, False on replay error (engine state left unchanged).
+
+        Sprint C (2026-05-12): zusätzlich werden die idempotency_keys aller
+        bisherigen Fills in ``self._filled_keys`` geladen. Damit blockt der
+        nächste ``create_order`` einen doppelten Fill, auch wenn zwei
+        run_tick()-Aufrufe (oder zwei Engine-Instanzen) parallel laufen —
+        Race-Condition aus Q/USDT 2026-05-09 16:21:18 (zwei identische
+        opbridge-Keys 333 ms auseinander).
+        """
+        path = Path(audit_path) if audit_path is not None else self._audit_path
+        result = replay_paper_audit(path)
+        if not result.available:
+            logger.warning("[PAPER] audit replay failed: %s", result.error)
+            return False
+        self._portfolio.positions = dict(result.positions)
+        if result.cash_usd:
+            self._portfolio.cash = result.cash_usd
+        self._portfolio.realized_pnl_usd = result.realized_pnl_usd
+        # Sprint C: persistent dedup-Set aus audit-replay übernehmen.
+        self._filled_keys.update(result.filled_idempotency_keys)
+        self._lifecycle_state_by_correlation_id = {
+            correlation_id: transitions[-1].to_state
+            for correlation_id, transitions in result.lifecycle_history.items()
+            if transitions
+        }
+        # PRE-A follow-up: surface lifecycle-replay discontinuities to operator.
+        # Position recovery itself is unaffected (see test_lifecycle_replay_
+        # errors_do_not_block_position_recovery) but silent drops would mask
+        # legitimate state-machine drift — e.g. a legacy ORDER_SUBMITTED ->
+        # WAITING_FOR_ENTRY row or a discontinuous transition emitted before
+        # the FSM tracker existed. Logged as warning so journalctl + log-
+        # aggregation surface the count without breaking rehydrate-flow.
+        if result.lifecycle_replay_errors:
+            logger.warning(
+                "[PAPER] audit-replay observed %d lifecycle discontinuit%s: %s",
+                len(result.lifecycle_replay_errors),
+                "y" if len(result.lifecycle_replay_errors) == 1 else "ies",
+                "; ".join(result.lifecycle_replay_errors[:3])
+                + ("; ..." if len(result.lifecycle_replay_errors) > 3 else ""),
+            )
+        return True
+
+    @staticmethod
+    def _is_opening_order(side: str, position_side: str) -> bool:
+        side_lower = side.lower()
+        return (position_side == "long" and side_lower == "buy") or (
+            position_side == "short" and side_lower == "sell"
+        )
+
+    def _emit_lifecycle_transition(
+        self,
+        *,
+        correlation_id: str,
+        default_from_state: OrderLifecycleState,
+        to_state: OrderLifecycleState,
+        reason: str,
+    ) -> bool:
+        if not correlation_id:
+            return False
+        # Idempotency-Guard (#314): keine doppelte/rückwärtige (Re-)Emission der
+        # Order-Open-Sequenz, sobald die correlation_id diese Stufe schon erreicht
+        # hat (z.B. Reprocess oder rehydrierte Instanz nach Restart). Sauberer
+        # No-op statt einer gefangenen IllegalLifecycleTransition.
+        known_state = self._lifecycle_state_by_correlation_id.get(correlation_id)
+        if known_state is not None and _is_redundant_open_transition(known_state, to_state):
+            logger.debug(
+                "[PAPER] Skipping redundant lifecycle emission for %s: already at %s, "
+                "target %s (idempotent no-op)",
+                correlation_id,
+                known_state.value,
+                to_state.value,
+            )
+            return False
+        from_state = self._lifecycle_state_by_correlation_id.get(
+            correlation_id,
+            default_from_state,
+        )
+        try:
+            transition = make_lifecycle_transition(
+                correlation_id=correlation_id,
+                from_state=from_state,
+                to_state=to_state,
+                reason=reason,
+            )
+        except Exception as e:
+            logger.error(
+                "[PAPER] Failed to emit lifecycle transition %s -> %s "
+                "(correlation_id=%s, reason=%s): %s",
+                from_state.value,
+                to_state.value,
+                correlation_id,
+                reason,
+                e,
+            )
+            return False
+        self._append_audit("lifecycle_transition", transition.to_dict())
+        self._lifecycle_state_by_correlation_id[correlation_id] = to_state
+        return True
+
+    def execute_intent(
+        self,
+        intent: ExecutableOrderIntent,
+        current_price: float,
+        risk_check_id: str,
+        fill_price: float | None = None,
+    ) -> tuple[PaperOrder, PaperFill | None]:
+        """Parity interface: execute an ExecutableOrderIntent on paper.
+
+        ``fill_price`` (2026-06-10) overrides the price the simulated fill is
+        booked at. Callers pass it to model LIMIT/STOP semantics — e.g. the
+        premium bridge fills at the signal's stated entry price rather than the
+        current spot, so a target-touch close realises the signal's intended
+        PnL. ``None`` (default) preserves the legacy fill-at-spot behaviour, so
+        the autonomous loop and every existing caller are unchanged. Slippage
+        and the geometry guards in ``fill_order`` apply to whichever price is
+        used, keeping the fill realistic (a long SL at/above the fill price is
+        still rejected).
+        """
+        kwargs = executable_intent_to_paper_kwargs(intent)
+        kwargs["risk_check_id"] = risk_check_id
+        # 2026-06-13: regime-AT-ENTRY for premium/bridge intents. The autonomous
+        # loop stamps this in trading_loop; intent-executed (premium-channel)
+        # entries resolve it here at execution time so their position_closed
+        # events are regime-attributable too instead of collapsing to "unknown".
+        # Fail-soft "" via the shared helper — never blocks the fill.
+        kwargs["regime"] = regime_label_at(intent.symbol, now_utc_iso())
+
+        order = self.create_order(**kwargs)
+        # Limit or market? In paper, fill_order requires a price. We fill at the
+        # explicit override when given, else at the current spot.
+        effective_fill_price = (
+            fill_price if fill_price is not None and fill_price > 0 else current_price
+        )
+        fill = self.fill_order(order, effective_fill_price)
+        return order, fill
 
     def create_order(
         self,
@@ -78,9 +424,69 @@ class PaperExecutionEngine:
         take_profit: float | None = None,
         idempotency_key: str | None = None,
         risk_check_id: str = "",
+        position_side: str = "long",
+        venue: str = "paper",
+        correlation_id: str = "",
+        leverage: float | None = None,
+        source: str = "",
+        document_id: str = "",
+        regime: str = "",
+        partial_fill_ratio: float = 1.0,
     ) -> PaperOrder:
-        """Create an order record (does not fill immediately)."""
+        """Create an order record (does not fill immediately).
+
+        position_side defaults to "long". Use side="sell", position_side="short"
+        to open/increase a simulated short, and side="buy", position_side="short"
+        to close/reduce it.
+
+        NEO-P-106 Phase 2 / Sprint B (CostModel): venue defaults to "paper",
+        which now resolves to the realistic Binance-Spot 10 bp/side entry in
+        config/venue_fees.yaml (NOT worst-case anymore) — the same per-side
+        source the CostModel and the V1 cost-geometry gate read. Callers that
+        need constructor fee_pct compatibility must pass venue="legacy".
+
+        Sprint A (2026-05-12): leverage + source aus ExecutableOrderIntent
+        durchgereicht damit PaperPosition + Frontend sie ohne audit-jsonl-
+        Crosswalk anzeigen kann. Beide optional — Legacy-Tests ohne diese
+        Felder bleiben funktional.
+        """
+        if position_side not in {"long", "short"}:
+            raise ValueError("position_side must be 'long' or 'short'")
+        if (
+            isinstance(partial_fill_ratio, bool)
+            or not isinstance(partial_fill_ratio, (int, float))
+            or partial_fill_ratio <= 0.0
+            or partial_fill_ratio > 1.0
+        ):
+            raise ValueError("partial_fill_ratio must be > 0.0 and <= 1.0")
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
+        # Sprint C (2026-05-12): upfront idempotency-Check verhindert das
+        # Schreiben einer doppelten order_created-Audit-Zeile wenn dieser
+        # idempotency_key bereits einen erfolgreichen Fill produziert hat
+        # (cross-process / cross-instance Race aus Q/USDT 2026-05-09).
+        # rehydrate_from_audit lädt _filled_keys aus dem audit-jsonl; das
+        # in-memory-set fängt zusätzlich same-process-races.
+        if idem_key in self._filled_keys:
+            logger.warning(
+                "[PAPER] create_order rejected — idempotency_key already filled: "
+                "key=%s symbol=%s side=%s qty=%s",
+                idem_key,
+                symbol,
+                side,
+                quantity,
+            )
+            self._append_audit(
+                "order_created_rejected_duplicate",
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "idempotency_key": idem_key,
+                    "reason": "idempotency_key_already_filled",
+                    "rejected_at": _now_utc(),
+                },
+            )
+            raise DuplicateOrderError(f"order with idempotency_key={idem_key!r} already filled")
         order = PaperOrder(
             order_id=_new_order_id(),
             symbol=symbol,
@@ -93,8 +499,30 @@ class PaperExecutionEngine:
             created_at=_now_utc(),
             idempotency_key=idem_key,
             risk_check_id=risk_check_id,
+            position_side=position_side,
+            venue=venue,
+            correlation_id=correlation_id,
+            leverage=leverage,
+            source=source,
+            document_id=document_id,
+            regime=regime,
         )
-        self._append_audit("order_created", order.__dict__)
+        self._partial_fill_ratios[order.order_id] = float(partial_fill_ratio)
+        self._append_audit(
+            "order_created",
+            {
+                **order.__dict__,
+                "partial_fill_ratio": float(partial_fill_ratio),
+                "requested_quantity": quantity,
+            },
+        )
+        if correlation_id and self._is_opening_order(order.side, order.position_side):
+            self._emit_lifecycle_transition(
+                correlation_id=correlation_id,
+                default_from_state=OrderLifecycleState.ORDER_BUILDING,
+                to_state=OrderLifecycleState.ORDER_SUBMITTED,
+                reason="paper_order_created",
+            )
         return order
 
     def fill_order(self, order: PaperOrder, current_price: float) -> PaperFill | None:
@@ -106,11 +534,111 @@ class PaperExecutionEngine:
             logger.warning("[PAPER] Duplicate order rejected: key=%s", order.idempotency_key)
             return None
 
+        if order.position_side not in {"long", "short"}:
+            raise ValueError("position_side must be 'long' or 'short'")
+
         if current_price <= 0:
             logger.error(
                 "[PAPER] Invalid price for fill: %s price=%.2f", order.symbol, current_price
             )
             return None
+
+        is_entry_fill = self._is_opening_order(order.side, order.position_side)
+        partial_fill_ratio = self._partial_fill_ratios.get(order.order_id, 1.0)
+        if not is_entry_fill:
+            partial_fill_ratio = 1.0
+        requested_quantity = order.quantity
+        fill_quantity = requested_quantity * partial_fill_ratio
+        remaining_quantity = max(requested_quantity - fill_quantity, 0.0)
+        is_partial_entry = is_entry_fill and remaining_quantity > 1e-12
+
+        # Defense-in-depth against inverted stops — the Risk Engine owns the
+        # primary geometry gate, but if it is ever bypassed we still refuse
+        # geometrically impossible open orders.
+        if order.side == "buy" and order.position_side == "long":
+            if order.stop_loss is not None and order.stop_loss >= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — long SL at or above current price: "
+                    "%s sl=%.4f price=%.4f",
+                    order.symbol,
+                    order.stop_loss,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_sl",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "stop_loss": order.stop_loss,
+                        "current_price": current_price,
+                        "reason": "long_sl_at_or_above_price",
+                    },
+                )
+                return None
+            if order.take_profit is not None and order.take_profit <= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — long TP at or below current price: "
+                    "%s tp=%.4f price=%.4f",
+                    order.symbol,
+                    order.take_profit,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_tp",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "take_profit": order.take_profit,
+                        "current_price": current_price,
+                        "reason": "long_tp_at_or_below_price",
+                    },
+                )
+                return None
+        if order.side == "sell" and order.position_side == "short":
+            if order.stop_loss is not None and order.stop_loss <= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — short SL at or below current price: "
+                    "%s sl=%.4f price=%.4f",
+                    order.symbol,
+                    order.stop_loss,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_sl",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "position_side": order.position_side,
+                        "stop_loss": order.stop_loss,
+                        "current_price": current_price,
+                        "reason": "short_sl_at_or_below_price",
+                    },
+                )
+                return None
+            if order.take_profit is not None and order.take_profit >= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — short TP at or above current price: "
+                    "%s tp=%.4f price=%.4f",
+                    order.symbol,
+                    order.take_profit,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_tp",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "position_side": order.position_side,
+                        "take_profit": order.take_profit,
+                        "current_price": current_price,
+                        "reason": "short_tp_at_or_above_price",
+                    },
+                )
+                return None
 
         # Apply slippage (adverse for buyer, favorable for seller)
         if order.side == "buy":
@@ -118,10 +646,76 @@ class PaperExecutionEngine:
         else:
             fill_price = current_price * (1 - self._slippage_pct)
 
-        cost = fill_price * order.quantity
-        fee = cost * self._fee_pct
+        cost = fill_price * fill_quantity
+        # NEO-P-106 / Sprint B (CostModel single source): venue-spezifische
+        # Maker/Taker-Fee aus config/venue_fees.yaml — dieselbe per-side-Quelle
+        # die CostModel und das V1-Kosten-Geometrie-Gate lesen. Market = taker;
+        # Limit mit limit_price = maker. paper -> realistischer 10 bp/side Eintrag.
+        # GENUINELY unknown venue -> role-spezifischer worst-case Default.
+        # Constructor `fee_pct` wird ignoriert, sobald venue!="legacy"; legacy-Path
+        # bleibt als explizite Opt-out fuer Property-Tests.
+        from app.execution.fees import lookup_order_fee
 
-        if order.side == "buy":
+        if order.venue == "legacy":
+            fee_pct_eff = self._fee_pct
+            fee_meta = ("legacy", "taker", self._fee_pct * 10000.0, "constructor")
+        else:
+            fee_record = lookup_order_fee(
+                order.venue,
+                order_type=order.order_type,
+                limit_price=order.limit_price,
+            )
+            fee_pct_eff = fee_record.bps_applied / 10000.0
+            fee_meta = (
+                fee_record.venue,
+                fee_record.role,
+                fee_record.bps_applied,
+                fee_record.table_version,
+            )
+        fee = cost * fee_pct_eff
+        pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
+
+        # 2026-06-25 DQ-Backstop: reject orders that would OPEN/ADD to an untradeable
+        # symbol (self-pair like USDT/USDT, stablecoin/stablecoin). Closes still pass
+        # so any pre-existing junk position can be wound down. Generator already skips
+        # these (Filter 0); this catches any other source.
+        _opens = (order.position_side == "long" and order.side == "buy") or (
+            order.position_side == "short" and order.side == "sell"
+        )
+        if _opens and not is_tradeable_symbol(order.symbol):
+            logger.warning(
+                "[PAPER] Rejecting open on untradeable symbol %s (self-pair/stablecoin pair)",
+                order.symbol,
+            )
+            return None
+
+        # 2026-06-29 Entry-Guard: reject opens on symbols with no canonical Binance
+        # market (off-venue microcaps fed by Bybit-universe feeder). Closes still pass
+        # so any pre-existing stuck position can be wound down. Permissive default:
+        # the gate is a no-op unless EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE=true.
+        if _opens and get_settings().execution.universe_eligibility_enforce:
+            _unpriceable = latest_unpriceable_symbols(
+                Path("artifacts/symbol_eligibility_audit.jsonl")
+            )
+            if not is_canonical_priceable(order.symbol, _unpriceable):
+                logger.warning(
+                    "[PAPER] Rejecting open on non-priceable symbol %s "
+                    "(no canonical-venue market (unpriceable); UNIVERSE_ELIGIBILITY_ENFORCE)",
+                    order.symbol,
+                )
+                return None
+
+        if order.position_side == "long" and order.side == "buy":
+            # 2026-06-25 DQ-Fix: no long entry while a SHORT is open on the same
+            # symbol (symmetric to the short-sell guard below). Prevents the false
+            # blended avg that produced 4 ETH/BTC side-conflicts on 06-23/24.
+            existing_pos = self._portfolio.positions.get(order.symbol)
+            if existing_pos is not None and existing_pos.position_side != "long":
+                logger.warning(
+                    "[PAPER] Cannot open long %s — short position already open (side-conflict)",
+                    order.symbol,
+                )
+                return None
             if self._portfolio.cash < cost + fee:
                 logger.warning(
                     "[PAPER] Insufficient cash for order %s: need=%.2f have=%.2f",
@@ -134,10 +728,12 @@ class PaperExecutionEngine:
 
             pos = self._portfolio.positions.get(order.symbol)
             if pos:
-                # Average into existing position
-                total_qty = pos.quantity + order.quantity
+                # Average into existing position. V25-C: tier ladder + initial
+                # quantity carry forward — averaging in does NOT reset the
+                # staged-exit plan that the bridge already attached.
+                total_qty = pos.quantity + fill_quantity
                 avg_price = (
-                    pos.avg_entry_price * pos.quantity + fill_price * order.quantity
+                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
                 ) / total_qty
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
@@ -147,27 +743,128 @@ class PaperExecutionEngine:
                     take_profit=order.take_profit or pos.take_profit,
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
+                    document_id=pos.document_id,
+                    regime=pos.regime,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
-                    quantity=order.quantity,
+                    quantity=fill_quantity,
                     avg_entry_price=fill_price,
                     stop_loss=order.stop_loss,
                     take_profit=order.take_profit,
                     opened_at=_now_utc(),
+                    position_side=order.position_side,
+                    correlation_id=order.correlation_id,
+                    leverage=order.leverage,
+                    source=order.source,
+                    document_id=order.document_id,
+                    regime=order.regime,
                 )
-        else:  # sell
+        elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
-            if not pos or pos.quantity < order.quantity:
+            if not pos or pos.position_side != "long" or pos.quantity < order.quantity:
                 logger.warning("[PAPER] Cannot sell %s — insufficient position", order.symbol)
                 return None
-            proceeds = fill_price * order.quantity - fee
-            pnl = (fill_price - pos.avg_entry_price) * order.quantity - fee
+            proceeds = fill_price * fill_quantity - fee
+            pnl = (fill_price - pos.avg_entry_price) * fill_quantity - fee
             self._portfolio.cash += proceeds
             self._portfolio.realized_pnl_usd += pnl
 
-            remaining_qty = pos.quantity - order.quantity
+            remaining_qty = pos.quantity - fill_quantity
+            if remaining_qty <= 1e-8:
+                del self._portfolio.positions[order.symbol]
+            else:
+                # V25-C: partial sell preserves the tier ladder + initial
+                # quantity so the next monitor tick can fire the next tier.
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=remaining_qty,
+                    avg_entry_price=pos.avg_entry_price,
+                    stop_loss=pos.stop_loss,
+                    take_profit=pos.take_profit,
+                    opened_at=pos.opened_at,
+                    realized_pnl_usd=pos.realized_pnl_usd + pnl,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
+                    document_id=pos.document_id,
+                    regime=pos.regime,
+                )
+        elif order.position_side == "short" and order.side == "sell":
+            pos = self._portfolio.positions.get(order.symbol)
+            if pos:
+                if pos.position_side != "short":
+                    logger.warning("[PAPER] Cannot short %s — long position exists", order.symbol)
+                    return None
+            proceeds = fill_price * fill_quantity - fee
+            self._portfolio.cash += proceeds
+
+            if pos:
+                total_qty = pos.quantity + fill_quantity
+                avg_price = (
+                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
+                ) / total_qty
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=total_qty,
+                    avg_entry_price=avg_price,
+                    stop_loss=order.stop_loss or pos.stop_loss,
+                    take_profit=order.take_profit or pos.take_profit,
+                    opened_at=pos.opened_at,
+                    realized_pnl_usd=pos.realized_pnl_usd,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
+                    document_id=pos.document_id,
+                    regime=pos.regime,
+                )
+            else:
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=fill_quantity,
+                    avg_entry_price=fill_price,
+                    stop_loss=order.stop_loss,
+                    take_profit=order.take_profit,
+                    opened_at=_now_utc(),
+                    position_side=order.position_side,
+                    correlation_id=order.correlation_id,
+                    leverage=order.leverage,
+                    source=order.source,
+                    document_id=order.document_id,
+                    regime=order.regime,
+                )
+        elif order.position_side == "short" and order.side == "buy":
+            pos = self._portfolio.positions.get(order.symbol)
+            if not pos or pos.position_side != "short" or pos.quantity < order.quantity:
+                logger.warning("[PAPER] Cannot buy-cover %s — insufficient short", order.symbol)
+                return None
+            cover_cost = fill_price * fill_quantity + fee
+            if self._portfolio.cash < cover_cost:
+                logger.warning(
+                    "[PAPER] Insufficient cash to cover short %s: need=%.2f have=%.2f",
+                    order.order_id,
+                    cover_cost,
+                    self._portfolio.cash,
+                )
+                return None
+            pnl = (pos.avg_entry_price - fill_price) * fill_quantity - fee
+            self._portfolio.cash -= cover_cost
+            self._portfolio.realized_pnl_usd += pnl
+
+            remaining_qty = pos.quantity - fill_quantity
             if remaining_qty <= 1e-8:
                 del self._portfolio.positions[order.symbol]
             else:
@@ -179,22 +876,52 @@ class PaperExecutionEngine:
                     take_profit=pos.take_profit,
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd + pnl,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
+                    document_id=pos.document_id,
+                    regime=pos.regime,
                 )
+        else:
+            logger.warning(
+                "[PAPER] Unsupported side/position_side combo: side=%s position_side=%s",
+                order.side,
+                order.position_side,
+            )
+            return None
 
         self._portfolio.total_fees_usd += fee
         self._portfolio.trade_count += 1
         self._filled_keys.add(order.idempotency_key)
+
+        is_closing_fill = (order.position_side == "long" and order.side == "sell") or (
+            order.position_side == "short" and order.side == "buy"
+        )
+        trade_pnl_for_fill = pnl if is_closing_fill else 0.0
 
         fill = PaperFill(
             fill_id=_new_fill_id(),
             order_id=order.order_id,
             symbol=order.symbol,
             side=order.side,
-            quantity=order.quantity,
+            quantity=fill_quantity,
             fill_price=fill_price,
             fee_usd=fee,
             filled_at=_now_utc(),
             slippage_pct=self._slippage_pct * 100,
+            pnl_usd=trade_pnl_for_fill,
+            position_side=order.position_side,
+            fee_venue=fee_meta[0],
+            fee_role=fee_meta[1],
+            fee_bps_applied=fee_meta[2],
+            fee_table_version=fee_meta[3],
+            correlation_id=order.correlation_id,
+            source=order.source,
+            document_id=order.document_id,
+            regime=order.regime,
         )
 
         self._append_audit(
@@ -203,23 +930,84 @@ class PaperExecutionEngine:
                 **fill.__dict__,
                 "portfolio_cash": self._portfolio.cash,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "requested_quantity": requested_quantity,
+                "filled_quantity": fill_quantity,
+                "remaining_quantity": remaining_quantity,
+                "partial_fill_ratio": partial_fill_ratio,
+                "is_partial_entry": is_partial_entry,
+                "fill_status": "partial_entry" if is_partial_entry else "filled",
             },
         )
-        logger.info(
-            "[PAPER] Fill: %s %s %.4f @ %.2f (fee=%.4f pnl_impact=%.2f)",
-            order.side,
-            order.symbol,
-            order.quantity,
-            fill_price,
-            fee,
-            self._portfolio.realized_pnl_usd,
-        )
+        # V2-Followup 2026-05-21: bei Partial-Entry beide Werte loggen, damit
+        # Runtime-Logs nicht wie 100%-Fill aussehen (Operator-Lesbarkeit).
+        if is_partial_entry:
+            logger.info(
+                "[PAPER] Fill: %s %s %.4f/%.4f @ %.2f (ratio=%.2f fee=%.4f pnl_impact=%.2f)",
+                order.side,
+                order.symbol,
+                fill_quantity,
+                requested_quantity,
+                fill_price,
+                partial_fill_ratio,
+                fee,
+                self._portfolio.realized_pnl_usd,
+            )
+        else:
+            logger.info(
+                "[PAPER] Fill: %s %s %.4f @ %.2f (fee=%.4f pnl_impact=%.2f)",
+                order.side,
+                order.symbol,
+                fill_quantity,
+                fill_price,
+                fee,
+                self._portfolio.realized_pnl_usd,
+            )
+        if order.correlation_id and is_entry_fill:
+            accepted = self._emit_lifecycle_transition(
+                correlation_id=order.correlation_id,
+                default_from_state=OrderLifecycleState.ORDER_SUBMITTED,
+                to_state=OrderLifecycleState.ORDER_ACCEPTED,
+                reason="paper_order_accepted",
+            )
+            if accepted:
+                self._emit_lifecycle_transition(
+                    correlation_id=order.correlation_id,
+                    default_from_state=OrderLifecycleState.ORDER_ACCEPTED,
+                    to_state=OrderLifecycleState.POSITION_OPEN,
+                    reason="paper_position_opened",
+                )
+
+            self._validate_and_append_signal_transition(
+                decision_id=order.correlation_id,
+                from_state=SignalState.APPROVED,
+                to_state=SignalState.EXECUTED,
+                source="paper_engine",
+                reason="order_filled",
+            )
         return fill
 
     def check_stop_take(self, symbol: str, current_price: float) -> str | None:
         """Check stop-loss and take-profit triggers. Returns 'stop' | 'take' | None."""
         pos = self._portfolio.positions.get(symbol)
         if not pos:
+            return None
+        if pos.position_side == "short":
+            if pos.stop_loss and current_price >= pos.stop_loss:
+                logger.warning(
+                    "[PAPER] Short stop-loss triggered: %s price=%.2f sl=%.2f",
+                    symbol,
+                    current_price,
+                    pos.stop_loss,
+                )
+                return "stop"
+            if pos.take_profit and current_price <= pos.take_profit:
+                logger.info(
+                    "[PAPER] Short take-profit triggered: %s price=%.2f tp=%.2f",
+                    symbol,
+                    current_price,
+                    pos.take_profit,
+                )
+                return "take"
             return None
         if pos.stop_loss and current_price <= pos.stop_loss:
             logger.warning(
@@ -239,10 +1027,531 @@ class PaperExecutionEngine:
             return "take"
         return None
 
+    # V25-C (2026-05-04): Multi-tier take-profit (staged exits).
+    #
+    # The bridge calls set_position_tp_tiers(symbol, tiers) right after fill
+    # with [(price, qty_share)] pairs derived from the channel's targets.
+    # On each subsequent monitor tick we look at the FIRST remaining tier;
+    # if current_price has reached it, we close that fraction of the
+    # original position (consume_first_tier), audit it as
+    # position_partial_closed, and shrink the tiers list. SL still applies
+    # to the residual position. When tiers is empty and SL never fired the
+    # operator can manually close or wait for SL.
+
+    def set_position_tp_tiers(
+        self,
+        symbol: str,
+        tiers: list[tuple[float, float]],
+    ) -> bool:
+        """Attach a multi-tier take-profit ladder to an open position.
+
+        ``tiers`` is a list of ``(price, qty_share)`` pairs, where qty_share
+        is the fraction of the position's current quantity to close when that
+        price is hit. Tiers are sorted ascending by price so the lowest target
+        fires first. Returns True if applied, False if the symbol has no open
+        position. Setting an empty list reverts to legacy single-TP behaviour.
+        Audit event: ``position_tp_tiers_set``.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None:
+            return False
+        sorted_tiers = sorted(
+            (
+                (float(price), float(qty_share))
+                for price, qty_share in tiers
+                if qty_share > 0 and price > 0
+            ),
+            key=lambda item: item[0],
+            reverse=pos.position_side == "short",
+        )
+        pos.take_profit_tiers = sorted_tiers
+        if pos.initial_quantity <= 0:
+            pos.initial_quantity = pos.quantity
+        self._append_audit(
+            "position_tp_tiers_set",
+            {
+                "symbol": symbol,
+                "tiers": [{"price": p, "qty_share": q} for p, q in sorted_tiers],
+                "initial_quantity": pos.initial_quantity,
+            },
+        )
+        logger.info(
+            "[PAPER] Tiers set: %s tiers=%s initial_qty=%.6f",
+            symbol,
+            sorted_tiers,
+            pos.initial_quantity,
+        )
+        return True
+
+    def _consume_first_tier(
+        self,
+        symbol: str,
+        current_price: float,
+    ) -> tuple[PaperOrder, PaperFill | None]:
+        """Close the tier-share of the position at current_price, advance tiers.
+
+        Internal helper used by monitor_positions when the first tier's price
+        has been hit. Audit event ``position_partial_closed`` is emitted in
+        addition to the standard order_created/order_filled pair.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None or not pos.take_profit_tiers:
+            return None
+        if current_price <= 0:
+            return None
+
+        tier_price, qty_share = pos.take_profit_tiers[0]
+        # Quantity to close = share * initial_quantity. Last tier closes the
+        # exact remainder so floating-point drift cannot leave dust behind.
+        is_last = len(pos.take_profit_tiers) == 1
+        if is_last:
+            close_qty = pos.quantity
+        else:
+            close_qty = min(pos.initial_quantity * qty_share, pos.quantity)
+        if close_qty <= 0:
+            # Empty tier — drop and try again next tick.
+            pos.take_profit_tiers = pos.take_profit_tiers[1:]
+            return None
+
+        idem_key = f"tp_tier_{symbol}_{pos.opened_at}_{tier_price}"
+        if idem_key in self._filled_keys:
+            # Already executed (e.g. duplicate monitor tick) — drop tier safely.
+            pos.take_profit_tiers = pos.take_profit_tiers[1:]
+            return None
+
+        entry_price = pos.avg_entry_price
+        # DS-20260529-V1: same circuit breaker as close_position — a tier that
+        # only fires because the monitor price disagrees with the entry source
+        # must not book a phantom partial close.
+        implied = _implied_close_return(entry_price, current_price, pos.position_side)
+        cap = _max_close_return_pct()
+        if implied is not None and abs(implied) > cap:
+            self._append_audit(
+                "close_price_sanity_rejected",
+                {
+                    "symbol": symbol,
+                    "reason": "tp_tier",
+                    "tier_price": tier_price,
+                    "entry_price": entry_price,
+                    "close_price": current_price,
+                    "implied_return_pct": implied * 100.0,
+                    "max_close_return_pct": cap * 100.0,
+                    "position_side": pos.position_side,
+                },
+            )
+            logger.error(
+                "[PAPER] Tier-close REJECTED — implied return %.1f%% exceeds cap "
+                "%.1f%%: %s entry=%.6g close=%.6g (likely stale/wrong price source)",
+                implied * 100.0,
+                cap * 100.0,
+                symbol,
+                entry_price,
+                current_price,
+            )
+            return None
+        close_side = "buy" if pos.position_side == "short" else "sell"
+        order = self.create_order(
+            symbol=symbol,
+            side=close_side,
+            quantity=close_qty,
+            idempotency_key=idem_key,
+            risk_check_id=f"tp_tier:{tier_price}",
+            position_side=pos.position_side,
+            correlation_id=pos.correlation_id,
+            source=pos.source,
+            document_id=pos.document_id,
+            regime=pos.regime,
+        )
+        fill = self.fill_order(order, current_price)
+        if fill is None:
+            return None
+
+        # Re-read position because fill_order may have removed it on full close.
+        residual = self._portfolio.positions.get(symbol)
+        residual_tiers = pos.take_profit_tiers[1:]
+        if residual is not None:
+            residual.take_profit_tiers = residual_tiers
+        # else: residual is None → position exited fully, tiers drop with it.
+
+        self._append_audit(
+            "position_partial_closed",
+            {
+                "symbol": symbol,
+                "reason": "tp_tier",
+                "tier_price": tier_price,
+                "tier_qty_share": qty_share,
+                "quantity_closed": close_qty,
+                "entry_price": entry_price,
+                "exit_price": fill.fill_price,
+                "fill_id": fill.fill_id,
+                "order_id": fill.order_id,
+                "remaining_quantity": residual.quantity if residual else 0.0,
+                "remaining_tiers": [{"price": p, "qty_share": q} for p, q in residual_tiers],
+                "trade_pnl_usd": fill.pnl_usd,
+                "fee_usd": fill.fee_usd,
+                "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "signal_source": pos.source,
+                "document_id": pos.document_id,
+                "regime": pos.regime,
+            },
+        )
+        logger.info(
+            "[PAPER] Tier-close: %s qty=%.6f at tier_price=%.4f exit=%.4f "
+            "remaining=%.6f tiers_left=%d pnl=%.2f",
+            symbol,
+            close_qty,
+            tier_price,
+            fill.fill_price,
+            residual.quantity if residual else 0.0,
+            len(residual_tiers),
+            self._portfolio.realized_pnl_usd,
+        )
+        if pos.correlation_id:
+            target_state = (
+                OrderLifecycleState.TP_HIT
+                if residual is None
+                else OrderLifecycleState.PARTIAL_TP_HIT
+            )
+            self._emit_lifecycle_transition(
+                correlation_id=pos.correlation_id,
+                default_from_state=OrderLifecycleState.POSITION_OPEN,
+                to_state=target_state,
+                reason="paper_tier_closed",
+            )
+        return fill
+
+    def adjust_position(
+        self,
+        symbol: str,
+        *,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        reason: str = "manual",
+    ) -> bool:
+        """Update SL/TP of an open position without changing quantity or entry.
+
+        Use when an averaged-down merge has left the position with a stop that
+        no longer makes geometric sense (e.g. SL above avg_entry for a long).
+        Appends a ``position_adjusted`` audit event so replay reconstructs
+        state correctly. Returns True iff a position existed and was updated.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None:
+            return False
+        new_sl = stop_loss if stop_loss is not None else pos.stop_loss
+        new_tp = take_profit if take_profit is not None else pos.take_profit
+        self._portfolio.positions[symbol] = PaperPosition(
+            symbol=pos.symbol,
+            quantity=pos.quantity,
+            avg_entry_price=pos.avg_entry_price,
+            stop_loss=new_sl,
+            take_profit=new_tp,
+            opened_at=pos.opened_at,
+            realized_pnl_usd=pos.realized_pnl_usd,
+            position_side=pos.position_side,
+            take_profit_tiers=list(pos.take_profit_tiers),
+            initial_quantity=pos.initial_quantity,
+            correlation_id=pos.correlation_id,
+            leverage=pos.leverage,
+            source=pos.source,
+            document_id=pos.document_id,
+            regime=pos.regime,
+        )
+        self._append_audit(
+            "position_adjusted",
+            {
+                "symbol": symbol,
+                "stop_loss": new_sl,
+                "take_profit": new_tp,
+                "reason": reason,
+            },
+        )
+        logger.info(
+            "[PAPER] Adjusted %s sl=%s tp=%s reason=%s",
+            symbol,
+            new_sl,
+            new_tp,
+            reason,
+        )
+        return True
+
+    def close_position(
+        self,
+        symbol: str,
+        current_price: float,
+        reason: str = "manual",
+    ) -> PaperFill | None:
+        """Close a full open position at current_price.
+
+        Emits the standard order_created + order_filled pair (via create_order /
+        fill_order), followed by a dedicated position_closed audit event that
+        distinguishes exits from entry-side sells (short entries).
+
+        Returns the close-side fill, or None if there is no open position /
+        price invalid / idempotency dedup. Idempotency key is derived from the
+        position's open timestamp + reason so repeated calls within the same
+        trigger do not double-close.
+
+        Return-type note (2026-05-16 V4.1): an earlier annotation declared
+        ``tuple[PaperOrder, PaperFill | None]`` but the implementation never
+        returned a tuple — all three internal callers (monitor_positions
+        SL/TP/trigger paths) already destructure as a single fill. Annotation
+        corrected to match reality so the new /premium-signals/position-repair
+        consumer can type-check.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if not pos:
+            return None
+        if current_price <= 0:
+            return None
+
+        idem_key = f"close_{symbol}_{pos.opened_at}_{reason}"
+        if idem_key in self._filled_keys:
+            return None
+
+        entry_price = pos.avg_entry_price
+        # DS-20260529-V1: reject phantom closes from price-source disagreement.
+        implied = _implied_close_return(entry_price, current_price, pos.position_side)
+        cap = _max_close_return_pct()
+        if implied is not None and abs(implied) > cap:
+            self._append_audit(
+                "close_price_sanity_rejected",
+                {
+                    "symbol": symbol,
+                    "reason": reason,
+                    "entry_price": entry_price,
+                    "close_price": current_price,
+                    "implied_return_pct": implied * 100.0,
+                    "max_close_return_pct": cap * 100.0,
+                    "position_side": pos.position_side,
+                },
+            )
+            logger.error(
+                "[PAPER] Close REJECTED — implied return %.1f%% exceeds cap %.1f%%: "
+                "%s entry=%.6g close=%.6g (likely stale/wrong price source)",
+                implied * 100.0,
+                cap * 100.0,
+                symbol,
+                entry_price,
+                current_price,
+            )
+            return None
+        quantity = pos.quantity
+        close_side = "buy" if pos.position_side == "short" else "sell"
+        order = self.create_order(
+            symbol=symbol,
+            side=close_side,
+            quantity=quantity,
+            idempotency_key=idem_key,
+            risk_check_id=f"auto_close:{reason}",
+            position_side=pos.position_side,
+            correlation_id=pos.correlation_id,
+            source=pos.source,
+            document_id=pos.document_id,
+            regime=pos.regime,
+        )
+        fill = self.fill_order(order, current_price)
+        if fill is None:
+            return None
+
+        self._append_audit(
+            "position_closed",
+            {
+                "symbol": symbol,
+                "reason": reason,
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "exit_price": fill.fill_price,
+                "fill_id": fill.fill_id,
+                "order_id": fill.order_id,
+                # NEO-P-101-r2: KEEP realized_pnl_usd KUMULATIV (legacy alias).
+                # New consumers must read trade_pnl_usd for per-trade NETTO PnL.
+                "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "trade_pnl_usd": fill.pnl_usd,
+                "fee_usd": fill.fee_usd,
+                "position_side": fill.position_side,
+                # NEO-P-20260603-001: source attribution. "" = unknown (legacy/
+                # unattributed entry). Lets edge_report split closes by source.
+                "signal_source": pos.source,
+                "document_id": pos.document_id,
+                "regime": pos.regime,
+            },
+        )
+        logger.info(
+            "[PAPER] Close: %s qty=%.4f entry=%.2f exit=%.2f reason=%s pnl=%.2f",
+            symbol,
+            quantity,
+            entry_price,
+            fill.fill_price,
+            reason,
+            self._portfolio.realized_pnl_usd,
+        )
+        if pos.correlation_id:
+            if reason in {"sl", "stop", "stop_loss"}:
+                target_state = OrderLifecycleState.SL_HIT
+            elif reason == "take" or reason == "tp_hit":
+                target_state = OrderLifecycleState.TP_HIT
+            else:
+                target_state = OrderLifecycleState.CANCELLED
+
+            self._emit_lifecycle_transition(
+                correlation_id=pos.correlation_id,
+                default_from_state=OrderLifecycleState.POSITION_OPEN,
+                to_state=target_state,
+                reason=reason,
+            )
+
+            self._validate_and_append_signal_transition(
+                decision_id=pos.correlation_id,
+                from_state=SignalState.EXECUTED,
+                to_state=SignalState.CLOSED,
+                source="paper_engine",
+                reason=reason,
+            )
+        return fill
+
+    def monitor_positions(
+        self,
+        prices_by_symbol: dict[str, float],
+    ) -> list[PaperFill]:
+        """Check SL/TP for all open positions, close those triggered.
+
+        Takes a price map so callers fetch market data once and drive exits
+        deterministically. Returns the list of fills produced (empty when no
+        trigger fires). Positions whose symbol is missing from the price map
+        are skipped — this is intentional, so a partial price feed cannot
+        force a close at a zero or stale price.
+
+        V25-C (2026-05-04) staged exits: when a position carries
+        ``take_profit_tiers`` we evaluate the first tier first. If
+        current_price has reached it the tier is consumed (partial close)
+        and we keep looping the same symbol until either no more tiers fire
+        in this tick or the position is closed. SL still wins over any tier
+        — a stop hit closes the full residual position regardless of tiers.
+        """
+        fills: list[PaperFill] = []
+        for symbol in list(self._portfolio.positions.keys()):
+            price = prices_by_symbol.get(symbol)
+            if price is None or price <= 0:
+                continue
+            pos = self._portfolio.positions.get(symbol)
+            # A-Fix 2026-06-13: liquidation has the HIGHEST priority — a leveraged
+            # position whose margin is wiped out is force-closed at the liquidation
+            # price (≈ total margin loss) before any stop/TP. Only when leverage>1
+            # (isolated-margin model). For stops nearer than 1/leverage the stop
+            # still fires first, so this only bites genuinely wide-stop signals.
+            if pos and pos.leverage and pos.leverage > 1.0:
+                liq = _liquidation_price(pos.avg_entry_price, pos.leverage, pos.position_side)
+                if liq is not None and (
+                    (pos.position_side == "short" and price >= liq)
+                    or (pos.position_side != "short" and price <= liq)
+                ):
+                    fill = self.close_position(symbol, liq, reason="liquidation")
+                    if fill:
+                        fills.append(fill)
+                    continue
+            # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter
+            # Time-Stop. Schließt Positionen, deren Regime-at-Entry ein
+            # konfiguriertes Max-Hold hat, sobald das Alter überschritten ist
+            # (Befund: chop_quiet revertiert nach ~300s). Default-LEER ⇒ AUS.
+            # Nach Liquidation, vor Stop/TP — ein Time-Stop ist ein bewusster
+            # Exit, aber Liquidation/echter Stop dürfen davor feuern.
+            if pos and self._regime_max_hold:
+                _max_hold = self._regime_max_hold.get(pos.regime)
+                if _max_hold is not None:
+                    _age = _position_age_seconds(pos.opened_at)
+                    if _age is not None and _age >= _max_hold:
+                        fill = self.close_position(symbol, price, reason="time_stop")
+                        if fill:
+                            fills.append(fill)
+                        continue
+            # Stop-loss has priority over tiers — it kills the whole residual.
+            if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
+                fill = self.close_position(symbol, price, reason="stop")
+                if fill:
+                    fills.append(fill)
+                continue
+            if pos and pos.position_side != "short" and pos.stop_loss and price <= pos.stop_loss:
+                fill = self.close_position(symbol, price, reason="stop")
+                if fill:
+                    fills.append(fill)
+                continue
+            # Multi-tier path: consume as many tiers as the price triggers
+            # in this single tick (e.g. one wide candle can clear TP1+TP2).
+            consumed_any = False
+            while True:
+                pos = self._portfolio.positions.get(symbol)
+                if pos is None or not pos.take_profit_tiers:
+                    break
+                tier_price = pos.take_profit_tiers[0][0]
+                if pos.position_side == "short":
+                    if price > tier_price:
+                        break
+                elif price < tier_price:
+                    break
+                fill = self._consume_first_tier(symbol, price)
+                if fill is None:
+                    break
+                fills.append(fill)
+                consumed_any = True
+            if consumed_any:
+                continue
+            # Legacy single-TP path: only when no tier ladder is set.
+            pos = self._portfolio.positions.get(symbol)
+            if pos is None or pos.take_profit_tiers:
+                continue
+            trigger = self.check_stop_take(symbol, price)
+            if trigger is None:
+                continue
+            fill = self.close_position(symbol, price, reason=trigger)
+            if fill:
+                fills.append(fill)
+        return fills
+
     def _append_audit(self, event_type: str, data: dict[str, object]) -> None:
-        record = {"event_type": event_type, "timestamp_utc": _now_utc(), **data}
+        # NEO-P-101-r2: every NEW audit row carries schema_version="v2".
+        # Legacy v1 rows (pre-NEO-P-101-r2) lack the field - consumers must
+        # default to "v1" via dict.get("schema_version", "v1").
+        record = {
+            "schema_version": "v2",
+            "event_type": event_type,
+            "timestamp_utc": _now_utc(),
+            **data,
+        }
         try:
-            with self._audit_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record) + "\n")
-        except OSError as e:
+            PaperExecutionAuditStreamRow.model_validate(record)
+            with append_lock(self._audit_path):
+                with self._audit_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+        except (OSError, ValueError) as e:
             logger.error("[PAPER] Audit log write failed: %s", e)
+        _publish_paper_event(event_type, record)
+
+    def _validate_and_append_signal_transition(
+        self,
+        decision_id: str,
+        from_state: SignalState,
+        to_state: SignalState,
+        source: str,
+        reason: str,
+    ) -> None:
+        try:
+            SignalStateMachine.validate_transition(from_state, to_state)
+            trans = SignalStateTransition(
+                decision_id=decision_id,
+                from_state=from_state,
+                to_state=to_state,
+                source=source,
+                timestamp_utc=_now_utc(),
+                reason=reason,
+            )
+            self._append_audit("signal_state_transition", trans.to_dict())
+        except IllegalStateTransitionError as e:
+            logger.error(
+                "[PAPER] Illegal signal state transition: %s "
+                "(decision_id=%s, source=%s, reason=%s)",
+                e,
+                decision_id,
+                source,
+                reason,
+            )
