@@ -1,5 +1,4 @@
 """Temporary governance update script for PH5B close / PH5C open."""
-from pathlib import Path
 
 
 def read(p: str) -> str:
@@ -131,6 +130,7 @@ def update_phase_plan() -> None:
 
     # Fix current_sprint regardless of encoding
     import re
+
     t = re.sub(
         r"current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS \(active D-92, .{1,5}84\)`",
         "current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)`",
@@ -172,6 +172,7 @@ def update_risk_register() -> None:
         ),
     )
     import re
+
     t = re.sub(
         r"current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS \(active D-92, .{1,5}84\)`",
         "current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)`",
@@ -183,15 +184,19 @@ def update_risk_register() -> None:
 
 def update_tasklist() -> None:
     t = read("TASKLIST.md")
-    t = t.replace(
-        "current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (execution complete)`",
-        "current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)`",
-    ).replace(
-        "next_required_step: `PH5B_RESULTS_REVIEW_AND_CLOSE`",
-        "next_required_step: `PH5C_EXECUTION`",
-    ).replace(
-        "- [ ] **Phase 5 / PH5B** (2026-03-24) -- Low Signal Cluster: root cause EMPTY_MANUAL 19/19, recommendation FILTER_BEFORE_LLM (pending close)",
-        "- [x] **Phase 5 / PH5B** (2026-03-24) -- Low Signal Cluster: root cause EMPTY_MANUAL 19/19, recommendation FILTER_BEFORE_LLM (D-94)",
+    t = (
+        t.replace(
+            "current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (execution complete)`",
+            "current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)`",
+        )
+        .replace(
+            "next_required_step: `PH5B_RESULTS_REVIEW_AND_CLOSE`",
+            "next_required_step: `PH5C_EXECUTION`",
+        )
+        .replace(
+            "- [ ] **Phase 5 / PH5B** (2026-03-24) -- Low Signal Cluster: root cause EMPTY_MANUAL 19/19, recommendation FILTER_BEFORE_LLM (pending close)",
+            "- [x] **Phase 5 / PH5B** (2026-03-24) -- Low Signal Cluster: root cause EMPTY_MANUAL 19/19, recommendation FILTER_BEFORE_LLM (D-94)",
+        )
     )
     # Replace active tasks block
     old_block = (
@@ -222,6 +227,7 @@ def update_tasklist() -> None:
     else:
         # Fallback: replace any active tasks section referencing PH5B tasks
         import re
+
         t = re.sub(
             r"## Active Tasks\n\n\| Task.*?\n(?:\|.*?\n)*",
             new_block + "\n",
@@ -235,19 +241,25 @@ def update_tasklist() -> None:
 def update_agents() -> None:
     t = read("AGENTS.md")
     import re
-    t = re.sub(
-        r"\| current_sprint \| `PH5[AB][^`]*` \|",
-        "| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)` |",
-        t,
-    ).replace(
-        "| next_required_step | `PH5B definition` |",
-        "| next_required_step | `PH5C_EXECUTION` |",
-    ).replace(
-        "| phase5_status | `active -- PH5A closed; PH5B definition next` |",
-        "| phase5_status | `active -- PH5B closed (D-94); PH5C active (D-95)` |",
-    ).replace(
-        "| next_required_step | `PH5C_EXECUTION` |",
-        "| next_required_step | `PH5C_EXECUTION` |",
+
+    t = (
+        re.sub(
+            r"\| current_sprint \| `PH5[AB][^`]*` \|",
+            "| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)` |",
+            t,
+        )
+        .replace(
+            "| next_required_step | `PH5B definition` |",
+            "| next_required_step | `PH5C_EXECUTION` |",
+        )
+        .replace(
+            "| phase5_status | `active -- PH5A closed; PH5B definition next` |",
+            "| phase5_status | `active -- PH5B closed (D-94); PH5C active (D-95)` |",
+        )
+        .replace(
+            "| next_required_step | `PH5C_EXECUTION` |",
+            "| next_required_step | `PH5C_EXECUTION` |",
+        )
     )
     write("AGENTS.md", t)
     print("AGENTS.md updated")

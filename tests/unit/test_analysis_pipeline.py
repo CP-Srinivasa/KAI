@@ -1,4 +1,4 @@
-"""Tests for AnalysisPipeline â€” mocked LLM provider."""
+"""Tests for AnalysisPipeline with mocked LLM providers."""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -66,7 +66,10 @@ def _make_llm_output() -> LLMAnalysisOutput:
 
 def _make_doc(
     title: str = "Bitcoin ETF rally",
-    text: str = "BTC hits new high",
+    text: str = (
+        "BTC hits new high amid growing institutional demand"
+        " for crypto exchange-traded funds globally"
+    ),
 ) -> CanonicalDocument:
     return CanonicalDocument(url="https://example.com/1", title=title, raw_text=text)
 
@@ -133,24 +136,6 @@ async def test_pipeline_with_llm_provider():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_with_companion_provider_marks_internal_analysis_source():
-    llm_out = _make_llm_output()
-    provider = _mock_named_provider("companion", llm_out)
-    engine = _btc_engine()
-    pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider, run_llm=True)
-
-    result = await pipeline.run(_make_doc())
-
-    assert result.analysis_result is not None
-    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
-
-    result.apply_to_document()
-
-    assert result.document.analysis_source == AnalysisSource.INTERNAL
-    assert result.document.provider == "companion"
-
-
-@pytest.mark.asyncio
 async def test_ensemble_openai_wins_sets_external_llm_source():
     llm_out = _make_llm_output()
     openai_provider = _mock_named_provider("openai", llm_out)
@@ -182,7 +167,13 @@ async def test_ensemble_internal_fallback_sets_internal_source():
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=ensemble, run_llm=True)
-    result = await pipeline.run(_make_doc("Bitcoin halving", "BTC halving outlook"))
+    result = await pipeline.run(
+        _make_doc(
+            "Bitcoin halving",
+            "BTC halving outlook with significant market"
+            " implications for the broader crypto ecosystem",
+        )
+    )
 
     assert result.analysis_result is not None
     assert result.provider_name == "internal"
@@ -314,7 +305,12 @@ async def test_run_batch_concurrency():
     provider = _mock_provider(llm_out)
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider)
     docs = [
-        CanonicalDocument(url=f"https://example.com/{i}", title=f"BTC doc {i}") for i in range(8)
+        CanonicalDocument(
+            url=f"https://example.com/{i}",
+            title=f"BTC doc {i}",
+            raw_text="Bitcoin market analysis with significant institutional demand signals",
+        )
+        for i in range(8)
     ]
 
     results = await pipeline.run_batch(docs)
@@ -330,7 +326,7 @@ async def test_pipeline_with_shadow_provider_success():
     shadow_out = _make_llm_output()
     shadow_out.sentiment_label = SentimentLabel.BEARISH
     shadow_out.recommended_priority = 3
-    shadow_provider = _mock_named_provider("companion", shadow_out)
+    shadow_provider = _mock_named_provider("shadow", shadow_out)
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -346,7 +342,7 @@ async def test_pipeline_with_shadow_provider_success():
     # Check shadow output was captured natively on the result object
     assert result.shadow_llm_output is not None
     assert result.shadow_llm_output.sentiment_label == SentimentLabel.BEARISH
-    assert result.shadow_provider_name == "companion"
+    assert result.shadow_provider_name == "shadow"
 
     result.apply_to_document()
 
@@ -359,7 +355,7 @@ async def test_pipeline_with_shadow_provider_success():
     assert shadow_data is not None
     assert shadow_data["sentiment_label"] == "bearish"
     assert shadow_data["recommended_priority"] == 3
-    assert result.document.metadata.get("shadow_provider") == "companion"
+    assert result.document.metadata.get("shadow_provider") == "shadow"
 
 
 @pytest.mark.asyncio
@@ -368,9 +364,9 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
     provider = _mock_provider(llm_out)
 
     shadow_provider = AsyncMock()
-    shadow_provider.provider_name = "companion"
+    shadow_provider.provider_name = "shadow"
     shadow_provider.model = "kai-v1"
-    shadow_provider.analyze = AsyncMock(side_effect=RuntimeError("Companion offline"))
+    shadow_provider.analyze = AsyncMock(side_effect=RuntimeError("Shadow provider offline"))
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -383,7 +379,7 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
     assert result.success
     assert result.llm_output is not None
     assert result.shadow_llm_output is None
-    assert result.shadow_error == "Companion offline"
+    assert result.shadow_error == "Shadow provider offline"
 
     result.apply_to_document()
     assert result.document.provider == "openai"
@@ -393,8 +389,8 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
 @pytest.mark.asyncio
 async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
     shadow_out = _make_llm_output()
-    shadow_out.short_reasoning = "Companion shadow summary."
-    shadow_provider = _mock_named_provider("companion", shadow_out)
+    shadow_out.short_reasoning = "Shadow provider summary."
+    shadow_provider = _mock_named_provider("shadow", shadow_out)
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -410,14 +406,14 @@ async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
     assert result.analysis_result.analysis_source == AnalysisSource.RULE
     assert result.provider_name == "fallback"
     assert result.shadow_llm_output is not None
-    assert result.shadow_provider_name == "companion"
+    assert result.shadow_provider_name == "shadow"
 
     result.apply_to_document()
 
     assert result.document.provider == "fallback"
     assert result.document.analysis_source == AnalysisSource.RULE
     assert result.document.metadata["shadow_analysis"]["short_reasoning"] == (
-        "Companion shadow summary."
+        "Shadow provider summary."
     )
 
 
@@ -472,3 +468,162 @@ def test_fallback_market_scope_existing_document_scope_adds_weight():
     doc = _make_scope_doc(market_scope=MarketScope.MACRO, title="Fed rate decision impact")
     result = _fallback_market_scope(doc, [])
     assert result == MarketScope.MACRO
+
+
+# ---------------------------------------------------------------------------
+# Market context integration tests
+# ---------------------------------------------------------------------------
+
+from app.analysis.pipeline import _derive_market_regime
+from app.analysis.prompts import _format_market_context
+
+
+def test_derive_market_regime_strong_uptrend():
+    assets = [{"change_pct_7d": 8.0}, {"change_pct_7d": 6.0}]
+    assert _derive_market_regime(assets) == "strong_uptrend"
+
+
+def test_derive_market_regime_mild_uptrend():
+    assets = [{"change_pct_7d": 3.0}, {"change_pct_7d": 2.0}]
+    assert _derive_market_regime(assets) == "mild_uptrend"
+
+
+def test_derive_market_regime_sideways():
+    assets = [{"change_pct_7d": 0.5}, {"change_pct_7d": -0.5}]
+    assert _derive_market_regime(assets) == "sideways"
+
+
+def test_derive_market_regime_strong_downtrend():
+    assets = [{"change_pct_7d": -7.0}, {"change_pct_7d": -6.0}]
+    assert _derive_market_regime(assets) == "strong_downtrend"
+
+
+def test_derive_market_regime_mild_downtrend():
+    assets = [{"change_pct_7d": -2.0}, {"change_pct_7d": -3.0}]
+    assert _derive_market_regime(assets) == "mild_downtrend"
+
+
+def test_derive_market_regime_unknown_without_data():
+    assets = [{"change_pct_7d": None}]
+    assert _derive_market_regime(assets) == "unknown"
+
+
+def test_format_market_context_renders_prices():
+    ctx = {
+        "assets": [
+            {"symbol": "BTC", "price": 67500.0, "change_pct_24h": 2.1, "change_pct_7d": 5.3},
+            {"symbol": "ETH", "price": 3200.0, "change_pct_24h": -1.2, "change_pct_7d": 3.1},
+        ],
+        "regime": "mild_uptrend",
+    }
+    text = _format_market_context(ctx)
+    assert "BTC" in text
+    assert "$67,500.00" in text
+    assert "+2.1%" in text
+    assert "+5.3%" in text
+    assert "ETH" in text
+    assert "-1.2%" in text
+    assert "mild_uptrend" in text
+    assert "already priced in" in text.lower() or "ALREADY reflected" in text
+
+
+def test_format_user_prompt_includes_market_context():
+    from app.analysis.prompts import format_user_prompt
+
+    prompt = format_user_prompt(
+        "BTC News",
+        "Bitcoin reaches new high.",
+        context={
+            "tickers": ["BTC"],
+            "source_type": "rss_feed",
+            "market_context": {
+                "assets": [
+                    {
+                        "symbol": "BTC",
+                        "price": 67500.0,
+                        "change_pct_24h": 2.1,
+                        "change_pct_7d": 5.3,
+                    },
+                ],
+                "regime": "mild_uptrend",
+            },
+        },
+    )
+    assert "$67,500.00" in prompt
+    assert "mild_uptrend" in prompt
+    assert "rss_feed" in prompt
+
+
+def test_format_user_prompt_without_market_context_unchanged():
+    from app.analysis.prompts import format_user_prompt
+
+    prompt = format_user_prompt(
+        "BTC News",
+        "Bitcoin reaches new high.",
+        context={"tickers": ["BTC"], "source_type": "rss_feed"},
+    )
+    assert "Market Context" not in prompt
+    assert "rss_feed" in prompt
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_batch_fetches_market_context():
+    """run_batch() fetches market context once and injects into each document's context."""
+    from app.market_data.models import Ticker
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_ticker = AsyncMock(
+        side_effect=lambda s: Ticker(
+            symbol=s,
+            timestamp_utc="2026-04-14T10:00:00+00:00",
+            bid=67500.0 if "BTC" in s else 3200.0,
+            ask=67500.0 if "BTC" in s else 3200.0,
+            last=67500.0 if "BTC" in s else 3200.0,
+            volume_24h=1e9,
+            change_pct_24h=2.1 if "BTC" in s else -1.2,
+            change_pct_7d=5.3 if "BTC" in s else 3.1,
+        )
+    )
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=None,
+        run_llm=False,
+        market_data_adapter=mock_adapter,
+    )
+
+    docs = [_make_doc(), _make_doc(title="ETH update", text="Ethereum upgrades")]
+    results = await pipeline.run_batch(docs)
+
+    assert len(results) == 2
+    # Adapter called exactly 2 times (BTC + ETH), not 2*2
+    assert mock_adapter.get_ticker.call_count == 2
+    # Market context cached internally
+    assert pipeline._cached_market_context is not None
+    assert len(pipeline._cached_market_context["assets"]) == 2
+    assert pipeline._cached_market_context["regime"] in (
+        "mild_uptrend",
+        "strong_uptrend",
+        "sideways",
+    )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_market_context_fail_open():
+    """If market data fetch fails, pipeline proceeds without market context."""
+    mock_adapter = AsyncMock()
+    mock_adapter.get_ticker = AsyncMock(return_value=None)
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=None,
+        run_llm=False,
+        market_data_adapter=mock_adapter,
+    )
+
+    results = await pipeline.run_batch([_make_doc()])
+    assert len(results) == 1
+    assert results[0].success
+    assert pipeline._cached_market_context is None

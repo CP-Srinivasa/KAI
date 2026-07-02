@@ -1,25 +1,99 @@
-"""Analysis pipeline for keyword, entity, LLM, and fallback analysis."""
+"""Analysis pipeline for keyword, entity, LLM, and fallback analysis.
+
+Topologie (primary / shadow / ensemble)
+=======================================
+
+::
+
+    CanonicalDocument
+           │
+           ▼
+    ┌──────────────────────────────────┐
+    │ KeywordEngine + Rules            │  deterministic pre-filter
+    │  • spam probability              │  (compute_spam_probability,
+    │  • rule_relevance                │   _MIN_RULE_RELEVANCE_FOR_LLM,
+    │  • trusted-author bypass (D-176) │   STUB_CONTENT_THRESHOLD)
+    └──────────────────────────────────┘
+           │ (gate: skip LLM if pre-filter says noise,
+           │  unless author is on trusted social-handles list)
+           ▼
+      ┌────────────────┐          ┌────────────────┐
+      │ PRIMARY LLM    │◄── fan ──│ SHADOW LLM     │ optional, D-156f
+      │ (default:      │   out    │ (Anthropic     │ Shadow shows divergence
+      │  Anthropic     │          │  preferred     │ without affecting
+      │  post-D-180)   │          │  post-D-180)   │ primary decision path
+      └────────────────┘          └────────────────┘
+           │                              │
+           │   LLMAnalysisOutput          │  LLMAnalysisOutput (shadow)
+           ▼                              ▼
+    ┌──────────────────────────────────┐
+    │ ENSEMBLE (optional, flag-gated)  │  merges primary + shadow
+    │   if ensemble.enabled:           │  via confidence-weighted
+    │     blend → AnalysisResult       │  averaging (see ensemble.py)
+    │   else:                          │
+    │     primary → AnalysisResult     │
+    └──────────────────────────────────┘
+           │
+           ▼
+    AnalysisResult {sentiment, priority, actionable, entities, tags, …}
+
+Guards / gates (inlined before LLM call)
+- ``_STUB_CONTENT_THRESHOLD`` — body ≤ 50 bytes → skip LLM (PH5C)
+- ``_MIN_RULE_RELEVANCE_FOR_LLM`` — rule_relevance < 0.10 → skip LLM (D-110)
+- trusted-author bypass — tweets from ``monitor/social_accounts.txt`` skip
+  stub/relevance gates (D-176)
+- spam probability from rules feeds into LLM prompt + post-filter
+
+Semantics was shaped by D-156f (shadow-provider selection), D-180
+(Anthropic preferred), commits 3e5be3e + 61ebbfd. See also
+``docs/adr/0001-tradingview-integration.md`` for the TV branch of the
+analysis flow.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
+from app.analysis.crypto_relevance import crypto_relevance_verdict
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
-from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, MarketScope, SentimentLabel, SourceType
 from app.core.logging import get_logger
-from app.enrichment.entities.matcher import hits_to_entity_mentions
+from app.market_data.base import BaseMarketDataAdapter
+from app.normalization.entities import hits_to_entity_mentions
 
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
+_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body Ã¢â€°Â¤ 50 bytes
+_MIN_RULE_RELEVANCE_FOR_LLM = 0.10  # D-110: skip LLM for very low rule relevance
+
+
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
+def _derive_market_regime(assets: list[dict[str, Any]]) -> str:
+    """Derive a simple market regime label from BTC/ETH 7d changes."""
+    changes_7d = [a["change_pct_7d"] for a in assets if a.get("change_pct_7d") is not None]
+    if not changes_7d:
+        return "unknown"
+    avg_7d = sum(changes_7d) / len(changes_7d)
+    if avg_7d > 5.0:
+        return "strong_uptrend"
+    if avg_7d > 1.5:
+        return "mild_uptrend"
+    if avg_7d < -5.0:
+        return "strong_downtrend"
+    if avg_7d < -1.5:
+        return "mild_downtrend"
+    return "sideways"
+
+
 _CRYPTO_TITLE_TERMS = frozenset(
     {
         "bitcoin",
@@ -45,6 +119,43 @@ _CRYPTO_TITLE_TERMS = frozenset(
 
 logger = get_logger(__name__)
 
+_TRUSTED_AUTHOR_HANDLE_RE = re.compile(r"@([A-Za-z0-9_]{1,15})")
+
+
+def load_trusted_social_handles(monitor_dir: Path) -> frozenset[str]:
+    """Parse monitor/social_accounts.txt → lowercased handles without the @.
+
+    D-174 Phase I (2Y): tweets from curated watchlist authors bypass both the
+    stub-length and low-relevance gates, because the curated list is already
+    the whitelist. Format: `platform|handle|name|category`, platform=twitter,
+    comments (#) and blanks ignored.
+    """
+    path = Path(monitor_dir) / "social_accounts.txt"
+    if not path.exists():
+        return frozenset()
+    handles: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 2 or parts[0].strip().lower() != "twitter":
+            continue
+        handle = parts[1].strip().lstrip("@").lower()
+        if handle:
+            handles.add(handle)
+    return frozenset(handles)
+
+
+def _extract_author_handle(author: str | None) -> str | None:
+    """Return the @handle (without @, lowercase) from a CanonicalDocument.author string."""
+    if not author:
+        return None
+    match = _TRUSTED_AUTHOR_HANDLE_RE.search(author)
+    if not match:
+        return None
+    return match.group(1).lower()
+
 
 def _unique_strings(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -66,12 +177,23 @@ def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
     provider_name = provider_name.strip().lower()
     if provider_name in {"fallback", "rule"}:
         return AnalysisSource.RULE
-    if provider_name in {"internal", "companion"}:
+    if provider_name in {"internal"}:
         return AnalysisSource.INTERNAL
     return AnalysisSource.EXTERNAL_LLM
 
 
-def _resolve_runtime_provider_name(provider: BaseAnalysisProvider | None) -> str | None:
+def _resolve_runtime_provider_name(
+    provider: BaseAnalysisProvider | None,
+    output: LLMAnalysisOutput | None = None,
+) -> str | None:
+    # Preferred: the output annotates which provider actually ran. This is
+    # per-call and cannot race, so it trumps any instance-level state on an
+    # ensemble wrapper shared across concurrent pipelines.
+    if output is not None and isinstance(output.provider_used, str):
+        winner = output.provider_used.strip()
+        if winner:
+            return winner
+
     if provider is None:
         return None
 
@@ -306,11 +428,84 @@ class AnalysisPipeline:
         provider: BaseAnalysisProvider | None = None,
         run_llm: bool = True,
         shadow_provider: BaseAnalysisProvider | None = None,
+        market_data_adapter: BaseMarketDataAdapter | None = None,
+        trusted_social_handles: frozenset[str] | None = None,
+        crypto_gate_mode: str | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
         self._run_llm = run_llm
         self._shadow_provider = shadow_provider
+        self._market_data_adapter = market_data_adapter
+        self._cached_market_context: dict[str, Any] | None = None
+        # D-174 Phase I (2Y): curated twitter watchlist bypasses stub + low-relevance gates.
+        self._trusted_social_handles: frozenset[str] = trusted_social_handles or frozenset()
+        # Pre-analysis crypto-relevance gate (2026-06-16). Resolved once at
+        # construction (one pipeline per batch, not per doc). None → read the
+        # SOURCE_CRYPTO_RELEVANCE_GATE_MODE setting (default ``shadow``).
+        self._crypto_gate_mode = self._resolve_crypto_gate_mode(crypto_gate_mode)
+
+        if self._shadow_overlaps_ensemble() and shadow_provider is not None:
+            # CLAUDE.md §6 requires Konsens/Dissens/Red-Team. A shadow that
+            # overlaps with the primary ensemble chain degenerates to an echo
+            # whenever the ensemble falls back to it — no red-team signal.
+            # Warn at construction time so operators see the misconfiguration
+            # once, rather than burying it in per-document debug logs.
+            logger.warning(
+                "shadow_redundant_configuration",
+                shadow=shadow_provider.provider_name,
+                primary_chain=getattr(provider, "provider_chain", None),
+                hint=(
+                    "Shadow provider is also in the primary ensemble chain. "
+                    "Red-team value is lost when ensemble falls back to this "
+                    "provider. Consider a distinct shadow (e.g. Anthropic)."
+                ),
+            )
+
+    @staticmethod
+    def _resolve_crypto_gate_mode(explicit: str | None) -> str:
+        """Resolve the crypto-relevance gate mode (off|shadow|enforce).
+
+        Fail-SAFE: an explicit value is honoured (lowercased); otherwise read the
+        setting. Any error or unknown value degrades to ``off`` so a config
+        glitch never silently starts skipping the LLM.
+        """
+        if explicit is not None:
+            mode = explicit.strip().lower()
+            return mode if mode in {"off", "shadow", "enforce"} else "off"
+        try:
+            from app.core.settings import get_settings
+
+            mode = get_settings().sources.crypto_relevance_gate_mode.strip().lower()
+            return mode if mode in {"off", "shadow", "enforce"} else "off"
+        except Exception:  # noqa: BLE001 — config glitch must not break analysis
+            return "off"
+
+    def _is_trusted_social_author(self, doc: CanonicalDocument) -> bool:
+        """True if doc is a tweet whose author is in the curated watchlist."""
+        if not self._trusted_social_handles:
+            return False
+        if doc.source_type != SourceType.SOCIAL_API:
+            return False
+        handle = _extract_author_handle(doc.author)
+        if handle is None:
+            return False
+        return handle in self._trusted_social_handles
+
+    def _shadow_overlaps_ensemble(self) -> bool:
+        """True if the primary is an Ensemble that contains the shadow provider.
+
+        When the primary ensemble falls back to the same provider configured as
+        shadow, running the shadow call would duplicate the request and burn
+        quota for no new information. Caller uses this to gate the shadow call.
+        """
+        if self._shadow_provider is None or self._provider is None:
+            return False
+        chain = getattr(self._provider, "provider_chain", None)
+        if not isinstance(chain, (list, tuple)):
+            return False
+        shadow_name = self._shadow_provider.provider_name.strip().lower()
+        return any(isinstance(name, str) and name.strip().lower() == shadow_name for name in chain)
 
     async def _run_shadow_analysis(
         self,
@@ -363,12 +558,77 @@ class AnalysisPipeline:
             "tickers": self._keyword_engine.match_tickers(full_text),
             "source_type": doc.source_type.value if doc.source_type else None,
         }
+        if self._cached_market_context is not None:
+            context["market_context"] = self._cached_market_context
+        pre_llm_relevance = _fallback_relevance(doc, keyword_hits, entity_mentions)
 
+        trusted_author = self._is_trusted_social_author(doc)
         fallback_reason: str | None = None
         if self._provider is None:
             fallback_reason = "LLM provider unavailable."
         elif not self._run_llm:
             fallback_reason = "LLM provider disabled."
+        elif trusted_author:
+            # D-174 Phase I (2Y): curated social watchlist author — bypass both
+            # stub-length and low-relevance gates. Handle is lowercased in loader.
+            logger.info(
+                "trusted_author_gate_bypass",
+                doc_id=str(doc.id),
+                author=doc.author,
+                content_len=len(text),
+                pre_llm_relevance=pre_llm_relevance,
+            )
+        elif len(text) <= _STUB_CONTENT_THRESHOLD:
+            # PH5C: skip LLM for stub/placeholder documents
+            fallback_reason = "stub_document: content below threshold."
+            logger.info(
+                "stub_document_skipped_llm",
+                doc_id=str(doc.id),
+                content_len=len(text),
+                threshold=_STUB_CONTENT_THRESHOLD,
+            )
+        elif (
+            pre_llm_relevance < _MIN_RULE_RELEVANCE_FOR_LLM
+            and not doc.tickers
+            and not doc.crypto_assets
+        ):
+            # D-110: low-relevance gate -- skip LLM for likely off-topic documents.
+            # This keeps token budget focused on documents with meaningful rule signals.
+            fallback_reason = (
+                "low_relevance_gate: "
+                f"pre_llm_relevance={pre_llm_relevance:.3f} "
+                f"< {_MIN_RULE_RELEVANCE_FOR_LLM:.2f}"
+            )
+            logger.info(
+                "low_relevance_gate_skipped_llm",
+                doc_id=str(doc.id),
+                pre_llm_relevance=pre_llm_relevance,
+                title=doc.title[:80] if doc.title else "",
+            )
+
+        # Pre-analysis crypto-relevance gate (2026-06-16). Only acts on documents
+        # that would otherwise reach the LLM (fallback_reason still None) and are
+        # NOT trusted-author bypasses. Fail-open: a crypto-irrelevant verdict
+        # means no ticker, no crypto_asset, and zero crypto keyword hits.
+        if self._crypto_gate_mode != "off" and fallback_reason is None and not trusted_author:
+            crypto_relevant, crypto_reason = crypto_relevance_verdict(doc, keyword_hits)
+            if not crypto_relevant:
+                if self._crypto_gate_mode == "enforce":
+                    fallback_reason = f"crypto_relevance_gate: {crypto_reason}"
+                    logger.info(
+                        "crypto_relevance_gate_skipped_llm",
+                        doc_id=str(doc.id),
+                        reason=crypto_reason,
+                        title=doc.title[:80] if doc.title else "",
+                    )
+                else:  # shadow — measure only, no behaviour change
+                    logger.info(
+                        "crypto_relevance_gate_shadow",
+                        doc_id=str(doc.id),
+                        would_skip=True,
+                        reason=crypto_reason,
+                        title=doc.title[:80] if doc.title else "",
+                    )
 
         if fallback_reason is not None:
             analysis_result = self._build_fallback_analysis(
@@ -398,10 +658,11 @@ class AnalysisPipeline:
                     )
                 )
 
+                shadow_may_overlap = self._shadow_overlaps_ensemble()
                 shadow_task: (
                     asyncio.Task[tuple[LLMAnalysisOutput | None, str | None, str | None]] | None
                 ) = None
-                if self._shadow_provider is not None:
+                if self._shadow_provider is not None and not shadow_may_overlap:
                     shadow_task = asyncio.create_task(
                         self._run_shadow_analysis(
                             doc,
@@ -413,17 +674,54 @@ class AnalysisPipeline:
                 try:
                     primary_output = await primary_task
                 except Exception:
+                    # Primary failed: still harvest the shadow result so the
+                    # red-team signal (or a quota-wasted error) is preserved
+                    # for the fallback PipelineResult instead of silently
+                    # dropped. Only the shadow's OWN exception is swallowed.
                     if shadow_task is not None:
-                        with contextlib.suppress(Exception):
-                            await shadow_task
+                        try:
+                            (
+                                shadow_llm_output,
+                                shadow_provider_name,
+                                shadow_error,
+                            ) = await shadow_task
+                        except Exception:
+                            pass
                     raise
 
                 llm_output = primary_output
                 if shadow_task is not None:
                     shadow_llm_output, shadow_provider_name, shadow_error = await shadow_task
+                elif shadow_may_overlap and self._shadow_provider is not None:
+                    # Overlap risk: only fire shadow if primary ensemble picked
+                    # a different provider than the shadow. If they match, skip
+                    # the shadow call entirely to save quota.
+                    primary_runtime_name = (
+                        _resolve_runtime_provider_name(self._provider, primary_output)
+                        or self._provider.provider_name
+                    )
+                    shadow_name = self._shadow_provider.provider_name
+                    if primary_runtime_name.strip().lower() != shadow_name.strip().lower():
+                        (
+                            shadow_llm_output,
+                            shadow_provider_name,
+                            shadow_error,
+                        ) = await self._run_shadow_analysis(
+                            doc,
+                            text=text,
+                            context=context,
+                        )
+                    else:
+                        logger.info(
+                            "shadow_skipped_ensemble_overlap",
+                            doc_id=str(doc.id),
+                            primary_runtime=primary_runtime_name,
+                            shadow=shadow_name,
+                        )
 
                 provider_name = (
-                    _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
+                    _resolve_runtime_provider_name(self._provider, primary_output)
+                    or self._provider.provider_name
                 )
                 analysis_source = _resolve_analysis_source(provider_name)
 
@@ -445,6 +743,8 @@ class AnalysisPipeline:
                     actionable=primary_output.actionable,
                     tags=primary_output.tags,
                     spam_probability=primary_output.spam_probability,
+                    directional_confidence=primary_output.directional_confidence,
+                    event_timing=primary_output.event_timing,
                 )
             except Exception as exc:
                 logger.warning(
@@ -514,6 +814,11 @@ class AnalysisPipeline:
         if market_scope is not None and market_scope != MarketScope.UNKNOWN:
             tag_sources.append(market_scope.value)
         fallback_tags = _unique_strings(tag_sources)[:_FALLBACK_MAX_TERMS]
+        # PH5C: inject stub_document tag for stub/placeholder documents
+        if "stub_document" in fallback_reason.lower() and "stub_document" not in [
+            t.lower() for t in fallback_tags
+        ]:
+            fallback_tags.insert(0, "stub_document")
 
         keyword_terms = ", ".join(hit.canonical for hit in keyword_hits[:5])
         entity_terms = ", ".join(mention.name for mention in entity_mentions[:5])
@@ -550,11 +855,52 @@ class AnalysisPipeline:
             spam_probability=spam_probability,
         )
 
+    async def _fetch_market_context(self) -> dict[str, Any] | None:
+        """Fetch BTC/ETH market data once per batch. Fail-open: returns None on error."""
+        if self._market_data_adapter is None:
+            return None
+        if self._cached_market_context is not None:
+            return self._cached_market_context
+
+        assets: list[dict[str, Any]] = []
+        for symbol in ("BTC/USDT", "ETH/USDT"):
+            try:
+                ticker = await self._market_data_adapter.get_ticker(symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("market_context_fetch_failed", symbol=symbol, error=str(exc))
+                continue
+            if ticker is None:
+                continue
+            assets.append(
+                {
+                    "symbol": symbol.split("/")[0],
+                    "price": ticker.last,
+                    "change_pct_24h": ticker.change_pct_24h,
+                    "change_pct_7d": ticker.change_pct_7d,
+                }
+            )
+
+        if not assets:
+            logger.warning("market_context_empty", reason="no_ticker_data")
+            return None
+
+        regime = _derive_market_regime(assets)
+        self._cached_market_context = {"assets": assets, "regime": regime}
+        logger.info(
+            "market_context_loaded",
+            asset_count=len(assets),
+            regime=regime,
+        )
+        return self._cached_market_context
+
     async def run_batch(
         self,
         documents: list[CanonicalDocument],
     ) -> list[PipelineResult]:
         """Analyze multiple documents with bounded concurrency."""
+        # Pre-fetch market context once for the entire batch
+        await self._fetch_market_context()
+
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
         async def _bounded(doc: CanonicalDocument) -> PipelineResult:

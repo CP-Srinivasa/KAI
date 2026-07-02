@@ -1,0 +1,871 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from app.alerts.hold_metrics import (
+    LEGACY_UNKNOWN_SOURCE,
+    MIN_ACTIVE_PRECISION_PCT,
+    MIN_PER_SOURCE_RESOLVED,
+    MIN_PER_SOURCE_RESOLVED_PER_WINDOW,
+    MIN_PER_SOURCE_WILSON_LOW_PCT,
+    MIN_RESOLVED_DIRECTIONAL_ALERTS,
+    STABILITY_WINDOW_COUNT,
+    STABILITY_WINDOW_DAYS,
+    _build_enriched_source_lookup,
+    build_hold_metrics_report,
+    compute_per_source_active_precision,
+    compute_per_source_stability,
+)
+
+
+def test_enriched_source_lookup_priority_db_name_provenance() -> None:
+    from types import SimpleNamespace
+
+    def _rec(source_name: str | None = None, prov_source: str | None = None) -> SimpleNamespace:
+        prov = SimpleNamespace(source=prov_source) if prov_source is not None else None
+        return SimpleNamespace(source_name=source_name, provenance=prov)
+
+    latest = {
+        "d_db": _rec(source_name="ignored", prov_source="ignored"),
+        "d_name": _rec(source_name="coindesk", prov_source="other"),
+        "d_prov": _rec(source_name=None, prov_source="cointelegraph"),
+        "d_unknown": _rec(source_name=None, prov_source="unknown"),
+    }
+    source_by_doc = {
+        "d_db": "reuters",
+        "d_name": "unknown",
+        "d_prov": "unknown",
+        "d_unknown": "unknown",
+    }
+    out = _build_enriched_source_lookup(latest, source_by_doc)
+    assert out["d_db"] == "reuters"  # a real DB join wins
+    assert out["d_name"] == "coindesk"  # DB unknown -> flat source_name
+    assert out["d_prov"] == "cointelegraph"  # DB+name empty -> provenance.source
+    assert out["d_unknown"] == LEGACY_UNKNOWN_SOURCE  # all unknown -> stays excluded
+
+
+def test_enriched_source_lookup_recovers_provenance_only_doc() -> None:
+    # The crux: a directional doc with NO flat source_name and NO DB row, but
+    # WITH provenance.source, must resolve to its real source instead of being
+    # dropped into the unknown bucket (the ~93% attribution gap).
+    from types import SimpleNamespace
+
+    latest = {"d": SimpleNamespace(source_name=None, provenance=SimpleNamespace(source="decrypt"))}
+    out = _build_enriched_source_lookup(latest, {})
+    assert out["d"] == "decrypt"
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(json.dumps(row) for row in rows)
+    path.write_text(text + ("\n" if text else ""), encoding="utf-8")
+
+
+def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -> None:
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-1",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-01T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 9,
+                "actionable": True,
+            },
+            {
+                "document_id": "doc-2",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-01T10:01:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["ETH/USDT"],
+                "priority": 8,
+                "actionable": False,
+                "directional_eligible": True,
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {
+                "document_id": "doc-1",
+                "outcome": "hit",
+                "annotated_at": "2026-04-01T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-2",
+                "outcome": "miss",
+                "annotated_at": "2026-04-01T11:05:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+
+    quality = report["signal_quality_validation"]
+    assert quality["directional_actionable_rate_pct"] == 50.0
+    assert quality["resolved_precision_pct"] == 50.0
+    assert quality["resolved_false_positive_rate_pct"] == 50.0
+    assert quality["priority_calibration_finding"] == "insufficient_sample"
+    assert quality["priority_hit_correlation"] == 1.0
+    assert quality["priority_hit_correlation_sample"] == 2
+    # Both docs are high priority (P8, P9 ≥ threshold 7): 1 hit, 1 miss
+    assert quality["high_priority_hit_rate_pct"] == 50.0
+    assert quality["low_priority_hit_rate_pct"] is None
+    assert quality["paper_real_price_cycle_count"] == 0
+    assert "no_real_price_paper_cycles" in quality["validation_gaps"]
+    assert "recall_not_computable_without_negative_ground_truth" in quality["validation_gaps"]
+    # D-149: priority tier fields present even at small n.
+    assert quality["priority_tier_high_conviction_threshold"] == 10
+    # P8+P9 both fall into standard tier (P7-P9), none in P10 tier.
+    assert quality["priority_tier_high_conviction_resolved"] == 0
+    assert quality["priority_tier_standard_resolved"] == 2
+    assert quality["priority_tier_standard_hit_rate_pct"] == 50.0
+    assert quality["priority_hit_correlation_deprecated_reason"] == (
+        "non_monotonic_within_p7_p10_band_see_d149"
+    )
+
+
+def test_hold_metrics_priority_tier_splits_p10_from_p7_p9(tmp_path: Path) -> None:
+    """D-149: P10 should bucket separately; lift = P10_rate - standard_rate."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    # Four docs: two P10 (1 hit, 1 miss → 50%), two P8 (0 hit, 2 miss → 0%).
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": f"doc-{i}",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": f"2026-04-01T10:0{i}:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": p,
+                "actionable": True,
+            }
+            for i, p in enumerate([10, 10, 8, 8])
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {"document_id": "doc-0", "outcome": "hit"},
+            {"document_id": "doc-1", "outcome": "miss"},
+            {"document_id": "doc-2", "outcome": "miss"},
+            {"document_id": "doc-3", "outcome": "miss"},
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+
+    quality = report["signal_quality_validation"]
+    assert quality["priority_tier_high_conviction_resolved"] == 2
+    assert quality["priority_tier_high_conviction_hit_rate_pct"] == 50.0
+    assert quality["priority_tier_standard_resolved"] == 2
+    assert quality["priority_tier_standard_hit_rate_pct"] == 0.0
+    # Lift = 50.0 - 0.0 = 50.0 pp
+    assert quality["priority_tier_lift_pct"] == 50.0
+    # Wilson CI fields are populated (bounded floats in [0,100]).
+    assert 0 <= quality["priority_tier_high_conviction_ci_low_pct"] <= 100
+    assert 0 <= quality["priority_tier_high_conviction_ci_high_pct"] <= 100
+
+
+def test_hold_metrics_detects_real_price_cycle_source(tmp_path: Path) -> None:
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(alert_audit, [])
+    _write_jsonl(alert_outcomes, [])
+    _write_jsonl(
+        trading_loop_audit,
+        [
+            {
+                "cycle_id": "cyc_1",
+                "status": "no_signal",
+                "completed_at": "2026-04-01T12:00:00+00:00",
+                "notes": ["market_data_source:coingecko"],
+            }
+        ],
+    )
+    _write_jsonl(
+        paper_execution_audit,
+        [
+            {
+                "event_type": "order_filled",
+                "realized_pnl_usd": 10.0,
+            }
+        ],
+    )
+
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+
+    quality = report["signal_quality_validation"]
+    assert quality["paper_real_price_cycle_count"] == 1
+    assert quality["paper_market_data_source_counts"]["coingecko"] == 1
+    assert quality["priority_mae_tier1_vs_teacher_baseline"] == 3.13
+    assert quality["llm_error_proxy_baseline_pct"] == 27.5
+
+
+def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> None:
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-crypto",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-01T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 8,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-non-crypto",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-01T10:01:00+00:00",
+                "sentiment_label": "bearish",
+                "affected_assets": [],
+                "priority": 8,
+                "actionable": True,
+                "directional_eligible": False,
+                "directional_block_reason": "unsupported_or_non_crypto_assets",
+                "directional_blocked_assets": ["OPENAI"],
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {
+                "document_id": "doc-crypto",
+                "outcome": "hit",
+                "annotated_at": "2026-04-01T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-non-crypto",
+                "outcome": "miss",
+                "annotated_at": "2026-04-01T11:05:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+
+    hit = report["alert_hit_rate_evidence"]
+    quality = report["signal_quality_validation"]
+    assert hit["directional_alert_documents"] == 1
+    assert hit["blocked_directional_documents"] == 1
+    # D-142: bearish is blocked before asset resolution in current re-evaluation
+    assert hit["blocked_directional_by_reason"] == {"bearish_directional_disabled": 1}
+    assert hit["resolved_directional_documents"] == 1
+    assert quality["resolved_precision_pct"] == 100.0
+
+
+def test_forward_simulation_uses_source_by_doc(tmp_path: Path) -> None:
+    """source_by_doc filters low-precision sources in forward simulation."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-good",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-decrypt",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:01:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {
+                "document_id": "doc-good",
+                "outcome": "hit",
+                "annotated_at": "2026-04-14T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-decrypt",
+                "outcome": "miss",
+                "annotated_at": "2026-04-14T11:01:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # Without source_by_doc: both docs are forward-eligible
+    report_no_src = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+    fwd_no = report_no_src["forward_simulation"]
+    assert fwd_no["resolved"] == 2
+    assert fwd_no["hits"] == 1
+    assert fwd_no["miss"] == 1
+
+    # With source_by_doc: decrypt miss gets filtered
+    report_src = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        source_by_doc={"doc-good": "cointelegraph", "doc-decrypt": "decrypt"},
+    )
+    fwd_src = report_src["forward_simulation"]
+    assert fwd_src["resolved"] == 1
+    assert fwd_src["hits"] == 1
+    assert fwd_src["miss"] == 0
+    assert fwd_src["filtered_out"] == 1
+    assert fwd_src["precision_pct"] == 100.0
+
+
+def test_forward_simulation_prefers_audit_source_name(tmp_path: Path) -> None:
+    """source_name from audit record takes precedence over source_by_doc."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-1",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+                "source_name": "cointelegraph",
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {"document_id": "doc-1", "outcome": "hit", "annotated_at": "2026-04-14T11:00:00+00:00"},
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # source_by_doc says "decrypt" but audit record says "cointelegraph" — audit wins
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        source_by_doc={"doc-1": "decrypt"},
+    )
+    fwd = report["forward_simulation"]
+    assert fwd["resolved"] == 1
+    assert fwd["hits"] == 1
+
+
+def test_forward_simulation_filters_reactive_title(tmp_path: Path) -> None:
+    """Reactive bullish titles are filtered in forward simulation."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-hit",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-reactive",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:01:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 10,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {
+                "document_id": "doc-hit",
+                "outcome": "hit",
+                "annotated_at": "2026-04-14T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-reactive",
+                "outcome": "miss",
+                "annotated_at": "2026-04-14T11:01:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # title_by_doc provides reactive title for doc-reactive
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        title_by_doc={
+            "doc-hit": "Charles Schwab opens bitcoin trading",
+            "doc-reactive": "ETF empire surging past $100 billion",
+        },
+    )
+    fwd = report["forward_simulation"]
+    # doc-reactive "surging" → reactive bullish → filtered
+    assert fwd["resolved"] == 1
+    assert fwd["hits"] == 1
+    assert fwd["miss"] == 0
+    assert fwd["filtered_out"] == 1
+
+
+# ── D-151: Hold-Gate enforces sample-size + active-precision + paper ─────────
+
+
+_GATE_FIXTURE_ANCHOR = datetime(2026, 4, 30, tzinfo=UTC)
+
+
+def _build_gate_fixture(
+    tmp_path: Path,
+    *,
+    resolved_count: int,
+    hits: int,
+    source_for_docs: str = "rss",
+    paper_fills: int = 5,
+    paper_cycles: int = 15,
+    pnl: float = 0.0,
+    spread_across_windows: bool = False,
+) -> dict[str, object]:
+    """Build a minimal hold-metrics report with controllable gate inputs.
+
+    When ``spread_across_windows`` is True, dispatched_at is distributed
+    evenly across the three 30-day stability windows ending at
+    ``_GATE_FIXTURE_ANCHOR`` so the per-source stability check has data
+    in every window. Hit/miss is interleaved within each window so the
+    Wilson-lower bound holds locally as well as in aggregate.
+    """
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    audits: list[dict[str, object]] = []
+    outcomes: list[dict[str, object]] = []
+    source_map: dict[str, str] = {}
+    if spread_across_windows:
+        per_window = resolved_count // 3
+        leftovers = resolved_count - per_window * 3
+        # window centers: anchor-15d, anchor-45d, anchor-75d
+        window_offsets_days = [15, 45, 75]
+        bucket_assignments: list[int] = []
+        bucket_hits_target: list[int] = []
+        per_window_hit = hits // 3
+        hit_leftovers = hits - per_window_hit * 3
+        for w_idx in range(3):
+            n = per_window + (1 if w_idx < leftovers else 0)
+            h = per_window_hit + (1 if w_idx < hit_leftovers else 0)
+            bucket_assignments.extend([w_idx] * n)
+            # Interleave: first h docs in this window are hits, rest are misses.
+            for j in range(n):
+                bucket_hits_target.append(1 if j < h else 0)
+    for i in range(resolved_count):
+        doc_id = f"doc-{i}"
+        if spread_across_windows:
+            offset_days = window_offsets_days[bucket_assignments[i]]
+            dispatched = (_GATE_FIXTURE_ANCHOR - timedelta(days=offset_days)).isoformat()
+            is_hit = bucket_hits_target[i] == 1
+        else:
+            dispatched = "2026-04-01T10:00:00+00:00"
+            is_hit = i < hits
+        audits.append(
+            {
+                "document_id": doc_id,
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": dispatched,
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 8,
+                "actionable": True,
+                "directional_eligible": True,
+            }
+        )
+        outcomes.append(
+            {
+                "document_id": doc_id,
+                "outcome": "hit" if is_hit else "miss",
+                "annotated_at": "2026-04-01T12:00:00+00:00",
+            }
+        )
+        source_map[doc_id] = source_for_docs
+    _write_jsonl(alert_audit, audits)
+    _write_jsonl(alert_outcomes, outcomes)
+
+    loop_rows = [
+        {
+            "cycle_id": f"cyc-{i}",
+            "started_at": "2026-04-01T09:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "status": "completed",
+            "fill_simulated": i < paper_fills,
+            "notes": ["market_data_source:coingecko"],
+            "completed_at": "2026-04-01T09:01:00+00:00",
+        }
+        for i in range(paper_cycles)
+    ]
+    _write_jsonl(trading_loop_audit, loop_rows)
+
+    exec_rows = [{"event_type": "order_created"} for _ in range(paper_fills)] + [
+        {"event_type": "order_filled", "realized_pnl_usd": pnl} for _ in range(paper_fills)
+    ]
+    _write_jsonl(paper_execution_audit, exec_rows)
+
+    return build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        source_by_doc=source_map,
+        stability_anchor=_GATE_FIXTURE_ANCHOR,
+    )
+
+
+def test_hold_gate_constants_match_d151(tmp_path: Path) -> None:
+    assert MIN_RESOLVED_DIRECTIONAL_ALERTS == 200
+    assert MIN_ACTIVE_PRECISION_PCT == 60.0
+
+
+def test_hold_gate_sample_size_below_threshold_blocks(tmp_path: Path) -> None:
+    """Fewer than 200 resolved → alert_hit_rate_condition unmet."""
+    report = _build_gate_fixture(tmp_path, resolved_count=100, hits=70)
+    gate = report["hold_gate_evaluation"]
+    assert gate["alert_hit_rate_condition_met"] is False
+    assert gate["overall_status"] == "hold_remains_active"
+    assert "resolved_directional_below_200" in gate["blocking_reasons"]
+
+
+def test_hold_gate_active_precision_below_threshold_blocks(tmp_path: Path) -> None:
+    """n=200 but precision=40% → active_precision_condition unmet."""
+    report = _build_gate_fixture(tmp_path, resolved_count=200, hits=80)
+    gate = report["hold_gate_evaluation"]
+    assert gate["alert_hit_rate_condition_met"] is True
+    assert gate["active_precision_condition_met"] is False
+    assert gate["overall_status"] == "hold_remains_active"
+    assert "active_precision_below_60_pct" in gate["blocking_reasons"]
+
+
+def test_hold_gate_all_conditions_met_releases(tmp_path: Path) -> None:
+    """All gate conditions including per-source floor + stability satisfied."""
+    # 70% hit-rate at n=240 (80 per window) — Wilson lower ~64% comfortably
+    # clears both the 60% headline floor and the 55% per-source floor in
+    # every 30-day window.
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=240,
+        hits=168,
+        paper_fills=5,
+        pnl=1.0,
+        spread_across_windows=True,
+    )
+    gate = report["hold_gate_evaluation"]
+    assert gate["alert_hit_rate_condition_met"] is True
+    assert gate["active_precision_condition_met"] is True
+    assert gate["per_source_precision_condition_met"] is True
+    assert gate["per_source_stability_condition_met"] is True
+    assert gate["paper_trading_condition_met"] is True
+    assert gate["feature_work_unblocked"] is True
+    assert gate["overall_status"] == "hold_releasable"
+    assert gate["blocking_reasons"] == []
+    assert "rss" in gate["sources_passing_both"]
+
+
+def test_hold_gate_per_source_precision_blocks_when_no_source_clears_floor(
+    tmp_path: Path,
+) -> None:
+    """Aggregate precision ok, but no single source has n>=50 + Wilson>=55%.
+
+    Hit-rate of 60% at n=200 yields a Wilson lower bound of ~53% — clears
+    the headline 60% floor on the point estimate but fails the stricter
+    55% lower-bound check the per-source gate enforces.
+    """
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=200,
+        hits=120,
+        paper_fills=5,
+        pnl=1.0,
+    )
+    gate = report["hold_gate_evaluation"]
+    assert gate["alert_hit_rate_condition_met"] is True
+    assert gate["active_precision_condition_met"] is True
+    assert gate["per_source_precision_condition_met"] is False
+    assert gate["feature_work_unblocked"] is False
+    assert any(r.startswith("no_source_meets_per_source_floor") for r in gate["blocking_reasons"])
+
+
+def test_hold_gate_stability_blocks_when_only_one_window_has_data(
+    tmp_path: Path,
+) -> None:
+    """Strong precision today but no spread across windows → stability fails."""
+    # All docs land in one timestamp → only window 0 has data, windows 1+2
+    # are empty (insufficient_n) → stability=False even with 70% hit-rate.
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=240,
+        hits=170,
+        paper_fills=5,
+        pnl=1.0,
+        spread_across_windows=False,
+    )
+    gate = report["hold_gate_evaluation"]
+    assert gate["per_source_precision_condition_met"] is True  # current snapshot ok
+    assert gate["per_source_stability_condition_met"] is False
+    assert gate["feature_work_unblocked"] is False
+    assert any(r.startswith("no_source_stable_across_") for r in gate["blocking_reasons"])
+
+
+def test_hold_gate_legacy_unknown_excluded_from_active(tmp_path: Path) -> None:
+    """Legacy `source=unknown` docs don't count toward active precision."""
+    # 200 resolved, 80 hits (40%) — but all legacy_unknown → active_resolved=0
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=200,
+        hits=80,
+        source_for_docs="unknown",
+    )
+    gate = report["hold_gate_evaluation"]
+    hit = report["alert_hit_rate_evidence"]
+    assert hit["active_resolved_directional_documents"] == 0
+    # With no active sample, condition cannot be met.
+    assert gate["active_precision_condition_met"] is False
+    assert "active_precision_below_60_pct" in gate["blocking_reasons"]
+
+
+def test_hold_gate_exposes_thresholds(tmp_path: Path) -> None:
+    """Gate output advertises the numeric thresholds for downstream consumers."""
+    report = _build_gate_fixture(tmp_path, resolved_count=50, hits=30)
+    gate = report["hold_gate_evaluation"]
+    assert gate["minimum_resolved_directional_alerts_for_gate"] == 200
+    assert gate["minimum_active_precision_pct_for_gate"] == 60.0
+    assert gate["minimum_per_source_resolved_for_gate"] == MIN_PER_SOURCE_RESOLVED
+    assert gate["minimum_per_source_wilson_low_pct_for_gate"] == MIN_PER_SOURCE_WILSON_LOW_PCT
+
+
+# ── Direct unit tests for the per-source helpers (no fixture indirection) ───
+
+
+def test_compute_per_source_active_precision_excludes_legacy_unknown() -> None:
+    active_resolved = {"d1", "d2", "d3"}
+    hit_docs = {"d1"}
+    source_lookup = {"d1": "rss", "d2": "rss", "d3": "unknown"}
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    # 'unknown' is filtered out, only 'rss' remains.
+    assert set(out.keys()) == {"rss"}
+    assert out["rss"]["resolved"] == 2
+    assert out["rss"]["hits"] == 1
+
+
+def test_compute_per_source_active_precision_passes_gate_at_clear_signal() -> None:
+    # 50 resolved, 40 hits → p=0.80, Wilson lower (n=50) ≈ 0.668 = 66.8%.
+    active_resolved = {f"d{i}" for i in range(50)}
+    hit_docs = {f"d{i}" for i in range(40)}
+    source_lookup = {f"d{i}": "rss" for i in range(50)}
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    assert out["rss"]["resolved"] == 50
+    assert out["rss"]["passes_gate"] is True
+    assert out["rss"]["ci_low_pct"] >= MIN_PER_SOURCE_WILSON_LOW_PCT
+
+
+def test_compute_per_source_active_precision_fails_gate_on_small_sample() -> None:
+    # 49 resolved (just below floor), even at 100% hit-rate must fail n threshold.
+    active_resolved = {f"d{i}" for i in range(49)}
+    hit_docs = set(active_resolved)
+    source_lookup = dict.fromkeys(active_resolved, "rss")
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    assert out["rss"]["n_threshold_met"] is False
+    assert out["rss"]["passes_gate"] is False
+
+
+def test_compute_per_source_stability_marks_empty_windows_as_fail() -> None:
+    """One source, all docs in window 0 — windows 1+2 must register as fail."""
+    anchor = datetime(2026, 4, 30, tzinfo=UTC)
+
+    class _Rec:
+        def __init__(self, dispatched_at: str) -> None:
+            self.dispatched_at = dispatched_at
+
+    docs = {f"d{i}" for i in range(40)}
+    hits = {f"d{i}" for i in range(30)}
+    # All in window 0 (anchor - 10d): plenty for window 0, nothing else.
+    latest_directional_by_doc = {d: _Rec((anchor - timedelta(days=10)).isoformat()) for d in docs}
+    source_lookup = dict.fromkeys(docs, "rss")
+
+    out = compute_per_source_stability(
+        active_resolved_docs=docs,
+        hit_docs=hits,
+        latest_directional_by_doc=latest_directional_by_doc,
+        source_lookup=source_lookup,
+        now=anchor,
+    )
+    assert out["window_count"] == STABILITY_WINDOW_COUNT
+    assert out["window_days"] == STABILITY_WINDOW_DAYS
+    rss = out["by_source"]["rss"]
+    assert rss["stable"] is False
+    assert rss["windows"][0]["passes_window"] is True
+    # Empty windows must report insufficient_n explicitly.
+    assert rss["windows"][1]["passes_window"] is False
+    assert rss["windows"][1]["fail_reason"] == "insufficient_n"
+    assert rss["windows"][2]["fail_reason"] == "insufficient_n"
+    assert rss["windows"][1]["resolved"] == 0
+
+
+def test_compute_per_source_stability_passes_when_all_windows_strong() -> None:
+    """Sufficient n + strong precision in every window → stable=True."""
+    anchor = datetime(2026, 4, 30, tzinfo=UTC)
+
+    class _Rec:
+        def __init__(self, dispatched_at: str) -> None:
+            self.dispatched_at = dispatched_at
+
+    # 50 docs × 38 hits per window → p=0.76, Wilson lower ≈ 62.6%.
+    # Comfortably above the 55% floor with the 20-doc per-window minimum.
+    per_window = 50
+    hits_per_window = 38
+    docs: set[str] = set()
+    hit_docs: set[str] = set()
+    latest: dict[str, _Rec] = {}
+    sources: dict[str, str] = {}
+    for w in range(3):
+        offset_days = 15 + w * 30  # window centers
+        for i in range(per_window):
+            doc_id = f"w{w}_d{i}"
+            docs.add(doc_id)
+            if i < hits_per_window:
+                hit_docs.add(doc_id)
+            latest[doc_id] = _Rec((anchor - timedelta(days=offset_days)).isoformat())
+            sources[doc_id] = "rss"
+
+    out = compute_per_source_stability(
+        active_resolved_docs=docs,
+        hit_docs=hit_docs,
+        latest_directional_by_doc=latest,
+        source_lookup=sources,
+        now=anchor,
+    )
+    rss = out["by_source"]["rss"]
+    assert rss["stable"] is True
+    assert all(w["passes_window"] for w in rss["windows"])
+    assert all(w["resolved"] >= MIN_PER_SOURCE_RESOLVED_PER_WINDOW for w in rss["windows"])

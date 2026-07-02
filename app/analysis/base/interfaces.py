@@ -31,10 +31,24 @@ class LLMAnalysisOutput(BaseModel):
     bear_case: str | None = None
     neutral_case: str | None = None
 
+    directional_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    event_timing: str | None = None
+
     historical_analogs: list[str] = Field(default_factory=list)
     recommended_priority: int = Field(default=5, ge=1, le=10)
     actionable: bool = False
     tags: list[str] = Field(default_factory=list)
+
+    # Set by ensemble/fallback wrappers to identify which underlying provider
+    # actually produced this output. Per-call, so it survives parallel runs
+    # where a shared provider instance would otherwise race on mutable state.
+    provider_used: str | None = None
+
+    # Cognitive Audit fields (populated post-validation by the provider)
+    raw_prompt: str | None = None
+    raw_response: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class BaseAnalysisProvider(ABC):

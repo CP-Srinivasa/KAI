@@ -25,7 +25,7 @@ from app.analysis.narratives.cluster import (
     save_narrative_clusters,
 )
 from app.core.enums import MarketScope, NarrativeLabel, SentimentLabel
-from app.research.signals import SignalCandidate
+from app.core.signals import SignalCandidate
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

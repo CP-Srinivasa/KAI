@@ -1,0 +1,145 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
+
+// Mock only the network fetchers; keep ApiError + types from the real module so
+// useApi's `instanceof ApiError` check keeps working.
+const fetchPortfolioSnapshot = vi.fn();
+const fetchExposureSummary = vi.fn();
+const fetchRecentCycles = vi.fn();
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchPortfolioSnapshot: (s?: AbortSignal) => fetchPortfolioSnapshot(s),
+    fetchExposureSummary: (s?: AbortSignal) => fetchExposureSummary(s),
+    fetchRecentCycles: (n?: number, s?: AbortSignal) => fetchRecentCycles(n, s),
+  };
+});
+
+import { LivePortfolioTiles } from "./LivePortfolioTiles";
+import { CurrencyProvider } from "@/state/CurrencyProvider";
+
+// Tiles format money via useCurrency() → render inside the provider. Force USD
+// so the $-grouping assertions are deterministic regardless of test-env locale.
+function renderTiles() {
+  return render(
+    <CurrencyProvider>
+      <LivePortfolioTiles />
+    </CurrencyProvider>,
+  );
+}
+
+const flatPortfolio = {
+  report_type: "paper_portfolio_snapshot",
+  generated_at: "2026-06-03T20:00:00Z",
+  source: "paper",
+  audit_path: "x",
+  cash_usd: 100000,
+  realized_pnl_usd: 0,
+  total_market_value_usd: 0,
+  total_equity_usd: 100000,
+  total_unrealized_pnl_usd: 0,
+  total_fees_usd: 0,
+  position_count: 0,
+  positions: [],
+};
+
+// A net-short book: cash is inflated by short-sale proceeds (a liability), so
+// the tile must flag the borrowed portion and show the short-aware net position.
+const shortBookPortfolio = {
+  ...flatPortfolio,
+  cash_usd: 34150,
+  total_market_value_usd: 13820,
+  total_equity_usd: 25112, // cash + (long 4035 − short 9785 = net −9038) ≈ 25112
+  position_count: 2,
+  positions: [
+    { symbol: "BTC/USDT", position_side: "short", market_value_usd: 9785 },
+    { symbol: "AAVE/USDT", position_side: "long", market_value_usd: 4035 },
+  ],
+};
+
+const flatExposure = {
+  report_type: "paper_exposure_summary",
+  priced_position_count: 0,
+  stale_position_count: 0,
+  unavailable_price_count: 0,
+  gross_exposure_usd: 0,
+  net_exposure_usd: 0,
+  largest_position_symbol: null,
+  largest_position_weight_pct: null,
+  mark_to_market_status: "ok",
+  execution_enabled: false,
+  write_back_allowed: false,
+  generated_at: "2026-06-03T20:00:00Z",
+  available: true,
+  error: null,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  try {
+    localStorage.setItem("kai-currency", "USD");
+  } catch {
+    /* no-op in envs without localStorage */
+  }
+});
+afterEach(cleanup);
+
+describe("LivePortfolioTiles", () => {
+  it("renders real equity + honest flat-book empty states", async () => {
+    fetchPortfolioSnapshot.mockResolvedValue(flatPortfolio);
+    fetchExposureSummary.mockResolvedValue(flatExposure);
+    fetchRecentCycles.mockResolvedValue({
+      report_type: "recent_cycles",
+      total_cycles: 0,
+      status_counts: {},
+      recent_cycles: [],
+    });
+
+    renderTiles();
+
+    // Portfolio tile reached the ready state (labels are deterministic; the exact
+    // currency grouping is Intl/env-dependent so we assert the $-value loosely).
+    expect((await screen.findAllByText("Gesamt-Equity")).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/\$100[,.]?000/)).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Kein Markteinsatz/)).length).toBeGreaterThanOrEqual(1);
+    expect(
+      (await screen.findAllByText(/Keine bewertbaren Positionen/)).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Keine Cycles im Fenster/)).length).toBeGreaterThanOrEqual(
+      1,
+    );
+  });
+
+  it("flags borrowed short proceeds in cash and shows the short-aware net position", async () => {
+    fetchPortfolioSnapshot.mockResolvedValue(shortBookPortfolio);
+    fetchExposureSummary.mockResolvedValue(flatExposure);
+    fetchRecentCycles.mockResolvedValue({
+      report_type: "recent_cycles",
+      total_cycles: 0,
+      status_counts: {},
+      recent_cycles: [],
+    });
+
+    renderTiles();
+
+    // Cash is no longer painted as fully "frei": the short-erlös portion is flagged.
+    expect(
+      (await screen.findAllByText(/aus Short-Erlösen — geliehen, nicht frei/)).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Netto-Position/)).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Cash \(Konto-Saldo\)/)).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders honest 'nicht erreichbar' on backend error", async () => {
+    fetchPortfolioSnapshot.mockRejectedValue(new Error("boom"));
+    fetchExposureSummary.mockRejectedValue(new Error("boom"));
+    fetchRecentCycles.mockRejectedValue(new Error("boom"));
+
+    renderTiles();
+
+    const errs = await screen.findAllByText(/nicht erreichbar/);
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+  });
+});

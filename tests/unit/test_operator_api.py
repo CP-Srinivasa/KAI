@@ -24,7 +24,7 @@ def _make_app(api_key: str = "") -> FastAPI:
     app.include_router(router)
 
     def _override_settings() -> SimpleNamespace:
-        return SimpleNamespace(api_key=api_key)
+        return SimpleNamespace(api_key=api_key, cf_access_allowed_emails="")
 
     app.dependency_overrides[get_settings] = _override_settings
     return app
@@ -61,12 +61,12 @@ def test_valid_token_passes_auth() -> None:
     with patch.object(
         __import__(
             "app.agents.mcp_server",
-            fromlist=["get_operational_readiness_summary"],
+            fromlist=["get_daily_operator_summary"],
         ),
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         new_callable=AsyncMock,
         return_value={
-            "report_type": "readiness",
+            "report_type": "daily_operator_summary",
             "execution_enabled": False,
         },
     ):
@@ -93,6 +93,8 @@ def test_expected_routes_present() -> None:
         "/operator/daily-summary",
         "/operator/portfolio-snapshot",
         "/operator/exposure-summary",
+        "/operator/portfolio/realized-by-asset",
+        "/operator/paper-pipeline-status",
         "/operator/trading-loop/status",
         "/operator/trading-loop/recent-cycles",
         "/operator/trading-loop/run-once",

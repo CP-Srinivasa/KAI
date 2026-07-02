@@ -18,7 +18,7 @@ from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentStatus
-from app.research.signals import extract_signal_candidates
+from app.core.signals import extract_signal_candidates
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

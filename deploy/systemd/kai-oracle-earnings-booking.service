@@ -1,0 +1,24 @@
+[Unit]
+Description=KAI Oracle Earnings-Booking — book settled kai-oracle:* invoices (U3, read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Read-only against the node's OWN invoices (lists + books settled kai-oracle:*
+# payments) — capital-free. Inert until APP_LN_ENABLED + a reachable node; no-op (0)
+# otherwise. "-" prefix: a failed run must never propagate — the next run retries.
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/book_oracle_earnings.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+MemoryMax=128M
+CPUQuota=50%

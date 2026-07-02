@@ -1,0 +1,16 @@
+[Unit]
+Description=KAI Momentum-Crosscheck — rebuild the cross-check snapshot (daily + intra-day)
+
+[Timer]
+# Tracks the 12h universe cadence; daily-OHLCV TA ratings don't move faster.
+# The same-named .service is auto-activated when the timer fires — deliberately
+# NO `Requires=` (Timer-Requires cascade lesson #414). NOT enabled by default:
+# the operator runs `systemctl enable --now kai-momentum-crosscheck.timer`.
+OnBootSec=12min
+OnUnitActiveSec=12h
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

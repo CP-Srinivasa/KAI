@@ -17,7 +17,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.errors import SecurityError
-from app.security.ssrf import validate_url
+from app.security.ssrf import ssrf_redirect_hook, validate_url
 
 _DEFAULT_HEADERS = {
     "User-Agent": "ai-analyst-bot/0.1 (feed validator)",
@@ -46,6 +46,7 @@ async def _fetch(url: str, timeout: int) -> tuple[bytes, str]:
         timeout=timeout,
         headers=_DEFAULT_HEADERS,
         follow_redirects=True,
+        event_hooks={"response": [ssrf_redirect_hook]},
     ) as client:
         response = await client.get(url)
         response.raise_for_status()

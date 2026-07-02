@@ -1,0 +1,29 @@
+[Unit]
+Description=KAI Momentum-Universe-Feed — feed universe symbols into PAPER (Goal G2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Feeds top-N Momentum-Universe symbols (minus those the G1 rotation FSM
+# flagged/archived) into PAPER as LONG signals tagged
+# analysis_source="momentum_universe" (so edge-report isolates the cohort).
+# PAPER only, NO capital. No-op unless MOMENTUM_UNIVERSE_FEED_ENABLED=true;
+# max_per_run bounds the per-tick burst. "-" prefix: a failed run must not
+# propagate (the feeder is fail-soft and skips a bad symbol).
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_feed.py
+
+StandardOutput=journal
+StandardError=journal
+# Runs up to max_per_run trading-loop cycles; generous backstop.
+TimeoutStartSec=300
+
+# The trading loop is heavier than a pure REST refresh — give it headroom.
+MemoryMax=512M
+CPUQuota=75%

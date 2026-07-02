@@ -9,13 +9,20 @@ RUN pip install --no-cache-dir hatchling
 
 FROM base AS production
 
+# AUDIT-A5: deterministic install from the same universal lockfile CI uses
+# (DS-20260527-V5). `pip install .` resolved pyproject ranges live at build
+# time → non-deterministic image, MAL/CVE-hardening bypassed. Install pinned
+# deps from the lock first (cached layer), then the project itself --no-deps.
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock
+
 COPY pyproject.toml .
 COPY README.md .
 COPY app/ ./app/
 COPY monitor/ ./monitor/
 COPY alembic.ini .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . --no-deps
 
 RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
 USER botuser

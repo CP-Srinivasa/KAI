@@ -24,6 +24,18 @@ class SourceModel(Base):
     original_url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     normalized_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Source-lifecycle columns (Phase 3 foundation, PR5a). All nullable + additive:
+    # dormant until the discovery/graduation engine (later Phase-3 PR) writes them.
+    # ``last_activity_at`` is signal-level (last directional dispatch), not raw
+    # ingestion; ``lifecycle_tier`` mirrors monitor/source_ranking.json.
+    probation_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lifecycle_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -46,6 +58,10 @@ class SourceModel(Base):
             "original_url": self.original_url,
             "normalized_url": self.normalized_url,
             "notes": self.notes,
+            "probation_start_at": self.probation_start_at,
+            "last_activity_at": self.last_activity_at,
+            "pinned_at": self.pinned_at,
+            "lifecycle_tier": self.lifecycle_tier,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

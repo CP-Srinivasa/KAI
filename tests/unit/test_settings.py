@@ -1,11 +1,13 @@
 import pytest
 
 from app.core.enums import ExecutionMode
+from app.core.errors import ConfigurationError
 from app.core.settings import (
     AlertSettings,
     AppSettings,
     DBSettings,
     ExecutionSettings,
+    OperatorSettings,
     ProviderSettings,
     RiskSettings,
     SourceSettings,
@@ -29,7 +31,7 @@ def test_db_settings_defaults():
 
 
 def test_alert_settings_defaults():
-    settings = AlertSettings()
+    settings = AlertSettings(_env_file=None)
     assert settings.dry_run is True
     assert settings.telegram_enabled is False
     assert settings.email_enabled is False
@@ -41,10 +43,44 @@ def test_provider_settings_defaults():
     assert settings.openai_timeout > 0
 
 
+def test_risk_settings_unlock_proximity_defaults_off(monkeypatch):
+    # Phase-0 skeleton (ADR 0012 truth-pivot): the unlock-proximity risk overlay
+    # must be default-OFF + shadow-only so merging/deploying it is a pure no-op
+    # until the evidence-gated Phase 3 wires it in.
+    for key in (
+        "RISK_UNLOCK_PROXIMITY_ENABLED",
+        "RISK_UNLOCK_PROXIMITY_SHADOW_ONLY",
+        "RISK_UNLOCK_PROXIMITY_HOURS",
+        "RISK_UNLOCK_PROXIMITY_MULTIPLIER",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    settings = RiskSettings(_env_file=None)
+    assert settings.unlock_proximity_enabled is False
+    assert settings.unlock_proximity_shadow_only is True
+    assert settings.unlock_proximity_hours == 48.0
+    assert 0.0 <= settings.unlock_proximity_multiplier <= 1.0
+
+
 def test_source_settings_defaults():
     settings = SourceSettings()
     assert settings.fetch_timeout > 0
     assert settings.max_retries > 0
+
+
+def test_operator_settings_defaults_are_fail_closed():
+    settings = OperatorSettings(_env_file=None)
+    assert settings.telegram_polling_enabled is False
+    assert settings.telegram_dry_run is True
+    assert settings.admin_chat_id_list == []
+    assert settings.signal_append_decision_enabled is False
+    assert settings.signal_auto_run_enabled is False
+    assert settings.signal_auto_run_mode == "paper"
+    assert settings.signal_forward_to_exchange_enabled is False
+
+
+def test_operator_settings_rejects_invalid_signal_auto_run_mode() -> None:
+    with pytest.raises(ValueError, match="OPERATOR_SIGNAL_AUTO_RUN_MODE"):
+        OperatorSettings(signal_auto_run_mode="live", _env_file=None)
 
 
 def test_execution_settings_defaults_are_safe_and_typed():
@@ -94,6 +130,35 @@ def test_execution_settings_live_requires_approval_and_no_dry_run():
             approval_required=False,
             _env_file=None,
         )
+
+
+def test_execution_settings_live_requires_approval_hmac_secret():
+    with pytest.raises(
+        ValueError,
+        match="EXECUTION_MODE=live requires EXECUTION_OPERATOR_SIGNAL_APPROVAL_HMAC_SECRET",
+    ):
+        ExecutionSettings(
+            mode="live",
+            live_enabled=True,
+            dry_run=False,
+            approval_required=True,
+            operator_signal_approval_hmac_secret="",
+            _env_file=None,
+        )
+
+
+def test_execution_settings_live_accepts_complete_guardrail_set():
+    settings = ExecutionSettings(
+        mode="live",
+        live_enabled=True,
+        dry_run=False,
+        approval_required=True,
+        operator_signal_approval_hmac_secret="test-secret-32-bytes-minimum-value",
+        _env_file=None,
+    )
+
+    assert settings.mode is ExecutionMode.LIVE
+    assert settings.operator_signal_approval_hmac_secret
 
 
 def test_execution_settings_live_enabled_requires_live_mode():
@@ -148,3 +213,44 @@ def test_app_settings_runtime_contract_rejects_invalid_risk_baseline() -> None:
             risk=RiskSettings(max_risk_per_trade_pct=0.5, _env_file=None),
             _env_file=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# NEO-P-001 (B): bind-address validator — production rejects non-loopback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("env", ["production", "prod", "live", "PRODUCTION"])
+def test_bind_host_rejects_non_loopback_in_production(env: str) -> None:
+    with pytest.raises(ConfigurationError, match="APP_API_BIND_HOST"):
+        AppSettings(env=env, api_bind_host="0.0.0.0", _env_file=None)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_bind_host_accepts_loopback_in_production(host: str) -> None:
+    settings = AppSettings(env="production", api_bind_host=host, _env_file=None)
+    assert settings.api_bind_host == host
+
+
+def test_bind_host_non_loopback_accepted_in_dev() -> None:
+    """Dev can bind 0.0.0.0 freely — exposure there is an operator choice."""
+    settings = AppSettings(env="development", api_bind_host="0.0.0.0", _env_file=None)
+    assert settings.api_bind_host == "0.0.0.0"
+
+
+def test_bind_host_non_loopback_accepted_with_opt_out() -> None:
+    """Opt-out flag lets Docker/containerised prod deployments keep 0.0.0.0."""
+    settings = AppSettings(
+        env="production",
+        api_bind_host="0.0.0.0",
+        allow_non_loopback_bind=True,
+        _env_file=None,
+    )
+    assert settings.api_bind_host == "0.0.0.0"
+    assert settings.allow_non_loopback_bind is True
+
+
+def test_bind_host_default_is_loopback() -> None:
+    settings = AppSettings(_env_file=None)
+    assert settings.api_bind_host == "127.0.0.1"
+    assert settings.allow_non_loopback_bind is False

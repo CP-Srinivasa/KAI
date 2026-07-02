@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from app.security.ssrf import validate_url
+from app.security.ssrf import ssrf_redirect_hook, validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,11 @@ async def fetch(
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            event_hooks={"response": [ssrf_redirect_hook]},
+        ) as client:
             response = await client.request(
                 method.upper(),
                 url,

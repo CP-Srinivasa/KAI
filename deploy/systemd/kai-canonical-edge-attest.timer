@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger KAI canonical-edge Attestation daily at 06:20 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:20:00 UTC
+AccuracySec=5min
+Persistent=true
+Unit=kai-canonical-edge-attest.service
+
+[Install]
+WantedBy=timers.target

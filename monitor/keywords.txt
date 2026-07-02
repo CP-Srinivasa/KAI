@@ -410,3 +410,156 @@ Mirco Recksiek
 Joern Menninger
 Sandor Horvath
 Stefan Viete
+
+# --- Geopolitics / Trade (2026-03-25) ---
+Geopolitics
+Geopolitical
+Trade War
+Embargo
+BRICS
+NATO
+OPEC
+Sovereignty
+Cold War
+Decouple
+Decoupling
+Retaliation
+
+# --- Energy / Climate / ESG (2026-03-25) ---
+Oil
+Crude
+Natural Gas
+Energy
+Renewable
+Solar
+Nuclear
+Carbon
+ESG
+Climate
+
+# --- Market Sentiment / Commentary (2026-03-25) ---
+Outlook
+Forecast
+Sentiment
+Risk-on
+Risk-off
+Rotation
+Momentum
+Overbought
+Oversold
+Volatility
+
+# --- Banking / Credit (2026-03-25) ---
+Bank
+Banking
+Lending
+Credit
+Default
+Bankruptcy
+Insolvency
+Deposit
+Interest Rate
+Central Bank
+
+# --- Corporate Events (2026-03-25) ---
+Revenue
+Profit
+Guidance
+Buyback
+Dividend
+IPO
+Merger
+Acquisition
+Restructuring
+Layoff
+
+# --- Supply Chain / Disruption (2026-03-25) ---
+Supply Chain
+Shipping
+Disruption
+Shortage
+Bottleneck
+Inventory
+
+# --- Social Media / Trading Slang (2026-04-17) ---
+Pump
+Pumping
+Dump
+Dumping
+Sell-off
+Selloff
+Breakout
+Breakdown
+Bullish
+Bearish
+Divergence
+Accumulation
+Distribution
+Whale Alert
+Liquidation
+Liquidated
+Delisting
+Listing
+Airdrop
+Rug Pull
+Rugpull
+WAGMI
+NGMI
+Rekt
+Flipping
+Mooning
+Degen
+Alpha
+Bags
+Ape
+Apeing
+
+# --- Exchanges / Platforms (2026-04-17) ---
+Binance
+Kraken
+Coinbase
+Bitfinex
+Gemini Exchange
+OKX
+Bybit
+KuCoin
+Uniswap
+Aave
+Curve
+Lido
+MakerDAO
+Compound
+dYdX
+
+# --- Additional Tickers (2026-04-17) ---
+SOL
+Solana
+ADA
+Cardano
+DOGE
+Dogecoin
+AVAX
+Avalanche
+DOT
+Polkadot
+MATIC
+Polygon
+LINK
+Chainlink
+ATOM
+Cosmos
+UNI
+AAVE
+LTC
+Litecoin
+NEAR
+Aptos
+APT
+SUI
+ARB
+Arbitrum
+OP
+Optimism
+PEPE
+SHIB
+Shiba Inu

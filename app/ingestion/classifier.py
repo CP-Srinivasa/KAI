@@ -41,6 +41,14 @@ _RSS_PATH_RE = re.compile(
     r"|/podcast\.xml$"
     r"|\.rss$"
     r"|\.atom$"
+    # /rss/ or /feed(s)/ as a slash-delimited path SEGMENT (not just the
+    # terminal suffix) — covers real feed URLs whose marker is mid-path:
+    #   /rss/press.html (ecb), /feeds/press_all.xml (fed),
+    #   /RSS/RSSENF/rssenf.xml (cftc), /rss/tag/ethereum (cointelegraph).
+    # The trailing slash keeps it tight (no /rssfeed, no /feedback/). A false
+    # positive is harmless: collect_rss_feed still validates via feedparser.
+    r"|/rss/"
+    r"|/feeds?/"
     r")",
     re.IGNORECASE,
 )

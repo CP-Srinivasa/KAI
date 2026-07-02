@@ -111,30 +111,30 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
     [
         (
             "/operator/status",
-            "get_operational_readiness_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operational_readiness_summary",
-                "readiness_status": "warning",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/readiness",
-            "get_operational_readiness_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operational_readiness_summary",
-                "readiness_status": "ok",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/decision-pack",
-            "get_decision_pack_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operator_decision_pack",
-                "overall_status": "clear",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
@@ -156,25 +156,20 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
         ),
         (
             "/operator/review-journal",
-            "get_review_journal_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "review_journal_summary",
-                "journal_status": "open",
-                "total_count": 2,
-                "open_count": 1,
-                "resolved_count": 1,
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/resolution-summary",
-            "get_resolution_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "review_resolution_summary",
-                "total_sources": 1,
-                "open_count": 0,
-                "resolved_count": 1,
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
@@ -273,7 +268,7 @@ def test_operator_request_id_generated_and_forwarded(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         fake_surface,
     )
 
@@ -298,7 +293,7 @@ def test_operator_request_id_and_correlation_id_passthrough(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         fake_surface,
     )
 
@@ -322,7 +317,7 @@ def test_operator_read_error_payload_is_consistent(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         failing_surface,
     )
 
@@ -340,12 +335,12 @@ def test_operator_read_error_payload_is_consistent(
     [
         (
             "/operator/review-journal",
-            "get_review_journal_summary",
+            "get_daily_operator_summary",
             "review_journal_unavailable",
         ),
         (
             "/operator/resolution-summary",
-            "get_resolution_summary",
+            "get_daily_operator_summary",
             "resolution_summary_unavailable",
         ),
         (
@@ -395,6 +390,50 @@ def test_operator_run_once_requires_idempotency_key(client: TestClient) -> None:
         status_code=400,
         error_code="missing_idempotency_key",
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"symbol": "BTC/USDT", "mode": "paper"},  # provider key omitted entirely
+        {"symbol": "BTC/USDT", "mode": "paper", "provider": ""},  # empty string
+        {"symbol": "BTC/USDT", "mode": "paper", "provider": "   "},  # whitespace only
+    ],
+)
+def test_operator_run_once_without_provider_is_rejected_without_mock_fill(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, str],
+) -> None:
+    """Regression: run-once must not silently fall back to mock prices.
+
+    A request that omits (or blanks) the provider must fail loud with
+    400 missing_provider and must NEVER reach run_trading_loop_once, so no
+    synthetic-price paper trade can contaminate the real audit/quality metrics.
+    """
+    _set_operator_api_key(client.app, "operator-token")
+
+    fill_attempted = False
+
+    async def fake_run_once(**kwargs: object) -> dict[str, object]:
+        nonlocal fill_attempted
+        fill_attempted = True
+        return {"status": "cycle_completed"}
+
+    monkeypatch.setattr(operator_router.mcp_server, "run_trading_loop_once", fake_run_once)
+
+    response = client.post(
+        "/operator/trading-loop/run-once",
+        headers=_auth_headers(idempotency_key="idem-no-provider"),
+        json=body,
+    )
+
+    _assert_error_payload(
+        response,
+        status_code=400,
+        error_code="missing_provider",
+    )
+    assert fill_attempted is False
 
 
 @pytest.mark.parametrize("mode", ["paper", "shadow"])

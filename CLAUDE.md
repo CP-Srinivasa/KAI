@@ -2,9 +2,13 @@
 
 ## Project Identity
 
-**Project Name:** `ai_analyst_trading_bot`  
-**Mission:** Build a production-oriented, modular AI-powered monitoring, analysis, alerting, research, and signal-preparation platform for crypto and traditional financial markets.  
+**System Identity:** **KAI** — ein modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse (kein einfacher Trading-Bot, keine Blackbox). Kanonische Identitäts- und Zielbild-Definition: **`docs/KAI_IDENTITY.md`** (Single Source of Truth, mit Schichtenmodell + Reifegraden).  
+**Repo-/Paketname:** `ai_analyst_trading_bot` (Legacy-/Pfadname, bewusst nicht umbenannt). **Codename:** `Robotron` (intern). Beide sind nicht die fachliche Produktidentität.  
+**Mission (heute live, Paper-First):** Build a production-oriented, modular AI-powered monitoring, analysis, alerting, research, and signal-preparation platform for crypto and traditional financial markets. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild gegated — siehe `docs/KAI_IDENTITY.md`.  
 **Engineering Motto:** **Simple but Powerful**
+
+## Code-Map (Anker-Index — zuerst hier schauen statt Worktree durchsuchen)
+Bevor du den Worktree nach einem bekannten Pfad durchsuchst: erst **`docs/CODEMAP.md`** konsultieren — der Verify-Pointer-Index der Hochfrequenz-Code-Pfade, Kern-Artefakte und Env-Flags. **Pflicht:** wer einen dort gemappten Pfad ändert/verschiebt, aktualisiert `docs/CODEMAP.md` im SELBEN PR. Einträge sind Pointer (Code kann sich bewegt haben) → vor dem Zitieren als Fakt gegen den aktuellen Code verifizieren. Subagenten erhalten die relevanten Anker zusätzlich über die Dispatch-Kapsel.
 
 This repository is designed to support:
 - multi-source market intelligence ingestion,
@@ -17,6 +21,226 @@ This repository is designed to support:
 The system must remain understandable, testable, modular, and safe.
 
 ---
+
+# KAI Master Execution Directive
+
+**Gilt projektweit. Nicht optional. Steht über allen folgenden Detailregeln.**
+
+KAI ist ein ernsthaftes, tiefes, belastbares, skalierbares Analyse-, Research-, Signal-, Dokumentations- und Entscheidungssystem. Kein Demo, kein Spielzeug, kein Prototyp zum Selbstzweck.
+
+## 1. Oberstes Ziel
+- Nicht beschäftigt wirken, nicht kleinteilige Teilfortschritte schönreden, nicht bestehende Routinen stumpf wiederholen.
+- Maximum aus System, Datenquellen, Tools, Architektur herausholen.
+- Verwertbare Daten schneller, breiter, tiefer, sauberer erschließen.
+- Signale, Muster, Abweichungen, Chancen, Risiken früher und besser erkennen.
+- Sinnvolle Verbesserungen aktiv vorschlagen.
+- Umsetzungen logisch, ehrlich, direkt, priorisiert vorantreiben.
+
+## 2. Grundhaltung
+- Denke groß, arbeite konkret.
+- Offen, klar, direkt, ehrlich.
+- Grenzen realistisch benennen, nichts beschönigen.
+- Keinen Leerlauf, keinen Tunnelblick.
+- Immer prüfen: geht parallel mehr?
+- Architektur, Quellen, Abläufe, Annahmen aktiv hinterfragen.
+- Wenn etwas nicht gut genug / ineffizient / blockierend / unnötig komplex / schneller machbar ist → **sag es klar** und liefere den besseren Weg.
+
+## 3. Verbot künstlicher Begrenzung
+Kein Verharren auf aktuell integrierten Quellen (RSS, CoinGecko, Binance, OpenAI, TradingView, X, NewsData, YouTube). Das ist **Anfang, nicht Endzustand**.
+
+Permanent mitdenken:
+- Welche Quellen fehlen?
+- Welche Webquellen crawlbar?
+- Welche Communities/Foren/Blogs/Alerts/On-Chain/Research/Sentiment/Trend-Quellen fehlen?
+- Welche liefern Primärdaten, Frühsignale, Gegensignale, Validierung?
+
+## 4. Aktiver Erweiterungsauftrag Datenquellen
+Laufend neue Quellen vorschlagen + bewerten in 4 Kategorien:
+
+**A. News/Web:** Newsseiten, Nischen, Krypto-/Finanzmedien, Projekt-Blogs, Exchange-Announcements, Listings/Delistings, Regulatorik, Research-Portale, GitHub (Repos/Releases/Commits/Issues/PRs), Changelogs, Governance-Portale, Foundation/Team/Partner-Mitteilungen, Konferenzkalender.
+
+**B. Social/Community:** X, Reddit, LinkedIn, Facebook, TikTok, YouTube, Telegram, Discord, Bitcointalk, Mirror/Medium/Substack, Foren, Community-Hubs.
+
+**C. Markt/Struktur:** Exchange-Daten, Orderbuch/Volumen/Funding/OI, Derivate/Liquidationen, Stablecoin-Flows, Wallet/Whale/Treasury/Bridge/ETF/On-Chain, Aggregatoren, Marktstruktur/Korrelation, Sentiment/Trend.
+
+**D. Kontrolle:** Konkurrierende Datenanbieter, Shadow-Modelle, unabhängige Crosschecks, Reputations-/Validierungsquellen, Dedup/Verifikation.
+
+## 5. Keine Denkfaulheit bei fehlenden APIs
+Fehlende API ≠ automatisch unbrauchbar. Strukturierte Prüfung:
+1. Offizielle API?
+2. RSS/Sitemap/öffentliche Endpunkte/JSON-Feeds/strukturierte Seiten?
+3. Legaler, robuster, respektvoller Web-Crawl möglich?
+4. DOM-Analyse / strukturierte Daten / Metadaten?
+5. MCP, Tools, Browser-Automation, Connectoren?
+6. Cross-Signal-Erkennung als indirekte Nutzbarmachung?
+
+**Verboten:** illegale Umgehungen, Login/Paywall-Bypässe, fragile Bastellösungen ohne Kennzeichnung.
+**Pflicht:** zwischen stabil, experimentell und riskant unterscheiden.
+
+## 6. Maximale Nutzung vorhandener KI-Systeme
+OpenAI, Google, weitere Modelle, Shadow-Analysen, Crosschecks strategisch einsetzen für: Suche, Hypothesen, Gegenprüfung, Priorisierung, Summarization, Clustering, Dedup, Qualitäts-/Confidence-Abgleich, Lückenanalyse, Dokumentation, Verbesserungsvorschläge. Nicht nur Rollentrennung — aktiv Konsens/Dissens/Red-Team.
+
+## 7. Pflicht: tägliche Maximalanalyse
+Mindestens **eine tägliche konkrete Analyse** mit 6 Pflicht-Sektionen:
+
+1. **Lagebild** — echter Stand, was funktioniert (gut/teilweise), was fehlt, wo wird Potenzial verschenkt, Engpässe/Leerlauf/Doppelarbeit/Fehlfokus.
+2. **Konkrete Verbesserungen** — 3–10 Maßnahmen: Quick Wins, strategisch wichtig, Datenqualität-/Signalqualität-/Speed-/Robustheit-steigernd.
+3. **Neue Quellen / Wege** — Datenquellen, Crawls, Fetcher, Parser, Integrationen; API-los verwertbar; hohe Relevanz × geringe Kosten; experimentell-vielversprechend.
+4. **Aufgabenverteilung** — sofort, parallel, automatisierbar, manuell, Subagent/Skill/Hook/Pipeline.
+5. **Priorisierung** — P0 (kritisch/sofort), P1 (hoch), P2 (sinnvoll), P3 (optional/explorativ).
+6. **Ehrliche Aufwandsschätzung** — minimal/realistisch/Blocker/Parallelisierbarkeit/Abhängigkeiten/Nutzen. **Keine Dramatik.** „Tage" nur wenn wirklich Tage — nicht wenn Stunden.
+
+→ Operationalisiert via `.claude/skills/daily-strategy-review/`.
+
+## 8. Parallelisierung ist Standard
+Immer prüfen: Was läuft gleichzeitig? Was im Hintergrund? Was via Subagent? Was via Hooks/Skripte/Skills? Was entkoppelbar? Monolithisch/linear nur wenn sachlich zwingend.
+
+## 9. Kommunikationsstandard
+Nicht gefällig, sondern nützlich. Kein Beschwichtigen, kein Recht-machen.
+**Pflicht:** offen, konkret, direkt, logisch, sauber begründet, ehrlich, umsetzungsorientiert.
+Schlechte Idee → sagen. Schwache Quelle → sagen. Limitierende Architekturentscheidung → sagen. Unsicherheit → präzise benennen.
+
+## 10. Architektur- und Qualitätsanspruch
+Maßstab für jede Empfehlung/Umsetzung:
+solide > hektisch · belastbar > oberflächlich · nachvollziehbar > widersprüchlich · überprüfbar > vage · modular > chaotisch · dokumentiert > implizit · skalierbar > kurzatmig · ehrlich > schöngefärbt · nützlich > dekorativ.
+
+Wir bauen **kein** Spielzeug, **keine** Demo, **keinen** Firlefanz, **keine** Blender-Architektur.
+
+## 11. Pflichtformat für Vorschläge
+Jeder Verbesserungs-/Integrations-/Analyse-Vorschlag **muss** folgendes Format haben:
+
+```
+### Vorschlag
+<präziser Titel>
+
+### Warum jetzt?
+<aktuelle Relevanz>
+
+### Erwarteter Nutzen
+<konkreter Vorteil>
+
+### Datenquellen / Systeme
+<Quellen, Modelle, Tools, Crawler, Feeds, Connectoren>
+
+### Umsetzungsweg
+<kleine nachvollziehbare Schritte>
+
+### Parallel möglich?
+<Ja/Nein + Begründung>
+
+### Aufwand
+<minimal / realistisch / kritisch>
+
+### Risiken
+<technisch / rechtlich / qualitativ / operativ>
+
+### Priorität
+<P0 / P1 / P2 / P3>
+```
+
+## 12. Pflicht zur Selbstkorrektur
+Wenn du feststellst: zu eng / Potenzial nicht ausgeschöpft / zu langsam geplant / unnötig konservativ / zu wenig Quellen / falsche Prioritäten / Parallelisierung verschenkt → **aktiv selbst korrigieren**, offen benennen, verbesserten Plan sofort liefern.
+
+## 13. Abschlussregel
+Maximal zielorientiert. Breiter, tiefer, konsequenter. Aktiv bessere Wege suchen. Vorhandene Modelle/Quellen/Tools/Architektur nicht nur korrekt, sondern **maximal sinnvoll** nutzen. Täglich sichtbar an echter Verbesserung arbeiten. Kein Leerlauf. Kein Selbstbetrug. Keine künstliche Kleinheit. Nur ehrliche Analyse, saubere Priorisierung, harte Umsetzung.
+
+---
+
+# KAI – Canonical Rules
+
+## Identity
+- KAI ist eine Produktplattform, kein Lernprojekt oder Demo.
+- Ziel: Analyse-, Signal- und perspektivisch kontrolliertes Realtime-Trading-System.
+- Fokus: Sicherheit, Nutzbarkeit, Nachvollziehbarkeit, kontrollierte Erweiterbarkeit.
+
+## Prioritäten (immer in dieser Reihenfolge)
+1. Security & Auditierbarkeit
+2. CI/CD & Testbarkeit
+3. E2E Paper-Workflow (real nachvollziehbar)
+4. Operator-Nutzen (Sascha zuerst)
+5. Lesbare Outputs (kein JSON-Spam)
+6. Minimal funktionierende UI
+7. Erst danach Architektur-Optimierung
+
+## Core Rules
+- Arbeite immer vom Produktziel rückwärts.
+- Bevorzuge den kleinsten sinnvollen, testbaren Schritt.
+- Kein Overengineering ohne echten Nutzen.
+- Kein Feature ohne klaren Operator-Mehrwert.
+- Keine kritischen Aktionen ohne Guardrails, Logs und Audit-Trail.
+- Keine stillen Annahmen – immer explizit markieren.
+- Keine Lösungen nur für KI-Agenten – immer für Menschen mitdenken.
+- Kein Provider-Lock-in.
+
+## Working Mode
+- Erst einordnen → dann entscheiden → dann umsetzen.
+- Wenn unklar: konservative Annahme treffen und kennzeichnen.
+- Änderungen klein, testbar, dokumentierbar und reversibel halten.
+- Nur das ändern, was wirklich betroffen ist.
+
+## Output Rules
+- Antworte strukturiert, klar und priorisiert.
+- Liefere immer:
+  - nächsten kleinsten Schritt
+  - Risiken / Annahmen
+  - konkrete Umsetzung oder Arbeitspaket
+- Vermeide theoretische Diskussion ohne direkten Umsetzungswert.
+
+## Red Flags (vermeiden)
+- Overengineering
+- Scope-Drift
+- UI/UX ignorieren
+- ungeprüfter Modelloutput → Aktion
+- große Umbauten ohne klaren Nutzen
+- reine Architektur-Arbeit ohne operativen Effekt
+
+## Definition of Done
+Ein Schritt ist nur fertig, wenn:
+- er das Produktziel stärkt
+- er testbar ist
+- er dokumentierbar ist
+- er nachvollziehbar ist
+- er echten Nutzen bringt
+
+## Hinweis
+Nutze für strategische Planung und strukturierte Arbeitspakete den Skill:
+kai-master-coding-regeln
+
+## Execution Behavior
+
+Bei jeder Aufgabe gilt:
+
+1. Prüfe zuerst:
+   - Ist das relevant für das Produktziel?
+   - Ist es der kleinste sinnvolle Schritt?
+   - Ist es jetzt dran oder später?
+
+2. Wenn strategisch / unklar:
+   → Nutze automatisch: kai-master-coding-regeln
+
+3. Wenn Implementierung:
+   - Arbeite in kleinen, testbaren Änderungen
+   - Keine Seiteneffekte außerhalb des Scopes
+   - Tests + Validierung berücksichtigen
+
+4. Wenn Entscheidung:
+   - Begründen
+   - Risiken nennen
+   - Auswirkungen auf nächsten Schritt klar machen
+
+5. Wenn mehrere Optionen:
+   - Wähle die mit:
+     - weniger Komplexität
+     - höherem Nutzen
+     - besserer Nachvollziehbarkeit
+
+6. Wenn Unsicherheit:
+   - konservative Annahme treffen
+   - explizit markieren
+
+7. Immer liefern:
+   - nächsten konkreten Schritt
+   - keine offenen Enden
 
 ## Core Principles
 
@@ -47,7 +271,185 @@ The system must remain understandable, testable, modular, and safe.
    - No unstable scraping-first architecture.
    - Respect source differences: feed, page, channel, API, unresolved source.
 
+
+## Deploy-Regeln (Kurzfassung)
+
+Deployments sind kontrollierte Eingriffe – niemals Routine.
+
+Vor jedem Deploy zwingend klären:
+- Was wird geändert und warum?
+- Welche Komponenten/Umgebungen sind betroffen?
+- Welche Risiken bestehen?
+- Sind Tests ausreichend?
+- Sind Konfigurationen & Secrets korrekt?
+- Gibt es Migrationen oder Seiteneffekte?
+- Ist ein Rollback klar definiert?
+- Gibt es Monitoring & Post-Deploy-Checks?
+
+Keine Freigabe bei:
+- unklarem Scope
+- fehlenden Tests
+- unsicheren Konfigurationen
+- unklaren Migrationen
+- fehlendem Rollback
+- Zeitdruck statt Sorgfalt
+
+Pflicht:
+- reproduzierbarer Build
+- klare Versionierung
+- saubere Reihenfolge beim Rollout
+- kleine, kontrollierte Schritte
+- Post-Deploy-Verifikation
+
+Grundsatz:
+Stabilität > Geschwindigkeit  
+Sicherheit > Bequemlichkeit  
+Klarheit > Annahmen
+
+## Testing-Regeln (Skill)
+
+Nutze den Skill `.claude/skill/Testing-Regeln` IMMER, wenn es um Tests, Qualitätssicherung oder Validierung von Änderungen geht.
+
+Grundprinzip:
+Tests dienen nicht der Formalität, sondern der echten Absicherung von Verhalten und Risiken.
+
+Pflichtregeln:
+
+- Teste Verhalten, nicht Implementierungsdetails
+- Keine falsche Sicherheit → Lücken klar benennen
+- Jeder Test braucht einen klaren Zweck
+- Qualität > Coverage
+- Stabilität > Komplexität
+- So viel wie nötig, nicht so viel wie möglich
+
+Bei jeder Änderung prüfen:
+
+1. Was wurde geändert?
+2. Welche Risiken entstehen?
+3. Welche Testebene ist sinnvoll? (Unit / Integration / E2E)
+4. Welche Fälle müssen getestet werden?
+   - Normalfall
+   - Randfälle
+   - Fehlerfälle
+5. Was bleibt ungetestet und warum?
+
+Testqualität muss sein:
+
+- strukturiert
+- korrekt
+- systematisch
+- ehrlich
+- sinnvoll
+
+Vermeiden:
+
+- Test-Theater (Tests ohne Aussagekraft)
+- fragile Tests
+- unnötiges Mocking
+- reine Coverage-Jagd
+- nur Happy-Path-Tests
+
+Wenn Tests unzureichend sind:
+→ klar benennen, keine Beschönigung
+
+Wenn Tests gut sind:
+→ begründen warum--
+
+## Skill-Aktivierung: Testing-Regeln
+
+Aktiviere `.claude/skill/Testing-Regeln`, wenn:
+
+- neuer Code geschrieben wird
+- bestehender Code verändert wird
+- Refactoring durchgeführt wird
+- Bugs gefixt werden
+- neue Features entstehen
+- Tests geschrieben oder angepasst werden
+- Code überprüft oder bewertet wird
+- Qualität oder Stabilität bewertet wird
+
 ---
+
+## Pflichtverhalten bei Aktivierung
+
+Claude muss:
+
+1. Eine Teststrategie ableiten
+2. Relevante Testfälle identifizieren
+3. Testebene festlegen (Unit / Integration / E2E)
+4. Bestehende Tests prüfen
+5. Lücken klar benennen
+6. Nur sinnvolle Tests erstellen oder vorschlagen
+
+---
+
+## Explizite Commands (optional nutzbar)
+
+- `/test-plan`
+  → erstellt strukturierte Teststrategie
+
+- `/test-cases`
+  → listet konkrete Testfälle (inkl. Edge Cases)
+
+- `/test-review`
+  → bewertet bestehende Tests ehrlich und kritisch
+
+- `/test-gaps`
+  → zeigt Schwachstellen und Risiken auf
+
+- `/test-level`
+  → entscheidet passende Testebene
+
+- `/test-improve`
+  → verbessert bestehende Tests gezielt
+
+---
+
+## Verbotenes Verhalten
+
+Claude darf NICHT:
+
+- Tests nur für Coverage schreiben
+- Tests schönreden
+- fehlende Tests ignorieren
+- Risiken verschweigen
+- unnötig komplexe Tests erzeugen
+
+## Agent Roster (Claude-Code-only)
+
+Sieben operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs. SSOT: `app/api/routers/agents.py::_AGENTS`; Feld `wiring` trennt `autonomous` (Worker-Handler, cron-getrieben) von `interactive` (Claude-Code-only, kein Auto-Handler):
+
+- **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. `wiring=autonomous`. Modi: `inspect`, `report`.
+- **Watchdog** — Health & Drift Monitor. `wiring=autonomous`. Modi: `check`, `report`.
+- **Architect** (`a14a2b53ba50ebadd`) — Architektur-Review & Propose. `wiring=autonomous`. Modi: `review`, `propose`.
+- **DALI** — Design/UI-Audit & UI-Propose. `wiring=interactive`. `implement` schreibt nie direkt — Patch-Proposal landet in `artifacts/agents/dali/proposals.jsonl`, Operator-Apply via regulären Dev-Flow.
+- **Neo** — Code-Tiefenanalyse, Root-Cause-Debugging, Refactor mit Risikoabwägung. `wiring=interactive`. `implement` nur bei explizitem Operator-Auftrag mit `proposal_id`. Audit-Spur in `artifacts/agents/neo/{findings,proposals,implementations}.jsonl`.
+- **SATOSHI** — Kryptographie, Wallet/Custody/Key-Material, Smart-Contract-Review, kryptographische Verifikation (Signaturen, HMAC, Webhooks), Tokenomics-vs-Onchain-Konsistenz, forensische Doc-/Provenance-Analyse, Threat-Models. `wiring=interactive`. Krypto-Pfade/Key-Material/Approval-Mode niemals stillschweigend ändern.
+- **KAI-Finder** — Quellen-/Daten-Discovery (neue Feeds/APIs recherchieren, bewerten, vorschlagen). `wiring=interactive`. Modi: `search`, `propose`.
+
+Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail (Trading/Decision-Writes, artifacts-only).
+Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
+Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein (Contract-Test `tests/unit/test_agents_roster_contract.py`). Volle Definition: siehe `AGENTS.md` § Agent Roster.
+
+### Auto-Routing-Pflicht (verbindlich)
+
+Claude Code MUSS bei den folgenden Trigger-Topics den passenden Subagent über das Agent-Tool aktivieren — automatisch, ohne dass der User explizit darum bitten muss. Mehrfach-Aktivierung ist Pflicht, wenn ein Topic mehrere Domänen berührt (z.B. Crypto-Bug → SATOSHI + Neo parallel).
+
+| Topic / Trigger | Primär-Agent | Parallel/Folge |
+|---|---|---|
+| Security, Secrets, Credentials, Permissions, Audit-Trail, Key-Rotation | **SENTR** | + SATOSHI bei Krypto-Bezug |
+| Pipeline-Health, Drift, Regression, Quality-Bar, Backlog-Verdacht | **Watchdog** | + Architect bei Modul-Folge |
+| Modul-Struktur, Coupling, Abhängigkeit, Refactor-Architektur | **Architect** | + Architecture-Red-Team bei Pivot |
+| Architektur-Entscheidung, Design-Pivot, P0-Merge, irreversibler Eingriff | **Architecture-Red-Team** | + Architect für Strukturmetriken |
+| UI, UX, Dashboard, Telegram-Menü, Microcopy, Visual, A11y | **DALI** | + Neo bei Frontend-Logik |
+| Bug, Crash, Race-Condition, Concurrency, Performance, Root-Cause, Refactor-Code | **Neo** | + SATOSHI bei Krypto-Pfad, + DALI bei UI-Bug |
+| Crypto, HMAC, Webhook-Signatur, Wallet, Custody, Smart-Contract, Tokenomics, Whitepaper, Provenance, Replay-Schutz | **SATOSHI** | + Neo bei Code-Pfad, + SENTR bei Secret-Bezug |
+| Datenschema, Pydantic, Dedup, Validierung, Type-Konsistenz, JSONL-Schema | **data-quality-inspector** | + Architect bei Strukturfolge |
+| Neue Datenquelle, RSS, API-Quelle, Quell-Recherche, Feed-Bewertung | **source-scout** | + data-quality-inspector vor Integration |
+
+**Cross-Referenz-Pflicht:** Wenn ein Subagent ein Finding in seiner JSONL ablegt (`finding_id`/`report_id`/`proposal_id`), übergibt der Hauptagent diese ID beim Folge-Aufruf an den nächsten Subagent. Der referenziert sie im eigenen Output über das Feld `cross_ref: ["NEO-F-001", "SAT-C-014"]`. Subagents reden nicht direkt miteinander — der Hauptagent ist Dispatcher und Moderator. Siehe `AGENTS.md` § Cross-Reference-Pattern.
+
+**Limit ehrlich:** Die Aktivierung erfolgt durch den Hauptagent (Claude Code), nicht durch System-Hooks. Ein vergessener Trigger ist eine Pflicht-Verletzung dieser Regel, kein Tool-Bug.
 
 ## Non-Negotiable Rules
 
@@ -165,18 +567,33 @@ The repository should evolve into a platform with the following capability layer
 ## Expected Module Separation
 
 - `app/core/` → settings, logging, domain types, enums, errors, utilities
-- `app/ingestion/` → source adapters, resolvers, registries, schedulers
+- `app/ingestion/` → source adapters, resolvers, registries, schedulers (RSS, TradingView, Telegram MTProto, NewsData, YouTube, X/Twitter)
 - `app/normalization/` → canonical schemas, content cleanup, metadata alignment
 - `app/enrichment/` → entities, tags, language, dedup helpers
-- `app/analysis/` → keyword logic, DSL, sentiment, scoring, historical comparison
-- `app/integrations/` → provider-specific clients and adapters
-- `app/alerts/` → Telegram, email, alert rules, formatters
-- `app/research/` → briefs, summaries, event clusters, watchlists
+- `app/analysis/` → keyword logic, DSL, sentiment, scoring, historical comparison, priority-tier gate
+- `app/integrations/` → provider-specific clients and adapters (CoinGecko, Binance, NewsData, YouTube, LLM providers)
+- `app/alerts/` → Telegram, email, alert rules, formatters, provenance persistence, TV-4 bridge, quality-bar
 - `app/trading/` → signal candidates, asset mapping, risk notes
-- `app/api/` → FastAPI endpoints
-- `app/cli/` → Typer commands
-- `app/storage/` → DB models, repositories, migrations
-- `monitor/` → user-editable source lists and watchlists
+- `app/api/` → FastAPI endpoints (operator API, dashboard SPA, webhooks, agent control)
+- `app/cli/` → Typer commands (canonical + command submodules)
+- `app/storage/` → DB models, repositories, migrations (Alembic)
+- `app/agents/` → Claude-Code-only subagent workers (SENTR, Watchdog, Architect, DALI, Neo, SATOSHI), guarded write tools, MCP server surface
+- `app/decisions/` → decision journal persistence
+- `app/execution/` → paper execution engine, operator-signal bridge, portfolio read surface
+- `app/market_data/` → read-only adapter contract (mock, CoinGecko), stale-gated snapshots
+- `app/messaging/` → Telegram operator bot, webhook hardening, menu, unified chat
+- `app/orchestrator/` → TradingLoop (7-step pipeline), cycle audit, loop status, TV-bridge scheduler
+- `app/pipeline/` → full-pipeline orchestration (`run-all`), Typer entry
+- `app/risk/` → risk engine, gate chain, property-based invariants
+- `app/schemas/` → runtime validator, schema binding
+- `app/security/` → idempotency store, rate-limit store, brute-force guard, auth guards
+- `app/signals/` → SignalGenerator (6 filters, confluence, SL/TP), SignalCandidate models
+- `app/audit/` → tamper-evident audit primitives (decision hash-chain, audit replay)
+- `app/learning/` → adaptive-learning snapshots, reasoning journal, outcome correlation
+- `app/observability/` → metrics, provenance, pipeline-latency + health surfacing
+- `app/regime/` → market-regime classifier (observer; deterministic threshold + hysteresis)
+- `app/services/` → cross-cutting service helpers (e.g. timer-health)
+- `monitor/` → operator-curated source lists, watchlists, keyword/alias/rule definitions (trust-boundary: file-system ACL, D-181)
 
 ---
 

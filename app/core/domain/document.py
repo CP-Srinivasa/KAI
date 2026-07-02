@@ -129,6 +129,10 @@ class CanonicalDocument(BaseModel):
     # Analysis scores (set after analysis pipeline runs)
     sentiment_label: SentimentLabel | None = None
     sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    # F3-V-0 (2026-05-24): LLM confidence in directional classification.
+    # Used by app/alerts/eligibility.py as bullish>=0.8 / bearish>=0.95 gate.
+    # Persisted for confidence-threshold-recalibration analysis (F3).
+    directional_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     relevance_score: float | None = Field(default=None, ge=0.0, le=1.0)
     impact_score: float | None = Field(default=None, ge=0.0, le=1.0)
     novelty_score: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -200,7 +204,7 @@ class CanonicalDocument(BaseModel):
         provider = (self.provider or "").strip().lower()
         if not provider or provider in {"fallback", "rule"}:
             return AnalysisSource.RULE
-        if provider in {"internal", "companion"} or provider.startswith("ensemble("):
+        if provider in {"internal"} or provider.startswith("ensemble("):
             return AnalysisSource.INTERNAL
         return AnalysisSource.EXTERNAL_LLM
 
@@ -246,6 +250,10 @@ class AnalysisResult(BaseModel):
     tags: list[str] = Field(default_factory=list)
     spam_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     recommended_priority: int | None = Field(default=None, ge=1, le=10)
+
+    # D-116: Directional signal quality fields
+    directional_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    event_timing: str | None = None
 
 
 # ── Query DSL ─────────────────────────────────────────────────────────────────

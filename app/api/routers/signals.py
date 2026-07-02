@@ -1,0 +1,705 @@
+"""Dashboard signal paste endpoint — parity with Telegram structured messages.
+
+POST /api/signals/paste accepts a structured block ([SIGNAL] / [NEWS] /
+[EXCHANGE_RESPONSE]) and routes it through the same v2 envelope pipeline
+used by the Telegram bot:
+
+- parse via `parse_structured_message`
+- schema-validate via `validate_message_model`
+- wrap via `MessageEnvelope.wrap(source_channel=dashboard)`
+- de-duplicate via idempotency_key over the envelope audit JSONL
+- audit append to `artifacts/telegram_message_envelope.jsonl` (shared log)
+
+No order execution is performed here — the dashboard surface is read-only
+for execution; a SIGNAL accepted here is available for downstream routing
+just like a Telegram-accepted one.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
+
+from app.api.routers.operator import require_operator_api_token
+from app.messaging.message_models import (
+    ExchangeResponse,
+    MessageEnvelope,
+    NewsMessage,
+    SourceChannel,
+    TradingSignal,
+)
+from app.messaging.message_schema import (
+    MessageSchemaValidationError,
+    validate_message_model,
+)
+from app.messaging.signal_parser import (
+    SignalParseError,
+    parse_structured_message,
+    split_validation_errors,
+)
+from app.premium.state_machine import (
+    PremiumSignalState,
+    approval_state,
+    bridge_stage_to_state,
+    normalized_source,
+    origin_signal_id,
+    state_label,
+    state_tone,
+)
+
+logger = logging.getLogger(__name__)
+
+_ENVELOPE_AUDIT_PATH = Path("artifacts/telegram_message_envelope.jsonl")
+_LOOKBACK = 500
+
+router = APIRouter(prefix="/signals", tags=["signals"])
+
+
+class SignalCompletionFields(BaseModel):
+    """Operator-provided completions for fields the heuristic parser could
+    not infer from free-form text (e.g. no exchange named in the paste).
+
+    No silent defaults — every execution-relevant field must be supplied
+    explicitly by the operator before the signal is accepted.
+    """
+
+    exchange_scope: list[str] | None = Field(default=None, max_length=10)
+    stop_loss: float | None = Field(default=None, gt=0)
+    targets: list[float] | None = Field(default=None, max_length=10)
+    leverage: int | None = Field(default=None, ge=1, le=125)
+    source: str | None = Field(default=None, max_length=128)
+
+
+class SignalPasteRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    operator_user_id: str | None = Field(default=None, max_length=128)
+    trace_id: str | None = Field(default=None, max_length=128)
+    completion_fields: SignalCompletionFields | None = Field(default=None)
+
+
+class SignalPasteResponse(BaseModel):
+    # accepted | duplicate | rejected | needs_completion
+    status: str
+    # accepted | idempotency_gate | parse | schema_validation | execution_gate | completion_gate
+    stage: str
+    message_type: str | None = None
+    envelope_id: str | None = None
+    idempotency_key: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    # When status=needs_completion, list of fields the operator must supply.
+    missing_fields: list[str] = Field(default_factory=list)
+    # Echo back what the parser already has so the UI can render a
+    # prefilled completion form.
+    parsed_preview: dict[str, object] | None = None
+
+
+def _audit_path() -> Path:
+    path = _ENVELOPE_AUDIT_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _append_audit(record: dict[str, object]) -> None:
+    path = _audit_path()
+    try:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.error("[signals.paste] Audit write failed: %s", exc)
+
+
+def _is_duplicate(idempotency_key: str) -> bool:
+    path = _audit_path()
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        logger.warning("[signals.paste] Audit read failed: %s", exc)
+        return False
+    for line in reversed(lines[-_LOOKBACK:]):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("idempotency_key") != idempotency_key:
+            continue
+        if rec.get("stage") in {"accepted", "idempotency_gate"}:
+            return True
+    return False
+
+
+def _apply_completions(
+    signal: TradingSignal,
+    completions: SignalCompletionFields | None,
+) -> TradingSignal:
+    """Merge operator-supplied completions into a parsed signal.
+
+    When the operator explicitly passes a value in ``completion_fields``, it
+    overrides whatever the heuristic parsed. This is intentional — the
+    operator reviewed the ``parsed_preview`` and is submitting the verified
+    final values. Fields omitted from ``completion_fields`` keep their
+    parsed values. Returns a new TradingSignal.
+    """
+    if completions is None:
+        return signal
+    changes: dict[str, object] = {}
+    if completions.exchange_scope:
+        normalized = [
+            v.strip().lower().replace(" ", "_") for v in completions.exchange_scope if v.strip()
+        ]
+        if normalized:
+            changes["exchange_scope"] = normalized
+    if completions.stop_loss is not None:
+        changes["stop_loss"] = completions.stop_loss
+    if completions.targets:
+        cleaned = [t for t in completions.targets if t > 0]
+        if cleaned:
+            changes["targets"] = cleaned
+    if completions.leverage is not None:
+        changes["leverage"] = completions.leverage
+    if completions.source:
+        changes["source"] = completions.source
+    if not changes:
+        return signal
+    return replace(signal, **changes)
+
+
+def _signal_preview(signal: TradingSignal) -> dict[str, object]:
+    """Compact preview of what the parser already extracted — used to
+    prefill the operator's completion form in the UI."""
+    preview: dict[str, object] = {
+        "symbol": signal.display_symbol or signal.symbol,
+        "side": signal.side.value,
+        "direction": signal.direction.value,
+        "entry_type": signal.entry_type.value,
+        "targets": list(signal.targets),
+        "stop_loss": signal.stop_loss,
+        "leverage": signal.leverage,
+        "exchange_scope": list(signal.exchange_scope),
+        "source": signal.source,
+    }
+    if signal.entry_value is not None:
+        preview["entry_value"] = signal.entry_value
+    if signal.entry_min is not None:
+        preview["entry_min"] = signal.entry_min
+    if signal.entry_max is not None:
+        preview["entry_max"] = signal.entry_max
+    return preview
+
+
+def _record_base(
+    stage: str,
+    status: str,
+    message_type: str,
+    operator_user_id: str | None,
+    trace_id: str | None,
+) -> dict[str, object]:
+    rec: dict[str, object] = {
+        "timestamp_utc": datetime.now(UTC).isoformat(),
+        "event": "dashboard_message_envelope",
+        "source": "dashboard",
+        "stage": stage,
+        "status": status,
+        "message_type": message_type,
+        "execution_enabled": False,
+        "write_back_allowed": False,
+    }
+    if operator_user_id:
+        rec["operator_user_id"] = operator_user_id
+    if trace_id:
+        rec["trace_id"] = trace_id
+    return rec
+
+
+@router.post("/paste", response_model=SignalPasteResponse)
+async def paste_signal(
+    payload: SignalPasteRequest,
+    request: Request,
+    _auth: Annotated[None, Depends(require_operator_api_token)] = None,
+) -> SignalPasteResponse:
+    """Accept a structured NEWS/SIGNAL/EXCHANGE_RESPONSE block from the dashboard."""
+    text = payload.text.strip()
+
+    try:
+        parsed = parse_structured_message(text)
+    except SignalParseError as exc:
+        rec = _record_base(
+            "parse",
+            "rejected",
+            "unknown",
+            payload.operator_user_id,
+            payload.trace_id,
+        )
+        rec["errors"] = [str(exc)]
+        rec["payload"] = {"text_preview": text[:300]}
+        _append_audit(rec)
+        return SignalPasteResponse(
+            status="rejected",
+            stage="parse",
+            message_type=None,
+            errors=[str(exc)],
+        )
+
+    try:
+        schema_payload = validate_message_model(parsed)
+    except MessageSchemaValidationError as exc:
+        errors = exc.errors or [str(exc)]
+        rec = _record_base(
+            "schema_validation",
+            "rejected",
+            parsed.message_type.value,
+            payload.operator_user_id,
+            payload.trace_id,
+        )
+        rec["errors"] = list(errors)
+        rec["payload"] = {"text_preview": text[:300]}
+        _append_audit(rec)
+        return SignalPasteResponse(
+            status="rejected",
+            stage="schema_validation",
+            message_type=parsed.message_type.value,
+            errors=list(errors),
+        )
+
+    if isinstance(parsed, TradingSignal):
+        # Merge operator-supplied completions (if any) before validation so
+        # the second round-trip from the UI can fill missing fields like
+        # exchange_scope — no silent defaults are applied.
+        parsed = _apply_completions(parsed, payload.completion_fields)
+
+        validation_errors = parsed.validation_errors
+        if validation_errors:
+            completable, blocking = split_validation_errors(validation_errors)
+            preview = _signal_preview(parsed)
+
+            # Soft path: only completable fields are missing. Don't wrap an
+            # envelope yet — we're waiting on the operator to supply them.
+            if completable and not blocking:
+                rec = _record_base(
+                    "completion_gate",
+                    "needs_completion",
+                    "signal",
+                    payload.operator_user_id,
+                    payload.trace_id,
+                )
+                rec["missing_fields"] = list(completable)
+                rec["payload"] = preview
+                _append_audit(rec)
+                return SignalPasteResponse(
+                    status="needs_completion",
+                    stage="completion_gate",
+                    message_type="signal",
+                    missing_fields=list(completable),
+                    parsed_preview=preview,
+                )
+
+            # Hard block: non-completable error (e.g. missing entry, bad
+            # direction). Wrap an envelope so it shows up in the audit log,
+            # but mark it rejected at execution_gate.
+            envelope = MessageEnvelope.wrap(
+                parsed,
+                source_channel=SourceChannel.DASHBOARD,
+                operator_user_id=payload.operator_user_id,
+                trace_id=payload.trace_id,
+            )
+            rec = _record_base(
+                "execution_gate",
+                "blocked",
+                "signal",
+                payload.operator_user_id,
+                payload.trace_id,
+            )
+            rec["envelope_id"] = envelope.envelope_id
+            rec["idempotency_key"] = envelope.idempotency_key
+            rec["payload"] = dict(envelope.payload)
+            rec["raw_text_preview"] = text[:500]
+            rec["errors"] = list(validation_errors)
+            rec["missing_fields"] = list(completable)
+            _append_audit(rec)
+            return SignalPasteResponse(
+                status="rejected",
+                stage="execution_gate",
+                message_type="signal",
+                envelope_id=envelope.envelope_id,
+                idempotency_key=envelope.idempotency_key,
+                errors=list(validation_errors),
+                missing_fields=list(completable),
+                parsed_preview=preview,
+            )
+
+    envelope = MessageEnvelope.wrap(
+        parsed,
+        source_channel=SourceChannel.DASHBOARD,
+        operator_user_id=payload.operator_user_id,
+        trace_id=payload.trace_id,
+    )
+    message_type = envelope.payload_type.value
+
+    if _is_duplicate(envelope.idempotency_key):
+        rec = _record_base(
+            "idempotency_gate",
+            "duplicate",
+            message_type,
+            payload.operator_user_id,
+            payload.trace_id,
+        )
+        rec["envelope_id"] = envelope.envelope_id
+        rec["idempotency_key"] = envelope.idempotency_key
+        rec["payload"] = dict(envelope.payload)
+        rec["raw_text_preview"] = text[:500]
+        _append_audit(rec)
+        return SignalPasteResponse(
+            status="duplicate",
+            stage="idempotency_gate",
+            message_type=message_type,
+            envelope_id=envelope.envelope_id,
+            idempotency_key=envelope.idempotency_key,
+        )
+
+    rec = _record_base(
+        "accepted",
+        "ok",
+        message_type,
+        payload.operator_user_id,
+        payload.trace_id,
+    )
+    rec["envelope_id"] = envelope.envelope_id
+    rec["idempotency_key"] = envelope.idempotency_key
+    rec["payload"] = dict(envelope.payload)
+    rec["raw_text_preview"] = text[:500]
+    rec["schema_payload_keys"] = sorted(schema_payload.keys())
+    _append_audit(rec)
+
+    # Mirror shape used by telegram bot's structured NEWS/EXCHANGE_RESPONSE paths:
+    # no order execution happens here. For TradingSignal downstream routing
+    # (paper handoff) a follow-up worker can consume the envelope JSONL.
+    _ = (NewsMessage, ExchangeResponse)  # keep imports referenced; isinstance for typing only
+
+    return SignalPasteResponse(
+        status="accepted",
+        stage="accepted",
+        message_type=message_type,
+        envelope_id=envelope.envelope_id,
+        idempotency_key=envelope.idempotency_key,
+    )
+
+
+class SignalSummary(BaseModel):
+    """Trade-relevant fields projected from a signal envelope payload.
+
+    Populated only when `EnvelopeRecord.message_type == "signal"`. Lets the
+    dashboard show WHAT was accepted without re-fetching the raw audit file.
+    """
+
+    signal_id: str | None = None
+    symbol: str | None = None
+    direction: str | None = None
+    side: str | None = None
+    exchange_scope: list[str] = Field(default_factory=list)
+    market_type: str | None = None
+    entry_type: str | None = None
+    entry_value: float | None = None
+    targets: list[float] = Field(default_factory=list)
+    stop_loss: float | None = None
+    leverage: int | None = None
+    signal_status: str | None = None
+    signal_timestamp: str | None = None
+    origin_signal_id: str | None = None
+    source_uid: str | None = None
+
+
+class EnvelopeRecord(BaseModel):
+    timestamp_utc: str | None = None
+    event: str | None = None
+    source: str | None = None
+    stage: str | None = None
+    status: str | None = None
+    message_type: str | None = None
+    envelope_id: str | None = None
+    idempotency_key: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    signal: SignalSummary | None = None
+    raw_text_preview: str | None = None
+    origin_signal_id: str | None = None
+    approval_state: str | None = None
+    raw_source: str | None = None
+    normalized_source: str | None = None
+    execution_source: str | None = None
+    premium_state: str | None = None
+    premium_state_label: str | None = None
+    premium_state_tone: str | None = None
+    bridge_stage: str | None = None
+    bridge_reason: str | None = None
+    # Dedupe (2026-06-08): raw (telegram_premium_channel) + approved
+    # (…_approved) are ONE business signal. The record shown is the canonical
+    # (approved if present); these fields let the UI render "Rohsignal +
+    # Approved Event" as one grouped row instead of two double-counted rows.
+    dedup_key: str | None = None
+    double_sourced: bool = False
+    has_raw_event: bool = False
+    has_approved_event: bool = False
+    merged_event_count: int = 1
+
+
+class EnvelopeRecentResponse(BaseModel):
+    count: int
+    records: list[EnvelopeRecord]
+    # Number of raw business signals collapsed (raw+approved) for transparency.
+    deduped_from: int | None = None
+
+
+def _latest_bridge_by_envelope(path: Path) -> dict[str, dict[str, object]]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        logger.warning("[signals.recent] Bridge audit read failed: %s", exc)
+        return {}
+    by_key: dict[str, dict[str, object]] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            rec = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        for key_name in ("envelope_id", "correlation_id"):
+            key = rec.get(key_name)
+            if isinstance(key, str) and key:
+                by_key[key] = rec
+    return by_key
+
+
+def _derive_premium_state(
+    raw: dict[str, object],
+    bridge: dict[str, object] | None,
+) -> PremiumSignalState:
+    if raw.get("status") in {"rejected", "blocked"}:
+        return PremiumSignalState.INVALID
+    if raw.get("status") == "duplicate":
+        return PremiumSignalState.REQUIRES_REVIEW
+    if bridge is not None:
+        stage = _as_str(bridge.get("stage"))
+        reason = _as_str(bridge.get("reason")) or _as_str(bridge.get("audit_reason"))
+        return bridge_stage_to_state(stage, reason)
+    if raw.get("message_type") == "signal" and raw.get("stage") == "accepted":
+        source = _as_str(raw.get("source"))
+        if source and source.endswith("_approved"):
+            return PremiumSignalState.APPROVED
+        return PremiumSignalState.ENVELOPE_ACCEPTED
+    return PremiumSignalState.PARSED_OK
+
+
+def _project_record(
+    raw: dict[str, object],
+    *,
+    bridge_by_envelope: dict[str, dict[str, object]] | None = None,
+) -> EnvelopeRecord:
+    errors = raw.get("errors")
+    errors_list = [str(e) for e in errors] if isinstance(errors, list) else []
+    message_type = _as_str(raw.get("message_type"))
+    signal: SignalSummary | None = None
+    if message_type == "signal":
+        payload = raw.get("payload")
+        if isinstance(payload, dict):
+            signal = _project_signal(payload)
+    raw_text_preview = _as_str(raw.get("raw_text_preview"))
+    if raw_text_preview is None:
+        payload = raw.get("payload")
+        if isinstance(payload, dict):
+            raw_text_preview = _as_str(payload.get("text_preview"))
+    bridge: dict[str, object] | None = None
+    bridge_by_envelope = bridge_by_envelope or {}
+    env_id = _as_str(raw.get("envelope_id"))
+    if env_id:
+        bridge = bridge_by_envelope.get(env_id)
+    origin_id_raw = _as_str(raw.get("origin_envelope_id"))
+    if bridge is None and origin_id_raw:
+        bridge = bridge_by_envelope.get(origin_id_raw)
+    p_state = _derive_premium_state(raw, bridge)
+    raw_source = _as_str(raw.get("source"))
+    return EnvelopeRecord(
+        timestamp_utc=_as_str(raw.get("timestamp_utc")),
+        event=_as_str(raw.get("event")),
+        source=raw_source,
+        stage=_as_str(raw.get("stage")),
+        status=_as_str(raw.get("status")),
+        message_type=message_type,
+        envelope_id=env_id,
+        idempotency_key=_as_str(raw.get("idempotency_key")),
+        errors=errors_list,
+        signal=signal,
+        raw_text_preview=raw_text_preview,
+        origin_signal_id=origin_signal_id(raw),
+        approval_state=approval_state(raw),
+        raw_source=raw_source,
+        normalized_source=normalized_source(raw_source),
+        execution_source=raw_source if raw_source and raw_source.endswith("_approved") else None,
+        premium_state=p_state.value,
+        premium_state_label=state_label(p_state),
+        premium_state_tone=state_tone(p_state),
+        bridge_stage=_as_str(bridge.get("stage")) if bridge is not None else None,
+        bridge_reason=(
+            _as_str(bridge.get("reason")) or _as_str(bridge.get("audit_reason"))
+            if bridge is not None
+            else None
+        ),
+    )
+
+
+def _project_signal(payload: dict[str, object]) -> SignalSummary:
+    return SignalSummary(
+        signal_id=_as_str(payload.get("signal_id")),
+        symbol=_as_str(payload.get("display_symbol")) or _as_str(payload.get("symbol")),
+        direction=_as_str(payload.get("direction")),
+        side=_as_str(payload.get("side")),
+        exchange_scope=_as_str_list(payload.get("exchange_scope")),
+        market_type=_as_str(payload.get("market_type")),
+        entry_type=_as_str(payload.get("entry_type")),
+        entry_value=_as_float(payload.get("entry_value")),
+        targets=_as_float_list(payload.get("targets")),
+        stop_loss=_as_float(payload.get("stop_loss")),
+        leverage=_as_int(payload.get("leverage")),
+        signal_status=_as_str(payload.get("status")),
+        signal_timestamp=_as_str(payload.get("timestamp_utc")),
+        origin_signal_id=_as_str(payload.get("origin_signal_id"))
+        or _as_str(payload.get("source_uid"))
+        or _as_str(payload.get("signal_id")),
+        source_uid=_as_str(payload.get("source_uid")),
+    )
+
+
+def _as_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _as_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(x) for x in value if x is not None]
+
+
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float_list(value: object) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    out: list[float] = []
+    for x in value:
+        try:
+            out.append(float(x))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _as_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/envelope/recent", response_model=EnvelopeRecentResponse)
+async def recent_envelopes(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    _auth: Annotated[None, Depends(require_operator_api_token)] = None,
+) -> EnvelopeRecentResponse:
+    """Return the newest N envelope audit records (parse/accepted/duplicate/…)."""
+    path = _ENVELOPE_AUDIT_PATH
+    if not path.exists():
+        return EnvelopeRecentResponse(count=0, records=[])
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        logger.warning("[signals.recent] Audit read failed: %s", exc)
+        return EnvelopeRecentResponse(count=0, records=[])
+
+    bridge_by_envelope = _latest_bridge_by_envelope(Path("artifacts/bridge_pending_orders.jsonl"))
+
+    # Parse newest-first, then dedupe raw+approved into one business signal
+    # (Dashboard double-count fix 2026-06-08). We over-read so that after
+    # collapsing pairs we can still return up to ``limit`` distinct signals.
+    from app.observability.premium_dedupe import compute_dedup_key
+
+    parsed_raws: list[dict[str, object]] = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            raw = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        parsed_raws.append(raw)
+        if len(parsed_raws) >= limit * 2:
+            break
+
+    # Group by stable signal identity, preserving newest-first order.
+    groups: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for raw in parsed_raws:
+        key = compute_dedup_key(raw)
+        grp = groups.get(key)
+        if grp is None:
+            grp = {"key": key, "raw": None, "approved": None, "first": raw}
+            groups[key] = grp
+            order.append(key)
+        src = _as_str(raw.get("source")) or ""
+        if src.endswith("_approved"):
+            grp["approved"] = raw
+        elif src.startswith("telegram_premium_channel"):
+            grp["raw"] = raw
+        else:
+            grp.setdefault("other", raw)
+
+    records: list[EnvelopeRecord] = []
+    for key in order:
+        if len(records) >= limit:
+            break
+        grp = groups[key]
+        canonical = grp["approved"] or grp["raw"] or grp["first"]
+        rec = _project_record(canonical, bridge_by_envelope=bridge_by_envelope)
+        has_raw = grp["raw"] is not None
+        has_approved = grp["approved"] is not None
+        rec.dedup_key = key
+        rec.has_raw_event = has_raw
+        rec.has_approved_event = has_approved
+        rec.double_sourced = has_raw and has_approved
+        rec.merged_event_count = sum(1 for v in (grp["raw"], grp["approved"]) if v is not None) or 1
+        records.append(rec)
+
+    return EnvelopeRecentResponse(
+        count=len(records), records=records, deduped_from=len(parsed_raws)
+    )

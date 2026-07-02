@@ -1,0 +1,28 @@
+[Unit]
+Description=Cloudflare Tunnel (kai-trader.org)
+# Decoupled from kai-server (2026-06-18): a prior Requires=kai-server.service
+# propagated EVERY kai-server restart (i.e. every deploy) to cloudflared, so the
+# tunnel dropped for ~60s each time → external HTTP 530 windows → lost
+# TradingView webhooks (TV does not retry). The tunnel must stay up independently
+# of app restarts; a brief kai-server restart just yields a short origin 502, not
+# a tunnel drop. After= for boot ordering only (no restart propagation).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+# D-208: ensure logs/ exists and is owned by service-user before systemd
+# opens StandardOutput=append: as root.
+ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && chown -R ubuntu:ubuntu /home/kai/ai_analyst_trading_bot/logs'
+ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kai/.cloudflared/config.yml run kai
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/tunnel.log
+StandardError=append:/home/kai/ai_analyst_trading_bot/logs/tunnel.err.log
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

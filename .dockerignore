@@ -1,0 +1,49 @@
+# AUDIT-A5: keep the Docker build context lean + deterministic. Without this,
+# the build context shipped .git, web/node_modules, local venvs, runtime
+# artifacts and secrets into the image layers.
+.git
+.gitignore
+.github
+
+# Python caches / local envs
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+htmlcov/
+.coverage*
+
+# Frontend (image is backend-only; never ship node_modules / build output)
+web/node_modules/
+web/dist/
+node_modules/
+
+# Tests + docs are not needed in the runtime image
+tests/
+docs/
+KAI-Persona/
+
+# Runtime output + local state (never bake into image)
+artifacts/
+logs/
+*.log
+*.db
+*.sqlite3
+
+# Secrets / local config — must never enter an image layer
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.b32
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,27 @@
+[Unit]
+Description=KAI Asset-Rotation-Shadow — evaluate rotation decisions on paper data (Goal G1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# READ-ONLY measurement: reads the paper-execution audit, evaluates the
+# Mittelweg verdict + rotation policy per asset, persists the FSM state, and
+# appends a decision record to artifacts/asset_rotation_shadow.jsonl. NOTHING
+# acts on the decisions (no feed, no sizing, no capital) — this is the G1
+# "rotiert nachvollziehbar"-Sicht. "-" prefix: a failed run must not propagate.
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/asset_rotation_shadow_refresh.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+# Light: a single audit-file read + pure computation, no network.
+MemoryMax=192M
+CPUQuota=50%

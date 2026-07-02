@@ -2,39 +2,95 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import AnalysisResult
-from app.core.enums import ExecutionMode, SentimentLabel
-from app.core.settings import get_settings
-from app.execution.models import PaperPortfolio
+from app.core.enums import EntryMode, ExecutionMode, SentimentLabel
+from app.core.settings import AppSettings, get_settings
+from app.execution.models import PaperFill, PaperOrder, PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
+from app.execution.real_analysis_paper import (
+    is_real_analysis_source,
+    is_synthetic_probe_document,
+)
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.indicators import compute_atr
 from app.market_data.service import create_market_data_adapter
 from app.orchestrator.models import (
     CycleStatus,
     LoopCycle,
     LoopStatusSummary,
+    PriorityGateSummary,
     RecentCyclesSummary,
     _new_cycle_id,
     _now_utc,
 )
+from app.orchestrator.signal_source import (
+    SOURCE_CANARY_PROBE,
+    derive_autonomous_signal_source,
+    resolve_signal_source,
+)
+from app.risk.churn_killer import ChurnKillerConfig, ChurnVerdict, evaluate_churn_gate
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
+from app.risk.post_stop_cooldown import is_symbol_in_post_stop_cooldown
+from app.risk.reason_codes import ExecutionBlockerCode
+from app.security.kyt.models import KytAssessment
 from app.signals.generator import SignalGenerator
-from app.signals.models import SignalDirection
+from app.signals.models import SignalCandidate, SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
+from app.trading.diversification import (
+    DiversificationDecision,
+    DiversificationGuard,
+    exposures_from_paper_portfolio,
+)
+from app.trading.signal_consensus import (
+    GEMINI_OPENAI_BASE_URL,
+    SignalConsensusValidator,
+    ValidatorConfig,
+)
 
 logger = logging.getLogger(__name__)
 
 _AUDIT_LOG = Path("artifacts/trading_loop_audit.jsonl")
 _PAPER_EXECUTION_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _ALLOWED_CONTROL_MODES = frozenset({ExecutionMode.PAPER, ExecutionMode.SHADOW})
+
+_TV_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH")
+
+# Source taxonomy (SOURCE_* constants + derive_autonomous_signal_source +
+# resolve_signal_source) now lives in app/orchestrator/signal_source.py; the
+# names this module uses are imported above.
+
+
+# Sprint S7 god-file ratchet (D-234): paper-entry accounting lives in
+# app/execution/paper_entry_accounting.py now — ONE opening-fill truth shared
+# with the entry-policy route limiter (which previously carried its own copy).
+# Re-exported here because tests + the daily-cap call sites import from the loop.
+from app.execution.paper_entry_accounting import (  # noqa: E402
+    count_paper_entries_today,
+)
+from app.execution.paper_entry_accounting import (  # noqa: E402
+    effective_daily_paper_cap as _effective_daily_paper_cap,
+)
+
+
+def _normalize_tv_symbol(raw: str) -> str:
+    """Convert TV-style ticker (BTCUSDT) to KAI canonical (BTC/USDT)."""
+    s = raw.strip().upper()
+    if "/" in s:
+        return s
+    for quote in _TV_QUOTE_SUFFIXES:
+        if s.endswith(quote) and len(s) > len(quote):
+            return f"{s[: -len(quote)]}/{quote}"
+    return f"{s}/USDT"
 
 
 class TradingLoop:
@@ -55,6 +111,7 @@ class TradingLoop:
         execution_engine: PaperExecutionEngine,
         market_data_adapter: BaseMarketDataAdapter,
         signal_generator: SignalGenerator,
+        consensus_validator: SignalConsensusValidator | None = None,
         audit_log_path: str | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
@@ -62,6 +119,7 @@ class TradingLoop:
         self._exec = execution_engine
         self._market_data = market_data_adapter
         self._signals = signal_generator
+        self._consensus = consensus_validator
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         self._session_factory = session_factory
@@ -80,15 +138,228 @@ class TradingLoop:
         self,
         analysis: AnalysisResult,
         symbol: str,
+        *,
+        analysis_source: str | None = None,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
     ) -> LoopCycle:
         """
         Execute one cycle for a symbol and return the immutable cycle audit record.
 
         This method does not run loops in background and does not manage scheduling.
+
+        ``analysis_source`` (Goal 2026-06-10): an explicit caller tag. When it is
+        the real-analysis feeder marker AND the active entry_mode is ``disabled``,
+        a fail-closed three-arm override may DECOUPLE this single cycle so a
+        ``source=real_analysis`` paper fill is allowed while the global kill-switch
+        stays set. The synthetic autonomous loop never sets this tag, and
+        ``loop_control_*`` probe document_ids are hard-excluded, so the degenerate
+        canary loop can never reach a fill through this path. Default None →
+        unchanged behaviour for every existing caller.
+
+        ``execution_mode`` (V2 2026-06-16): the entry-mode DECOUPLING path
+        additionally requires PAPER mode, so a SHADOW real-analysis cycle may tag
+        itself ``real_analysis`` for the relaxed priority threshold WITHOUT ever
+        opening a fill. Default PAPER preserves the real-analysis paper feeder.
         """
         cycle_id = _new_cycle_id()
         started_at = _now_utc()
         notes: list[str] = []
+
+        # B-005: resolve settings ONCE per cycle. get_settings() re-parses .env on
+        # every call (no lru_cache); calling it repeatedly inside a tick risks the
+        # known event-loop wedge. All gates below read from this single snapshot.
+        settings = get_settings()
+
+        # Entry-Safety-Mode (Goal 2026-06-01). Highest-level kill-switch for the
+        # AUTONOMOUS loop: in DISABLED mode no new positions are opened at all.
+        # Cheapest possible reject — runs before market-data fetch / signal gen.
+        # Scope: only this autonomous analysis-driven path. Operator-/bridge-/
+        # premium-promoted entries (run_promoted_signal) are a different signal
+        # source and are intentionally NOT gated here; they keep their own risk
+        # gates + approval. Exits/risk-reductions are never gated by entry_mode.
+        entry_mode = settings.execution.entry_mode
+        shadow_only = False
+        # True only when this cycle was decoupled from entry_mode=disabled as a
+        # real-analysis paper fill. Drives B-002 source attribution on the label
+        # so these fills are excluded from edge/D-227/hit-rate headlines (as
+        # canary already is) and never poison the honest forward-edge figure.
+        real_analysis_feed = False
+        technical_paper_feed = False
+        if not entry_mode.allows_autonomous_loop_entry:
+            decoupled, decouple_refusal = self._real_analysis_decoupling_verdict(
+                analysis=analysis,
+                analysis_source=analysis_source,
+                settings=settings,
+                execution_mode=execution_mode,
+            )
+            if decoupled:
+                notes.append(
+                    "real_analysis_paper_decoupled:entry_disabled_override"
+                    if entry_mode is EntryMode.DISABLED
+                    else f"real_analysis_paper_decoupled:{entry_mode.value}"
+                )
+                real_analysis_feed = True
+            else:
+                decoupled_tech, decouple_tech_refusal = self._technical_paper_decoupling_verdict(
+                    analysis=analysis,
+                    analysis_source=analysis_source,
+                    settings=settings,
+                    execution_mode=execution_mode,
+                )
+                if decoupled_tech:
+                    notes.append(
+                        "technical_paper_decoupled:entry_disabled_override"
+                        if entry_mode is EntryMode.DISABLED
+                        else f"technical_paper_decoupled:{entry_mode.value}"
+                    )
+                    technical_paper_feed = True
+                else:
+                    if not settings.execution.shadow_diagnostics:
+                        reject_notes = [f"entry_mode_blocked:{entry_mode.value}"]
+                        if decouple_refusal is not None:
+                            reject_notes.append(
+                                f"real_analysis_decouple_refused:{decouple_refusal}"
+                            )
+                        if decouple_tech_refusal is not None:
+                            reject_notes.append(
+                                f"technical_paper_decouple_refused:{decouple_tech_refusal}"
+                            )
+                        cycle = self._build_cycle(
+                            cycle_id,
+                            started_at,
+                            symbol,
+                            CycleStatus.ENTRY_MODE_BLOCKED,
+                            notes=notes + reject_notes,
+                        )
+                        await self._write_db(cycle)
+                        return cycle
+                    shadow_only = True
+
+        # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
+        # it to 10 restricts paper fills to the high-conviction tier where
+        # live hit-rate evidence is disjoint from standard tier (D-149).
+        #
+        # Paper-Learning P3 (Goal 2026-06-10): for source=real_analysis ONLY, the
+        # threshold is the feeder-specific real_analysis_paper.min_priority
+        # instead of the global execution.paper_min_priority. Every other source
+        # (autonomous loop etc.) keeps the global value byte-identically.
+        if is_real_analysis_source(analysis_source):
+            min_priority = settings.real_analysis_paper.min_priority
+        elif analysis_source == "technical_paper":
+            min_priority = 1
+        else:
+            min_priority = settings.execution.paper_min_priority
+        if min_priority > 1:
+            observed = analysis.recommended_priority
+            if observed is None or observed < min_priority:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PRIORITY_REJECTED,
+                    notes=notes + [f"priority_gate_reject:{observed}|threshold:{min_priority}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # Paper-Learning daily-entry cap (Goal 2026-06-10). Default 0 == unlimited
+        # → this whole branch is skipped, so without
+        # EXECUTION_MAX_DAILY_PAPER_ENTRIES there is no behavioural change. When a
+        # positive cap is set and that many opening paper fills already settled
+        # today (UTC), the loop refuses to open a new entry. Cheapest hard stop —
+        # placed alongside the priority gate, before market-data fetch / signal
+        # gen. Exits/risk-reductions never reach this autonomous-entry path.
+        #
+        # Two independent caps combine to the STRICTER (smallest positive) bound:
+        # the global execution.max_daily_paper_entries and the feeder-specific
+        # real_analysis_paper.max_daily_paper_entries. Either at 0 == unlimited for
+        # that axis; both 0 → no cap (no-op).
+        max_daily_paper_entries = _effective_daily_paper_cap(
+            settings.execution.max_daily_paper_entries,
+            settings.real_analysis_paper.max_daily_paper_entries,
+        )
+        if max_daily_paper_entries > 0:
+            entries_today = count_paper_entries_today(self._exec.audit_path)
+            if entries_today >= max_daily_paper_entries:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PAPER_CAP_REACHED,
+                    notes=notes
+                    + [
+                        f"paper_daily_cap_reached:{entries_today}|cap:{max_daily_paper_entries}",
+                        f"reason_code:{ExecutionBlockerCode.PAPER_DAILY_CAP_REACHED.value}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # Sprint S3 (#181 §5): route-volume limits for the real-analysis paper
+        # route (max_trades_per_hour / max_notional_per_day_usd /
+        # max_open_positions). Only evaluated for decoupled real-analysis
+        # cycles; every other source is untouched. Limits come from the entry
+        # policy: explicit env values, or the conservative defaults injected in
+        # EXECUTION_ENTRY_MODE=paper_learning. No limits configured → no-op.
+        if real_analysis_feed:
+            from app.execution.entry_policy import (
+                EntryRoute,
+                check_route_limits,
+                resolve_entry_policy,
+            )
+
+            ra_verdict = resolve_entry_policy(settings).verdict(EntryRoute.REAL_ANALYSIS_PAPER)
+            limits_ok, limit_detail, limits_snapshot = check_route_limits(
+                route=EntryRoute.REAL_ANALYSIS_PAPER,
+                limits=ra_verdict.limits,
+                audit_path=self._exec.audit_path,
+                current_open_positions=len(self._exec.portfolio.positions),
+            )
+            if not limits_ok:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PAPER_CAP_REACHED,
+                    notes=notes
+                    + [
+                        f"route_limit_reject:{limit_detail}|{limits_snapshot.get('usage')}",
+                        f"reason_code:{ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        if technical_paper_feed or (
+            entry_mode.allows_autonomous_loop_entry and analysis_source == "technical_paper"
+        ):
+            from app.execution.entry_policy import EntryRoute, evaluate_route_gate
+
+            gate_reject = evaluate_route_gate(
+                settings=settings,
+                route=EntryRoute.TECHNICAL_PAPER,
+                audit_path=self._exec.audit_path,
+                current_open_positions=len(self._exec.portfolio.positions),
+            )
+            if gate_reject is not None:
+                status = (
+                    CycleStatus.ENTRY_MODE_BLOCKED
+                    if gate_reject.blocked
+                    else CycleStatus.PAPER_CAP_REACHED
+                )
+                cycle = self._build_cycle(
+                    cycle_id, started_at, symbol, status, notes=notes + list(gate_reject.notes)
+                )
+                await self._write_db(cycle)
+                return cycle
+
+            # B-002 edge-attribution: mark this cycle as a technical-paper feed
+            # regardless of entry_mode. The disabled-decoupling branch already set
+            # the flag; the enabled-loop path (entry_mode=paper) reaches here with
+            # it still False, so without this the fill would be mislabelled
+            # ``autonomous_loop`` and pollute the honest forward-edge headline
+            # instead of being excluded like canary / real_analysis.
+            technical_paper_feed = True
 
         market_data = None
         try:
@@ -151,7 +422,123 @@ class TradingLoop:
             await self._write_db(cycle)
             return cycle
 
+        # Consensus gate — all validator LLMs must agree.
+        if self._consensus is not None:
+            consensus = await self._consensus.validate(signal, market_data)
+            notes.append(
+                f"consensus:{consensus.agreed}|"
+                f"conf:{consensus.confidence:.2f}|"
+                f"models:{consensus.validator_model}"
+            )
+            for vr in consensus.validator_results:
+                notes.append(f"validator:{vr.label}|agreed:{vr.agreed}|conf:{vr.confidence:.2f}")
+            if not consensus.agreed:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.CONSENSUS_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    notes=notes
+                    + [
+                        f"consensus_reason:{consensus.reasoning}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # P1.1: Dynamic ATR Geometry
+        if signal.stop_loss_price is None:
+            try:
+                ohlcv_data = await self._market_data.get_ohlcv(symbol, limit=20)
+                atr = compute_atr(ohlcv_data, period=14)
+                if atr is not None:
+                    notes.append(f"atr_calculated:{atr:.4f}")
+                else:
+                    notes.append("atr_calculated:None")
+
+                sl, tp = self._risk.calculate_risk_geometry(
+                    entry_price=signal.entry_price,
+                    direction=signal.direction.value,
+                    atr=atr,
+                )
+
+                signal = replace(
+                    signal,
+                    stop_loss_price=sl,
+                    take_profit_price=tp,
+                )
+            except Exception as exc:
+                notes.append(f"atr_geometry_error:{exc}")
+
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+
+        # Phase B shadow-only path: entry_mode is disabled but shadow-diagnostics
+        # is ON. We have the raw signal + geometry the loop WOULD have entered;
+        # record it as a hypothetical candidate (no entry-gates applied, so we
+        # measure the SIGNAL not the gates) and stop before any execution. This
+        # is captured BEFORE cooldown/churn/risk on purpose — those gates are
+        # what we are trying to fix, so shadow evidence must be gate-independent.
+        if shadow_only:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ENTRY_MODE_BLOCKED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes
+                + [f"entry_mode_blocked:{entry_mode.value}", "shadow_candidate_recorded"],
+            )
+            self._record_shadow_candidate(
+                cycle=cycle,
+                signal=signal,
+                order_side=order_side,
+                entry_mode_value=entry_mode.value,
+                recommended_priority=analysis.recommended_priority,
+                analysis=analysis,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # NEO-V2: per-symbol post-stop cooldown. Cheapest reject — runs before the
+        # risk gate so a symbol that just stopped out is not re-entered (and
+        # re-charged ~1.2% round-trip fees) within the cooldown window. Additive:
+        # placed before check_order, it does not touch any existing risk gate.
+        if self._in_post_stop_cooldown(symbol):
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.COOLDOWN_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Sprint E (Goal §5): churn-killer. Generalises the cooldown above (any
+        # risk-reducing close + loss-streak backoff) and adds global rate/turnover
+        # limits. Entry-only — exits are never gated here.
+        churn = self._evaluate_churn(symbol)
+        if churn.blocked:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                self._churn_cycle_status(churn),
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + [f"churn:{churn.reason}|{churn.detail}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
         current_positions = len(self._exec.portfolio.positions)
         risk_result = self._risk.check_order(
             symbol=symbol,
@@ -160,6 +547,8 @@ class TradingLoop:
             signal_confluence_count=signal.confluence_count,
             stop_loss_price=signal.stop_loss_price,
             current_open_positions=current_positions,
+            entry_price=signal.entry_price,
+            take_profit_price=signal.take_profit_price,
         )
 
         if not risk_result.approved:
@@ -201,8 +590,99 @@ class TradingLoop:
             await self._write_db(cycle)
             return cycle
 
+        # Diversification / concentration guard (default-off, shadow-first).
+        # Stamps the audit with the concentration recommendation; only blocks
+        # the cycle when enforce mode is active and the action is `reject`.
+        notional = size_result.position_size_units * signal.entry_price
+        div_decision = self._evaluate_diversification(symbol=symbol, notional_usd=notional)
+        if div_decision is not None:
+            notes.extend(self._diversification_notes(div_decision))
+            if div_decision.blocks:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.DIVERSIFICATION_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # KYT (Know Your Transaction) pre-transaction check (default-off,
+        # shadow-first). Screens symbol/venue + behavioural patterns, stamps the
+        # cycle audit, and only blocks in enforce mode on a hold/block/
+        # manual_review decision. Never crashes the loop. DS-20260529-V1.
+        kyt_assessment = self._evaluate_kyt(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            side=order_side,
+            quantity=size_result.position_size_units,
+            entry_price=signal.entry_price,
+            source=signal.provenance.source if signal.provenance else "",
+            correlation_id=signal.decision_id,
+        )
+        if kyt_assessment is not None:
+            notes.append(
+                f"kyt:{kyt_assessment.decision.value}|risk:{kyt_assessment.risk_level.value}"
+                f"|score:{kyt_assessment.score}"
+            )
+            from app.security.kyt.gate import enforce_blocks
+
+            if enforce_blocks(kyt_assessment):
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.KYT_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
         order = None
         fill = None
+        # NEO-P-20260603-001: attribute the autonomous fill to its signal source.
+        # document_id traces the originating analysis (canary probes are
+        # "loop_control_<asset>_<profile>"; the real generator carries the RSS/
+        # news doc id). signal_source is a coarse bucket so edge_report can split
+        # canary-probe vs real-generator fills. "" stays the unknown default for
+        # any path that does not set source_document_id.
+        # NEO-P-002 (Weg B): ONE coarse source bucket, shared fill + shadow
+        # (app/orchestrator/signal_source.py). B-002: decoupled real_analysis /
+        # technical_paper feeds are hard-attributed at the SOURCE so reports
+        # exclude them from the honest forward edge like canary; any other explicit
+        # cohort tag (e.g. momentum_universe) gets its OWN bucket instead of the
+        # autonomous_generator default. Without this, momentum closes were
+        # invisible to extract_cohort_outcomes and wrongly counted in the
+        # canonical autonomous edge.
+        attribution_doc_id = signal.source_document_id or analysis.document_id or ""
+        signal_source = resolve_signal_source(
+            attribution_doc_id,
+            real_analysis_feed=real_analysis_feed,
+            technical_paper_feed=technical_paper_feed,
+            analysis_source=analysis_source,
+        )
+        # Goal 2026-06-10 (long+short): thread the position side through to the
+        # engine. The autonomous loop historically only opened longs; for a SHORT
+        # signal it emitted side="sell" WITHOUT position_side, so the engine read
+        # it as a long-close → "insufficient position" → order_failed and shorts
+        # never opened. The engine fully supports shorts (SL above / TP below
+        # entry, validated on fill) and the SignalGenerator already emits
+        # short-correct SL/TP geometry; this only supplies the missing
+        # position_side so a sell OPENS a short instead of mis-closing a
+        # non-existent long. Bullish behaviour is byte-identical (position_side
+        # was already the engine default "long").
+        position_side = "long" if signal.direction == SignalDirection.LONG else "short"
         try:
             order = self._exec.create_order(
                 symbol=symbol,
@@ -213,6 +693,10 @@ class TradingLoop:
                 take_profit=signal.take_profit_price,
                 idempotency_key=signal.decision_id,
                 risk_check_id=risk_result.check_id,
+                source=signal_source,
+                document_id=attribution_doc_id,
+                position_side=position_side,
+                regime=self._entry_regime_label(symbol, started_at),
             )
             fill = self._exec.fill_order(order, current_price=signal.entry_price)
         except Exception as exc:  # noqa: BLE001
@@ -225,6 +709,422 @@ class TradingLoop:
                 market_data_fetched=True,
                 signal_generated=True,
                 risk_approved=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Fail-closed: an unfilled order must not be reported as completed.
+        if fill is None:
+            notes.append("fill_not_simulated")
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                order_created=order is not None,
+                fill_simulated=False,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        self._risk.update_daily_loss(
+            realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
+            equity=equity,
+        )
+
+        cycle = self._build_cycle(
+            cycle_id,
+            started_at,
+            symbol,
+            CycleStatus.COMPLETED,
+            market_data_fetched=True,
+            signal_generated=True,
+            risk_approved=True,
+            order_created=order is not None,
+            fill_simulated=fill is not None,
+            decision_id=signal.decision_id,
+            risk_check_id=risk_result.check_id,
+            order_id=order.order_id if order else None,
+            notes=notes,
+        )
+        # Goal 2026-06-10 (C): emit a fully-labelled paper-trade record so every
+        # autonomous paper fill is unambiguously attributable by mode / direction
+        # / source / confidence / threshold / regime — the axes the
+        # paper-learning analysis splits on (production_paper vs a later
+        # exploration label). Fail-soft: a labelling problem must never break the
+        # cycle (the fill already happened).
+        self._record_paper_trade_label(
+            cycle=cycle,
+            signal=signal,
+            order=order,
+            fill=fill,
+            entry_mode_value=entry_mode.value,
+            signal_source=signal_source,
+            source_document_id=attribution_doc_id,
+            threshold_used=min_priority,
+            real_analysis_feed=real_analysis_feed,
+            technical_paper_feed=technical_paper_feed,
+        )
+        self._write_audit(cycle)
+        await self._write_db(cycle)
+        return cycle
+
+    async def run_position_monitor(self) -> dict[str, object]:
+        """Check SL/TP on every open position and close those that triggered.
+
+        Fetches fresh market data once per open-position symbol, passes the
+        price map to the paper engine, and returns a small summary dict
+        suitable for logging / cron output.
+        """
+        portfolio = self._exec.portfolio
+        open_symbols = list(portfolio.positions.keys())
+        checked = 0
+        no_market_data = 0
+        triggered = 0
+        closes: list[dict[str, float | str]] = []
+        if not open_symbols:
+            return {
+                "checked": checked,
+                "no_market_data": no_market_data,
+                "triggered": triggered,
+                "closes": closes,
+            }
+
+        prices: dict[str, float] = {}
+        for symbol in open_symbols:
+            try:
+                md = await self._market_data.get_market_data_point(symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[LOOP] monitor: market data error for %s: %s", symbol, exc)
+                md = None
+            if md is None or md.is_stale:
+                no_market_data += 1
+                continue
+            prices[symbol] = md.price
+            checked += 1
+
+        fills = self._exec.monitor_positions(prices)
+        for fill in fills:
+            triggered += 1
+            closes.append(
+                {
+                    "symbol": fill.symbol,
+                    "quantity": fill.quantity,
+                    "fill_price": fill.fill_price,
+                    "realized_pnl_usd": self._exec.portfolio.realized_pnl_usd,
+                }
+            )
+
+        if fills:
+            self._risk.update_daily_loss(
+                realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
+                equity=self._exec.portfolio.cash,
+            )
+
+        return {
+            "checked": checked,
+            "no_market_data": no_market_data,
+            "triggered": triggered,
+            "closes": closes,
+        }
+
+    async def run_promoted_signal(
+        self,
+        signal: SignalCandidate,
+    ) -> LoopCycle:
+        """Execute one cycle for a pre-approved promoted TV signal.
+
+        Skips SignalGenerator (signal already exists) but still fetches
+        fresh market data, runs risk check, position sizing, and paper
+        execution.  Entry price is updated to the live market price.
+        """
+        cycle_id = _new_cycle_id()
+        started_at = _now_utc()
+        notes: list[str] = [
+            f"source:tv_promoted|decision_id:{signal.decision_id}",
+        ]
+        if signal.provenance:
+            notes.append(f"provenance:{signal.provenance.source}|{signal.provenance.version}")
+
+        symbol = _normalize_tv_symbol(signal.symbol)
+
+        market_data = None
+        try:
+            market_data = await self._market_data.get_market_data_point(symbol)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"market_data_error:{exc}")
+
+        if market_data is None:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.NO_MARKET_DATA,
+                notes=notes + [f"no_market_data:{symbol}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        notes.append(f"market_data_source:{market_data.source}")
+
+        if market_data.is_stale:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.STALE_DATA,
+                market_data_fetched=True,
+                notes=notes + [f"stale_data_skip:{symbol}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        live_price = market_data.price
+
+        if self._consensus is not None:
+            consensus = await self._consensus.validate(signal, market_data)
+            notes.append(f"consensus:{consensus.agreed}|conf:{consensus.confidence:.2f}")
+            if not consensus.agreed:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.CONSENSUS_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    notes=notes + [f"consensus_reason:{consensus.reasoning}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # P1.1: Dynamic ATR Geometry
+        if signal.stop_loss_price is None:
+            try:
+                ohlcv_data = await self._market_data.get_ohlcv(symbol, limit=20)
+                atr = compute_atr(ohlcv_data, period=14)
+                if atr is not None:
+                    notes.append(f"atr_calculated:{atr:.4f}")
+                else:
+                    notes.append("atr_calculated:None")
+
+                sl, tp = self._risk.calculate_risk_geometry(
+                    entry_price=live_price,
+                    direction=signal.direction.value,
+                    atr=atr,
+                )
+
+                signal = replace(
+                    signal,
+                    stop_loss_price=sl,
+                    take_profit_price=tp,
+                )
+            except Exception as exc:
+                notes.append(f"atr_geometry_error:{exc}")
+
+        order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+
+        # NEO-V2: per-symbol post-stop cooldown (see run_cycle path for rationale).
+        if self._in_post_stop_cooldown(symbol):
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.COOLDOWN_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Sprint E (Goal §5): churn-killer (see run_cycle path for rationale).
+        churn = self._evaluate_churn(symbol)
+        if churn.blocked:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                self._churn_cycle_status(churn),
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + [f"churn:{churn.reason}|{churn.detail}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        current_positions = len(self._exec.portfolio.positions)
+        risk_result = self._risk.check_order(
+            symbol=symbol,
+            side=order_side,
+            signal_confidence=signal.confidence_score,
+            signal_confluence_count=signal.confluence_count,
+            stop_loss_price=signal.stop_loss_price,
+            current_open_positions=current_positions,
+            entry_price=signal.entry_price,
+            take_profit_price=signal.take_profit_price,
+        )
+
+        if not risk_result.approved:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.RISK_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                notes=notes + risk_result.violations,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        equity = self._exec.portfolio.cash
+        size_result = self._risk.calculate_position_size(
+            symbol=symbol,
+            entry_price=live_price,
+            stop_loss_price=signal.stop_loss_price,
+            equity=equity,
+        )
+
+        if not size_result.approved or size_result.position_size_units <= 0:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.SIZE_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                notes=notes + [size_result.rationale],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Diversification / concentration guard (default-off, shadow-first).
+        notional = size_result.position_size_units * live_price
+        div_decision = self._evaluate_diversification(symbol=symbol, notional_usd=notional)
+        if div_decision is not None:
+            notes.extend(self._diversification_notes(div_decision))
+            if div_decision.blocks:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.DIVERSIFICATION_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # KYT (Know Your Transaction) pre-transaction check (default-off,
+        # shadow-first). Screens symbol/venue + behavioural patterns, stamps the
+        # cycle audit, and only blocks in enforce mode on a hold/block/
+        # manual_review decision. Never crashes the loop. DS-20260529-V1.
+        kyt_assessment = self._evaluate_kyt(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            side=order_side,
+            quantity=size_result.position_size_units,
+            entry_price=signal.entry_price,
+            source=signal.provenance.source if signal.provenance else "",
+            correlation_id=signal.decision_id,
+        )
+        if kyt_assessment is not None:
+            notes.append(
+                f"kyt:{kyt_assessment.decision.value}|risk:{kyt_assessment.risk_level.value}"
+                f"|score:{kyt_assessment.score}"
+            )
+            from app.security.kyt.gate import enforce_blocks
+
+            if enforce_blocks(kyt_assessment):
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.KYT_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        order = None
+        fill = None
+        # NEO-P-20260603-001: promoted/bridge signals are their own source bucket.
+        # Prefer the structured provenance.source; fall back to "tv_promoted".
+        promoted_source = "tv_promoted"
+        if signal.provenance and signal.provenance.source:
+            promoted_source = signal.provenance.source
+        try:
+            order = self._exec.create_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=size_result.position_size_units,
+                order_type="market",
+                stop_loss=signal.stop_loss_price,
+                take_profit=signal.take_profit_price,
+                idempotency_key=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                source=promoted_source,
+                document_id=signal.source_document_id or "",
+                regime=self._entry_regime_label(symbol, started_at),
+            )
+            fill = self._exec.fill_order(order, current_price=live_price)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"execution_error:{exc}")
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        if fill is None:
+            notes.append("fill_not_simulated")
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                order_created=order is not None,
+                fill_simulated=False,
                 decision_id=signal.decision_id,
                 risk_check_id=risk_result.check_id,
                 order_id=order.order_id if order else None,
@@ -294,6 +1194,258 @@ class TradingLoop:
             self._write_audit(cycle)
         return cycle
 
+    def _record_shadow_candidate(
+        self,
+        *,
+        cycle: LoopCycle,
+        signal: SignalCandidate,
+        order_side: str,
+        entry_mode_value: str,
+        recommended_priority: int | None,
+        analysis: AnalysisResult,
+    ) -> None:
+        """Phase B: persist a hypothetical entry candidate (no execution).
+
+        Fully fail-soft — a shadow-ledger problem must never affect the cycle.
+        The read-only ``check_order`` records the gate verdict the signal WOULD
+        have hit, so the operator can later separate "signal bad" from "gate
+        rejected" without re-running anything.
+        """
+        try:
+            from app.observability.shadow_candidate_ledger import (
+                ShadowCandidate,
+                record_candidate,
+            )
+
+            side = "long" if signal.direction == SignalDirection.LONG else "short"
+            started = cycle.started_at
+            ts_utc = started if isinstance(started, str) else started.isoformat()
+            regime_stamp = self._regime_stamp_for_audit(cycle)
+
+            # NEO-P-002 (Weg B): ONE taxonomy via derive_autonomous_signal_source
+            # (document_id-based) — the same helper the fill path uses, so fill
+            # and shadow buckets join. Replaces #137's divergent event_type
+            # mapping (which produced "autonomous_loop"; that value is no longer
+            # emitted as a NEW source). The doc-id traces the originating
+            # analysis: canary probes carry "loop_control_*", the real generator
+            # carries the news doc-id, "" stays unknown.
+            attribution_doc_id = signal.source_document_id or analysis.document_id or ""
+            source = derive_autonomous_signal_source(attribution_doc_id)
+            is_canary = source == SOURCE_CANARY_PROBE
+
+            # NEO-P-002 rich fields — ONLY genuinely derivable values; the rest
+            # stay explicit unknown/missing rather than fabricated defaults.
+            #   candidate_kind  — this hook fires after the SignalGenerator
+            #                     produced geometry, so it is ALWAYS a real signal
+            #                     candidate. raw_scan/no_candidate/synthetic are
+            #                     never written here.
+            #   source_stage    — fixed: runs right after the generator, pre-gate.
+            #   score_source    — confidence origin is not distinguishable at the
+            #                     loop boundary; "missing" when no confidence, else
+            #                     "unknown" (honest, not invented).
+            #   signal_origin   — same coarse bucket as source (the report axis).
+            #   is_synthetic_default — always False: no pseudo candidate fabricated.
+            confidence = signal.confidence_score
+            score_source = "missing" if confidence is None else "unknown"
+            sentiment = (
+                analysis.sentiment_label.value if analysis.sentiment_label is not None else None
+            )
+
+            would_reject: bool | None = None
+            reason_codes: list[str] = []
+            try:
+                rr = self._risk.check_order(
+                    symbol=cycle.symbol,
+                    side=order_side,
+                    signal_confidence=signal.confidence_score,
+                    signal_confluence_count=signal.confluence_count,
+                    stop_loss_price=signal.stop_loss_price,
+                    current_open_positions=len(self._exec.portfolio.positions),
+                    entry_price=signal.entry_price,
+                    take_profit_price=signal.take_profit_price,
+                )
+                would_reject = not rr.approved
+                reason_codes = list(rr.reason_codes)
+            except Exception as exc:  # noqa: BLE001 — gate eval is best-effort
+                logger.debug("[LOOP] shadow gate-eval failed: %s", exc)
+
+            candidate = ShadowCandidate.from_geometry(
+                candidate_id=cycle.cycle_id,
+                ts_utc=ts_utc,
+                symbol=cycle.symbol,
+                side=side,
+                entry_price=signal.entry_price,
+                stop_price=signal.stop_loss_price,
+                take_price=signal.take_profit_price,
+                regime=regime_stamp.get("regime"),
+                regime_vol_class=regime_stamp.get("regime_vol_class"),
+                signal_confidence=signal.confidence_score,
+                recommended_priority=recommended_priority,
+                gate_would_reject=would_reject,
+                gate_reason_codes=reason_codes,
+                entry_mode=entry_mode_value,
+                source=source,
+                candidate_kind="signal_candidate",
+                source_stage="signal_generator",
+                score_source=score_source,
+                signal_origin=source,
+                document_id=attribution_doc_id or None,
+                cycle_id=cycle.cycle_id,
+                is_canary=is_canary,
+                is_synthetic_default=False,
+                priority=recommended_priority,
+                sentiment=sentiment,
+                directional_state=side,
+            )
+            record_candidate(candidate)
+        except Exception as exc:  # noqa: BLE001 — never break the loop
+            logger.warning("[LOOP] shadow candidate record failed: %s", exc)
+
+    def _real_analysis_decoupling_verdict(
+        self,
+        *,
+        analysis: AnalysisResult,
+        analysis_source: str | None,
+        settings: AppSettings,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
+    ) -> tuple[bool, str | None]:
+        """Decide whether THIS cycle may be decoupled from ``entry_mode=disabled``
+        as a real-analysis paper fill (Goal 2026-06-10).
+
+        Returns ``(decoupled, refusal_code)``:
+          - ``(True, None)`` ONLY when ALL hold:
+              1. the caller tagged ``analysis_source == "real_analysis"``, AND
+              2. the analysis document is NOT a synthetic ``loop_control_*`` probe
+                 (defense-in-depth against a mis-tagged probe), AND
+              3. the entry policy opens the real-analysis route (Sprint S3 #181):
+                 under ``disabled`` that is the fail-closed three-arm override
+                 (migration alias, byte-identical to the pre-S3 behaviour);
+                 under ``paper_learning`` the mode itself opens the route (the
+                 feeder master ``real_analysis_paper.enabled`` is still
+                 required); ``paper_premium_limited`` keeps it closed.
+          - ``(False, code)`` otherwise, where ``code`` explains the refusal for
+            the audit trail (None when the cycle simply is not a real-analysis
+            feed at all — i.e. the ordinary autonomous/synthetic path).
+
+        This is the ONLY place a closed-loop entry mode may yield a paper fill
+        via the loop. It never touches live (the caller runs ExecutionMode.PAPER
+        and ``_run_once_guard`` forbids live) and never re-arms the synthetic
+        loop.
+        """
+        if not is_real_analysis_source(analysis_source):
+            # Not the real-analysis feeder → no decoupling, no refusal noise; the
+            # ordinary entry_mode kill-switch applies as before.
+            return False, None
+        if execution_mode is not ExecutionMode.PAPER:
+            # V2 2026-06-16: a SHADOW real-analysis cycle tags ``real_analysis``
+            # only for the relaxed priority threshold — never a real fill. Refuse
+            # so it falls through to the shadow-diagnostics path. PAPER unaffected.
+            return False, "shadow_mode_no_decouple"
+        if is_synthetic_probe_document(analysis.document_id):
+            # Hard invariant: a synthetic probe can NEVER be decoupled, even if a
+            # caller mis-tags it as real_analysis.
+            return False, "synthetic_probe_not_decoupleable"
+        from app.execution.entry_policy import EntryRoute, resolve_entry_policy
+
+        verdict = resolve_entry_policy(settings).verdict(EntryRoute.REAL_ANALYSIS_PAPER)
+        if not verdict.allowed:
+            return False, verdict.reason_code
+        return True, None
+
+    def _technical_paper_decoupling_verdict(
+        self,
+        *,
+        analysis: AnalysisResult,
+        analysis_source: str | None,
+        settings: AppSettings,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
+    ) -> tuple[bool, str | None]:
+        """Decide whether THIS cycle may decouple from entry_mode=disabled as a tech paper fill."""
+        if analysis_source != "technical_paper":
+            return False, None
+        if execution_mode is not ExecutionMode.PAPER:
+            return False, "shadow_mode_no_decouple"
+        from app.execution.entry_policy import EntryRoute, resolve_entry_policy
+
+        verdict = resolve_entry_policy(settings).verdict(EntryRoute.TECHNICAL_PAPER)
+        if not verdict.allowed:
+            return False, verdict.reason_code
+        return True, None
+
+    def _record_paper_trade_label(
+        self,
+        *,
+        cycle: LoopCycle,
+        signal: SignalCandidate,
+        order: PaperOrder,
+        fill: PaperFill,
+        entry_mode_value: str,
+        signal_source: str,
+        source_document_id: str,
+        threshold_used: int,
+        real_analysis_feed: bool = False,
+        technical_paper_feed: bool = False,
+    ) -> None:
+        """Emit a labelled paper-trade record for an autonomous fill (Goal §C).
+
+        Additive + loop-owned: appended to the paper-execution audit log as a
+        dedicated ``paper_trade_label`` event keyed by order_id/fill_id, so it
+        joins to the canonical ``order_filled`` row without changing that row's
+        schema or touching the shared paper-engine / premium-fastlane path.
+
+        Carries the axes the paper-learning analysis needs and that the
+        ``order_filled`` event does NOT already provide:
+          - mode         — the active entry_mode (paper / probe / …)
+          - direction    — long / short
+          - source_id    — originating document id (canary vs real generator)
+          - source_name  — coarse source bucket (derive_autonomous_signal_source)
+          - feed_source  — B-002 hard attribution: ``real_analysis`` for the
+                           decoupled real-analysis feeder, ``technical_paper``
+                           for the technical-screener feeder, else
+                           ``autonomous_loop``. Reports key off THIS field to
+                           exclude both feeder cohorts from the edge/D-227/
+                           hit-rate headline (like canary).
+          - confidence   — signal confidence_score (None stays explicit null)
+          - threshold_used — paper_min_priority in force when this trade passed
+          - regime       — regime stamp active at fill time
+        ``trade_class="production_paper"`` distinguishes these from a future
+        ``exploration`` label. Fully fail-soft.
+        """
+        try:
+            direction = "long" if signal.direction == SignalDirection.LONG else "short"
+            regime_stamp = self._regime_stamp_for_audit(cycle)
+
+            feed_source = "autonomous_loop"
+            if real_analysis_feed:
+                feed_source = "real_analysis"
+            elif technical_paper_feed:
+                feed_source = "technical_paper"
+
+            record = {
+                "schema_version": "v2",
+                "event_type": "paper_trade_label",
+                "timestamp_utc": _now_utc(),
+                "trade_class": "production_paper",
+                "cycle_id": cycle.cycle_id,
+                "decision_id": signal.decision_id,
+                "order_id": order.order_id,
+                "fill_id": fill.fill_id,
+                "symbol": cycle.symbol,
+                "mode": entry_mode_value,
+                "direction": direction,
+                "source_id": source_document_id or None,
+                "source_name": signal_source,
+                "feed_source": feed_source,
+                "confidence": signal.confidence_score,
+                "threshold_used": threshold_used,
+                "regime": regime_stamp.get("regime"),
+                "regime_vol_class": regime_stamp.get("regime_vol_class"),
+            }
+            with self._exec.audit_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\n")
+        except Exception as exc:  # noqa: BLE001 — never break the loop
+            logger.warning("[LOOP] paper trade-label write failed: %s", exc)
+
     def _write_audit(self, cycle: LoopCycle) -> None:
         try:
             record = {
@@ -311,11 +1463,207 @@ class TradingLoop:
                 "risk_check_id": cycle.risk_check_id,
                 "order_id": cycle.order_id,
                 "notes": list(cycle.notes),
+                **self._regime_stamp_for_audit(cycle),
             }
             with self._audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record) + "\n")
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] Audit write failed: %s", exc)
+
+    @staticmethod
+    def _entry_regime_label(symbol: str, timestamp: str | None) -> str:
+        """Regime-AT-ENTRY stamp for the autonomous-loop position.
+
+        Thin wrapper over the shared ``regime_label_at`` SSOT so the autonomous
+        and premium-bridge stamping paths use ONE taxonomy. Fail-soft "" on any
+        lookup failure — forensic tag, never a gate, never crashes the loop.
+        """
+        from app.regime.lookup import regime_label_at
+
+        return regime_label_at(symbol, timestamp)
+
+    @staticmethod
+    def _regime_stamp_for_audit(cycle: LoopCycle) -> dict[str, object]:
+        """Stamp the cycle audit with the regime that was active when it ran.
+
+        R3-Shadow read-only — the cycle is NOT filtered by regime here, the
+        stamp is forensic context for ph5_feature_analysis ``by_regime``
+        bucket and any later R4-Active-Filter decision.
+
+        Failure-mode: any exception inside the lookup is swallowed and the
+        audit record gets ``regime`` fields with reason="error". The cycle
+        itself must complete regardless — this is a forensic side-channel,
+        not a gate.
+        """
+        from app.regime.lookup import (
+            DEFAULT_MAX_AGE_SECONDS,
+            get_regime_at,
+            symbol_to_regime_asset,
+        )
+
+        symbol = cycle.symbol or ""
+        timestamp = cycle.completed_at or cycle.started_at
+        if not timestamp:
+            return {
+                "regime": None,
+                "regime_reason": "no_timestamp",
+            }
+        asset = symbol_to_regime_asset(symbol)
+        is_proxy = asset != symbol.upper().split("/", 1)[0].split("-", 1)[0]
+        try:
+            result = get_regime_at(
+                asset,
+                timestamp,
+                max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash audit
+            logger.warning("[LOOP] Regime lookup failed: %s", exc)
+            return {
+                "regime": None,
+                "regime_reason": "error",
+                "regime_symbol_asset": asset,
+                "regime_symbol_is_proxy": is_proxy,
+            }
+        snap = result.snapshot
+        # Surface infrastructure-level regime gaps (file missing, data empty)
+        # so a silent pipeline failure shows up in the operator log instead
+        # of as an unactionable audit reason. The "stale" / "all_future"
+        # reasons are expected near classifier startup and stay info-only.
+        if result.reason in {"no_snapshot_file", "no_snapshots_data"}:
+            logger.warning(
+                "[LOOP] Regime snapshot missing for %s (asset=%s reason=%s) — "
+                "classifier never wrote or path drift suspected",
+                symbol,
+                asset,
+                result.reason,
+            )
+        return {
+            "regime": str(snap.regime) if snap is not None else None,
+            "regime_vol_class": str(snap.vol_class) if snap is not None else None,
+            "regime_confidence": snap.confidence if snap is not None else None,
+            "regime_reason": result.reason,
+            "regime_age_seconds": result.age_seconds,
+            "regime_symbol_asset": asset,
+            "regime_symbol_is_proxy": is_proxy,
+        }
+
+    def _evaluate_diversification(
+        self,
+        *,
+        symbol: str,
+        notional_usd: float | None,
+    ) -> DiversificationDecision | None:
+        """Concentration check against current paper book. None if disabled."""
+        settings = get_settings().diversification
+        if not settings.enabled:
+            return None
+        try:
+            guard = DiversificationGuard(mode=settings.mode)
+            portfolio = self._exec.portfolio
+            exposures = exposures_from_paper_portfolio(portfolio)
+            # Cost-basis equity cap denominator
+            equity = portfolio.cash + sum(
+                p.quantity * p.avg_entry_price for p in portfolio.positions.values()
+            )
+            return guard.evaluate_candidate(
+                exposures,
+                candidate_symbol=symbol,
+                notional_usd=notional_usd,
+                portfolio_equity_usd=equity,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the guard
+            logger.warning("[LOOP] diversification check failed (non-fatal): %s", exc)
+            return None
+
+    def _in_post_stop_cooldown(self, symbol: str) -> bool:
+        """True if symbol was stopped out within post-stop cooldown window."""
+        window = get_settings().risk.post_stop_cooldown_min
+        if window <= 0:
+            return False
+        try:
+            return is_symbol_in_post_stop_cooldown(
+                symbol,
+                cooldown_minutes=window,
+                audit_path=self._exec.audit_path,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] post-stop cooldown check failed (non-fatal): %s", exc)
+            return False
+
+    def _evaluate_churn(self, symbol: str) -> ChurnVerdict:
+        """Evaluate churn-killer gate verdict for a new entry on symbol."""
+        settings = get_settings()
+        risk = settings.risk
+        per_symbol = risk.churn_max_trades_per_symbol_per_hour
+        # PROBE: apply the tighter probe cap when configured (> 0). Other modes
+        # keep the normal cap. This is the Sprint A throttle hook landing here.
+        if (
+            settings.execution.entry_mode is EntryMode.PROBE
+            and risk.churn_probe_trades_per_hour > 0
+        ):
+            per_symbol = risk.churn_probe_trades_per_hour
+        config = ChurnKillerConfig(
+            cooldown_minutes=risk.churn_cooldown_min,
+            loss_streak_threshold=risk.churn_loss_streak_threshold,
+            loss_streak_multiplier=risk.churn_loss_streak_multiplier,
+            max_trades_per_symbol_per_hour=per_symbol,
+            max_notional_turnover_per_hour=risk.churn_max_notional_turnover_per_hour,
+        )
+        try:
+            return evaluate_churn_gate(symbol, config=config, audit_path=self._exec.audit_path)
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] churn-killer check failed (non-fatal): %s", exc)
+            return ChurnVerdict(blocked=False, reason=None, detail="")
+
+    @staticmethod
+    def _churn_cycle_status(verdict: ChurnVerdict) -> CycleStatus:
+        """Map a churn verdict reason to the cycle status."""
+        if verdict.reason == "post_stop_cooldown":
+            return CycleStatus.COOLDOWN_REJECTED
+        return CycleStatus.CHURN_REJECTED
+
+    @staticmethod
+    def _diversification_notes(decision: DiversificationDecision) -> list[str]:
+        notes = [
+            f"diversification:{decision.action}|mode:{decision.mode}|enforced:{decision.enforced}"
+        ]
+        if decision.projected_btc_eth_pct is not None:
+            notes.append(f"diversification_btc_eth_pct:{decision.projected_btc_eth_pct:.1f}")
+        for reason in decision.reasons:
+            notes.append(f"diversification_reason:{reason}")
+        if decision.alternatives:
+            alts = ",".join(a.symbol for a in decision.alternatives)
+            notes.append(f"diversification_alternatives:{alts}")
+        return notes
+
+    def _evaluate_kyt(
+        self,
+        *,
+        cycle_id: str,
+        symbol: str,
+        side: str,
+        quantity: float | None,
+        entry_price: float | None,
+        source: str = "",
+        correlation_id: str = "",
+    ) -> KytAssessment | None:
+        """KYT pre-transaction screen (default-off, shadow-first)."""
+        try:
+            from app.security.kyt.gate import screen_order
+
+            return screen_order(
+                tx_id=cycle_id,
+                symbol=symbol,
+                venue="paper",
+                side=side,
+                quantity=quantity,
+                entry_price=entry_price,
+                source=source,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] KYT check failed (non-fatal): %s", exc)
+            return None
 
     async def _write_db(self, cycle: LoopCycle) -> None:
         """Dual-write cycle to DB (session-per-cycle). Non-fatal: DB errors never stop the loop."""
@@ -405,6 +1753,23 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         kill_switch_enabled=risk.kill_switch_enabled,
         min_signal_confidence=risk.min_signal_confidence,
         min_signal_confluence_count=risk.min_signal_confluence_count,
+        atr_multiplier=risk.atr_multiplier,
+        tp_atr_multiplier=risk.tp_atr_multiplier,
+        min_notional_usd=risk.min_notional_usd,
+        max_position_size_pct=risk.max_position_size_pct,
+        # Paper-Learning sizing patch (2026-06-18) — both default-OFF in Settings.
+        min_stop_pct_for_sizing=risk.min_stop_pct_for_sizing,
+        max_notional_per_trade_usd=risk.max_notional_per_trade_usd,
+        round_trip_fee_pct=risk.round_trip_fee_pct,
+        min_sl_cost_multiple=risk.min_sl_cost_multiple,
+        # Sprint 2026-06-02 reward/risk gates — all default-OFF in Settings.
+        min_rr=risk.min_rr,
+        min_avg_rr=risk.min_avg_rr,
+        max_signal_risk_pct=risk.max_signal_risk_pct,
+        max_leveraged_risk_pct=risk.max_leveraged_risk_pct,
+        min_net_edge_bps=risk.min_net_edge_bps,
+        min_target_distance_pct=risk.min_target_distance_pct,
+        gates_mode=risk.gates_mode,
     )
 
 
@@ -417,6 +1782,14 @@ def build_loop_trigger_analysis(
     profile = analysis_profile.strip().lower()
     asset = symbol.split("/")[0].upper()
 
+    # NEO-P-PRIO-20260425-01: AnalysisResult.recommended_priority defaults to
+    # None. The D-182 paper-priority-gate (run_cycle, lines ~117-130) hard-
+    # rejects None when EXECUTION_PAPER_MIN_PRIORITY > 1. Without explicit
+    # values here every cron-triggered cycle since 2026-04-22 silently
+    # rejected (218 priority_rejected / zero regular fills). Conservative
+    # stays low (=1) so it remains correctly blocked under the strict gate;
+    # bullish/bearish probes are at the high-conviction tier (=10) so they
+    # actually exercise the downstream paper engine they were meant to test.
     if profile == "conservative":
         return AnalysisResult(
             document_id=f"loop_control_{asset.lower()}_conservative",
@@ -438,6 +1811,7 @@ def build_loop_trigger_analysis(
             actionable=False,
             tags=["control_plane", "conservative", "run_once"],
             spam_probability=0.0,
+            recommended_priority=1,
         )
 
     if profile == "bullish":
@@ -460,6 +1834,7 @@ def build_loop_trigger_analysis(
             actionable=True,
             tags=["control_plane", "bullish", "run_once"],
             spam_probability=0.0,
+            recommended_priority=10,
         )
 
     if profile == "bearish":
@@ -482,11 +1857,68 @@ def build_loop_trigger_analysis(
             actionable=True,
             tags=["control_plane", "bearish", "run_once"],
             spam_probability=0.0,
+            recommended_priority=10,
         )
 
     raise ValueError(
         f"unsupported_analysis_profile:{analysis_profile} (allowed: conservative, bullish, bearish)"
     )
+
+
+def _build_consensus_validator(
+    enable: bool,
+    consensus_model: str,
+    settings: object,
+) -> SignalConsensusValidator | None:
+    """Build consensus validator with all available LLM backends."""
+    if not enable:
+        return None
+
+    configs: list[ValidatorConfig] = []
+
+    openai_key = getattr(
+        getattr(settings, "providers", None),
+        "openai_api_key",
+        "",
+    )
+    if openai_key:
+        configs.append(
+            ValidatorConfig(
+                api_key=openai_key,
+                model=consensus_model,
+                label="openai",
+            )
+        )
+
+    gemini_key = getattr(
+        getattr(settings, "providers", None),
+        "gemini_api_key",
+        "",
+    )
+    gemini_model = (
+        getattr(
+            getattr(settings, "providers", None),
+            "gemini_model",
+            "",
+        )
+        or "gemini-2.5-flash"
+    )
+    if gemini_key:
+        configs.append(
+            ValidatorConfig(
+                api_key=gemini_key,
+                model=gemini_model,
+                label="gemini",
+                base_url=GEMINI_OPENAI_BASE_URL,
+                max_tokens=1024,
+                timeout=30,
+            )
+        )
+
+    if not configs:
+        return None
+
+    return SignalConsensusValidator(configs=configs)
 
 
 def build_trading_loop(
@@ -497,12 +1929,11 @@ def build_trading_loop(
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
+    rehydrate_from_audit: bool = True,
 ) -> TradingLoop:
-    """Build the canonical trading loop for explicit paper/shadow run-once execution.
-
-    provider: market data provider name. If None, reads from APP_MARKET_DATA_PROVIDER
-    (default: "coingecko"). Pass "mock" explicitly in tests.
-    """
+    """Build the canonical trading loop for explicit paper/shadow run-once execution."""
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
     if not allowed:
@@ -518,23 +1949,62 @@ def build_trading_loop(
         live_enabled=False,
         audit_log_path=str(execution_audit_path),
     )
+    if rehydrate_from_audit:
+        execution_engine.rehydrate_from_audit()
     market_data_adapter = create_market_data_adapter(
         provider=resolved_provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
+    )
+    # Phase 2D — Bayes + Adaptive-Learning Wiring.
+    # Default-off contract: when both risk.bayes_confidence_enabled and
+    # learning.adaptive_learning_enabled are False (the production default),
+    # build_bayes_signal_kwargs returns {} and SignalGenerator runs with the
+    # exact legacy kwargs it had before this wiring landed. The operator
+    # opts in via settings — no silent activation.
+    from app.signals.bayes_activation import build_bayes_signal_kwargs
+
+    # Orthogonal Bayes evidence (V5 Funding/OI/LS + HYPE-S1). Default-off,
+    # measure-first: all sources disabled (default) → None → exact legacy
+    # behaviour. Selection + composition live in composite_evidence_wiring
+    # (S7 extraction) — providers only ever disk-read warm snapshots, no
+    # inline network I/O in the loop.
+    from app.signals.composite_evidence_wiring import (
+        build_composite_evidence_provider_from_settings,
+    )
+
+    extra_evidences_provider = build_composite_evidence_provider_from_settings(settings)
+
+    bayes_kwargs = build_bayes_signal_kwargs(
+        settings.risk,
+        learning_settings=settings.learning,
+        extra_evidences_provider=extra_evidences_provider,
     )
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,
         min_confluence=settings.risk.min_signal_confluence_count,
         mode=normalized_mode.value,
         venue="paper",
+        **bayes_kwargs,
     )
+    consensus_validator = _build_consensus_validator(
+        enable_consensus,
+        consensus_model,
+        settings,
+    )
+
+    from app.storage.db.session import build_session_factory
+
+    session_factory = build_session_factory(settings.db)
+
     return TradingLoop(
         risk_engine=risk_engine,
         execution_engine=execution_engine,
         market_data_adapter=market_data_adapter,
         signal_generator=signal_generator,
+        consensus_validator=consensus_validator,
         audit_log_path=str(loop_audit_path),
+        session_factory=session_factory,
     )
 
 
@@ -544,30 +2014,81 @@ async def run_trading_loop_once(
     mode: str | ExecutionMode = ExecutionMode.PAPER,
     provider: str | None = None,
     analysis_profile: str = "conservative",
+    analysis_result: AnalysisResult | None = None,
+    analysis_source: str | None = None,
     loop_audit_path: str | Path = _AUDIT_LOG,
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> LoopCycle:
-    """Run exactly one explicit paper/shadow cycle with fail-closed mode guard."""
+    """Run exactly one explicit paper/shadow cycle with fail-closed mode guard.
+
+    If *analysis_result* is provided (e.g. from the D-119 alert bridge), it is
+    used directly instead of building a synthetic trigger analysis.  This allows
+    real LLM-generated analyses to drive paper-trade fills.
+
+    ``analysis_source`` (Goal 2026-06-10) is passed straight to ``run_cycle`` as
+    the caller tag. The real-analysis paper feeder sets it to ``"real_analysis"``
+    so a fully-armed three-arm override may decouple this cycle from
+    ``entry_mode=disabled`` for a PAPER fill. Default None → no decoupling.
+    """
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
     if not allowed:
         raise ValueError(reason or "trading_loop_run_once blocked")
 
-    loop = build_trading_loop(
+    # AUDIT-A2: build_trading_loop rehydrates paper state by reading the loop
+    # audit JSONL synchronously; offload so the rehydration read does not block
+    # the event loop (proportional to audit-log size). Logic is unchanged.
+    loop = await asyncio.to_thread(
+        build_trading_loop,
         mode=normalized_mode,
         provider=provider,
         loop_audit_path=loop_audit_path,
         execution_audit_path=execution_audit_path,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
+        enable_consensus=enable_consensus,
+        consensus_model=consensus_model,
     )
-    analysis = build_loop_trigger_analysis(
+    analysis = analysis_result or build_loop_trigger_analysis(
         symbol=symbol,
         analysis_profile=analysis_profile,
     )
-    return await loop.run_cycle(analysis, symbol)
+    return await loop.run_cycle(
+        analysis, symbol, analysis_source=analysis_source, execution_mode=normalized_mode
+    )
+
+
+async def run_position_monitor_once(
+    *,
+    provider: str | None = None,
+    loop_audit_path: str | Path = _AUDIT_LOG,
+    execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, object]:
+    """Build a paper-mode loop (rehydrated from audit) and run one SL/TP monitor pass.
+
+    Intended for cron invocation: fetches live prices for every open position,
+    closes any position whose SL/TP fired, returns a summary dict.
+    """
+    # AUDIT-A2: offload the synchronous build + audit-JSONL rehydration off the
+    # event loop so the position-monitor tick cannot wedge FastAPI as the audit
+    # log grows (esp. on the Pi's USB-SSD). Logic unchanged.
+    loop = await asyncio.to_thread(
+        build_trading_loop,
+        mode=ExecutionMode.PAPER,
+        provider=provider,
+        loop_audit_path=loop_audit_path,
+        execution_audit_path=execution_audit_path,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+        enable_consensus=False,
+    )
+    return await loop.run_position_monitor()
 
 
 def load_trading_loop_cycles(audit_path: str | Path = _AUDIT_LOG) -> list[dict[str, object]]:
@@ -577,16 +2098,19 @@ def load_trading_loop_cycles(audit_path: str | Path = _AUDIT_LOG) -> list[dict[s
         return []
 
     records: list[dict[str, object]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            records.append(payload)
+    # KAI-01: stream the (~27 MB) trading-loop audit line-by-line instead of
+    # ``read_text().splitlines()`` to avoid the full-file RAM peak on the Pi.
+    with path.open(encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                records.append(payload)
     return records
 
 
@@ -612,6 +2136,57 @@ def build_recent_cycles_summary(
         status_counts=status_counts,
         recent_cycles=recent,
         last_n=normalized_last_n,
+        audit_path=str(Path(audit_path)),
+    )
+
+
+def build_priority_gate_summary(
+    *,
+    audit_path: str | Path = _AUDIT_LOG,
+    window_hours: int = 24,
+) -> PriorityGateSummary:
+    """D-184: summarize priority-gate activity over a rolling window."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.settings import get_settings
+
+    now = datetime.now(UTC)
+    window_start = now - timedelta(hours=max(1, window_hours))
+    window_start_iso = window_start.isoformat()
+
+    threshold = get_settings().execution.paper_min_priority
+    gate_active = threshold > 1
+
+    records = load_trading_loop_cycles(audit_path)
+    total = 0
+    priority_rejected = 0
+    other_rejected = 0
+    completed = 0
+    for record in records:
+        started_raw = record.get("started_at")
+        if not isinstance(started_raw, str) or started_raw < window_start_iso:
+            continue
+        total += 1
+        status = str(record.get("status", "unknown"))
+        if status == CycleStatus.PRIORITY_REJECTED.value:
+            priority_rejected += 1
+        elif status == CycleStatus.COMPLETED.value:
+            completed += 1
+        elif status.endswith("_rejected") or status in {
+            CycleStatus.ORDER_FAILED.value,
+            CycleStatus.ERROR.value,
+        }:
+            other_rejected += 1
+
+    return PriorityGateSummary(
+        threshold=threshold,
+        gate_active=gate_active,
+        window_hours=window_hours,
+        total_cycles=total,
+        priority_rejected=priority_rejected,
+        other_rejected=other_rejected,
+        completed=completed,
+        window_start_utc=window_start_iso,
         audit_path=str(Path(audit_path)),
     )
 
@@ -656,3 +2231,47 @@ def build_loop_status_summary(
         last_cycle_completed_at=last_cycle_completed_at,
         audit_path=str(Path(audit_path)),
     )
+
+
+async def run_promoted_signals_once(
+    *,
+    provider: str | None = None,
+    loop_audit_path: str | Path = _AUDIT_LOG,
+    execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
+) -> list[LoopCycle]:
+    """Load pending promoted TradingView signals and run each through the paper loop."""
+    from app.signals.tv_consumer import load_pending_promoted, mark_consumed
+
+    candidates = load_pending_promoted()
+    if not candidates:
+        logger.info("[TV-4] No pending promoted signals to process.")
+        return []
+
+    loop = build_trading_loop(
+        mode=ExecutionMode.PAPER,
+        provider=provider,
+        loop_audit_path=loop_audit_path,
+        execution_audit_path=execution_audit_path,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+        enable_consensus=enable_consensus,
+        consensus_model=consensus_model,
+    )
+
+    cycles: list[LoopCycle] = []
+    for candidate in candidates:
+        cycle = await loop.run_promoted_signal(candidate)
+        mark_consumed(candidate.decision_id)
+        cycles.append(cycle)
+        logger.info(
+            "[TV-4] Processed %s → %s (%s)",
+            candidate.decision_id,
+            cycle.status.value,
+            _normalize_tv_symbol(candidate.symbol),
+        )
+
+    return cycles

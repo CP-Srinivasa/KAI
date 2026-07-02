@@ -153,10 +153,10 @@
         "max_risk_per_trade_pct": { "type": "number", "minimum": 0.0, "maximum": 0.25 },
         "max_daily_loss_pct": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
         "max_total_drawdown_pct": { "type": "number", "minimum": 0.0, "maximum": 5.0 },
-        "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 6 },
         "max_sector_or_theme_exposure_pct": { "type": "number", "minimum": 0.0 },
         "max_correlated_exposure_pct": { "type": "number", "minimum": 0.0 },
-        "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 10.0 },
         "require_stop_loss": { "type": "boolean", "const": true },
         "allow_averaging_down": { "type": "boolean", "const": false },
         "allow_martingale": { "type": "boolean", "const": false },
@@ -297,6 +297,22 @@
         "sandbox_required_for_code_execution": { "type": "boolean", "const": true },
         "dependency_scan_required": { "type": "boolean", "const": true },
         "secret_scan_required": { "type": "boolean", "const": true }
+      }
+    },
+    "security_enforced": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_auth_required",
+        "RBAC_enabled",
+        "audit_log_immutable",
+        "encryption_at_rest_required"
+      ],
+      "properties": {
+        "api_auth_required": { "type": "boolean" },
+        "RBAC_enabled": { "type": "boolean" },
+        "audit_log_immutable": { "type": "boolean" },
+        "encryption_at_rest_required": { "type": "boolean" }
       }
     },
     "messaging_ux": {

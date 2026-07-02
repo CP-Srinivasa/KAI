@@ -16,7 +16,7 @@ Covers:
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -45,17 +45,21 @@ def _mock_price_response(
     price: float = 65000.0,
     volume: float = 1e9,
     change: float = 2.5,
-    last_updated: int | None = None,
-) -> dict:
-    updated = last_updated or int(time.time())
-    return {
-        cg_id: {
-            "usd": price,
-            "usd_24h_vol": volume,
-            "usd_24h_change": change,
-            "last_updated_at": updated,
+    change_7d: float = 4.0,
+    last_updated: str | None = None,
+) -> list[dict]:
+    """Mock /coins/markets response (D-120: includes 7d change)."""
+    updated = last_updated or datetime.now(UTC).isoformat()
+    return [
+        {
+            "id": cg_id,
+            "current_price": price,
+            "total_volume": volume,
+            "price_change_percentage_24h": change,
+            "price_change_percentage_7d_in_currency": change_7d,
+            "last_updated": updated,
         }
-    }
+    ]
 
 
 def _mock_ohlc_response() -> list:
@@ -65,6 +69,23 @@ def _mock_ohlc_response() -> list:
         [now_ms - 3600_000, 65000, 66000, 64800, 65500],
         [now_ms, 65500, 66200, 65200, 66000],
     ]
+
+
+def _mock_range_response(
+    *,
+    start_ts: datetime,
+    end_ts: datetime,
+    start_price: float = 100.0,
+    end_price: float = 110.0,
+) -> dict[str, list[list[float]]]:
+    start_ms = int(start_ts.timestamp() * 1000)
+    end_ms = int(end_ts.timestamp() * 1000)
+    return {
+        "prices": [
+            [start_ms, start_price],
+            [end_ms, end_price],
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +230,73 @@ async def test_get_ohlcv_unknown_symbol() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_price_change_between
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_success() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+
+    with patch.object(
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=_mock_range_response(start_ts=start, end_ts=end),
+    ):
+        move = await adapter.get_price_change_between(
+            "BTC/USDT",
+            start_utc=start,
+            end_utc=end,
+        )
+
+    assert move is not None
+    p0, p1, pct = move
+    assert p0 == 100.0
+    assert p1 == 110.0
+    assert pct == 10.0
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_unknown_symbol() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+    move = await adapter.get_price_change_between(
+        "UNKNOWN/PAIR",
+        start_utc=start,
+        end_utc=end,
+    )
+    assert move is None
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_returns_none_when_points_too_far() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+    far_start = datetime(2026, 3, 18, 12, 0, tzinfo=UTC)
+    far_end = datetime(2026, 3, 23, 12, 0, tzinfo=UTC)
+
+    with patch.object(
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=_mock_range_response(start_ts=far_start, end_ts=far_end),
+    ):
+        move = await adapter.get_price_change_between(
+            "BTC/USDT",
+            start_utc=start,
+            end_utc=end,
+            max_point_gap_seconds=300,
+        )
+
+    assert move is None
+
+
+# ---------------------------------------------------------------------------
 # get_market_data_point + staleness
 # ---------------------------------------------------------------------------
 
@@ -233,7 +321,7 @@ async def test_market_data_point_fresh() -> None:
 @pytest.mark.asyncio
 async def test_market_data_point_stale() -> None:
     adapter = CoinGeckoAdapter(freshness_threshold_seconds=10.0)
-    old_ts = int(time.time()) - 300  # 5 minutes old
+    old_ts = (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
     with patch.object(
         adapter,
         "_get_json",
@@ -330,6 +418,116 @@ def test_no_write_methods() -> None:
     ]
     for name in forbidden:
         assert not hasattr(adapter, name), f"CoinGeckoAdapter has forbidden method: {name}"
+
+
+# ---------------------------------------------------------------------------
+# _get_json 429 retry (D-138)
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    def __init__(
+        self,
+        status_code: int,
+        payload: object | None = None,
+        retry_after: str | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._payload = payload or []
+        self.headers: dict[str, str] = {}
+        if retry_after is not None:
+            self.headers["Retry-After"] = retry_after
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _StubClient:
+    """Minimal async-context-manager client returning queued responses."""
+
+    def __init__(self, responses: list[_StubResponse]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def __aenter__(self) -> _StubClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def get(
+        self,
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+    ) -> _StubResponse:
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_get_json_retries_on_429_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """429 on attempt 1, 200 on attempt 2 → returns payload."""
+    adapter = _adapter()
+    client = _StubClient(
+        [
+            _StubResponse(429, retry_after="0"),  # retry immediately
+            _StubResponse(200, payload={"ok": True}),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+    # Zero the real sleep so test is fast.
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.asyncio.sleep",
+        AsyncMock(),
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_get_json_exhausts_retries_on_persistent_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All 4 attempts return 429 → returns None and sets error."""
+    adapter = _adapter()
+    client = _StubClient([_StubResponse(429, retry_after="0") for _ in range(4)])
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.asyncio.sleep",
+        AsyncMock(),
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result is None
+    assert client.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_get_json_other_http_error_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """500 → single call, no retry."""
+    adapter = _adapter()
+    client = _StubClient([_StubResponse(500)])
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result is None
+    assert client.calls == 1
 
 
 # ---------------------------------------------------------------------------

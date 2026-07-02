@@ -132,7 +132,12 @@ class _IdempotencyRecord:
 class TradingLoopRunOnceRequest(BaseModel):
     symbol: str = "BTC/USDT"
     mode: str = "paper"
-    provider: str = "mock"
+    # No implicit default: a missing provider used to fall through to "mock",
+    # which silently wrote synthetic-price paper trades into the real audit and
+    # contaminated the quality metrics (same failure class as the SKYAI
+    # mock-pricing freeze). Run-once must now name its provider explicitly;
+    # _validate_provider() rejects an absent provider with 400.
+    provider: str | None = None
     analysis_profile: str = "conservative"
     loop_audit_path: str = "artifacts/trading_loop_audit.jsonl"
     execution_audit_path: str = "artifacts/paper_execution_audit.jsonl"
@@ -302,6 +307,23 @@ def _validate_idempotency_key(request: Request, key: str | None) -> str:
     return candidate
 
 
+def _validate_provider(request: Request, provider: str | None) -> str:
+    """Reject guarded run-once requests that omit an explicit market-data provider.
+
+    Defense-in-depth against silent mock-price contamination: a missing provider
+    fails loud with 400 instead of falling back to synthetic "mock" prices.
+    """
+    candidate = (provider or "").strip()
+    if not candidate:
+        raise _operator_http_error(
+            request,
+            status_code=400,
+            code="missing_provider",
+            message="provider is required for guarded run-once (no implicit mock fallback)",
+        )
+    return candidate
+
+
 def _request_fingerprint(payload: TradingLoopRunOnceRequest) -> str:
     canonical = json.dumps(
         payload.model_dump(mode="json"),
@@ -393,9 +415,17 @@ def _reset_operator_guard_state_for_tests() -> None:
 def require_operator_api_token(
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    cf_access_email: Annotated[
+        str | None, Header(alias="Cf-Access-Authenticated-User-Email")
+    ] = None,
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> None:
-    """Require a configured APP_API_KEY and a matching Bearer token."""
+    """Require either a CF-Access identity (allowlisted email) or a Bearer APP_API_KEY.
+
+    See ``app.security.auth`` for the global middleware that applies the same
+    two-mechanism check. Per-route enforcement here mirrors it so operator
+    endpoints stay independently fail-closed.
+    """
     api_key = (settings.api_key or "").strip()
     if not api_key:
         raise _operator_http_error(
@@ -405,6 +435,17 @@ def require_operator_api_token(
             message="Operator API is disabled until APP_API_KEY is configured (fail-closed)",
         )
 
+    # (1) Cloudflare Access — trusted email forwarded by the tunnel.
+    cf_allowed = {
+        e.strip().lower() for e in (settings.cf_access_allowed_emails or "").split(",") if e.strip()
+    }
+    if cf_allowed and cf_access_email:
+        email = cf_access_email.strip().lower()
+        if email in cf_allowed:
+            request.state.operator_subject = f"cf_{email}"
+            return
+
+    # (2) Bearer token — local scripts / cron / freshness probe.
     if not authorization:
         raise _operator_http_error(
             request,
@@ -446,36 +487,44 @@ router = APIRouter(
 )
 
 
+# Canonical read-surface aliases (W-002): the six GET endpoints below all expose
+# the SAME canonical daily-operator-summary payload via get_daily_operator_summary.
+# This is deliberate (and enforced by test_operator_read_endpoints_passthrough_
+# canonical_payloads), NOT distinct data sources — the semantic path names are
+# ergonomic aliases for operator/MCP/CLI consumers. Per-purpose loaders
+# (review-journal / resolution-summary) were documented historically but never
+# implemented; until a real distinct aggregator exists these stay honest aliases.
+# The dashboard only consumes /status, /readiness, /decision-pack.
 @router.get("/status")
 async def get_operator_status(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator status surface (read-only readiness projection)."""
+    """Canonical operator read surface (read-only). Shared daily-summary payload."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="status_unavailable",
-        loader=mcp_server.get_operational_readiness_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
 @router.get("/readiness")
 async def get_operator_readiness(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator readiness surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above)."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="readiness_unavailable",
-        loader=mcp_server.get_operational_readiness_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
 @router.get("/decision-pack")
 async def get_operator_decision_pack(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator decision-pack surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above)."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="decision_pack_unavailable",
-        loader=mcp_server.get_decision_pack_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -483,40 +532,13 @@ async def get_operator_decision_pack(request: Request, response: Response) -> di
 async def get_operator_daily_summary(
     request: Request,
     response: Response,
-    handoff_path: str | None = None,
-    state_path: str = "artifacts/active_route_profile.json",
-    alert_audit_dir: str = "artifacts",
-    artifacts_dir: str = "artifacts",
-    stale_after_hours: int = 24,
-    stale_after_days: float = 30.0,
-    loop_audit_path: str = "artifacts/trading_loop_audit.jsonl",
-    loop_last_n: int = 50,
-    portfolio_audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    market_data_provider: str = "coingecko",
-    freshness_threshold_seconds: float = 120.0,
-    timeout_seconds: int = 10,
-    review_journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
-    """Canonical operator daily summary surface (read-only)."""
+    """Canonical daily operator summary (read-only). The other read paths alias this."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="daily_summary_unavailable",
-        loader=lambda: mcp_server.get_daily_operator_summary(
-            handoff_path=handoff_path,
-            state_path=state_path,
-            alert_audit_dir=alert_audit_dir,
-            artifacts_dir=artifacts_dir,
-            stale_after_hours=stale_after_hours,
-            retention_stale_after_days=stale_after_days,
-            loop_audit_path=loop_audit_path,
-            loop_last_n=loop_last_n,
-            portfolio_audit_path=portfolio_audit_path,
-            market_data_provider=market_data_provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-            review_journal_path=review_journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -526,14 +548,17 @@ async def get_operator_review_journal(
     response: Response,
     journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
-    """Canonical operator review-journal surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above).
+
+    NOTE: journal_path is currently accepted for backward-compat but ignored —
+    the shared loader does not read it. A distinct review-journal aggregator is
+    not implemented yet.
+    """
     return await _resolve_read_payload(
         request,
         response,
         error_code="review_journal_unavailable",
-        loader=lambda: mcp_server.get_review_journal_summary(
-            journal_path=journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -543,14 +568,17 @@ async def get_operator_resolution_summary(
     response: Response,
     journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
-    """Canonical operator resolution summary surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above).
+
+    NOTE: journal_path is currently accepted for backward-compat but ignored —
+    the shared loader does not read it. A distinct resolution aggregator is not
+    implemented yet.
+    """
     return await _resolve_read_payload(
         request,
         response,
         error_code="resolution_summary_unavailable",
-        loader=lambda: mcp_server.get_resolution_summary(
-            journal_path=journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -576,18 +604,22 @@ async def get_operator_portfolio_snapshot(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    provider: str = "coingecko",
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> dict[str, object]:
     """Canonical read-only paper portfolio snapshot."""
+    # F-05: default to the system provider (``fallback`` chain), not a hardcoded
+    # ``coingecko`` — coingecko-only reads left exotic/young symbols valueless
+    # (see settings.market_data_provider). The query param still overrides.
+    resolved_provider = provider or get_settings().market_data_provider
     return await _resolve_read_payload(
         request,
         response,
         error_code="portfolio_snapshot_unavailable",
         loader=lambda: mcp_server.get_paper_portfolio_snapshot(
             audit_path=audit_path,
-            provider=provider,
+            provider=resolved_provider,
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
         ),
@@ -599,22 +631,332 @@ async def get_operator_exposure_summary(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    provider: str = "coingecko",
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> dict[str, object]:
     """Canonical read-only paper exposure summary."""
+    # F-05: default to the system provider (``fallback`` chain), not coingecko.
+    resolved_provider = provider or get_settings().market_data_provider
     return await _resolve_read_payload(
         request,
         response,
         error_code="exposure_summary_unavailable",
         loader=lambda: mcp_server.get_paper_exposure_summary(
             audit_path=audit_path,
-            provider=provider,
+            provider=resolved_provider,
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
         ),
     )
+
+
+@router.get("/signals/{signal_id}")
+async def get_operator_signal_detail(
+    request: Request,
+    response: Response,
+    signal_id: str,
+    journal_path: str = "artifacts/decision_journal.jsonl",
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+) -> dict[str, object]:
+    """Read-only signal detail by decision_id. 404 when unknown, 503 on a
+    malformed journal. Never trades, never changes execution state."""
+    from app.decisions.signal_detail import build_signal_detail
+
+    _set_context_headers(response, request)
+    try:
+        detail = build_signal_detail(signal_id, journal_path=journal_path, audit_path=audit_path)
+    except Exception as exc:
+        raise _operator_http_error(
+            request,
+            status_code=503,
+            code="signal_detail_unavailable",
+            message=f"Signal detail read surface unavailable: {exc.__class__.__name__}",
+        ) from exc
+    if detail is None:
+        raise _operator_http_error(
+            request,
+            status_code=404,
+            code="signal_not_found",
+            message=f"No signal with decision_id {signal_id!r}",
+        )
+    return detail
+
+
+@router.get("/signals/{signal_id}/explain")
+async def get_operator_signal_explain(
+    request: Request,
+    response: Response,
+    signal_id: str,
+    journal_path: str = "artifacts/decision_journal.jsonl",
+) -> dict[str, object]:
+    """Read-only decision-path / explainability view by decision_id."""
+    from app.decisions.signal_detail import build_signal_explain
+
+    _set_context_headers(response, request)
+    try:
+        detail = build_signal_explain(signal_id, journal_path=journal_path)
+    except Exception as exc:
+        raise _operator_http_error(
+            request,
+            status_code=503,
+            code="signal_explain_unavailable",
+            message=f"Signal explain read surface unavailable: {exc.__class__.__name__}",
+        ) from exc
+    if detail is None:
+        raise _operator_http_error(
+            request,
+            status_code=404,
+            code="signal_not_found",
+            message=f"No signal with decision_id {signal_id!r}",
+        )
+    return detail
+
+
+@router.get("/portfolio/realized-by-asset")
+async def get_realized_by_asset(
+    request: Request,
+    response: Response,
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    source_filter: str | None = None,
+    source_prefix: str | None = None,
+) -> dict[str, object]:
+    """Per-asset realized PnL from paper_execution_audit.jsonl.
+
+    2026-05-25 Forensik-Antwort: Diese Route widerlegt die Annahme "Vor
+    Live-Mode keine sinnvolle Visualisierung" und entkoppelt die UI von
+    "Phase 2 — nach Backtest-Endpoint". Reine Aggregation über
+    position_closed + position_partial_closed Events. KEIN Exchange-Call,
+    KEIN Live-Trading, KEIN Mark-to-Market, read-only.
+
+    2026-06-04 RC-3 (DALI Premium-Truth-Sprint): ``source_filter`` /
+    ``source_prefix`` werden jetzt durchgereicht. Das Dashboard hat den
+    Query-Param zwar geschickt, der Router hat ihn aber verworfen — die
+    Portfolio-Tabs (Premium Telegram / Autonomous / …) zeigten daher ALLE den
+    identischen, ungefilterten Gesamtbestand. Das war die "Premium-Erfolg"-
+    Illusion: die "Premium Telegram"-Tab listete auch autonome Trades.
+
+    Schema: siehe app.execution.portfolio_read.compute_realized_by_asset.
+    """
+    from app.execution.portfolio_read import compute_realized_by_asset
+
+    _set_context_headers(response, request)
+    return compute_realized_by_asset(
+        Path(audit_path),
+        source_filter=source_filter,
+        source_prefix=source_prefix,
+    )
+
+
+def _realized_summary_block(by_asset_summary: dict[str, object]) -> dict[str, object]:
+    """Extract realized_summary fields from compute_realized_by_asset output.
+
+    mypy-safe: by_asset_summary is dict[str, object] (untyped JSON shape), so
+    we narrow ``totals`` via isinstance and treat missing/non-dict as zero.
+    """
+    totals_raw = by_asset_summary.get("totals")
+    totals: dict[str, object] = totals_raw if isinstance(totals_raw, dict) else {}
+    return {
+        "total_realized_pnl_usd": totals.get("realized_pnl_usd", 0.0),
+        "closed_trades": totals.get("closed_trades", 0),
+        "assets_count": totals.get("assets_count", 0),
+        "last_close_utc": by_asset_summary.get("audit_last_event_utc"),
+    }
+
+
+@router.get("/paper-pipeline-status")
+async def get_paper_pipeline_status(
+    request: Request,
+    response: Response,
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    loop_audit_path: str = "artifacts/trading_loop_audit.jsonl",
+    blocked_alerts_path: str = "artifacts/blocked_alerts.jsonl",
+    cron_log_path: str = "artifacts/paper_trading_cron.log",
+    bridge_orders_path: str = "artifacts/bridge_pending_orders.jsonl",
+) -> dict[str, object]:
+    """Operator-Diagnose: ist die Paper-Pipeline lebendig oder eingefroren?
+
+    2026-05-25 Forensik-Antwort: Operator-Eindruck "Equity bewegt sich nicht"
+    wird durch fünf orthogonale Indikatoren erklärt — letzter Fill, letzter
+    Close, Cron-Heartbeat, Bridge-Status, Eligibility-Block-Reasons in den
+    letzten 24h. Keine Behauptung "OK"/"down", nur transparente Zahlen.
+
+    KEINE Exchange-Calls, KEINE Live-Daten.
+    """
+    from app.execution.portfolio_read import compute_realized_by_asset
+
+    _set_context_headers(response, request)
+
+    audit = Path(audit_path)
+    loop_audit = Path(loop_audit_path)
+    blocked = Path(blocked_alerts_path)
+    cron = Path(cron_log_path)
+    bridge = Path(bridge_orders_path)
+    now = datetime.now(UTC)
+
+    def _age_seconds(p: Path) -> float | None:
+        if not p.exists():
+            return None
+        return now.timestamp() - p.stat().st_mtime
+
+    def _last_event_ts(p: Path, *, type_filter: set[str] | None = None) -> str | None:
+        if not p.exists():
+            return None
+        last: str | None = None
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                if type_filter is not None and d.get("event_type") not in type_filter:
+                    continue
+                ts = d.get("timestamp_utc") or d.get("created_at") or d.get("filled_at")
+                if isinstance(ts, str) and ts and (last is None or ts > last):
+                    last = ts
+        except OSError:
+            return None
+        return last
+
+    # Block-Reason-Counter aus blocked_alerts.jsonl (letzte 24h).
+    cutoff = now.timestamp() - 24 * 3600
+    block_reasons: dict[str, int] = {}
+    if blocked.exists():
+        try:
+            for line in blocked.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                ts = d.get("blocked_at", "")
+                if not isinstance(ts, str):
+                    continue
+                try:
+                    ts_clean = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
+                    ts_dt = datetime.fromisoformat(ts_clean)
+                except ValueError:
+                    continue
+                if ts_dt.timestamp() < cutoff:
+                    continue
+                reason = d.get("block_reason", "unknown")
+                if isinstance(reason, str):
+                    block_reasons[reason] = block_reasons.get(reason, 0) + 1
+        except OSError:
+            pass
+
+    # Cron-Log: priority_rejected vs completed in den letzten 1000 Zeilen.
+    cron_recent_priority_rejected = 0
+    cron_recent_completed = 0
+    cron_recent_total = 0
+    if cron.exists():
+        try:
+            lines = cron.read_text(encoding="utf-8").splitlines()[-1000:]
+            for line in lines:
+                if "status=priority_rejected" in line:
+                    cron_recent_priority_rejected += 1
+                    cron_recent_total += 1
+                elif "status=completed" in line:
+                    cron_recent_completed += 1
+                    cron_recent_total += 1
+                elif "status=" in line:
+                    cron_recent_total += 1
+        except OSError:
+            pass
+
+    # Replay-Health: schickt skipped_events transparent durch.
+    try:
+        from app.execution.audit_replay import replay_paper_audit
+
+        replay = replay_paper_audit(audit)
+        replay_payload = {
+            "available": replay.available,
+            "error": replay.error,
+            "cash_usd": round(replay.cash_usd, 4),
+            "open_positions": sorted(replay.positions.keys()),
+            "open_positions_count": len(replay.positions),
+            "skipped_events": [{"line": ln, "reason": r} for ln, r in replay.skipped_events],
+        }
+    except Exception as exc:  # noqa: BLE001
+        replay_payload = {
+            "available": False,
+            "error": f"replay_exception:{exc.__class__.__name__}",
+        }
+
+    # Realized-by-asset Summary (totals only — full details an separater Route).
+    by_asset_summary = compute_realized_by_asset(audit)
+
+    age_audit = _age_seconds(audit)
+    age_loop = _age_seconds(loop_audit)
+    age_cron = _age_seconds(cron)
+    age_bridge = _age_seconds(bridge)
+
+    last_fill = _last_event_ts(audit, type_filter={"order_filled"})
+    last_close = _last_event_ts(audit, type_filter={"position_closed", "position_partial_closed"})
+    last_order = _last_event_ts(audit, type_filter={"order_created"})
+
+    return {
+        "as_of_utc": now.isoformat(),
+        "audit_files": {
+            "paper_execution_audit": {
+                "path": str(audit),
+                "exists": audit.exists(),
+                "age_seconds": age_audit,
+                "last_order_created_utc": last_order,
+                "last_order_filled_utc": last_fill,
+                "last_position_close_utc": last_close,
+            },
+            "trading_loop_audit": {
+                "path": str(loop_audit),
+                "exists": loop_audit.exists(),
+                "age_seconds": age_loop,
+            },
+            "paper_trading_cron_log": {
+                "path": str(cron),
+                "exists": cron.exists(),
+                "age_seconds": age_cron,
+            },
+            "bridge_pending_orders": {
+                "path": str(bridge),
+                "exists": bridge.exists(),
+                "age_seconds": age_bridge,
+            },
+        },
+        "replay_health": replay_payload,
+        "cron_recent_1000": {
+            "total_status_rows": cron_recent_total,
+            "priority_rejected": cron_recent_priority_rejected,
+            "completed": cron_recent_completed,
+            "priority_rejected_share_pct": round(
+                cron_recent_priority_rejected / cron_recent_total * 100.0, 2
+            )
+            if cron_recent_total > 0
+            else None,
+        },
+        "block_reasons_24h": block_reasons,
+        "block_total_24h": sum(block_reasons.values()),
+        "realized_summary": _realized_summary_block(by_asset_summary),
+        "freeze_indicators": {
+            "paper_audit_stale_seconds": age_audit,
+            "no_fills_since_seconds": (
+                (now - datetime.fromisoformat(last_fill.replace("Z", "+00:00"))).total_seconds()
+                if isinstance(last_fill, str) and last_fill
+                else None
+            ),
+            "all_cron_priority_rejected": (
+                cron_recent_total > 0 and cron_recent_priority_rejected == cron_recent_total
+            ),
+        },
+    }
 
 
 @router.get("/trading-loop/status")
@@ -668,6 +1010,7 @@ async def post_operator_trading_loop_run_once(
 
     try:
         safe_idempotency_key = _validate_idempotency_key(request, idempotency_key)
+        checked_provider = _validate_provider(request, payload.provider)
         fingerprint = _request_fingerprint(payload)
 
         replay_payload = _load_idempotent_replay(
@@ -700,7 +1043,7 @@ async def post_operator_trading_loop_run_once(
         result = await mcp_server.run_trading_loop_once(
             symbol=payload.symbol,
             mode=payload.mode,
-            provider=payload.provider,
+            provider=checked_provider,
             analysis_profile=payload.analysis_profile,
             loop_audit_path=payload.loop_audit_path,
             execution_audit_path=payload.execution_audit_path,

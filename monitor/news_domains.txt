@@ -21,3 +21,5 @@ bankless.com|0.75|crypto_defi_news|en
 thedefiant.io|0.74|defi_news|en
 coinbureau.com|0.70|crypto_review|en
 a16zcrypto.com|0.82|crypto_research|en
+cryptobriefing.com|0.78|crypto_news|en
+cryptoslate.com|0.75|crypto_news|en

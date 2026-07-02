@@ -13,6 +13,7 @@ from app.risk.models import (
     _new_check_id,
     _now_utc,
 )
+from app.risk.reason_codes import map_violations_to_codes
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class RiskEngine:
     def is_halted(self) -> bool:
         """True when system is paused or kill switch is active."""
         return self._kill_switch_active or self._paused
+
+    @property
+    def limits(self) -> RiskLimits:
+        """Read-only access to the active risk limits (for audit/observability)."""
+        return self._limits
 
     def pause(self) -> None:
         """Operator-triggered pause. No new orders allowed."""
@@ -116,10 +122,19 @@ class RiskEngine:
         stop_loss_price: float | None,
         current_open_positions: int,
         is_averaging_down: bool = False,
+        entry_price: float | None = None,
+        take_profit_price: float | None = None,
+        take_profit_targets: list[float] | tuple[float, ...] | None = None,
+        leverage: float | None = None,
+        sma: float | None = None,
     ) -> RiskCheckResult:
         """
         Pre-order risk gate. Must return approved=True before any order is sent.
         All checks are evaluated; violations accumulate.
+
+        ``take_profit_targets`` (full tier list) and ``leverage`` feed the
+        reward/risk + risk-budget gates (Gate 10). They are optional and the
+        gates are default-off, so omitting them is backward compatible.
         """
         check_id = _new_check_id()
         violations: list[str] = []
@@ -151,13 +166,77 @@ class RiskEngine:
         if is_averaging_down and not self._limits.allow_averaging_down:
             violations.append("averaging_down_not_allowed")
 
-        if self._limits.allow_martingale is False:
-            # Trust the caller to flag this; we enforce the limit setting
-            pass
+        # AUDIT-A8/F-4: previously a no-op ("trust the caller"). An averaging-down
+        # order — adding to an existing (typically losing) position — is exactly
+        # the mechanism a martingale uses. We cannot verify *size escalation*
+        # in-engine without order-history (proposed vs. prior fill size), which
+        # would require plumbing through every caller; that fuller detection is
+        # tracked as a follow-up. Until then we enforce fail-safe: when martingale
+        # is disallowed, an averaging-down add is blocked rather than silently
+        # permitted. (Default config disallows averaging_down too, so this only
+        # changes the allow_averaging_down=True + allow_martingale=False case,
+        # which is precisely where the operator wants the stricter policy to bite.)
+        if self._limits.allow_martingale is False and is_averaging_down:
+            if "martingale_not_allowed" not in violations:
+                violations.append("martingale_not_allowed")
 
-        # Gate 3: Stop loss required
-        if self._limits.require_stop_loss and stop_loss_price is None:
+        # Gate 3: Stop loss required (Hard-Gate, no longer configurable)
+        if stop_loss_price is None or stop_loss_price <= 0:
             violations.append("stop_loss_required_but_missing")
+
+        # Gate 3b: SL/TP geometry — prevent inverted stops (long with sl>=entry,
+        # short with sl<=entry) and mirror-inverted take-profits. Triggered only
+        # when entry_price is provided AND the respective level is set; skips
+        # validation when the caller omits entry_price (backwards compatible).
+        normalized_side = side.lower()
+        if entry_price is not None and entry_price > 0:
+            if normalized_side == "buy":
+                if stop_loss_price is not None and stop_loss_price >= entry_price:
+                    violations.append(
+                        f"sl_geometry_invalid:long_sl_at_or_above_entry|"
+                        f"entry={entry_price}|sl={stop_loss_price}"
+                    )
+                if take_profit_price is not None and take_profit_price <= entry_price:
+                    violations.append(
+                        f"tp_geometry_invalid:long_tp_at_or_below_entry|"
+                        f"entry={entry_price}|tp={take_profit_price}"
+                    )
+            elif normalized_side == "sell":
+                if stop_loss_price is not None and stop_loss_price <= entry_price:
+                    violations.append(
+                        f"sl_geometry_invalid:short_sl_at_or_below_entry|"
+                        f"entry={entry_price}|sl={stop_loss_price}"
+                    )
+                if take_profit_price is not None and take_profit_price >= entry_price:
+                    violations.append(
+                        f"tp_geometry_invalid:short_tp_at_or_above_entry|"
+                        f"entry={entry_price}|tp={take_profit_price}"
+                    )
+
+        # Gate 3c (NEO-V1): cost-aware SL geometry. A stop tighter than the
+        # round-trip transaction cost cannot win — the fee alone turns the trade
+        # net-negative on the way out. Reject when the stop distance fails to
+        # clear `min_sl_cost_multiple x round_trip_fee`. Default-off
+        # (min_sl_cost_multiple <= 0) for backward compatibility. Skipped when
+        # entry_price/SL are absent or non-positive (those are caught by Gate 3 /
+        # the missing-entry contract); strict `<` so a stop exactly at the
+        # threshold is allowed.
+        if (
+            self._limits.min_sl_cost_multiple > 0
+            and entry_price is not None
+            and entry_price > 0
+            and stop_loss_price is not None
+            and stop_loss_price > 0
+        ):
+            sl_distance_pct = abs(entry_price - stop_loss_price) / entry_price * 100.0
+            min_required_pct = self._limits.min_sl_cost_multiple * self._limits.round_trip_fee_pct
+            if sl_distance_pct < min_required_pct:
+                violations.append(
+                    f"sub_cost_geometry_rejected:sl_dist={sl_distance_pct:.4g}%<"
+                    f"{min_required_pct:.4g}%"
+                    f"(k={self._limits.min_sl_cost_multiple:.4g}x"
+                    f"rt_fee={self._limits.round_trip_fee_pct:.4g}%)"
+                )
 
         # Gate 4: Signal confidence
         if signal_confidence < self._limits.min_signal_confidence:
@@ -189,6 +268,39 @@ class RiskEngine:
                 f"drawdown_limit_breached:{self._total_drawdown_pct:.2f}%>{self._limits.max_total_drawdown_pct}%"
             )
 
+        # Gate 9: Regime Filter (Anti-Fehlsignal — Cluster 3b)
+        # Reject trades that fight the prevailing trend defined by an SMA reference.
+        # Bypassed when regime_filter_enabled=False OR sma=None OR entry_price=None,
+        # so callers that don't provide regime context remain backwards compatible.
+        if self._limits.regime_filter_enabled and sma is not None and entry_price is not None:
+            side_norm = side.strip().lower()
+            if entry_price > sma and side_norm in {"sell", "short"}:
+                violations.append(f"regime_conflict:uptrend_rejects_{side_norm}")
+            elif entry_price < sma and side_norm in {"buy", "long"}:
+                violations.append(f"regime_conflict:downtrend_rejects_{side_norm}")
+
+        # Gate 10 (Sprint 2026-06-02): reward/risk + risk-budget gates.
+        # Geometry diagnostics are computed ALWAYS (even when an earlier gate
+        # already fired, e.g. max_open_positions) so the audit/UI can show WHY a
+        # signal is structurally good or bad independent of the first blocker.
+        geometry = self._signal_geometry(
+            side=normalized_side,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss_price,
+            targets=list(take_profit_targets) if take_profit_targets else None,
+            leverage=leverage,
+        )
+        # Gate 10 honours gates_mode: "off" skips, "audit" records would_reject
+        # without blocking, "enforce" merges into the blocking violations.
+        gates_mode = (self._limits.gates_mode or "audit").strip().lower()
+        rr_violations: list[str] = []
+        if gates_mode != "off":
+            self._apply_reward_risk_gates(geometry, rr_violations)
+        would_reject = bool(rr_violations)
+        would_reject_codes = map_violations_to_codes(rr_violations)
+        if gates_mode == "enforce":
+            violations.extend(rr_violations)
+
         approved = len(violations) == 0
         reason = (
             "All risk gates passed" if approved else f"Risk violations: {'; '.join(violations)}"
@@ -202,6 +314,10 @@ class RiskEngine:
             check_type="pre_order",
             reason=reason,
             violations=violations,
+            reason_codes=map_violations_to_codes(violations),
+            would_reject=would_reject,
+            would_reject_violations=rr_violations,
+            would_reject_codes=would_reject_codes,
             details={
                 "side": side,
                 "signal_confidence": signal_confidence,
@@ -209,6 +325,8 @@ class RiskEngine:
                 "open_positions": current_open_positions,
                 "daily_loss_pct": self._daily_loss_pct,
                 "drawdown_pct": self._total_drawdown_pct,
+                "signal_geometry": geometry,
+                "gates_mode": gates_mode,
             },
         )
 
@@ -225,6 +343,202 @@ class RiskEngine:
 
         return result
 
+    def _signal_geometry(
+        self,
+        *,
+        side: str,
+        entry_price: float | None,
+        stop_loss_price: float | None,
+        targets: list[float] | None,
+        leverage: float | None,
+    ) -> dict[str, object] | None:
+        """Compute reward/risk geometry for the reward-risk gates + audit.
+
+        Returns ``None`` when entry/SL are not usable (non-positive/missing) — a
+        sentinel the gate layer treats as "insufficient data". `targets` may be
+        ``None`` (some callers have only a single TP); reward fields are then
+        ``None`` but the risk-distance fields still populate.
+
+        Reward is signed in the *favourable* direction: for a long, target above
+        entry is positive; for a short, target below entry is positive. ``t1`` is
+        the first listed target (matches the channel's tier-1 convention).
+        """
+        if entry_price is None or entry_price <= 0:
+            return None
+        if stop_loss_price is None or stop_loss_price <= 0:
+            return None
+
+        lev = leverage if (leverage is not None and leverage > 0) else 1.0
+        stop_distance_pct = abs(entry_price - stop_loss_price) / entry_price * 100.0
+        leveraged_risk_pct = stop_distance_pct * lev
+
+        def _favourable_reward_pct(target: float) -> float:
+            if side == "buy":
+                return (target - entry_price) / entry_price * 100.0
+            # sell/short
+            return (entry_price - target) / entry_price * 100.0
+
+        geom: dict[str, object] = {
+            "side": side,
+            "leverage": lev,
+            "stop_distance_pct": round(stop_distance_pct, 6),
+            "leveraged_risk_pct": round(leveraged_risk_pct, 6),
+            "round_trip_fee_pct": self._limits.round_trip_fee_pct,
+        }
+
+        valid_targets = [t for t in (targets or []) if isinstance(t, (int, float)) and t > 0]
+        if valid_targets and stop_distance_pct > 0:
+            rewards = [_favourable_reward_pct(float(t)) for t in valid_targets]
+            t1_reward_pct = rewards[0]
+            avg_reward_pct = sum(rewards) / len(rewards)
+            net_edge_bps = (t1_reward_pct - self._limits.round_trip_fee_pct) * 100.0
+            geom.update(
+                {
+                    "t1_reward_pct": round(t1_reward_pct, 6),
+                    "avg_reward_pct": round(avg_reward_pct, 6),
+                    "nearest_target_distance_pct": round(t1_reward_pct, 6),
+                    "rr_t1": round(t1_reward_pct / stop_distance_pct, 6),
+                    "avg_rr": round(avg_reward_pct / stop_distance_pct, 6),
+                    "net_edge_bps_t1": round(net_edge_bps, 4),
+                    "n_targets": len(valid_targets),
+                }
+            )
+        return geom
+
+    def _apply_reward_risk_gates(
+        self, geometry: dict[str, object] | None, violations: list[str]
+    ) -> None:
+        """Append violations for the Sprint-2026-06-02 reward/risk gates.
+
+        Fail-closed: when a gate is ENABLED (threshold > 0 / not None) but the
+        required geometry is unavailable, the order is rejected with an
+        ``*:insufficient_data`` violation rather than silently passing.
+        """
+        lim = self._limits
+        gate_enabled = (
+            lim.min_rr > 0
+            or lim.min_avg_rr > 0
+            or lim.max_signal_risk_pct > 0
+            or lim.max_leveraged_risk_pct > 0
+            or lim.min_net_edge_bps is not None
+            or lim.min_target_distance_pct > 0
+        )
+        if not gate_enabled:
+            return
+
+        if geometry is None:
+            violations.append("signal_risk_too_high:insufficient_data:entry_or_sl_missing")
+            return
+
+        def _num(key: str) -> float | None:
+            v = geometry.get(key)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        rr_t1 = _num("rr_t1")
+        avg_rr = _num("avg_rr")
+        stop_distance_pct = _num("stop_distance_pct")
+        leveraged_risk_pct = _num("leveraged_risk_pct")
+        net_edge_bps = _num("net_edge_bps_t1")
+        nearest_target_pct = _num("nearest_target_distance_pct")
+
+        # Reward/risk floors (need targets).
+        if lim.min_rr > 0:
+            if rr_t1 is None:
+                violations.append("rr_too_low:insufficient_data:no_targets")
+            elif rr_t1 < lim.min_rr:
+                violations.append(f"rr_too_low:{rr_t1:.4g}<{lim.min_rr:.4g}")
+        if lim.min_avg_rr > 0:
+            if avg_rr is None:
+                violations.append("avg_rr_too_low:insufficient_data:no_targets")
+            elif avg_rr < lim.min_avg_rr:
+                violations.append(f"avg_rr_too_low:{avg_rr:.4g}<{lim.min_avg_rr:.4g}")
+
+        # Risk-budget ceilings (need stop distance — always present when geometry
+        # is not None).
+        if lim.max_signal_risk_pct > 0 and stop_distance_pct is not None:
+            if stop_distance_pct > lim.max_signal_risk_pct:
+                violations.append(
+                    f"signal_risk_too_high:{stop_distance_pct:.4g}%>{lim.max_signal_risk_pct:.4g}%"
+                )
+        if lim.max_leveraged_risk_pct > 0 and leveraged_risk_pct is not None:
+            if leveraged_risk_pct > lim.max_leveraged_risk_pct:
+                violations.append(
+                    f"leveraged_risk_too_high:{leveraged_risk_pct:.4g}%"
+                    f">{lim.max_leveraged_risk_pct:.4g}%"
+                )
+
+        # Net edge after fees (need targets).
+        if lim.min_net_edge_bps is not None:
+            if net_edge_bps is None:
+                violations.append("net_edge_too_low:insufficient_data:no_targets")
+            elif net_edge_bps < lim.min_net_edge_bps:
+                violations.append(
+                    f"net_edge_too_low:{net_edge_bps:.4g}bps<{lim.min_net_edge_bps:.4g}bps"
+                )
+
+        # Minimum nearest-target distance (need targets).
+        if lim.min_target_distance_pct > 0:
+            if nearest_target_pct is None:
+                violations.append("target_too_close:insufficient_data:no_targets")
+            elif nearest_target_pct < lim.min_target_distance_pct:
+                violations.append(
+                    f"target_too_close:{nearest_target_pct:.4g}%<{lim.min_target_distance_pct:.4g}%"
+                )
+
+    def calculate_risk_geometry(
+        self,
+        *,
+        entry_price: float,
+        direction: str,
+        atr: float | None,
+    ) -> tuple[float | None, float | None]:
+        """
+        Dynamically calculate stop-loss and take-profit bounds based on ATR.
+        Returns (stop_loss_price, take_profit_price).
+        If atr is None, returns (None, None).
+        """
+        if atr is None or atr <= 0 or entry_price <= 0:
+            return None, None
+
+        direction_normalized = direction.strip().lower()
+
+        sl_distance = atr * self._limits.atr_multiplier
+        tp_distance = atr * self._limits.tp_atr_multiplier
+
+        if direction_normalized in {"long", "buy"}:
+            stop_loss = entry_price - sl_distance
+            take_profit = entry_price + tp_distance
+        elif direction_normalized in {"short", "sell"}:
+            stop_loss = entry_price + sl_distance
+            take_profit = entry_price - tp_distance
+        else:
+            return None, None
+
+        return stop_loss, take_profit
+
+    def _regime_size_multiplier(self, symbol: str) -> float:
+        """WP-B: regime-konditionierter Sizing-Multiplier (default 1.0).
+
+        Fail-safe: bei deaktiviertem Feature, leerer Map oder Lookup-Fehler 1.0
+        (= keine Größenänderung). Der Regime-Lookup passiert NUR wenn aktiviert.
+        """
+        from app.core.settings import get_settings
+
+        rs = get_settings().risk
+        if not getattr(rs, "regime_size_enabled", False):
+            return 1.0
+        mults = getattr(rs, "regime_size_multipliers", {}) or {}
+        if not mults:
+            return 1.0
+        try:
+            from app.regime.lookup import now_utc_iso, regime_label_at
+
+            regime = regime_label_at(symbol, now_utc_iso())
+        except Exception:  # noqa: BLE001 — Sizing darf nie an einem Regime-Lookup scheitern
+            return 1.0
+        mult = mults.get(regime, 1.0)
+        return float(mult) if mult and mult > 0 else 1.0
+
     def calculate_position_size(
         self,
         *,
@@ -232,11 +546,27 @@ class RiskEngine:
         entry_price: float,
         stop_loss_price: float | None,
         equity: float,
+        leverage: float | None = None,
+        risk_allocation_pct: float | None = None,
+        apply_signal_leverage: bool = False,
     ) -> PositionSizeResult:
         """
-        Calculate safe position size based on risk limits.
-        Risk per trade = max_risk_per_trade_pct % of equity.
-        If no stop loss, use minimum position size.
+        Calculate safe position size based on risk limits or explicit channel sizing.
+        If `risk_allocation_pct` and `leverage` are provided, computes deterministically.
+        Otherwise, Risk per trade = max_risk_per_trade_pct % of equity.
+        If no stop loss, uses minimum position size.
+
+        ``apply_signal_leverage`` (A-Fix 2026-06-13, Operator): execute the signal
+        1:1 with its stated leverage so paper PnL reflects the real leveraged
+        result (premium-learning intake). The risk-based size is treated as the
+        MARGIN; the leverage multiplies it (notional = margin × leverage). The
+        per-position notional cap (``max_position_size_pct``) and the
+        signal-margin risk-cap are SKIPPED in this mode — the leverage must not
+        be silently undone. Loss is instead bounded by the liquidation check in
+        ``PaperExecutionEngine.monitor_positions`` (totaler Margin-Verlust).
+        Leverage is still clamped to ``max_leverage``. Off (default) keeps the
+        unchanged conservative sizing for the autonomous loop and every other
+        caller.
         """
         if entry_price <= 0 or equity <= 0:
             return PositionSizeResult(
@@ -253,20 +583,171 @@ class RiskEngine:
 
         max_risk_usd = equity * (self._limits.max_risk_per_trade_pct / 100)
 
-        if stop_loss_price is not None and stop_loss_price > 0:
+        # V-DB5 (2026-05-09): Stop-Loss ist mandatory für Sizing — ohne SL
+        # kann Risk nicht quantifiziert werden, also reject hard.
+        if stop_loss_price is None or stop_loss_price <= 0:
+            return PositionSizeResult(
+                approved=False,
+                symbol=symbol,
+                position_size_pct=0.0,
+                position_size_units=0.0,
+                entry_price=entry_price,
+                stop_loss_price=stop_loss_price,
+                max_loss_usd=0.0,
+                max_loss_pct=0.0,
+                rationale="Risk geometry missing: Stop-Loss is mandatory for sizing.",
+            )
+
+        sizing_mode = "risk_based"
+        leverage_capped = False
+        # eff_leverage shared by both sizing branches; clamped to max_leverage.
+        eff_leverage = leverage if leverage is not None and leverage > 0 else 1.0
+        if eff_leverage > self._limits.max_leverage:
+            logger.warning(
+                "[RISK] Capping leverage from %s to %s for %s",
+                eff_leverage,
+                self._limits.max_leverage,
+                symbol,
+            )
+            eff_leverage = self._limits.max_leverage
+            leverage_capped = True
+        if risk_allocation_pct is not None and risk_allocation_pct > 0:
+            # Channel-stated fixed margin and leverage (Antigravity 2026-05-10).
+            # Risk caps still win UNLESS apply_signal_leverage (1:1 intake): then
+            # the requested notional stands and liquidation bounds the loss.
+            sizing_mode = "signal_margin_leverage"
+            margin_usd = equity * (risk_allocation_pct / 100.0)
+            notional_usd = margin_usd * eff_leverage
+            requested_units = notional_usd / entry_price
+            units = requested_units
             risk_per_unit = abs(entry_price - stop_loss_price)
-            if risk_per_unit > 0:
-                units = max_risk_usd / risk_per_unit
+            if risk_per_unit > 0 and not apply_signal_leverage:
+                risk_capped_units = max_risk_usd / risk_per_unit
+                if units > risk_capped_units:
+                    sizing_mode = "signal_margin_leverage_risk_capped"
+                    units = risk_capped_units
+        else:
+            # V-DB5-Default: SL-distanzbasiertes Sizing (kein channel-margin gegeben).
+            # A-Fix: the risk-based size is the MARGIN; signal leverage multiplies
+            # it so paper PnL reflects the real leveraged result (1:1 intake).
+            risk_per_unit = abs(entry_price - stop_loss_price)
+            # Paper-Learning sizing floor: a tight stop inflates risk-based notional
+            # (notional = risk_usd / stop_dist) so 2-3 trades exhaust the daily
+            # notional cap. Sizing AS IF the stop were >= min_stop_pct_for_sizing %
+            # away yields smaller positions / more fills; the REAL stop_loss_price
+            # (and the real exit + max_loss below) is unchanged. <=0 disables (default).
+            sizing_risk_per_unit = risk_per_unit
+            if self._limits.min_stop_pct_for_sizing > 0:
+                sizing_risk_per_unit = max(
+                    risk_per_unit,
+                    entry_price * self._limits.min_stop_pct_for_sizing / 100.0,
+                )
+            if sizing_risk_per_unit > 0:
+                units = max_risk_usd / sizing_risk_per_unit
             else:
                 units = max_risk_usd / entry_price
-        else:
-            # No stop loss — use minimum sizing (0.1x normal)
-            units = (max_risk_usd / entry_price) * 0.1
+            if apply_signal_leverage and eff_leverage > 1.0:
+                sizing_mode = "risk_based_signal_leverage"
+                units *= eff_leverage
 
         position_value = units * entry_price
+
+        # DS-20260529-V2: hard upper notional cap (% of equity). Applied AFTER the
+        # risk-cap and SL-distance sizing (so the loss-cap still wins on the
+        # downside) but BEFORE the dust gate (a clamp may legitimately push a
+        # position below min_notional → then dust-reject is correct). A tight stop
+        # (small ATR → huge units) would otherwise bind 50-70% of equity and trip
+        # the 25% diversification asset-cap, deadlocking the loop. max_position_size_pct
+        # <= 0 disables the cap (backward-compatible).
+        position_capped = False
+        # A-Fix: in 1:1 signal-leverage intake the per-position notional cap is
+        # skipped so the leverage is not silently undone; liquidation bounds loss.
+        if self._limits.max_position_size_pct > 0 and not apply_signal_leverage:
+            max_position_value = equity * (self._limits.max_position_size_pct / 100)
+            if position_value > max_position_value:
+                uncapped_value = position_value
+                units = max_position_value / entry_price
+                position_value = units * entry_price
+                position_capped = True
+                sizing_mode = f"{sizing_mode}_position_capped"
+                position_cap_note = (
+                    f" position_size_capped: ${uncapped_value:.2f} -> "
+                    f"${position_value:.2f} ({self._limits.max_position_size_pct:.4g}% "
+                    f"equity cap)"
+                )
+
+        # Paper-Learning per-trade notional cap (absolute USD). Decouples trade
+        # count from stop distance so a handful of trades cannot exhaust the daily
+        # notional budget. Risk-based path only (premium signal-leverage keeps its
+        # full size). <=0 disables (default → backward-compatible).
+        per_trade_cap = self._limits.max_notional_per_trade_usd
+        if per_trade_cap > 0 and not apply_signal_leverage and position_value > per_trade_cap:
+            prior_note = position_cap_note if position_capped else ""
+            uncapped_value = position_value
+            units = per_trade_cap / entry_price
+            position_value = units * entry_price
+            position_capped = True
+            sizing_mode = f"{sizing_mode}_per_trade_capped"
+            position_cap_note = (
+                prior_note + f" per_trade_notional_capped: ${uncapped_value:.2f} -> "
+                f"${position_value:.2f} (${per_trade_cap:.2f} cap)"
+            )
+
+        # WP-B (regime-edge-capture 2026-06-15): regime-konditionierter Sizing-
+        # Multiplier. Befund: Edge trägt in breakout_up, ist in chop_quiet thin/
+        # revertierend → dort kleiner sizen. VOR dem Dust-Gate, damit ein
+        # heruntergesizter Trade korrekt als dust rejecten kann. Default-off ⇒
+        # mult=1.0 ⇒ unverändert. NICHT im apply_signal_leverage-Modus (Premium
+        # 1:1 darf nicht verzerrt werden).
+        if not apply_signal_leverage:
+            regime_mult = self._regime_size_multiplier(symbol)
+            if regime_mult != 1.0:
+                units *= regime_mult
+                position_value = units * entry_price
+                sizing_mode = f"{sizing_mode}_regime_x{regime_mult:.2g}"
+
+        # DS-20260528-V2: dust gate. Sizing equity is the portfolio's remaining
+        # cash (trading_loop), so a nearly-deployed portfolio yields a near-zero
+        # notional (~1e-16 units). Those fill but take no real position — they
+        # only pollute the audit and inflate the fill count. Reject below floor.
+        if position_value < self._limits.min_notional_usd:
+            return PositionSizeResult(
+                approved=False,
+                symbol=symbol,
+                position_size_pct=0.0,
+                position_size_units=0.0,
+                entry_price=entry_price,
+                stop_loss_price=stop_loss_price,
+                max_loss_usd=0.0,
+                max_loss_pct=0.0,
+                rationale=(
+                    f"dust_below_min_notional: ${position_value:.4g} < "
+                    f"${self._limits.min_notional_usd:.2f} (sizing_equity=${equity:.2f})"
+                    + (position_cap_note if position_capped else "")
+                ),
+            )
         position_size_pct = (position_value / equity) * 100
-        max_loss_usd = min(max_risk_usd, position_value)
+        if stop_loss_price is not None and stop_loss_price > 0:
+            max_loss_usd = abs(entry_price - stop_loss_price) * units
+        else:
+            max_loss_usd = min(max_risk_usd, position_value)
         max_loss_pct = (max_loss_usd / equity) * 100
+
+        if risk_allocation_pct is not None and risk_allocation_pct > 0:
+            rationale = (
+                f"{sizing_mode}: margin={risk_allocation_pct:.4g}% "
+                f"leverage={eff_leverage:.4g}x"
+                f"{' (capped)' if leverage_capped else ''}, "
+                f"{units:.4f} units @ {entry_price:.2f}, "
+                f"max_loss={max_loss_pct:.4g}%"
+            )
+        else:
+            rationale = (
+                f"Risk-based sizing: {self._limits.max_risk_per_trade_pct}% equity risk, "
+                f"{units:.4f} units @ {entry_price:.2f}"
+            )
+        if position_capped:
+            rationale += position_cap_note
 
         return PositionSizeResult(
             approved=True,
@@ -277,8 +758,5 @@ class RiskEngine:
             stop_loss_price=stop_loss_price,
             max_loss_usd=max_loss_usd,
             max_loss_pct=max_loss_pct,
-            rationale=(
-                f"Risk-based sizing: {self._limits.max_risk_per_trade_pct}% equity risk, "
-                f"{units:.4f} units @ {entry_price:.2f}"
-            ),
+            rationale=rationale,
         )

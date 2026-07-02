@@ -1,0 +1,13 @@
+[Unit]
+Description=Trigger KAI Premium-Signal-Pipeline Healthcheck every 60s
+
+[Timer]
+# 60-second cadence — Telethon heartbeat threshold is 90 s, so we want to
+# detect a stale heartbeat within one cycle (worst case 60+90 = 150 s).
+OnBootSec=120s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=kai-premium-healthcheck.service
+
+[Install]
+WantedBy=timers.target

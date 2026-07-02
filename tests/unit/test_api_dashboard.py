@@ -1,224 +1,1904 @@
+"""Tests for the operator dashboard (app.api.routers.dashboard).
+
+Covers:
+- GET /dashboard/api/quality returns structured JSON built live from audit files
+- Auth middleware exempts all /dashboard/* paths
+- JSONL loading helper edge cases
+"""
+
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+import json
+import os
+from collections.abc import Generator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.main import create_app
-from app.api.routers import dashboard as dashboard_router
-from app.api.routers import operator as operator_router
-from app.core.settings import get_settings
+from app.api.routers import dashboard as dashboard_mod
+from app.api.routers.dashboard import _load_jsonl, router
+from app.core.settings import (
+    AlertSettings,
+    AppSettings,
+    OperatorSettings,
+    ProviderSettings,
+    TradingViewSettings,
+)
 from app.security.auth import setup_auth
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-def _make_dashboard_app(*, api_key: str, attach_auth_middleware: bool) -> FastAPI:
+
+def _make_app(*, api_key: str = "") -> FastAPI:
+    """Minimal app with dashboard router and optional auth."""
     app = FastAPI()
-    app.include_router(dashboard_router.router)
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(api_key=api_key)
-    if attach_auth_middleware:
-        setup_auth(app, api_key)
+    app.include_router(router)
+    if api_key:
+        setup_auth(app, api_key=api_key, env="production")
     return app
 
 
-def _daily_payload() -> dict[str, object]:
-    return {
-        "report_type": "daily_operator_summary",
-        "readiness_status": "warning",
-        "cycle_count_today": 2,
-        "last_cycle_status": "no_signal",
-        "last_cycle_symbol": "BTC/USDT",
-        "last_cycle_at": "2026-03-22T12:00:00+00:00",
-        "position_count": 1,
-        "total_exposure_pct": 12.5,
-        "mark_to_market_status": "ok",
-        "decision_pack_status": "warning",
-        "open_incidents": 1,
-        "aggregated_at": "2026-03-22T12:05:00+00:00",
-        "execution_enabled": False,
-        "write_back_allowed": False,
+@contextmanager
+def _patch_artifacts(
+    d: Path,
+) -> Generator[None, None, None]:
+    """Patch all artifact path constants to point at tmp dir."""
+    with (
+        patch.object(dashboard_mod, "_ARTIFACTS", d),
+        patch.object(
+            dashboard_mod,
+            "_ALERT_AUDIT",
+            d / "alert_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_ALERT_OUTCOMES",
+            d / "alert_outcomes.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_TRADING_LOOP_AUDIT",
+            d / "trading_loop_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_PAPER_EXECUTION_AUDIT",
+            d / "paper_execution_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_AUDIT_V1_DISQUALIFIED_FLAG",
+            d / "paper_execution_audit_v1_disqualified.flag",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_BRIDGE_PENDING_ORDERS",
+            d / "bridge_pending_orders.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_ENTRY_WATCHER_AUDIT",
+            d / "entry_watcher_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_SOURCE_RELIABILITY_REPORT",
+            d / "source_reliability.json",
+        ),
+        patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
+        patch.dict(dashboard_mod._quality_cache, {"payload": None, "at": 0.0}),
+    ):
+        yield
+
+
+@pytest.fixture()
+def artifacts_dir(tmp_path: Path) -> Path:
+    """Temp artifacts directory with sample data.
+
+    The dashboard builds the hold-metrics report live from these audit JSONLs
+    via build_hold_metrics_report — there is no pre-computed snapshot file.
+    """
+    (tmp_path / "alert_audit.jsonl").write_text(
+        json.dumps(
+            {
+                "document_id": "abc12345-dead-beef",
+                "sentiment_label": "bullish",
+                "priority": 9,
+                "affected_assets": ["BTC/USDT"],
+                "dispatched_at": "2026-04-14T10:00:00",
+                "is_digest": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "alert_outcomes.jsonl").write_text(
+        json.dumps(
+            {
+                "document_id": "abc12345-dead-beef",
+                "outcome": "hit",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"status": "no_signal"})
+        + "\n"
+        + json.dumps({"status": "no_signal"})
+        + "\n"
+        + json.dumps({"status": "completed"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        json.dumps({"event_type": "order_filled", "side": "buy"})
+        + "\n"
+        + json.dumps({"event_type": "cycle_start"})
+        + "\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/quality -- JSON API
+#
+# Note: The /dashboard HTML shell is served by the React SPA mount in
+# app/api/main.py (web/dist/). This router only exposes the JSON API.
+# ---------------------------------------------------------------------------
+
+
+def test_quality_api_returns_metrics(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    # Live build aggregates from audit JSONLs (not a snapshot file).
+    # Fixture is sparse (1 alert older than recency window) → no resolved precision.
+    assert data["precision_pct"] is None
+    assert data["paper_fills"] == 1
+    assert data["paper_cycles"] == 3
+    assert data["signal_execution"]["total_correlations"] == 0
+    assert data["loop_status_counts"]["no_signal"] == 2
+    assert data["loop_status_counts"]["completed"] == 1
+    # Sparse fixture → gate stays active with documented blocking reasons.
+    assert data["gate_status"] == "hold_remains_active"
+    assert "resolved_directional_below_200" in data["blocking_reasons"]
+    assert data["dashboard_truth_contract_version"] == 2
+    # A past target reads as neutral "no_active_target" (config pending), NOT an
+    # alarming "expired" — the operator simply has not set a new target yet.
+    assert data["reentry"]["status"] == "no_active_target"
+    assert data["reentry"]["target_date"] == "2026-05-16"
+    assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
+        "lifetime",
+        "cutoff_since",
+    }
+    assert data["metric_contract"]["paper_fills_with_pnl"]["quality_status"] == "historical_only"
+    assert data["metric_contract"]["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+    # Truth-Layer v2 (Issue #170 Part A): registry serves the scalar metrics from
+    # ONE source; the frontend is never permitted to recompute them, and the
+    # contract value reconciles against the SSOT within tolerance.
+    registry = data["metric_registry"]
+    assert registry["paper_fills_with_pnl"]["status"] == "ok"
+    assert registry["paper_fills_recent_24h"]["value"] == float(
+        data["metric_contract"]["paper_fills_recent_24h"]["value"]
+    )
+    # an unsourced risk scalar is served degraded (value withheld), never faked
+    assert registry["var_usd"]["status"] == "degraded"
+    assert registry["var_usd"]["value"] is None
+    # every reconciliation entry is within tolerance (contract == SSOT)
+    assert data["metric_registry_reconciliation"]
+    assert all(r["within_tolerance"] for r in data["metric_registry_reconciliation"])
+
+
+def test_quality_api_includes_alerts_with_outcomes(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    alerts = r.json()["recent_alerts"]
+    assert len(alerts) == 1
+    assert alerts[0]["doc_id"] == "abc12345-dea"
+    assert alerts[0]["sentiment"] == "bullish"
+    assert alerts[0]["outcome"] == "hit"
+
+
+def test_quality_api_includes_source_reliability_summary(
+    artifacts_dir: Path,
+) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": "2026-05-24T09:00:00+00:00",
+                "window_days": 90,
+                "thresholds": {"min_n_for_demote": 20},
+                "scores": {
+                    "decrypt": {
+                        "source_name": "decrypt",
+                        "hits": 18,
+                        "miss": 7,
+                        "n": 25,
+                        "point_estimate": 0.72,
+                        "wilson_lower_95": 0.52,
+                        "tier": "neutral",
+                        "priority_modifier": 0,
+                    },
+                    "unknown": {
+                        "source_name": "unknown",
+                        "hits": 4,
+                        "miss": 16,
+                        "n": 20,
+                        "point_estimate": 0.2,
+                        "wilson_lower_95": 0.08,
+                        "tier": "low",
+                        "priority_modifier": -2,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    rel = r.json()["source_reliability"]
+    assert rel["status"] == "ok"
+    assert rel["source_count"] == 2
+    assert rel["tier_counts"] == {"neutral": 1, "low": 1}
+    assert rel["top_sources"][0]["source_name"] == "decrypt"
+    assert rel["top_sources"][0]["point_estimate_pct"] == 72.0
+    assert rel["unknown_bucket"]["tier"] == "low"
+    assert rel["trusted_count"] == 0
+    assert rel["quality_status"] in {"critical", "stale"}
+    assert rel["health_warning"]
+
+
+def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> None:
+    """Forensik 2026-05-25: position_partial_closed muss in paper_realized_pnl_usd
+    enthalten sein. Vorher hat dashboard.py:233 nur position_closed eingerechnet,
+    was zu Untererfassung führte (Codex-Beleg: Pi $759 vs Audit-Replay $2486)."""
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event_type": "order_filled", "side": "buy", "symbol": "BTC/USDT"},
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 500.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 300.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 200.0,
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    # All three close events must be counted: 500 + 300 + 200 = 1000
+    assert data["paper_realized_pnl_usd"] == 1000.0
+    assert data["paper_positions_closed"] == 1
+    assert data["paper_positions_partial_closed"] == 2
+    # Backwards-compat: paper_fills_with_pnl = closes + partials
+    assert data["paper_fills_with_pnl"] == 3
+    assert data["paper_evidence"]["closed_total"] == 3
+    assert data["paper_evidence"]["scope"] == "lifetime"
+    assert data["paper_evidence"]["warning"]
+
+
+def test_quality_api_separates_historical_paper_fills_from_rolling_24h(
+    tmp_path: Path,
+) -> None:
+    old_ts = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    recent_ts = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event_type": "order_filled", "timestamp_utc": old_ts},
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_closed",
+                    "timestamp_utc": old_ts,
+                    "trade_pnl_usd": 25.0,
+                },
+                {"event_type": "order_filled", "timestamp_utc": recent_ts},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    old_mtime = (datetime.now(UTC) - timedelta(hours=26)).timestamp()
+    os.utime(tmp_path / "paper_execution_audit.jsonl", (old_mtime, old_mtime))
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["paper_fills"] == 2
+    assert data["paper_fills_with_pnl"] == 1
+    assert data["paper_evidence"]["fills_recent_24h"] == 1
+    assert data["paper_evidence"]["closed_recent_24h"] == 0
+    assert data["paper_evidence"]["stale_status"] == "stale"
+    assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] == "lifetime"
+    assert data["metric_contract"]["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+
+
+def test_priority_gate_endpoint_exposes_reject_semantics(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps({"started_at": recent, "status": status})
+            for status in ["priority_rejected", "priority_rejected", "completed"]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["window_hours"] == 24
+    assert data["rejected_total"] == 2
+    assert data["rejected_pct"] == pytest.approx(66.67)
+    assert data["filled_total"] == 1
+    assert data["top_reject_reason"] == "below_priority_threshold"
+    assert data["priority_quality"]["current_quality_verdict"] in {
+        "insufficient_data",
+        "priority_unproven",
+        "priority_underperforming",
+        "priority_validated",
     }
 
 
-def test_dashboard_disabled_when_api_key_missing() -> None:
-    app = _make_dashboard_app(api_key="", attach_auth_middleware=False)
+def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"started_at": recent, "status": "priority_rejected"}) + "\n",
+        encoding="utf-8",
+    )
+
+    async def fake_hold_report() -> dict[str, object]:
+        return {
+            "signal_quality_validation": {
+                "priority_tier_lift_pct": -12.5,
+                "priority_tier_high_conviction_resolved": 8,
+                "priority_tier_standard_resolved": 8,
+            }
+        }
+
+    app = _make_app()
+    with (
+        _patch_artifacts(tmp_path),
+        patch.object(
+            dashboard_mod,
+            "_live_hold_report",
+            fake_hold_report,
+        ),
+    ):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    priority_quality = r.json()["priority_quality"]
+    assert priority_quality["high_priority_lift_pct"] == -12.5
+    assert priority_quality["current_quality_verdict"] == "priority_underperforming"
+    assert priority_quality["warning"]
+
+
+def test_regime_endpoint_marks_read_only_and_exposes_snapshot_age(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_dir = tmp_path / "artifacts" / "regime_state"
+    regime_dir.mkdir(parents=True)
+    snapshot = {
+        "asset": "BTC",
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "regime": "chop_quiet",
+        "vol_class": "vol_low",
+        "confidence": 1.0,
+        "adx": 20.0,
+        "plus_di": 12.0,
+        "minus_di": 10.0,
+        "rv_24h": 0.01,
+        "atr_zscore": 0.1,
+    }
+    (regime_dir / "btc_regime.jsonl").write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    app = _make_app()
     with TestClient(app) as client:
-        response = client.get("/dashboard")
+        r = client.get("/dashboard/api/regime")
 
-    assert response.status_code == 503
-    body = response.json()
-    assert body["detail"]["error"]["code"] == "dashboard_disabled"
-    assert body["detail"]["execution_enabled"] is False
-    assert body["detail"]["write_back_allowed"] is False
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_read_only"] is True
+    assert data["is_decision_relevant"] is False
+    assert data["semantic_status"] == "read_only"
+    assert data["warning"]
+    assert data["by_asset"]["BTC"]["regime"] == "chop_quiet"
+    assert data["by_asset_metadata"]["BTC"]["quality_status"] == "read_only"
+    assert data["by_asset_metadata"]["BTC"]["snapshot_age_hours"] is not None
 
 
-def test_dashboard_returns_html_response() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
-    ):
+# ---------------------------------------------------------------------------
+# Truth-layer finalization sprint (2026-06-04): config re-entry, small-n
+# deemphasis, loop heartbeat, regime data-vs-response freshness, contract
+# consistency. These assert SEMANTICS, not mere field presence.
+# ---------------------------------------------------------------------------
+
+
+def test_reentry_status_config_and_failsafe_semantics() -> None:
+    # Future date → active, real positive delta.
+    future = dashboard_mod._reentry_status(target_date="2099-12-31")
+    assert future["status"] == "active"
+    assert future["days_delta"] > 0
+    assert future["target_source"] == "explicit"
+    # Past date → no_active_target (config pending), NOT an alarming "expired"
+    # and NOT clamped to 0/today. days_delta stays the true negative value.
+    past = dashboard_mod._reentry_status(target_date="2020-01-01")
+    assert past["status"] == "no_active_target"
+    assert past["days_delta"] < 0
+    # Empty/invalid → fail-safe requires_re_evaluation, no crash, no invented target.
+    empty = dashboard_mod._reentry_status(target_date="")
+    assert empty["status"] == "requires_re_evaluation"
+    assert empty["days_delta"] is None
+    # Default (from settings) → 2026-05-16 lies in the past → neutral no_active_target.
+    default = dashboard_mod._reentry_status()
+    assert default["target_date"] == "2026-05-16"
+    assert default["status"] == "no_active_target"
+    assert default["target_source"] in {"config", "default_historical"}
+
+
+def test_source_reliability_flags_small_n_as_provisional(artifacts_dir: Path) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n": 50},
+                "scores": {
+                    "btc_echo": {
+                        "source_name": "btc_echo",
+                        "hits": 1,
+                        "miss": 0,
+                        "n": 1,
+                        "point_estimate": 1.0,
+                        "wilson_lower_95": 0.05,
+                        "tier": "watch",
+                        "priority_modifier": 0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
+            rel = client.get("/dashboard/api/quality").json()["source_reliability"]
+    # 100% at n=1 must NOT read as trusted, and must be flagged provisional.
+    assert rel["trusted_count"] == 0
+    assert rel["min_n"] == 50
+    assert rel["provisional_count"] == 1
+    src = rel["top_sources"][0]
+    assert src["source_name"] == "btc_echo"
+    assert src["is_provisional"] is True
+    assert src["sample_warning"]
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert '<meta http-equiv="refresh" content="60">' in response.text
 
-
-def test_dashboard_shows_readiness_status() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
-    ):
+def test_source_reliability_min_n_reads_promote_threshold_key(artifacts_dir: Path) -> None:
+    # F-001/F-005 regression: the producer serializes the promote threshold as
+    # `min_n_for_promote`; the dashboard must read THAT (30), not silently fall
+    # back to an unrelated 50 that over-flags sources as provisional.
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n_for_promote": 30, "min_n_for_demote": 20},
+                "scores": {
+                    "decrypt": {
+                        "source_name": "decrypt",
+                        "hits": 18,
+                        "miss": 7,
+                        "n": 25,
+                        "point_estimate": 0.72,
+                        "wilson_lower_95": 0.52,
+                        "tier": "neutral",
+                        "priority_modifier": 0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    assert "readiness" in response.text.lower()
-    assert "warning" in response.text.lower()
+            rel = client.get("/dashboard/api/quality").json()["source_reliability"]
+    assert rel["min_n"] == 30  # promote threshold, NOT the 50 fallback
+    assert rel["top_sources"][0]["is_provisional"] is True  # n=25 < 30
 
 
-def test_dashboard_shows_execution_disabled() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    payload = _daily_payload()
-    payload["execution_enabled"] = False
-    payload["write_back_allowed"] = False
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=payload,
-    ):
+def test_priority_gate_heartbeat_unknown_when_no_cycles(tmp_path: Path) -> None:
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    # Empty loop audit → zero cycles → loop liveness NOT verified.
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
+            data = client.get("/dashboard/api/priority-gate").json()
+    assert data["heartbeat_status"] == "unknown"
+    assert data["heartbeat_warning"]
+    # 0 filled must not be presented as healthy.
+    assert data["filled_total"] == 0
 
-    assert response.status_code == 200
-    assert "execution_enabled=False" in response.text
-    assert "write_back_allowed=False" in response.text
 
-
-def test_dashboard_degrades_on_summary_error() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("down"),
-    ):
+def test_priority_gate_heartbeat_active_blocking_when_cycles_present(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps({"started_at": recent, "status": s})
+            for s in ["priority_rejected", "priority_rejected"]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
+            data = client.get("/dashboard/api/priority-gate").json()
+    # Cycles present + fresh audit → loop liveness IS verified (not unknown/stale).
+    assert data["heartbeat_status"] in {"active", "active_blocking"}
+    assert data["heartbeat_warning"] is None
+    assert data["loop_audit_present"] is True
 
-    assert response.status_code == 200
-    assert "dashboard unavailable" in response.text.lower()
-    assert "status=unavailable" in response.text.lower()
-    assert "traceback" not in response.text.lower()
+
+def test_regime_separates_response_from_data_freshness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_dir = tmp_path / "artifacts" / "regime_state"
+    regime_dir.mkdir(parents=True)
+    snapshot = {
+        "asset": "BTC",
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "regime": "chop_quiet",
+        "vol_class": "vol_low",
+        "confidence": 1.0,
+        "adx": 20.0,
+        "plus_di": 12.0,
+        "minus_di": 10.0,
+        "rv_24h": 0.01,
+        "atr_zscore": 0.1,
+    }
+    (regime_dir / "btc_regime.jsonl").write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        data = client.get("/dashboard/api/regime").json()
+    # Response freshness must be distinct from data freshness.
+    assert "response_generated_at" in data
+    assert data["data_freshness_status"] in {"ok", "warning", "stale", "unverified", "no_data"}
+    assert data["data_freshness_status"] == "ok"  # snapshot is current
+    assert data["is_decision_relevant"] is False
 
 
-def test_dashboard_truth_matches_operator_daily_summary_payload() -> None:
-    payload = _daily_payload()
-    payload["readiness_status"] = "error"
-    payload["cycle_count_today"] = 9
-    payload["last_cycle_status"] = "executed"
-    payload["last_cycle_symbol"] = "ETH/USDT"
-    payload["last_cycle_at"] = "2026-03-22T15:15:00+00:00"
-    payload["position_count"] = 3
-    payload["total_exposure_pct"] = 27.75
-    payload["mark_to_market_status"] = "stale"
-    payload["decision_pack_status"] = "blocked"
-    payload["open_incidents"] = 4
-    payload["aggregated_at"] = "2026-03-22T15:16:00+00:00"
-
-    app = FastAPI()
-    app.include_router(dashboard_router.router)
-    app.include_router(operator_router.router)
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(api_key="test-key")
-
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=payload,
-    ):
+def test_metric_contract_does_not_contradict_parallel_truth_fields(artifacts_dir: Path) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n": 50},
+                "scores": {
+                    "unknown": {
+                        "source_name": "unknown",
+                        "hits": 4,
+                        "miss": 16,
+                        "n": 20,
+                        "point_estimate": 0.2,
+                        "wilson_lower_95": 0.08,
+                        "tier": "low",
+                        "priority_modifier": -2,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
         with TestClient(app) as client:
-            operator_response = client.get(
-                "/operator/daily-summary",
-                headers={"Authorization": "Bearer test-key"},
-            )
-            dashboard_response = client.get("/dashboard")
-
-    assert operator_response.status_code == 200
-    assert operator_response.json() == payload
-    assert dashboard_response.status_code == 200
-
-    html = dashboard_response.text
-    assert "canonical source: get_daily_operator_summary" in html
-    assert str(payload["readiness_status"]) in html
-    assert str(payload["cycle_count_today"]) in html
-    assert str(payload["last_cycle_status"]) in html
-    assert str(payload["last_cycle_symbol"]) in html
-    assert str(payload["last_cycle_at"]) in html
-    assert f"{payload['position_count']} positions" in html
-    assert f"{payload['total_exposure_pct']}%" in html
-    assert str(payload["mark_to_market_status"]) in html
-    assert str(payload["decision_pack_status"]) in html
-    assert str(payload["open_incidents"]) in html
-    assert f"aggregated_at={payload['aggregated_at']}" in html
-    assert "execution_enabled=False" in html
-    assert "write_back_allowed=False" in html
+            data = client.get("/dashboard/api/quality").json()
+    contract = data["metric_contract"]
+    # Contract must mirror, not contradict, the parallel truth fields.
+    assert contract["paper_fills_with_pnl"]["quality_status"] == "historical_only"
+    assert contract["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+    assert contract["market_regime"]["is_read_only"] is True
+    assert contract["market_regime"]["is_decision_relevant"] is False
+    assert (
+        contract["source_reliability"]["quality_status"]
+        == data["source_reliability"]["quality_status"]
+    )
 
 
-def test_dashboard_contains_static_drilldown_reference_section() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
-    ):
+# ---------------------------------------------------------------------------
+# Auth exemption: /dashboard/* paths pass without bearer
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_api_exempt_from_auth(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app(api_key="secret-key")
+    with _patch_artifacts(artifacts_dir):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Drilldown (Bearer required)" in html
-    assert "/operator/readiness" in html
-    assert "/operator/decision-pack" in html
-    assert "/operator/trading-loop/recent-cycles" in html
-    assert "/operator/review-journal" in html
-    assert "/operator/resolution-summary" in html
-    assert "<script" not in html.lower()
+            r = client.get("/dashboard/api/quality")
+    assert r.status_code == 200
 
 
-def test_dashboard_route_inventory_is_canonical_in_main_app() -> None:
+# ---------------------------------------------------------------------------
+# _load_jsonl helper
+# ---------------------------------------------------------------------------
+
+
+def test_load_jsonl_empty_for_missing_file() -> None:
+    assert _load_jsonl(Path("/does/not/exist.jsonl")) == []
+
+
+def test_load_jsonl_skips_invalid_lines(tmp_path: Path) -> None:
+    f = tmp_path / "test.jsonl"
+    f.write_text(
+        '{"a":1}\nnot-json\n{"b":2}\n',
+        encoding="utf-8",
+    )
+    rows = _load_jsonl(f)
+    assert len(rows) == 2
+    assert rows[0] == {"a": 1}
+    assert rows[1] == {"b": 2}
+
+
+def test_load_jsonl_tail(tmp_path: Path) -> None:
+    f = tmp_path / "test.jsonl"
+    lines = [json.dumps({"i": i}) for i in range(10)]
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    rows = _load_jsonl(f, tail=3)
+    assert len(rows) == 3
+    assert rows[0]["i"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Route inventory in main app
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_routes_in_main_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify React-SPA mount registers when web/dist exists.
+
+    The mount in app.api.main is conditional on `web/dist` being present
+    (created by `npm run build`). CI runners do not build the SPA, so we
+    stage a dummy web/dist to exercise the conditional mount.
+    """
+    (tmp_path / "web" / "dist").mkdir(parents=True)
+    (tmp_path / "web" / "dist" / "index.html").write_text("<html></html>")
+    monkeypatch.chdir(tmp_path)
+
+    from app.api.main import create_app
+
     app = create_app()
-
-    # Version-robust: some FastAPI versions flatten included routers into
-    # ``app.routes`` (each route has ``.path``), others nest them under a wrapper
-    # whose own ``.path`` is None and whose child routes live in ``.routes``.
-    # Recurse so the canonical /dashboard route is found either way.
-    def _collect_paths(routes: object) -> set[str]:
-        found: set[str] = set()
-        for route in routes or []:  # type: ignore[union-attr]
-            path = getattr(route, "path", None)
-            if isinstance(path, str):
-                found.add(path)
-            sub = getattr(route, "routes", None)
-            if sub:
-                found |= _collect_paths(sub)
-        return found
-
-    paths = _collect_paths(app.routes)
-    # Belt-and-braces: the OpenAPI schema aggregates every path operation
-    # regardless of internal router nesting, so /dashboard appears here even on
-    # FastAPI versions whose route tree we cannot fully walk.
-    paths |= set(app.openapi().get("paths", {}).keys())
-
+    paths = {route.path for route in app.routes}
     assert "/dashboard" in paths
-    assert "/static/dashboard.html" not in paths
+    assert "/dashboard/api/quality" in paths
+
+
+def test_lightning_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/lightning meldet `disabled` ohne Netzwerk-Call."""
+    client = TestClient(_make_app())
+    resp = client.get("/dashboard/api/lightning")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["reachable"] is False
+    assert "generated_at" in body
+    assert "num_active_channels" in body
+    # L1: chain-Wahrheit ist mit drin und ebenfalls default-off.
+    assert body["chain"]["state"] == "disabled"
+
+
+def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
+    """L1: Block-Höhe/Sync kommen aus der eigenen bitcoind, auch wenn lnd-getinfo leer ist."""
+    from app.chain.adapter import ChainStatus
+    from app.lightning.adapter import LightningNodeStatus
+
+    async def _fake_cached_node():  # lnd erreichbar (aus Cache), getinfo-Details fehlen
+        return (
+            LightningNodeStatus(
+                state="ok",
+                reachable=True,
+                server_state="SERVER_ACTIVE",
+                info_available=False,
+                block_height=0,
+                synced_to_chain=False,
+            ),
+            5.0,
+        )
+
+    async def _fake_cached():  # Hintergrund-Cache liefert die Chain-Wahrheit
+        return (
+            ChainStatus(
+                state="ok",
+                reachable=True,
+                chain="main",
+                blocks=953902,
+                headers=953902,
+                synced=True,
+                fee_sat_vb=2.0,
+                mempool_tx=5,
+            ),
+            12.0,
+        )
+
+    monkeypatch.setattr("app.lightning.cache.get_cached_node_status", _fake_cached_node)
+    monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
+
+    body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
+    assert body["state"] == "ok" and body["reachable"] is True
+    assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
+    assert body["synced_to_chain"] is True
+    assert body["node_age_seconds"] == 5.0
+    assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
+    assert body["chain_age_seconds"] == 12.0
+
+
+def test_chain_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/chain meldet `disabled` ohne Netzwerk-Call."""
+    resp = TestClient(_make_app()).get("/dashboard/api/chain")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["reachable"] is False
+    assert "generated_at" in body
+    assert "blocks" in body and "mempool_tx" in body
+
+
+def test_ln_reputation_endpoint_empty_window(monkeypatch) -> None:
+    """Kein Collector-Datensatz → ehrliches leeres Fenster (uptime_pct=None), 200."""
+    monkeypatch.setattr("app.lightning.reputation.read_recent_ln_reputation", lambda: [])
+    resp = TestClient(_make_app()).get("/dashboard/api/ln/reputation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 0
+    assert body["uptime_pct"] is None  # kein erfundener 100%-Wert ohne Daten
+    assert body["latest"] is None
+    assert body["records"] == []
+    assert "generated_at" in body
+
+
+def test_ln_reputation_endpoint_summarises_window(monkeypatch) -> None:
+    """uptime_pct = Anteil erreichbarer Ticks über das Fenster; latest=jüngster Record."""
+    recs = [
+        {"ts": "t0", "reachable": True, "num_peers": 4},
+        {"ts": "t1", "reachable": False, "num_peers": 0},
+        {"ts": "t2", "reachable": True, "num_peers": 4},
+    ]
+    monkeypatch.setattr("app.lightning.reputation.read_recent_ln_reputation", lambda: recs)
+    body = TestClient(_make_app()).get("/dashboard/api/ln/reputation").json()
+    assert body["count"] == 3
+    assert body["uptime_pct"] == 66.67  # 2/3 reachable
+    assert body["latest"]["ts"] == "t2"
+
+
+def test_ln_ops_endpoint_empty_until_value_layer(monkeypatch) -> None:
+    """Ops-Audit-Trail ist ehrlich leer, solange die gegatete Wert-Schicht nichts schreibt."""
+    monkeypatch.setattr("app.lightning.ops_ledger.read_recent_ln_ops", lambda: [])
+    resp = TestClient(_make_app()).get("/dashboard/api/ln/ops")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 0
+    assert body["ops"] == []
+    assert "generated_at" in body
+
+
+def test_ln_earnings_endpoint_aggregates_by_source(monkeypatch) -> None:
+    """Einnahmen-Übersicht summiert je Quelle (UC-7 Treasury-Quelle)."""
+    monkeypatch.setattr(
+        "app.lightning.earnings_ledger.read_recent_ln_earnings",
+        lambda: [
+            {"payment_hash": "a", "amount_sat": 500, "source": "l402"},
+            {"payment_hash": "b", "amount_sat": 700, "source": "l402"},
+            {"payment_hash": "c", "amount_sat": 300, "source": "bolt12"},
+        ],
+    )
+    body = TestClient(_make_app()).get("/dashboard/api/ln/earnings").json()
+    assert body["count"] == 3
+    assert body["total_sat"] == 1500
+    assert body["by_source"] == {"l402": 1200, "bolt12": 300}
+
+
+def test_integrity_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/integrity meldet `disabled` ohne FS-Touch."""
+    resp = TestClient(_make_app()).get("/dashboard/api/integrity")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["enabled"] is False
+    assert "generated_at" in body
+    assert "last_digest" in body and "proof_available" in body
+    # freshness/replay watchdog is surfaced on the same endpoint (disabled → ok)
+    assert body["freshness"]["reason_code"] == "L3_DISABLED"
+    assert body["freshness"]["status"] == "ok"
+
+
+def test_audit_chain_endpoint_contract() -> None:
+    """/dashboard/api/audit-chain returns the tamper-evidence KPI contract (#314)."""
+    resp = TestClient(_make_app()).get("/dashboard/api/audit-chain")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] in {"ok", "empty", "broken", "unavailable"}
+    for key in (
+        "available",
+        "entries",
+        "errors",
+        "journal_gaps",
+        "cross_checked",
+        "generated_at",
+    ):
+        assert key in body
+
+
+def test_audit_chain_endpoint_reflects_broken(monkeypatch) -> None:
+    """A tampered chain surfaces as state=broken with the first error (#314)."""
+    import app.observability.audit_chain_status as acs
+    from app.observability.audit_chain_status import AuditChainStatus
+
+    def _fake() -> AuditChainStatus:
+        return AuditChainStatus(
+            state="broken",
+            available=True,
+            entries=7,
+            errors=2,
+            first_error="chain_break idx=1 decision_id=dec-1 expected_prev=… got=…",
+            journal_gaps=0,
+            cross_checked=True,
+            reason="Tamper erkannt — Decision-Audit-Trail kompromittiert.",
+        )
+
+    monkeypatch.setattr(acs, "load_audit_chain_status", _fake)
+    body = TestClient(_make_app()).get("/dashboard/api/audit-chain").json()
+    assert body["state"] == "broken"
+    assert body["entries"] == 7
+    assert body["errors"] == 2
+    assert body["first_error"].startswith("chain_break")
+
+
+def test_integrity_endpoint_ok(monkeypatch) -> None:
+    """Vorhandener Anchor-Record → ok mit Digest + Proof-Status."""
+    from app.integrity.status import IntegrityStatus
+
+    def _fake_status(cfg=None):
+        return IntegrityStatus(
+            state="ok",
+            enabled=True,
+            stamper="opentimestamps",
+            anchor_count=3,
+            last_digest="abc123",
+            last_anchored_at="2026-06-17T00:00:00+00:00",
+            proof_available=True,
+        )
+
+    monkeypatch.setattr("app.integrity.get_integrity_status", _fake_status)
+    body = TestClient(_make_app()).get("/dashboard/api/integrity").json()
+    assert body["state"] == "ok" and body["enabled"] is True
+    assert body["last_digest"] == "abc123" and body["proof_available"] is True
+    assert body["anchor_count"] == 3
+
+
+def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
+    """Erreichbare bitcoind → ok mit Tip-Höhe/Sync/Fee/Mempool aus der Node."""
+    from app.chain.adapter import ChainStatus
+
+    async def _fake_cached():
+        return (
+            ChainStatus(
+                state="ok",
+                reachable=True,
+                chain="main",
+                blocks=953902,
+                headers=953902,
+                synced=True,
+                fee_sat_vb=2.5,
+                mempool_tx=7,
+            ),
+            8.0,
+        )
+
+    monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/chain").json()
+    assert body["state"] == "ok" and body["reachable"] is True
+    assert body["blocks"] == 953902 and body["synced"] is True
+    assert body["fee_sat_vb"] == 2.5 and body["mempool_tx"] == 7
+    assert body["age_seconds"] == 8.0
+
+
+def test_markets_derivatives_empty_is_honest(monkeypatch) -> None:
+    """Ohne Snapshot-Cache: ehrlich leer (available False), kein erfundener Wert."""
+
+    class _Empty:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {}
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Empty)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _Empty)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is False and body["rows"] == []
+
+
+def test_markets_derivatives_serves_own_ingestion(monkeypatch) -> None:
+    """Funding + OI aus KAIs eigenen Snapshot-Stores werden je Symbol gemerged."""
+    from app.market_data.models import FundingRateSnapshot, OpenInterestSnapshot
+
+    class _Funding:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": FundingRateSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:41:10Z",
+                    rate=7.06e-06,
+                    mark_price=65436.6,
+                    source="bybit",
+                )
+            }
+
+    class _OI:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": OpenInterestSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:00:00Z",
+                    open_interest=51176.86,
+                    oi_change_zscore=-1.21,
+                    source="bybit",
+                )
+            }
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Funding)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _OI)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is True and len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["symbol"] == "BTC/USDT"
+    assert row["funding_rate"] == 7.06e-06 and row["mark_price"] == 65436.6
+    assert row["open_interest"] == 51176.86 and row["oi_change_zscore"] == -1.21
+    assert row["funding_source"] == "bybit" and row["oi_source"] == "bybit"
+
+
+def test_markets_sentiment_endpoint(monkeypatch) -> None:
+    """Fear & Greed über den server-gecachten Adapter; Wert + Alter im Payload."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return SentimentSnapshot(available=True, value=61, classification="Greed"), 42.0
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is True and body["value"] == 61
+    assert body["classification"] == "Greed" and body["age_seconds"] == 42.0
+    assert body["source"] == "alternative.me"
+
+
+def test_markets_sentiment_cold_is_honest(monkeypatch) -> None:
+    """Kalter Cache: ehrlich available False, kein erfundener Wert."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return SentimentSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is False and body["age_seconds"] is None
+
+
+def test_markets_liquidations_endpoint(monkeypatch) -> None:
+    """OKX-Liquidationen über den server-gecachten Adapter; Long/Short je Symbol."""
+    from app.market_data.liquidations import LiquidationRow, LiquidationsSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            LiquidationsSnapshot(
+                available=True,
+                rows=(
+                    LiquidationRow(
+                        symbol="BTC/USDT",
+                        long_sz=7.5,
+                        short_sz=3.0,
+                        long_usd=4500.0,
+                        short_usd=1800.0,
+                        events=3,
+                        last_ts_utc="x",
+                    ),
+                ),
+            ),
+            12.0,
+        )
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is True and body["source"] == "okx"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["long_sz"] == 7.5 and body["rows"][0]["short_sz"] == 3.0
+    assert body["rows"][0]["long_usd"] == 4500.0 and body["rows"][0]["short_usd"] == 1800.0
+    assert body["age_seconds"] == 12.0
+
+
+def test_markets_liquidations_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.liquidations import LiquidationsSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return LiquidationsSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
+def test_operator_board_api_returns_curated_lists() -> None:
+    """GET /dashboard/api/operator-board liefert die kuratierten Listen (fail-soft)."""
+    client = TestClient(_make_app())
+    r = client.get("/dashboard/api/operator-board")
+    assert r.status_code == 200
+    data = r.json()
+    for key in ("stand", "todos", "phases", "improvements", "generated_at"):
+        assert key in data
+    assert isinstance(data["todos"], list)
+    assert isinstance(data["phases"], list)
+    assert isinstance(data["improvements"], list)
+
+
+def test_markets_momentum_endpoint(monkeypatch) -> None:
+    """Binance-Momentum über den server-gecachten Adapter; 24h-Änderung je Symbol."""
+    from app.market_data.momentum import MomentumRow, MomentumSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            MomentumSnapshot(
+                available=True,
+                rows=(MomentumRow(symbol="BTC/USDT", last_price=65000.0, change_pct_24h=-0.72),),
+            ),
+            9.0,
+        )
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is True and body["source"] == "binance"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["change_pct_24h"] == -0.72 and body["age_seconds"] == 9.0
+
+
+def test_markets_momentum_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.momentum import MomentumSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return MomentumSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/integrations -- echter Config-Status (No-Fake-Doktrin)
+#
+# Regression-Guard: das Settings-Tab-Badge war früher hartkodiert
+# ("vorbereitet"), egal ob der TradingView-Webhook live war. Der Status muss
+# aus den fail-closed Settings-Flags kommen.
+# ---------------------------------------------------------------------------
+
+
+def _integrations_settings(
+    *,
+    tv_enabled: bool = False,
+    tv_secret: str = "",
+    tv_auth_mode: str = "hmac",
+    tv_shared_token: str = "",
+    telegram_token: str = "",
+    operator_token: str = "",
+    openai_key: str = "",
+    gemini_key: str = "",
+    auto_promote: bool = False,
+) -> AppSettings:
+    """AppSettings mit explizit gepinnten Sub-Settings.
+
+    Init-kwargs schlagen ein ambient ``.env`` (pydantic-Priorität: init > env),
+    damit der Test deterministisch ist.
+    """
+    settings = AppSettings()
+    settings.tradingview = TradingViewSettings(
+        webhook_enabled=tv_enabled,
+        webhook_secret=tv_secret,
+        webhook_auth_mode=tv_auth_mode,
+        webhook_shared_token=tv_shared_token,
+        webhook_auto_promote_enabled=auto_promote,
+    )
+    settings.alerts = AlertSettings(telegram_token=telegram_token)
+    settings.operator = OperatorSettings(telegram_bot_token=operator_token)
+    settings.providers = ProviderSettings(
+        openai_api_key=openai_key,
+        anthropic_api_key="",
+        gemini_api_key=gemini_key,
+    )
+    return settings
+
+
+@contextmanager
+def _patch_settings(settings: AppSettings) -> Generator[None, None, None]:
+    # Der Endpoint importiert get_settings lokal aus app.core.settings —
+    # daher dort patchen (nicht im dashboard-Modul).
+    with patch("app.core.settings.get_settings", lambda: settings):
+        yield
+
+
+def test_integrations_tradingview_active_when_enabled_and_secret() -> None:
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=True, tv_secret="s3cr3t", auto_promote=True)
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.status_code == 200
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is True
+    assert tv["auto_promote_enabled"] is True
+    assert tv["auth_mode"] == "hmac"
+
+
+def test_integrations_tradingview_disabled_without_secret() -> None:
+    """Fail-closed: enabled aber KEIN Secret -> Router unmounted -> disabled."""
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=True, tv_secret="")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "disabled"
+    assert tv["mounted"] is False
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is False
+
+
+def test_integrations_tradingview_active_token_mode_without_secret() -> None:
+    """Pi-Realität: hmac_strict_event_id nutzt den Shared-Token, KEIN
+    webhook_secret. Der Endpoint ist trotzdem gemountet -> aktiv. Regression
+    gegen die alte `enabled AND webhook_secret`-Heuristik (meldete fälschlich
+    'disabled')."""
+    app = _make_app()
+    settings = _integrations_settings(
+        tv_enabled=True,
+        tv_secret="",
+        tv_auth_mode="hmac_strict_event_id",
+        tv_shared_token="tok",
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["secret_configured"] is False
+    assert tv["shared_token_configured"] is True
+
+
+def test_integrations_tradingview_disabled_when_flag_off() -> None:
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=False, tv_secret="s3cr3t")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.json()["integrations"]["tradingview"]["status"] == "disabled"
+
+
+def test_integrations_telegram_and_llm_derive_from_config() -> None:
+    app = _make_app()
+    settings = _integrations_settings(
+        telegram_token="tg-token", openai_key="sk-x", gemini_key="g-x"
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "active"
+    assert integ["llm"]["status"] == "active"
+    assert set(integ["llm"]["providers"]) == {"openai", "gemini"}
+    # SMTP ist nicht backend-konfigurierbar -> ehrlich disabled.
+    assert integ["email"]["status"] == "disabled"
+
+
+def test_integrations_disabled_when_nothing_configured() -> None:
+    app = _make_app()
+    settings = _integrations_settings()
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "disabled"
+    assert integ["llm"]["status"] == "disabled"
+    assert integ["llm"]["providers"] == []
+    assert integ["tradingview"]["status"] == "disabled"
+
+
+# --- Edge-Truth panel endpoint (2026-06-23 edge-window) -------------------------
+
+
+def _edge_close(symbol: str, exit_px: float, ts: str, pnl: float, source: str | None) -> dict:
+    row = {
+        "event_type": "position_closed",
+        "symbol": symbol,
+        "position_side": "long",
+        "entry_price": 100.0,
+        "exit_price": exit_px,
+        "quantity": 1.0,
+        "reason": "tp" if pnl > 0 else "sl",
+        "trade_pnl_usd": pnl,
+        "fee_usd": 0.1,
+        "timestamp_utc": ts,
+    }
+    if source is not None:
+        row["signal_source"] = source
+    return row
+
+
+def test_edge_window_canonical_restricts_to_real_generator(tmp_path: Path) -> None:
+    """canonical=true restricts the edge to attributed generator sources;
+    canonical=false shows the full stream and flags it contaminated."""
+    dashboard_mod._edge_window_cache.clear()
+    exec_rows = [
+        _edge_close("BTC/USDT", 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"),
+        _edge_close("LTC/USDT", 102.0, "2026-06-12T11:00:00+00:00", 2.0, "real_analysis"),
+        # unattributed May-canary-style close — excluded from canonical, kept in full:
+        _edge_close("ETH/USDT", 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in exec_rows) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        canon = client.get("/dashboard/api/edge-window?canonical=true").json()
+        full = client.get("/dashboard/api/edge-window?canonical=false").json()
+
+    assert canon["available"] is True
+    assert canon["canonical"] is True
+    assert canon["contaminated"] is False
+    assert canon["trade_count"] == 2  # only the two attributed generator closes
+    assert canon["closes_excluded_by_source"] == 1
+    assert canon["source_allowlist"] == ["autonomous_generator", "real_analysis"]
+    # n=2 is below the n>=30 gate → verdict is "insufficient" (zu dünn), NOT a
+    # measured disproval; the new gate/robustness fields are present.
+    assert canon["edge_gate_n"] == 30
+    assert canon["gate_reached"] is False
+    assert canon["verdict"] == "insufficient"
+    assert "without_best_p" in canon and "bootstrap_ci_95" in canon
+    # Kosten-Wahrheit fields are always present (gross winners here → reachable).
+    assert "p_mu_gross_positive" in canon and "breakeven_roundtrip_bps" in canon
+    assert canon["maker_floor_roundtrip_bps"] == 4.0
+
+    assert full["canonical"] is False
+    assert full["contaminated"] is True  # full stream is honestly flagged
+    assert full["trade_count"] == 3  # all closes incl. the unattributed one
+    assert full["source_allowlist"] is None
+
+
+def test_edge_window_gate_reached_low_p_is_disproven(tmp_path: Path) -> None:
+    """n>=gate with P(mu_net>0)<0.5 → verdict 'disproven' (belastbar widerlegt),
+    not the weaker 'insufficient'/'not yet proven'. (Operator 2026-06-25.)"""
+    dashboard_mod._edge_window_cache.clear()
+    # 32 attributed losing closes → above the n>=30 gate, P well below 0.5.
+    exec_rows = [
+        _edge_close(
+            "BTC/USDT", 99.0, f"2026-06-12T10:{i:02d}:00+00:00", -1.0, "autonomous_generator"
+        )
+        for i in range(32)
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in exec_rows) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        canon = client.get("/dashboard/api/edge-window?canonical=true").json()
+
+    assert canon["trade_count"] == 32
+    assert canon["gate_reached"] is True
+    assert canon["p_mu_net_positive"] is not None and canon["p_mu_net_positive"] < 0.5
+    assert canon["verdict"] == "disproven"
+    # Kosten-Wahrheit: exit<entry → gross edge is ALSO negative, break-even cost
+    # is below the maker floor → cost_reachable=False = a SIGNAL problem, not a
+    # cost problem (execution-alpha cannot save it).
+    assert canon["p_mu_gross_positive"] is not None and canon["p_mu_gross_positive"] < 0.5
+    assert canon["gross_mean_bps"] < 0
+    assert canon["breakeven_roundtrip_bps"] == canon["gross_mean_bps"]
+    assert canon["cost_reachable"] is False
+
+
+def test_edge_window_fail_closed_on_missing_audit(tmp_path: Path) -> None:
+    """Missing audit must not 500 the dashboard — fail-closed to available:false-ish."""
+    dashboard_mod._edge_window_cache.clear()
+    # no files written -> build runs over empty streams; endpoint must still 200.
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        r = client.get("/dashboard/api/edge-window?canonical=true")
+    assert r.status_code == 200
+    body = r.json()
+    assert "canonical" in body
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/source-lifecycle -- Phase 4 ranking + recent transitions
+# ---------------------------------------------------------------------------
+
+
+def test_source_lifecycle_api_unavailable_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No source_ranking.json yet → fail-closed available:false, never a 500."""
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/source-lifecycle")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["ranked"] == []
+    assert body["recent_events"] == []
+    assert body["error"] is None
+
+
+def test_source_lifecycle_api_returns_ranking_and_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "monitor").mkdir()
+    (tmp_path / "monitor" / "source_ranking.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-23T20:00:00+00:00",
+                "silent_after_days": 7,
+                "counts": {"ranked": 2, "provisional": 2, "pinned": 0, "rotation_flagged": 1},
+                "ranked": [
+                    {"source_name": "thedefiant", "rank": 1, "provisional": True, "n": 27},
+                    {"source_name": "theblock", "rank": 2, "provisional": True, "n": 24},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts" / "source_lifecycle_audit.jsonl").write_text(
+        json.dumps(
+            {
+                "source": "theblock",
+                "from_status": "active",
+                "to_status": "silent",
+                "reason": "lifecycle_recalc",
+                "recorded_at_utc": "2026-06-23T20:00:00+00:00",
+                "evidence": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/source-lifecycle")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["counts"]["ranked"] == 2
+    assert [e["source_name"] for e in body["ranked"]] == ["thedefiant", "theblock"]
+    assert len(body["recent_events"]) == 1
+    assert body["recent_events"][0]["to_status"] == "silent"
+
+
+def test_attach_db_status_flags_drift_and_handles_non_db_sources() -> None:
+    from app.api.routers.dashboard import _attach_db_status
+
+    ranked = [
+        {"source_name": "cryptoslate", "logical_status": "active"},  # DB says disabled → DRIFT
+        {"source_name": "thedefiant", "logical_status": "active"},  # DB agrees → no drift
+        {"source_name": "youtube_xyz", "logical_status": "active"},  # not in DB → db_status None
+    ]
+    db_map = {"cryptoslate": "disabled", "thedefiant": "active"}
+    out = _attach_db_status(ranked, db_map)
+
+    by_name = {e["source_name"]: e for e in out}
+    assert by_name["cryptoslate"]["db_status"] == "disabled"
+    assert by_name["cryptoslate"]["status_drift"] is True
+    assert by_name["thedefiant"]["db_status"] == "active"
+    assert by_name["thedefiant"]["status_drift"] is False
+    # A source with no DB row (e.g. youtube/tradingview_webhook) never drifts.
+    assert by_name["youtube_xyz"]["db_status"] is None
+    assert by_name["youtube_xyz"]["status_drift"] is False
+
+
+def test_attach_db_status_is_case_insensitive_on_provider() -> None:
+    from app.api.routers.dashboard import _attach_db_status
+
+    out = _attach_db_status(
+        [{"source_name": "CryptoSlate", "logical_status": "active"}],
+        {"cryptoslate": "disabled"},
+    )
+    assert out[0]["db_status"] == "disabled"
+    assert out[0]["status_drift"] is True
+
+
+def test_source_lifecycle_api_exposes_db_status_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a source that is DB-disabled but rank-active is flagged drifting."""
+    from types import SimpleNamespace
+
+    from app.api.deps import get_source_repo_optional
+    from app.core.enums import SourceStatus
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "monitor").mkdir()
+    (tmp_path / "monitor" / "source_ranking.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-29T12:00:00+00:00",
+                "ranked": [{"source_name": "cryptoslate", "logical_status": "active", "n": 9}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeRepo:
+        async def list(self, **_kw: object) -> list[object]:
+            return [SimpleNamespace(provider="cryptoslate", status=SourceStatus.DISABLED)]
+
+    app = _make_app()
+    app.dependency_overrides[get_source_repo_optional] = lambda: _FakeRepo()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/source-lifecycle").json()
+
+    entry = body["ranked"][0]
+    assert entry["logical_status"] == "active"
+    assert entry["db_status"] == "disabled"
+    assert entry["status_drift"] is True
+
+
+def test_ln_channels_api_disabled_shape() -> None:
+    """Default-off: /dashboard/api/ln/channels returns a fail-closed disabled shape.
+
+    Lightning is default-off in the test env, so the endpoint must answer 200 with
+    an honest empty/disabled payload and never touch the network.
+    """
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/ln/channels")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["state"] == "disabled"
+    assert data["channels"] == []
+    assert data["num_channels"] == 0
+    assert data["total_local_sat"] == 0
+    assert data["total_remote_sat"] == 0
+    assert "generated_at" in data
+
+
+def test_churn_api_reports_gross_net_with_partials(tmp_path: Path) -> None:
+    """Churn-Endpoint (/goal 2026-06-25): Brutto-vor-Fees vs Netto-nach-Fees aus
+    ECHTEN Audit-Fees inkl. position_partial_closed (qty=None → arithmetisch
+    abgeleitet). Read-only, fail-closed, kein Handelseingriff."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "buy",
+                    "position_side": "long",
+                    "filled_quantity": 100,
+                    "fee_usd": 10.0,
+                    "filled_at": "2026-06-12T10:00:00+00:00",
+                },
+                # Partial TP-Tier: KEIN quantity (reale Struktur)
+                {
+                    "event_type": "position_partial_closed",
+                    "symbol": "AAA/USDT",
+                    "position_side": "long",
+                    "entry_price": 1.0,
+                    "exit_price": 1.1,
+                    "quantity": None,
+                    "fee_usd": 1.0,
+                    "trade_pnl_usd": 3.0,
+                    "reason": "tp_tier",
+                    "timestamp_utc": "2026-06-12T11:00:00+00:00",
+                },
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "sell",
+                    "position_side": "long",
+                    "filled_quantity": 40,
+                    "fee_usd": 1.0,
+                    "pnl_usd": 3.0,
+                    "filled_at": "2026-06-12T11:00:00+00:00",
+                },
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "sell",
+                    "position_side": "long",
+                    "filled_quantity": 60,
+                    "fee_usd": 1.5,
+                    "pnl_usd": 10.5,
+                    "filled_at": "2026-06-12T13:00:00+00:00",
+                },
+                {
+                    "event_type": "position_closed",
+                    "symbol": "AAA/USDT",
+                    "position_side": "long",
+                    "entry_price": 1.0,
+                    "exit_price": 1.2,
+                    "quantity": 60,
+                    "fee_usd": 1.5,
+                    "trade_pnl_usd": 10.5,
+                    "reason": "take",
+                    "timestamp_utc": "2026-06-12T13:00:00+00:00",
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/churn?since=2026-06-11")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["available"] is True
+    assert data["realization_count"] == 2  # Partial + finaler Close
+    assert data["partial_count"] == 1
+    assert data["gross_usd"] == 16.0  # (3+1) + (10.5+1.5)
+    assert data["round_trip_fees_usd"] == 12.5  # open 10 + close 2.5
+    assert data["net_usd"] == 3.5  # gross - rt
+
+
+def test_churn_api_rejects_invalid_since(tmp_path: Path) -> None:
+    """SAT-C-462/NEO-F-202 (security review 2026-06-26): ein ungültiger ?since=
+    muss mit 400 abgelehnt werden BEVOR ein Cache-Eintrag angelegt oder die (große)
+    Audit-Datei geparst wird — sonst füllt beliebiger Müll den Cache unbegrenzt."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/churn?since=not-a-date")
+
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_since_expected_YYYY-MM-DD"
+    # KEIN Cache-Eintrag angelegt (kein unbegrenztes Wachstum durch Müll-Keys).
+    assert len(dashboard_mod._churn_cache) == 0
+
+
+def test_churn_cache_is_bounded(tmp_path: Path) -> None:
+    """SAT-C-462: auch viele GÜLTIGE Datums-Keys dürfen den Cache nicht unbegrenzt
+    füllen — ältester Eintrag wird verdrängt, sobald _CHURN_CACHE_MAX erreicht ist."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            for i in range(dashboard_mod._CHURN_CACHE_MAX + 10):
+                day = f"2026-{(i % 12) + 1:02d}-{(i % 28) + 1:02d}"
+                client.get(f"/dashboard/api/churn?since={day}")
+
+    assert len(dashboard_mod._churn_cache) <= dashboard_mod._CHURN_CACHE_MAX
+
+
+def test_momentum_universe_empty_returns_unavailable(tmp_path: Path) -> None:
+    """G0: no snapshot yet → available=False, never 500."""
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-universe")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_snapshot"
+
+
+def test_momentum_universe_returns_latest_snapshot(tmp_path: Path) -> None:
+    """G0: after a snapshot is persisted, the endpoint surfaces the ranked universe."""
+    from app.observability.momentum_universe import RankedSymbol
+    from app.observability.momentum_universe_ledger import append_snapshot
+
+    ledger = tmp_path / "momentum_universe_candidates.jsonl"
+    ranked = [
+        RankedSymbol("BTC/USDT", 0.91, 0.88, 0.95, 1, {"volume_score": 0.88}),
+        RankedSymbol("ETH/USDT", 0.40, 0.20, 0.55, 2, {}),
+    ]
+    append_snapshot(ledger, ranked, now=datetime(2026, 6, 1, tzinfo=UTC))
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-universe")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 2
+    assert body["universe"][0]["symbol"] == "BTC/USDT"
+    assert body["universe"][0]["rank"] == 1
+
+
+def test_momentum_crosscheck_empty_returns_unavailable(tmp_path: Path) -> None:
+    """G4: no cross-check snapshot yet → available=False, never 500."""
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-crosscheck")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_momentum_crosscheck_returns_latest(tmp_path: Path) -> None:
+    """G4: after a cross-check snapshot is persisted, the endpoint surfaces the rows."""
+    from datetime import UTC, datetime
+
+    from app.observability.momentum_crosscheck import append_crosscheck
+
+    ledger = tmp_path / "momentum_crosscheck.jsonl"
+    append_crosscheck(
+        ledger,
+        [{"symbol": "BTC/USDT", "rank": 1, "ta_label": "buy", "agreement": "agree_bullish"}],
+        now=datetime(2026, 6, 26, tzinfo=UTC),
+    )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-crosscheck")
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 1
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+
+
+def test_momentum_edge_release_no_cohort(tmp_path: Path) -> None:
+    """G5: no momentum_universe closes → available=False, never 500."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-edge-release")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_momentum_edge_release_disabled_when_few(tmp_path: Path) -> None:
+    """G5: a single cohort close → DISABLED (n < min_n, no defensible posterior)."""
+    audit = tmp_path / "paper_execution_audit.jsonl"
+    with audit.open("w", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "position_closed",
+                    "symbol": "BTC/USDT",
+                    "signal_source": "momentum_universe",
+                    "position_side": "long",
+                    "entry_price": 100.0,
+                    "exit_price": 102.0,
+                    "quantity": 1.0,
+                    "timestamp_utc": "2026-06-26T01:00:00Z",
+                    "trade_pnl_usd": 2.0,
+                    "reason": "tp",
+                }
+            )
+            + "\n"
+        )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-edge-release")
+    body = r.json()
+    assert body["available"] is True
+    assert body["recommended_mode"] == "disabled"
+
+
+# ---------------------------------------------------------------------------
+# Unlock-calendar (ADR 0012 truth-pivot, Phase 2): read-only CONTEXT marker.
+# ---------------------------------------------------------------------------
+
+
+def _reset_unlock_calendar_cache() -> None:
+    """Clear the module-level TTL cache so each test sees a fresh build."""
+    dashboard_mod._unlock_calendar_cache.update(at=0.0, payload=None)
+
+
+def test_unlock_calendar_unavailable_without_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    monkeypatch.chdir(tmp_path)  # no artifacts/research/unlock_events.json here
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/unlock-calendar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["tokens"] == []
+
+
+def test_unlock_calendar_returns_upcoming_from_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    research = tmp_path / "artifacts" / "research"
+    research.mkdir(parents=True)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    day = 86_400_000
+    (research / "unlock_events.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "tokens": {
+                    "PAST": {"max_supply": 1000.0, "events": [[now_ms - 5 * day, 10.0]]},
+                    "SOON": {"max_supply": 1000.0, "events": [[now_ms + 3 * day, 50.0]]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/unlock-calendar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    # The disclaimer must be present and explicitly NOT a directional signal.
+    assert "Kontext" in body["note"]
+    symbols = [t["symbol"] for t in body["tokens"]]
+    assert symbols == ["SOON"]  # past event filtered out
+    soon = body["tokens"][0]
+    assert soon["days_until"] > 0
+    assert soon["frac_of_max_supply"] == 0.05  # 50 / 1000
+    # schema-1 fixture has no generated_at → unknown age → flagged stale (honest).
+    assert body["stale"] is True
+    assert body["generated_at"] is None
+
+
+def _write_unlock_artifact(tmp_path: Path, generated_at: str | None) -> None:
+    research = tmp_path / "artifacts" / "research"
+    research.mkdir(parents=True)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    doc: dict = {
+        "schema": 2,
+        "tokens": {"SOON": {"max_supply": 1000.0, "events": [[now_ms + 3 * 86_400_000, 50.0]]}},
+    }
+    if generated_at is not None:
+        doc["generated_at"] = generated_at
+    (research / "unlock_events.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_unlock_calendar_fresh_artifact_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    _write_unlock_artifact(tmp_path, generated_at=datetime.now(UTC).isoformat())
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/unlock-calendar").json()
+    assert body["available"] is True
+    assert body["stale"] is False
+    assert body["age_days"] is not None and body["age_days"] < 1.0
+
+
+def test_unlock_calendar_old_artifact_flagged_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    _write_unlock_artifact(tmp_path, generated_at=old)
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/unlock-calendar").json()
+    # 30 days > 14-day threshold → stale, even though upcoming tokens exist.
+    assert body["available"] is True
+    assert body["stale"] is True
+    assert body["age_days"] is not None and body["age_days"] > 14.0

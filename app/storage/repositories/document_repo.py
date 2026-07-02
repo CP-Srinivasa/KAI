@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -13,6 +14,20 @@ from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import AnalysisSource, DocumentStatus, DocumentType, SourceType
 from app.core.errors import StorageError
 from app.storage.models.document import CanonicalDocumentModel
+
+
+@dataclass(frozen=True)
+class SourceActivityRow:
+    """Per-source ingestion activity aggregate (read-only observability)."""
+
+    source_name: str
+    total: int  # lifetime document count for this source
+    window_count: int  # documents fetched within the requested window
+    last_fetched_at: str | None  # ISO-8601 UTC of the most recent fetch, or None
+    # True when the last fetch is older than the silence threshold — a source that
+    # delivered before but went quiet. A generous default (7d) keeps it
+    # cadence-independent: nearly any live source delivers *something* within a week.
+    silent: bool
 
 
 class DocumentRepository:
@@ -72,6 +87,58 @@ class DocumentRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
+    async def source_activity(
+        self,
+        *,
+        window_hours: int = 24,
+        silent_after_hours: int = 168,
+        now: datetime | None = None,
+    ) -> list[SourceActivityRow]:
+        """Per-source ingestion activity (read-only aggregate over the canonical
+        documents store). Groups by ``source_name``; returns the lifetime count,
+        the count fetched within ``window_hours``, the most recent ``fetched_at``,
+        and a ``silent`` flag (last fetch older than ``silent_after_hours``, default
+        7 days) per source, newest source first. Pure read — touches no ingestion
+        write path.
+        """
+        from sqlalchemy import case, func
+
+        current = now or datetime.now(UTC)
+        cutoff = current - timedelta(hours=max(1, window_hours))
+        silence_cutoff = current - timedelta(hours=max(1, silent_after_hours))
+        window_count = func.sum(case((CanonicalDocumentModel.fetched_at >= cutoff, 1), else_=0))
+        stmt = (
+            select(
+                CanonicalDocumentModel.source_name,
+                func.count(CanonicalDocumentModel.id),
+                func.max(CanonicalDocumentModel.fetched_at),
+                window_count,
+            )
+            .group_by(CanonicalDocumentModel.source_name)
+            .order_by(func.max(CanonicalDocumentModel.fetched_at).desc())
+        )
+        result = await self._session.execute(stmt)
+
+        rows: list[SourceActivityRow] = []
+        for source_name, total, last_fetched, win in result.all():
+            last_iso: str | None = None
+            silent = True  # no timestamp at all → treat as silent
+            if last_fetched is not None:
+                if last_fetched.tzinfo is None:
+                    last_fetched = last_fetched.replace(tzinfo=UTC)
+                last_iso = last_fetched.astimezone(UTC).isoformat()
+                silent = last_fetched < silence_cutoff
+            rows.append(
+                SourceActivityRow(
+                    source_name=source_name or "unknown",
+                    total=int(total or 0),
+                    window_count=int(win or 0),
+                    last_fetched_at=last_iso,
+                    silent=silent,
+                )
+            )
+        return rows
+
     async def update_status(self, document_id: str, status: DocumentStatus) -> None:
         """Explicitly advance a document to a new lifecycle status."""
         values: dict[str, Any] = {"status": status.value}
@@ -116,6 +183,7 @@ class DocumentRepository:
             "sentiment_label": result.sentiment_label.value,
             "analysis_source": result.analysis_source.value if result.analysis_source else None,
             "sentiment_score": result.sentiment_score,
+            "directional_confidence": result.directional_confidence,
             "relevance_score": result.relevance_score,
             "impact_score": result.impact_score,
             "novelty_score": result.novelty_score,
@@ -143,6 +211,31 @@ class DocumentRepository:
             .where(CanonicalDocumentModel.id == document_id)
             .values(**values)
         )
+        await self._session.flush()
+
+    async def save_llm_audit(
+        self,
+        document_id: str,
+        provider: str,
+        model: str,
+        prompt_text: str,
+        raw_response: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> None:
+        from app.storage.models.audit import LLMAuditRecord
+
+        audit = LLMAuditRecord(
+            document_id=document_id,
+            provider=provider,
+            model=model,
+            prompt_text=prompt_text,
+            raw_response=raw_response,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+        self._session.add(audit)
         await self._session.flush()
 
     # ── Backward-compat aliases ──────────────────────────────────────────────
@@ -215,6 +308,54 @@ class DocumentRepository:
         result = await self._session.execute(stmt)
         return [_from_model(m) for m in result.scalars().all()]
 
+    async def list_directional_news_events(
+        self,
+        *,
+        since: datetime | None = None,
+        min_confidence: float = 0.0,
+        limit: int = 50_000,
+    ) -> list[dict[str, Any]]:
+        """Read-only projection of DIRECTIONAL documents for news-signal evaluation.
+
+        Returns lightweight dicts (``source_name``, ``sentiment_label``, ``tickers``,
+        ``published_at``, ``directional_confidence``) for documents that carry a
+        non-neutral sentiment, a ticker list, and a publish time — the raw material
+        :func:`app.research.news_outcomes.load_news_events` filters into events.
+        Time-ascending so the downstream moving-block bootstrap stays autocorr-safe.
+        """
+        stmt = (
+            select(
+                CanonicalDocumentModel.source_name,
+                CanonicalDocumentModel.sentiment_label,
+                CanonicalDocumentModel.tickers,
+                CanonicalDocumentModel.published_at,
+                CanonicalDocumentModel.directional_confidence,
+            )
+            .where(
+                CanonicalDocumentModel.sentiment_label.is_not(None),
+                CanonicalDocumentModel.sentiment_label != "neutral",
+                CanonicalDocumentModel.tickers.is_not(None),
+                CanonicalDocumentModel.published_at.is_not(None),
+            )
+            .order_by(CanonicalDocumentModel.published_at.asc())
+            .limit(limit)
+        )
+        if since is not None:
+            stmt = stmt.where(CanonicalDocumentModel.published_at >= since)
+        if min_confidence > 0.0:
+            stmt = stmt.where(CanonicalDocumentModel.directional_confidence >= min_confidence)
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "source_name": r.source_name,
+                "sentiment_label": r.sentiment_label,
+                "tickers": r.tickers,
+                "published_at": r.published_at,
+                "directional_confidence": r.directional_confidence,
+            }
+            for r in result.all()
+        ]
+
     async def list(
         self,
         source_id: str | None = None,
@@ -270,6 +411,7 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         content_hash=doc.content_hash,
         sentiment_label=doc.sentiment_label.value if doc.sentiment_label else None,
         sentiment_score=doc.sentiment_score,
+        directional_confidence=doc.directional_confidence,
         relevance_score=doc.relevance_score,
         impact_score=doc.impact_score,
         novelty_score=doc.novelty_score,
@@ -332,6 +474,7 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
             else None
         ),
         sentiment_score=model.sentiment_score,
+        directional_confidence=model.directional_confidence or 0.0,
         relevance_score=model.relevance_score,
         impact_score=model.impact_score,
         novelty_score=model.novelty_score,

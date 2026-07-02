@@ -1,0 +1,13 @@
+[Unit]
+Description=KAI kai-server Health Watchdog — fire every 2 minutes
+Requires=kai-server-health-watchdog.service
+
+[Timer]
+# Every 2 minutes → 3 consecutive failures ≈ 6 min before a restart fires.
+OnCalendar=*-*-* *:00/2:00
+Persistent=true
+AccuracySec=15s
+RandomizedDelaySec=10s
+
+[Install]
+WantedBy=timers.target

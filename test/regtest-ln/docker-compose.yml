@@ -1,0 +1,82 @@
+name: kai-regtest-ln
+
+# PR7 real-node E2E harness: a throwaway regtest Lightning network (bitcoind + 2 lnd).
+# Synthesizes — for FREE (regtest coins) — exactly the three things the live preflight
+# flags as missing on the real node: an invoices:write macaroon (baked on alice), a
+# payer (bob), and inbound liquidity (a channel bob->alice). The driver then runs the
+# full L402 round-trip mint->402->pay->settle->book->evaluate using KAI's OWN code.
+# Tear down with: docker compose -p kai-regtest-ln down -v
+
+services:
+  bitcoind:
+    image: polarlightning/bitcoind:27.0
+    container_name: kai-rt-bitcoind
+    command:
+      - bitcoind
+      - -regtest
+      - -server
+      - -txindex
+      - -rpcuser=kai
+      - -rpcpassword=kai
+      - -rpcallowip=0.0.0.0/0
+      - -rpcbind=0.0.0.0
+      - -zmqpubrawblock=tcp://0.0.0.0:28334
+      - -zmqpubrawtx=tcp://0.0.0.0:28335
+      - -fallbackfee=0.0002
+    ports:
+      - "18443:18443"
+    networks: [rtnet]
+
+  alice:
+    image: polarlightning/lnd:0.18.3-beta
+    container_name: kai-rt-alice
+    depends_on: [bitcoind]
+    command:
+      - lnd
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind
+      - --bitcoind.rpcuser=kai
+      - --bitcoind.rpcpass=kai
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28334
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28335
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+      - --alias=alice
+      - --tlsextradomain=alice
+      - --tlsextraip=0.0.0.0
+    ports:
+      - "8081:8080"
+    networks: [rtnet]
+
+  bob:
+    image: polarlightning/lnd:0.18.3-beta
+    container_name: kai-rt-bob
+    depends_on: [bitcoind]
+    command:
+      - lnd
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind
+      - --bitcoind.rpcuser=kai
+      - --bitcoind.rpcpass=kai
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28334
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28335
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+      - --alias=bob
+      - --tlsextradomain=bob
+      - --tlsextraip=0.0.0.0
+    ports:
+      - "8082:8080"
+    networks: [rtnet]
+
+networks:
+  rtnet:
+    driver: bridge
