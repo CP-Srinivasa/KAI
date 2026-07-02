@@ -53,3 +53,29 @@ Die zugängliche Signal-Landschaft ist systematisch durchgekämmt und **konsiste
 - **Sofort aufgeben (verworfen):** die teure Falsifikations-Apparatur macht weitere prä-registrierte Tests billig; Wegwerfen verschenkt diese Investition.
 - **Reines Revenue-Produkt jetzt (verworfen):** Nachfrage ist 0 und unbewiesen; aktiver Go-to-Market wäre verfrüht. Daher Hybrid mit Revenue als Folge-Gate.
 - **Status quo (verworfen):** „insufficient bis n≥30" auf Programmen, deren n nie wächst, ist Stillstand.
+
+## Addendum (2026-07-02)
+
+Operator-Klarstellung plus zwei Korrekturen und eine formale Alternativen-Bewertung. Die Historie oben bleibt unverändert; wo dieses Addendum widerspricht, gilt das Addendum.
+
+### (a) Wegpunkt innerhalb der Vision — kein Ersatz-NORTH_STAR
+
+Die Gesamt-Vision von KAI — **institutionelle AI-Finanzanalyse- und Entscheidungs-Infrastruktur** (Qualität, probabilistische Entscheidungsfindung, Datenvalidierung, Risikoarchitektur, langfristige Lernfähigkeit, Multi-Agenten-System; `docs/KAI_IDENTITY.md`) — ist das Dach und bleibt unverändert gültig. Diese ADR definiert den **aktuellen Wegpunkt** darunter, nicht ein neues Endziel: Die Falsifikations-/Truth-Disziplin IST die Qualitäts- und Validierungs-Schicht dieser Vision. Endziel bleibt ein unverzichtbarer, nachgefragter Use Case, in dem KAI unschlagbar ist.
+
+### (b) Demand-Korrektur: unbewiesen, nicht widerlegt
+
+Der „Ehrliche Vorbehalt" oben (G0 = 0 Challenges / 0 Payments / 0 Fingerprints, NO-PASS) trägt weniger, als er suggeriert: Der zahlbare `/oracle`-Pfad war bis nach dem Pivot **gated-off und nie gelistet** (Red-Team-Befund 2026-07-02). Nachfrage wurde also **nie fair getestet** — sie ist **unbewiesen, nicht widerlegt**. Nachfrage-Aussagen sind erst nach einer fairen, prä-registrierten Demand-Probe mit Kill-Kriterien (ADR 0011) zulässig. Risiko-Tracking: `RISK_REGISTER.md` R2.
+
+### (c) Sunk-Cost-Formulierung superseded
+
+Die Begründung unter „Sofort aufgeben (verworfen)" — *„Wegwerfen verschenkt diese Investition"* — ist ein Sunk-Cost-Argument und wird ersetzt durch das **Grenzkosten-Argument**: Die Falsifikations-Apparatur ist gebaut und betriebsstabil; die **Grenzkosten jedes weiteren prä-registrierten Tests sind gering** (Infrastruktur, Automatisierung und Attestation existieren), während jedes sauber attestierte Verdikt — positiv wie negativ — positiven Erwartungswert für die Truth-Plattform hat. Maßgeblich ist der künftige Grenznutzen, nicht die versunkene Investition.
+
+### (d) Billige Alternativen — formal bewertet, jetzt nicht, mit Revisit-Trigger
+
+| Alternative | Kurzbewertung | Warum jetzt nicht |
+|---|---|---|
+| **OSS-Extraktion der Truth-Tools** (canonical-edge, Prä-Reg-Ledger, edge-validation-CLI als eigenständiges Paket) | billig; könnte externe Nutzung als Nachfrage-Signal erzeugen | Paketierungs-/Pflege-Aufwand vor bewiesener externer Nachfrage; erst die faire Demand-Probe aus (b) laufen lassen — sie ist der billigere Test |
+| **Reiner LN-Node-/Infrastruktur-Fokus** | kapitalfreier LN-Kern läuft bereits; klarer, kleiner Scope | verschenkt die einzige nachgewiesene differenzierte Kompetenz (auditierbare Falsifikation); die LN-Wert-Schicht bleibt ohnehin Use-Case-gegated („erst zahlbarer Use-Case, dann Channels") |
+| **Deklariertes Lernprojekt** (Produktanspruch offiziell fallen lassen) | ehrlich, druckfrei, kostet nichts | beendet das Nachfrage-Experiment, bevor es je fair lief; bleibt als jederzeit ziehbarer Fallback bestehen — ihn NICHT vorzeitig zu ziehen kostet nichts |
+
+**Revisit-Trigger:** Bleiben bis zum **M3-Review (3 Monate nach Pivot, ~2026-09-29)** externe Nachfrage-/Nutzungs-Signale aus — d. h. faire, gelistete Demand-Probe ohne Anschlag (0 Payments / 0 Fingerprints trotz Sichtbarkeit) UND keine externe Nutzung/Referenzierung der attestierten Verdikte —, werden die drei Alternativen erneut formal bewertet, dann mit Priorität auf OSS-Extraktion oder deklariertem Lernprojekt.
