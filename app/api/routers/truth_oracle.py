@@ -168,6 +168,35 @@ async def fee_series(request: Request) -> dict[str, Any]:
     return build_fee_series(records)
 
 
+@router.get("/verdicts")
+async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
+    """UC-2 (fact flavour): the auditable falsification VERDICTS KAI has published.
+
+    Pre-edge-safe: serves the platform's TRUTH product — "we tested hypothesis H
+    under pre-registered criteria and it passed/failed" — never a prediction or an
+    edge/alpha claim. Each row carries its SHA-256 attestation hash + prereg link so
+    any buyer can re-verify the claim was not altered after the fact, and the
+    tamper-evident attestation ledger's integrity is reported alongside. L402-paid.
+    """
+    await _require_paid(request, "verdicts")
+    from app.research.verdict_report import list_verdict_reports
+    from app.truth.ledger import verify_ledger
+
+    rows = list_verdict_reports()
+    n = max(0, min(int(limit), 500))  # bound the response; -ve/huge limits clamp
+    integrity = verify_ledger()
+    return {
+        "source": "kai_falsification_platform",
+        "count": len(rows),
+        "verdicts": rows[:n],
+        "attestation_ledger": {"chain_ok": integrity["ok"], "records": integrity["records"]},
+        "verify": (
+            "recompute SHA-256 over each report's canonical (sorted-keys, compact) payload "
+            "JSON and compare to attestation_hash (app.truth.attestation.verify_attestation)"
+        ),
+    }
+
+
 class TimestampRequest(BaseModel):
     sha256_hex: str = Field(..., min_length=64, max_length=64)
 
