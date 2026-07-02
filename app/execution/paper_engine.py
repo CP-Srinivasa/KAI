@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from app.audit.stream_validation import PaperExecutionAuditStreamRow
@@ -22,7 +23,6 @@ from app.core.symbol_guard import is_tradeable_symbol
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
-    OrderLifecycleState,
     PaperFill,
     PaperOrder,
     PaperPortfolio,
@@ -32,6 +32,7 @@ from app.execution.models import (
     _now_utc,
     make_lifecycle_transition,
 )
+from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.order_intent import ExecutableOrderIntent
 from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
@@ -1087,12 +1088,18 @@ class PaperExecutionEngine:
         self,
         symbol: str,
         current_price: float,
-    ) -> tuple[PaperOrder, PaperFill | None]:
+    ) -> PaperFill | None:
         """Close the tier-share of the position at current_price, advance tiers.
 
         Internal helper used by monitor_positions when the first tier's price
         has been hit. Audit event ``position_partial_closed`` is emitted in
         addition to the standard order_created/order_filled pair.
+
+        Return-type note (B2.2 mypy-strict): every branch returns either the
+        close-side ``PaperFill`` or ``None`` — never a tuple. The sole caller
+        (``monitor_positions``) already destructures the result as a single
+        fill, mirroring the equivalent ``close_position`` correction
+        (2026-05-16). Annotation aligned to reality; behaviour unchanged.
         """
         pos = self._portfolio.positions.get(symbol)
         if pos is None or not pos.take_profit_tiers:
@@ -1521,7 +1528,7 @@ class PaperExecutionEngine:
                 fills.append(fill)
         return fills
 
-    def _append_audit(self, event_type: str, data: dict[str, object]) -> None:
+    def _append_audit(self, event_type: str, data: Mapping[str, object]) -> None:
         # NEO-P-101-r2: every NEW audit row carries schema_version="v2".
         # Legacy v1 rows (pre-NEO-P-101-r2) lack the field - consumers must
         # default to "v1" via dict.get("schema_version", "v1").

@@ -155,7 +155,6 @@ module = [
     "app.cli.main",
     "app.execution.audit_replay",
     "app.execution.operator_entry_watch",
-    "app.execution.paper_engine",
     "app.execution.portfolio_read",
     "app.ingestion.telegram_channel_worker",
     "app.ingestion.youtube.adapter",

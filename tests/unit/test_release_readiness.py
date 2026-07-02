@@ -234,7 +234,7 @@ def test_current_repo_default_is_not_live_candidate() -> None:
 
 def test_default_ignored_modules_reads_real_pyproject() -> None:
     mods = default_ignored_mypy_modules()
-    # paper_engine is a trading-critical module still ignored today
-    # (envelope_to_paper_bridge graduated to mypy-strict in B2.1).
-    assert "app.execution.paper_engine" in mods
+    # audit_replay is a trading-critical module still ignored today
+    # (paper_engine graduated to mypy-strict in B2.2).
+    assert "app.execution.audit_replay" in mods
     assert TRADING_CRITICAL_MODULES & set(mods)  # at least one trading-core still ignored
