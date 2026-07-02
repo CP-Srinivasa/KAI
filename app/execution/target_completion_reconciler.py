@@ -365,6 +365,10 @@ def reconcile_target_completion(
         "event_type": "position_closed",
         "timestamp_utc": ts,
         "symbol": display_sym,
+        # Trail-Join-Fix (2026-07-02): carry correlation_id so the reconcile
+        # close is attributable to its envelope in the premium trail join,
+        # consistent with paper_engine's position_closed emitter.
+        "correlation_id": position_correlation_id or "",
         "reason": f"reconcile:{close_reason_extra}",
         "quantity": pos.quantity,
         "entry_price": pos.avg_entry_price,

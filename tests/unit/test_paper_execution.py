@@ -408,6 +408,49 @@ def test_last_tier_closes_full_remaining_quantity(tmp_path):
     assert "ETH/USDT" not in eng.portfolio.positions
 
 
+def _open_long_with_corr(eng, symbol, qty, entry, *, correlation_id, sl=None):
+    order = eng.create_order(
+        symbol=symbol,
+        side="buy",
+        quantity=qty,
+        stop_loss=sl,
+        idempotency_key=f"open_{symbol}",
+        correlation_id=correlation_id,
+    )
+    return eng.fill_order(order, current_price=entry)
+
+
+def test_position_partial_closed_audit_carries_correlation_id(tmp_path):
+    """Trail-Join-Fix source contract: the TP-tier close audit event MUST carry
+    the position's correlation_id at its source. Without it the premium-signal
+    trail join cannot attach the per-trade PnL that lives only on this event and
+    a clean multi-TP winner renders as REQUIRES_REVIEW (Pi data: 0/60 carried it
+    before this fix)."""
+    eng = _engine(tmp_path)
+    _open_long_with_corr(eng, "HYPE/USDT", 100.0, 40.9, correlation_id="ENV-TG-tier", sl=39.26)
+    eng.set_position_tp_tiers("HYPE/USDT", [(41.105, 0.5), (41.72, 0.5)])
+    eng.monitor_positions({"HYPE/USDT": 41.15})  # hit TP1
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    partial = [r for r in records if r.get("event_type") == "position_partial_closed"]
+    assert len(partial) == 1
+    assert partial[0]["correlation_id"] == "ENV-TG-tier"
+    assert partial[0]["reason"] == "tp_tier"
+
+
+def test_position_closed_audit_carries_correlation_id(tmp_path):
+    """Trail-Join-Fix source contract: full closes carried NO correlation_id
+    either (Pi data: 0/294) — the premise that only TP-tiers were affected was
+    wrong. close_position must write it so full TP/SL closes resolve to
+    CLOSED_TP/CLOSED_SL rather than REQUIRES_REVIEW."""
+    eng = _engine(tmp_path)
+    _open_long_with_corr(eng, "ETH/USDT", 1.0, 3000.0, correlation_id="ENV-TG-close", sl=2900.0)
+    eng.close_position("ETH/USDT", current_price=3200.0, reason="take")
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    closed = [r for r in records if r.get("event_type") == "position_closed"]
+    assert len(closed) == 1
+    assert closed[0]["correlation_id"] == "ENV-TG-close"
+
+
 def test_audit_replay_restores_tiers_after_restart(tmp_path):
     # Open position + set tiers → consume TP1 → simulate restart by
     # rehydrating a fresh engine from the same audit log → tiers must be

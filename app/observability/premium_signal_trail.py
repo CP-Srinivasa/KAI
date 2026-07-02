@@ -458,6 +458,77 @@ def _attach_tp_tier_sells(
     return attached
 
 
+def _close_event_key(rec: dict[str, Any]) -> tuple[str, str, str]:
+    """Stable identity for a close-audit event (dedup key).
+
+    ``fill_id`` is unique per fill; the event_type + timestamp disambiguate the
+    rare case where a fill_id is missing on a legacy row.
+    """
+    et = str(rec.get("event_type") or rec.get("event") or "")
+    fid = str(rec.get("fill_id") or "")
+    ts = str(rec.get("timestamp_utc") or "")
+    return (et, fid, ts)
+
+
+def _attach_close_events_by_order_id(
+    base_events: list[dict[str, Any]],
+    paper_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deterministic backfill: attach close-audit events via ``order_id`` linkage.
+
+    Root cause (2026-07-02): ``position_closed`` and ``position_partial_closed``
+    audit events were historically written WITHOUT a ``correlation_id`` (Pi data:
+    0/294 resp. 0/60). Because the join in ``_paper_events_for_envelope`` matches
+    only on correlation_id / opbridge-idempotency-key, those events were dropped —
+    yet they are the ONLY records carrying per-trade ``trade_pnl_usd``. The trail
+    therefore left the realized PnL as None and rendered clean multi-TP winners as
+    ``REQUIRES_REVIEW``.
+
+    The source is fixed forward (paper_engine now writes correlation_id), but
+    historical rows need repair. A close event references exactly one close
+    ``order_id``; that order's ``order_created`` / ``order_filled`` records are
+    already joined to this envelope (via correlation_id, opbridge-idem, or the
+    symbol+ts match in ``_attach_tp_tier_sells``). We therefore attach a close
+    event iff its ``order_id`` is in the already-joined order set.
+
+    This is a UNIQUE-KEY link, not a guess: ``order_id`` is globally unique and
+    belongs to one position/envelope. Fail-closed — a close event whose order_id
+    is not in the joined set is left out (the position stays REQUIRES_REVIEW; we
+    never invent a link). Idempotent: events already present (e.g. new rows that
+    now carry correlation_id and matched directly) are de-duplicated by
+    ``_close_event_key`` so per-trade PnL is never double-counted.
+    """
+    joined_order_ids: set[str] = set()
+    for ev in base_events:
+        oid = ev.get("order_id")
+        if isinstance(oid, str) and oid:
+            joined_order_ids.add(oid)
+    if not joined_order_ids:
+        return base_events
+
+    seen: set[tuple[str, str, str]] = set()
+    attached: list[dict[str, Any]] = list(base_events)
+    for ev in base_events:
+        et = ev.get("event_type") or ev.get("event")
+        if et in ("position_closed", "position_partial_closed"):
+            seen.add(_close_event_key(ev))
+
+    for rec in paper_records:
+        et = rec.get("event_type") or rec.get("event")
+        if et not in ("position_closed", "position_partial_closed"):
+            continue
+        oid = rec.get("order_id")
+        if not isinstance(oid, str) or oid not in joined_order_ids:
+            continue
+        key = _close_event_key(rec)
+        if key in seen:
+            continue
+        seen.add(key)
+        attached.append(rec)
+    attached.sort(key=lambda r: r.get("timestamp_utc") or "")
+    return attached
+
+
 _DeriveResult = tuple[
     list[StageStatus],
     str,
@@ -1020,13 +1091,19 @@ def build_trail(
         payload = _payload(env)
         symbol = _safe_str(payload.get("display_symbol")) or _safe_str(payload.get("symbol")) or "?"
         # Pre-V4.1 TP-Tier-Sells haben correlation_id="" — über symbol+
-        # buy-fill-ts nachziehen. V4.1+ position_closed-Events haben
-        # eigene correlation_id und sind bereits in base_paper_events.
+        # buy-fill-ts nachziehen.
         paper_events = _attach_tp_tier_sells(
             base_paper_events,
             paper_records,
             symbol=symbol,
         )
+        # Trail-Join-Fix (2026-07-02): position_closed / position_partial_closed
+        # audit events historically carried NO correlation_id and were dropped by
+        # the join — yet they alone carry per-trade PnL. Attach them deterministically
+        # via order_id linkage to the already-joined close orders (fail-closed,
+        # idempotent). New rows now carry correlation_id and match directly; the
+        # dedup in this helper prevents double-counting.
+        paper_events = _attach_close_events_by_order_id(paper_events, paper_records)
         targets_raw = payload.get("targets")
         targets: list[float] = []
         if isinstance(targets_raw, list):

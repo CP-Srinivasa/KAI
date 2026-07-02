@@ -166,6 +166,56 @@ def _paper_position_closed(
     }
 
 
+def _paper_sell_filled(
+    order_id: str, symbol: str, ts: str, *, fill_price: float, correlation_id: str | None = None
+) -> dict:
+    rec = {
+        "schema_version": "v2",
+        "event_type": "order_filled",
+        "timestamp_utc": ts,
+        "order_id": order_id,
+        "symbol": symbol,
+        "side": "sell",
+        "status": "filled",
+        "fill_price": fill_price,
+        "quantity": 25.0,
+    }
+    if correlation_id is not None:
+        rec["correlation_id"] = correlation_id
+    return rec
+
+
+def _paper_partial_closed(
+    order_id: str,
+    symbol: str,
+    ts: str,
+    *,
+    tier_price: float,
+    trade_pnl_usd: float,
+    remaining_quantity: float,
+    correlation_id: str | None = None,
+) -> dict:
+    """position_partial_closed audit event.
+
+    ``correlation_id=None`` models the historical production defect (0/60 rows
+    carried it); a value models the post-fix source contract.
+    """
+    rec = {
+        "schema_version": "v2",
+        "event_type": "position_partial_closed",
+        "timestamp_utc": ts,
+        "order_id": order_id,
+        "symbol": symbol,
+        "reason": "tp_tier",
+        "tier_price": tier_price,
+        "trade_pnl_usd": trade_pnl_usd,
+        "remaining_quantity": remaining_quantity,
+    }
+    if correlation_id is not None:
+        rec["correlation_id"] = correlation_id
+    return rec
+
+
 def _paper_rejected_invalid_sl(order_id: str, env_id: str, symbol: str, ts: str) -> dict:
     return {
         "schema_version": "v2",
@@ -713,3 +763,105 @@ def test_bug4_bad_tick_ignored_stage_counts_as_pending():
     [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
     assert entry.overall == "PENDING_ENTRY"
     assert entry.is_open is False
+
+
+# ── Trail-Join-Fix: TP-tier / close correlation_id (2026-07-02) ────────────
+
+
+def _multi_tp_paper_records(env_id, approved_id, sym, *, partial_corr):
+    """Buy fill + 2 TP-tier sell fills + 2 partial-close events (last remaining=0).
+
+    ``partial_corr`` controls whether the position_partial_closed events carry
+    correlation_id (post-fix source contract) or not (historical defect, must be
+    repaired via order_id backfill).
+    """
+    return [
+        _paper_order_filled("ord_buy", env_id, approved_id, sym, "2026-06-10T19:03:50+00:00"),
+        _paper_sell_filled(
+            "ord_t1", sym, "2026-06-10T19:04:24+00:00", fill_price=1.05, correlation_id=env_id
+        ),
+        _paper_partial_closed(
+            "ord_t1",
+            sym,
+            "2026-06-10T19:04:24.1+00:00",
+            tier_price=1.05,
+            trade_pnl_usd=3.5,
+            remaining_quantity=50.0,
+            correlation_id=partial_corr,
+        ),
+        _paper_sell_filled(
+            "ord_t2", sym, "2026-06-10T19:14:24+00:00", fill_price=1.20, correlation_id=env_id
+        ),
+        _paper_partial_closed(
+            "ord_t2",
+            sym,
+            "2026-06-10T19:14:24.1+00:00",
+            tier_price=1.20,
+            trade_pnl_usd=6.0,
+            remaining_quantity=0.0,
+            correlation_id=partial_corr,
+        ),
+    ]
+
+
+def _multi_tp_scaffold(env_id, approved_id, sym):
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-10T19:03:50+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-10T19:03:50.5+00:00"),
+    ]
+    bridge = [_bridge_filled(env_id, approved_id, sym, "2026-06-10T19:03:50+00:00", "ord_buy")]
+    return envelopes, bridge
+
+
+def test_multi_tp_partial_closes_with_correlation_id_resolve_closed_tp():
+    """Post-fix source contract: partial-close events that carry correlation_id
+    are joined directly and a multi-TP winner resolves to CLOSED_TP with the
+    summed per-trade PnL. The exact-sum assertion also proves the order_id
+    backfill does NOT double-count events already matched by correlation_id."""
+    env_id, approved_id, sym = "ENV-TG-mtp-a", "ENV-APP-mtp-a", "SKYAI/USDT"
+    envelopes, bridge = _multi_tp_scaffold(env_id, approved_id, sym)
+    paper = _multi_tp_paper_records(env_id, approved_id, sym, partial_corr=env_id)
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=paper)
+    assert entry.overall == "CLOSED_TP"
+    assert entry.paper_close_reason == "tp_tier"
+    assert entry.realized_pnl_usd == 9.5  # 3.5 + 6.0, single-counted
+
+
+def test_multi_tp_partial_closes_backfilled_by_order_id():
+    """Historical repair: partial-close rows WITHOUT correlation_id (the
+    production defect) are attached deterministically via order_id linkage to
+    the already-joined tp-tier sells → CLOSED_TP, not REQUIRES_REVIEW."""
+    env_id, approved_id, sym = "ENV-TG-mtp-b", "ENV-APP-mtp-b", "VELVET/USDT"
+    envelopes, bridge = _multi_tp_scaffold(env_id, approved_id, sym)
+    paper = _multi_tp_paper_records(env_id, approved_id, sym, partial_corr=None)
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=paper)
+    assert entry.overall == "CLOSED_TP"
+    assert entry.realized_pnl_usd == 9.5
+
+
+def test_stray_partial_close_with_foreign_order_id_stays_requires_review():
+    """Fail-closed: a partial-close row whose order_id does NOT link to any
+    order joined for this envelope is left out (no invented link, no PnL leak).
+    The position stays REQUIRES_REVIEW instead of borrowing a foreign PnL."""
+    env_id, approved_id, sym = "ENV-TG-fc", "ENV-APP-fc", "FOO/USDT"
+    envelopes, bridge = _multi_tp_scaffold(env_id, approved_id, sym)
+    paper = [
+        _paper_order_filled("ord_buy", env_id, approved_id, sym, "2026-06-10T19:03:50+00:00"),
+        # A closing sell makes the trail look closed (legacy branch).
+        _paper_sell_filled(
+            "ord_sell", sym, "2026-06-10T21:00:00+00:00", fill_price=0.95, correlation_id=env_id
+        ),
+        # Stray partial-close for a DIFFERENT position: foreign order_id, no corr.
+        _paper_partial_closed(
+            "ord_FOREIGN",
+            sym,
+            "2026-06-10T21:00:00.1+00:00",
+            tier_price=1.20,
+            trade_pnl_usd=999.0,
+            remaining_quantity=0.0,
+            correlation_id=None,
+        ),
+    ]
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=paper)
+    assert entry.overall == "REQUIRES_REVIEW"
+    assert entry.realized_pnl_usd is None  # foreign 999.0 was NOT borrowed
