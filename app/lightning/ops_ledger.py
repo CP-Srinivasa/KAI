@@ -117,15 +117,21 @@ def _spend_amount_sat(record: dict[str, Any]) -> int:
 
 
 def spent_today_sat(path: Path | None = None, *, now: datetime | None = None) -> int:
-    """Summe der heute (UTC) executed, wert-abfließenden Sends — Daily-Cap-Quelle.
+    """Summe der heute (UTC) wert-abfließenden Sends — Daily-Cap-Quelle (fail-closed).
 
-    Tolerant gegen fehlende Datei/korrupte Zeilen (0 bzw. Zeile übersprungen);
-    ``planned``/``disabled`` berühren den Node nicht, ``error`` hat keinen Abfluss.
+    Zählt ``executed`` UND ``error``: ein error-Record kann ein real settled Spend
+    sein (Client-Timeout NACH dem Senden — live belegt durch den 25k-Spend vom
+    07-02, error geloggt, Channel-Balancen beweisen Settlement). Für ein
+    Sicherheits-Cap gilt: Unbekannt = mitzählen; ein echter Fehlschlag over-counted
+    dann nur Richtung needs_confirm. ``planned``/``disabled`` berühren den Node nie.
+    Tolerant gegen fehlende Datei/korrupte Zeilen.
     """
     today = (now or datetime.now(UTC)).date()
     total = 0
     for record in read_recent_jsonl(path or _OPS_PATH, limit=2000):
-        if record.get("state") != "executed" or record.get("action") not in SPEND_ACTIONS:
+        if record.get("state") not in ("executed", "error"):
+            continue
+        if record.get("action") not in SPEND_ACTIONS:
             continue
         try:
             ts = datetime.fromisoformat(str(record.get("ts", "")))

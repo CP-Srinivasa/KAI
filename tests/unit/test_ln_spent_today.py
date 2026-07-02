@@ -68,15 +68,23 @@ def test_bolt11_fallback_when_no_route_response(tmp_path) -> None:
     assert spent_today_sat(path, now=NOW) == 2100
 
 
-def test_ignores_non_spends_other_days_and_non_executed(tmp_path) -> None:
+def test_error_spend_counts_conservatively(tmp_path) -> None:
+    # Live belegt (25k-Spend 07-02): Client-Timeout loggt "error", die Zahlung
+    # settled trotzdem. Fail-closed: Unbekannt zählt gegen das Cap.
+    path = tmp_path / "ops.jsonl"
+    _write(path, [_rec("pay_invoice", "error", plan={"payment_request": "lnbc250u1pxyz"})])
+    assert spent_today_sat(path, now=NOW) == 25000
+
+
+def test_ignores_non_spends_other_days_and_planned(tmp_path) -> None:
     path = tmp_path / "ops.jsonl"
     _write(
         path,
         [
             _rec("open_channel", "executed", plan={"local_funding_amount": 400000}),
+            _rec("open_channel", "error", plan={"local_funding_amount": 400000}),
             _rec("create_invoice", "executed", plan={}),
             _rec("pay_invoice", "planned", plan={"payment_request": "lnbc250u1pxyz"}),
-            _rec("pay_invoice", "error", plan={"payment_request": "lnbc250u1pxyz"}),
             _rec(
                 "pay_invoice",
                 "executed",
