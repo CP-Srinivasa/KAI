@@ -1,5 +1,5 @@
 {
-  "min_line_rate_pct": 0.0,
-  "note": "BOOTSTRAP-Wert. Wird aus der ersten CI-Messung dieses Branches (scripts/coverage_ratchet.py-Step) auf (gemessen - 0.5pp) angehoben, bevor der PR gemergt wird.",
-  "source": "pending: erster gruener CI-Lauf claude/b4-coverage-ratchet"
+  "min_line_rate_pct": 81.0,
+  "note": "Line-Coverage-Ratchet: darf nur STEIGEN. Baseline = zuletzt gemessene CI-Line-Coverage minus 0.5pp Marge (gegen Mess-Rauschen), auf 1 NKS gerundet. Anheben nur via: python scripts/coverage_ratchet.py --update. Senken nur bewusst per Hand (diff-sichtbar, im PR zu rechtfertigen).",
+  "source": "CI-Run 28590785286 (PR #564, Tests-Job, claude/b4-coverage-ratchet @ 9ed3c075): Cobertura line-rate = 81.48% -> 81.48 - 0.5 = 80.98 -> 81.0"
 }
