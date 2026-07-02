@@ -21,6 +21,7 @@ from app.truth.ledger import (
     attest_prereg_ledger,
     attest_verdict_reports,
     chain_tip,
+    read_record,
     verify_ledger,
 )
 
@@ -139,6 +140,23 @@ def _write_verdict_report(out_dir, *, hypothesis: str, verdict: str, prereg_id=N
         generated_at=datetime.now(UTC),
     )
     return write_verdict_report(rep, out_dir), rep["attestation"]["hash"]
+
+
+def test_read_record_returns_matching_seq(tmp_path) -> None:
+    path = tmp_path / "truth.jsonl"
+    append_attestation("prereg", "a", {"n": 1}, path=path, mirror_audit=False)
+    r2 = append_attestation("prereg", "b", {"n": 2}, path=path, mirror_audit=False)
+    got = read_record(2, path=path)
+    assert got is not None
+    assert got["seq"] == 2
+    assert got["record_hash"] == r2["record_hash"]
+
+
+def test_read_record_absent_seq_or_file_is_none(tmp_path) -> None:
+    path = tmp_path / "truth.jsonl"
+    append_attestation("prereg", "a", {"n": 1}, path=path, mirror_audit=False)
+    assert read_record(99, path=path) is None
+    assert read_record(1, path=tmp_path / "missing.jsonl") is None
 
 
 def test_chain_tip_empty_is_genesis(tmp_path) -> None:

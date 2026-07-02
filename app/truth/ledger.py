@@ -151,6 +151,29 @@ def verify_ledger(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
     return {"ok": not errors, "records": checked, "errors": errors}
 
 
+def read_record(seq: int, *, path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any] | None:
+    """Return the ledger record with ``seq`` (tolerant read), or ``None`` if absent.
+
+    Read-only building block for third-party verification (``trading canonical-edge
+    --verify <seq>``): fetch one attested record so its payload can be
+    recomputed. Malformed/blank lines are skipped rather than raised, so a single
+    corrupt line elsewhere never blocks reading a valid record.
+    """
+    if not path.exists():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get("seq") == seq:
+            return record
+    return None
+
+
 def attested_subject_ids(path: Path, kind: str | None = None) -> set[str]:
     """Subject ids already attested (tolerant read; dedupe helper for backfills)."""
     if not path.exists():
@@ -283,5 +306,6 @@ __all__ = [
     "attest_verdict_reports",
     "attested_subject_ids",
     "chain_tip",
+    "read_record",
     "verify_ledger",
 ]
