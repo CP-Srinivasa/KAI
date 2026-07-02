@@ -35,7 +35,13 @@ from app.execution.envelope_to_paper_bridge import (
     _ttl_exceeded,
     run_tick,
 )
-from app.execution.normalized_signal import SignalStatus, new_signal
+from app.execution.normalized_signal import (
+    Direction,
+    EntryType,
+    Side,
+    SignalStatus,
+    new_signal,
+)
 from app.market_data.models import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 
@@ -128,7 +134,7 @@ def _canonical_symbol(payload: dict[str, object]) -> str:
     return raw.strip().upper() if isinstance(raw, str) and raw.strip() else ""
 
 
-def _entry_type(payload: dict[str, object]) -> str:
+def _entry_type(payload: dict[str, object]) -> EntryType:
     raw = str(payload.get("entry_type") or "limit").lower()
     if raw == "range":
         return "range"
@@ -137,6 +143,24 @@ def _entry_type(payload: dict[str, object]) -> str:
     if raw in {"trigger", "above", "below", "breakout_above", "breakdown_below"}:
         return "trigger"
     return "limit"
+
+
+def _side(payload: dict[str, object]) -> Side | None:
+    raw = payload.get("side")
+    if raw == "buy":
+        return "buy"
+    if raw == "sell":
+        return "sell"
+    return None
+
+
+def _direction(payload: dict[str, object]) -> Direction | None:
+    raw = payload.get("direction")
+    if raw == "long":
+        return "long"
+    if raw == "short":
+        return "short"
+    return None
 
 
 def _float(value: object) -> float | None:
@@ -158,20 +182,15 @@ def _build_waiting_signal(
     *, envelope: dict[str, object], envelope_id: str, source: str
 ) -> Any | None:
     payload = _payload(envelope)
-    direction = payload.get("direction")
-    side = payload.get("side")
+    direction = _direction(payload)
+    side = _side(payload)
     stop_loss = _float(payload.get("stop_loss"))
     targets = _targets(payload)
     entry_type = _entry_type(payload)
     entry_value = _resolve_entry_price(payload) if entry_type != "range" else None
     entry_min = _float(payload.get("entry_min")) if entry_type == "range" else None
     entry_max = _float(payload.get("entry_max")) if entry_type == "range" else None
-    if (
-        direction not in {"long", "short"}
-        or side not in {"buy", "sell"}
-        or stop_loss is None
-        or not targets
-    ):
+    if direction is None or side is None or stop_loss is None or not targets:
         return None
     try:
         signal = new_signal(
@@ -181,7 +200,7 @@ def _build_waiting_signal(
             display_symbol=str(payload.get("display_symbol") or _canonical_symbol(payload)),
             side=side,
             direction=direction,
-            entry_type=entry_type,  # type: ignore[arg-type]
+            entry_type=entry_type,
             entry_value=entry_value,
             entry_min=entry_min,
             entry_max=entry_max,
