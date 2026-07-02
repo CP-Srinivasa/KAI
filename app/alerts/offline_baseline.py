@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
+from app.storage.jsonl_io import iter_jsonl_tolerant
 
 OFFLINE_BASELINE_JSON = "ph5_offline_signal_baseline.json"
 OFFLINE_BASELINE_MD = "ph5_offline_signal_baseline.md"
@@ -26,21 +27,10 @@ class BaselineCandidate:
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for raw in handle:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                rows.append(parsed)
-    return rows
+    # B3: consolidated onto the canonical streaming reader. Behaviour-identical
+    # to the previous inline loop (missing file -> [], blank/malformed lines
+    # skipped silently with no retry, non-dict rows dropped via dict_only).
+    return list(iter_jsonl_tolerant(path))
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float | None:

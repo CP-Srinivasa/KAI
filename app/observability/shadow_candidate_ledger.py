@@ -36,6 +36,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.storage.jsonl_io import iter_jsonl_tolerant
+
 logger = logging.getLogger(__name__)
 
 LEDGER_PATH = Path("artifacts/shadow_candidate_ledger.jsonl")
@@ -298,18 +300,11 @@ def _parse_ts_ms(ts_utc: str) -> int | None:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    # B3: consolidated onto the canonical streaming reader. ``dict_only=False``
+    # preserves the previous behaviour of keeping *any* well-formed JSON value
+    # (non-dict rows were appended too); missing file -> [], blank/malformed
+    # lines skipped silently with no retry.
+    return list(iter_jsonl_tolerant(path, dict_only=False))
 
 
 # NEO-P-002 (Weg B): candidate_kinds representing an actual hypothetical entry

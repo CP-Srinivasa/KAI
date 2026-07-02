@@ -39,7 +39,6 @@ Vertrag
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,38 +108,17 @@ class RecoveryResult:
 
 
 def _read_jsonl_tolerant(path: Path) -> list[dict[str, object]]:
-    """Toleranter JSONL-Read. Nutzt zentrale Helper wenn verfügbar, sonst
-    inline mit Skipp-on-Malformed. Crash-Recovery muss bei korrupten
-    Last-Lines durchlaufen — der Crash hat eventuell halbe Records
-    geschrieben."""
-    try:
-        from app.storage.jsonl_io import read_jsonl_tolerant
+    """Toleranter JSONL-Read über den zentralen ``read_jsonl_tolerant``
+    (NEO-P-002 D / D-194). Crash-Recovery muss bei korrupten Last-Lines
+    durchlaufen — der zentrale Reader skippt mid-file-Korruption still und
+    retryt die letzte, evtl. halb geschriebene Zeile genau einmal.
 
-        return list(read_jsonl_tolerant(path))
-    except ImportError:
-        # Fallback: inline tolerant read
-        if not path.exists():
-            return []
-        records: list[dict[str, object]] = []
-        try:
-            for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    obj = json.loads(stripped)
-                    if isinstance(obj, dict):
-                        records.append(obj)
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "[recovery] skipped malformed line %s:%d (%s)",
-                        path,
-                        line_no,
-                        exc,
-                    )
-        except OSError as exc:
-            logger.warning("[recovery] read %s failed: %s", path, exc)
-        return records
+    B3: der frühere Inline-``ImportError``-Fallback war toter Code (der
+    First-Party-Import kann nie ``ImportError`` werfen) und wurde entfernt.
+    """
+    from app.storage.jsonl_io import read_jsonl_tolerant
+
+    return list(read_jsonl_tolerant(path))
 
 
 # ─── Idempotency-Check ─────────────────────────────────────────────────────
