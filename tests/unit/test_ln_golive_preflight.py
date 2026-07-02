@@ -39,11 +39,31 @@ def test_go_when_everything_ready() -> None:
     assert out["verdict"] == "GO" and out["go"] is True and out["blocking"] == []
 
 
-def test_no_go_when_pay_enabled_is_true() -> None:
-    """Negative invariant: the spend kill-switch MUST stay off for the receive probe."""
+def test_armed_mode_drops_receive_only_invariants() -> None:
+    """When the value layer is armed (pay_enabled=true) the receive-only invariants
+    (pay_enabled_off / macaroon_scope_minimal) are REPLACED, not reported as failures.
+    A send-capable macaroon (scope_minimal=False) is the correct armed state → GO."""
     cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
-    out = golive_preflight(cfg, **_all_node_ok())
-    assert out["verdict"] == "NO-GO" and "pay_enabled_off" in out["blocking"]
+    out = golive_preflight(cfg, **{**_all_node_ok(), "macaroon_scope_minimal": False})
+    names = {c["name"] for c in out["checks"]}
+    assert "pay_enabled_off" not in names
+    assert "macaroon_scope_minimal" not in names
+    assert "value_layer_armed" in names and "macaroon_send_capable" in names
+    assert out["verdict"] == "GO" and out["blocking"] == []
+
+
+def test_armed_mode_no_go_when_macaroon_cannot_send() -> None:
+    """Armed but the macaroon is scope-minimal (pay probe permission-denied) → the
+    cockpit cannot actually spend → NO-GO on macaroon_send_capable."""
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+    out = golive_preflight(cfg, **{**_all_node_ok(), "macaroon_scope_minimal": True})
+    assert out["verdict"] == "NO-GO" and "macaroon_send_capable" in out["blocking"]
+
+
+def test_receive_only_no_go_when_pay_enabled_off_violated() -> None:
+    """Receive-only regime (pay_enabled=false) still enforces the scope-minimal invariant."""
+    out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "macaroon_scope_minimal": False})
+    assert out["verdict"] == "NO-GO" and "macaroon_scope_minimal" in out["blocking"]
 
 
 def test_no_go_when_macaroon_not_scope_minimal() -> None:
