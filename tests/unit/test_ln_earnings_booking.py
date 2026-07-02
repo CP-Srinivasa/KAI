@@ -17,7 +17,7 @@ import pytest
 
 from app.core.lightning_settings import LightningSettings
 from app.lightning.client import LndRestClient
-from app.lightning.earnings_booking import book_oracle_earnings
+from app.lightning.earnings_booking import book_all_earnings, book_oracle_earnings
 from app.lightning.earnings_ledger import read_recent_ln_earnings
 
 
@@ -94,3 +94,27 @@ async def test_noop_when_lightning_disabled(tmp_path: Path) -> None:
         )
     assert booked == 0
     build.assert_not_called()  # disabled → node never touched
+
+
+@pytest.mark.asyncio
+async def test_book_all_earnings_covers_paylink_prefix(tmp_path: Path) -> None:
+    """G2 (ADR 0013): LNbits-Pay-Link-Invoices laufen durch UNSER lnd — der
+    Memo-Prefix ``kai-pay:`` bucht Empfangs-Identitäts-Zahlungen ohne
+    LNbits-API/Webhook über dieselbe idempotente Maschinerie."""
+    rh1, ph1 = _ph("oracle-hit")
+    rh2, ph2 = _ph("paylink-hit")
+    invoices = [
+        {"memo": "kai-oracle:verdicts", "settled": True, "r_hash": rh1, "amt_paid_sat": 10},
+        {"memo": "kai-pay: kai@node", "settled": True, "r_hash": rh2, "amt_paid_sat": 2100},
+        {"memo": "fremd", "settled": True, "r_hash": _ph("other")[0], "amt_paid_sat": 5},
+    ]
+    p = tmp_path / "earn.jsonl"
+    with patch("app.lightning.earnings_booking._build_client", return_value=_fake_client(invoices)):
+        counts = await book_all_earnings(
+            path=p, cfg=LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        )
+    assert counts == {"oracle-l402": 1, "lnurlp": 1}
+    by_hash = {r["payment_hash"]: r for r in read_recent_ln_earnings(p)}
+    assert by_hash[ph2]["source"] == "lnurlp"
+    assert by_hash[ph2]["amount_sat"] == 2100
+    assert by_hash[ph1]["source"] == "oracle-l402"
