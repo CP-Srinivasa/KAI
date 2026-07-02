@@ -86,11 +86,18 @@ jobs:
       # hinweg). -q überstimmt das -v aus addopts (Vollprotokoll bringt in CI
       # nichts und kostet Log-I/O; Failures bleiben voll sichtbar).
       # tests/benchmarks läuft im Job "Benchmarks" (parallel, Required-Check).
-      - run: pytest tests/ -q -n auto --dist loadfile --ignore=tests/benchmarks --cov=app --cov-report=xml
+      - run: pytest tests/ -q -n auto --dist loadfile --ignore=tests/benchmarks --cov=app --cov-report=term --cov-report=xml
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+      # Coverage-Ratchet (B4): Line-Coverage darf nur STEIGEN. Vergleicht die
+      # Cobertura-line-rate aus coverage.xml gegen scripts/coverage_baseline.json
+      # (= gemessen - 0.5pp Marge). Eine Regression blockt den Merge; ein
+      # bewusster Rueckgang erfordert eine diff-sichtbare Baseline-Anpassung, die
+      # der Review rechtfertigen muss. Laeuft NACH dem Codecov-Upload, damit
+      # Codecov die Daten auch bei einer Regression noch erhaelt.
+      - run: python scripts/coverage_ratchet.py
 
   benchmarks:
     # ADR-0003-Gate (DuckDB-Query-p95 <50ms) — eigener Job statt Step im Tests-Job:
