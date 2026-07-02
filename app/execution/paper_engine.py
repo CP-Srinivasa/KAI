@@ -1177,6 +1177,13 @@ class PaperExecutionEngine:
             "position_partial_closed",
             {
                 "symbol": symbol,
+                # Trail-Join-Fix (2026-07-02): the TP-tier close event MUST carry
+                # the position's correlation_id at its source. Without it the
+                # premium-signal trail join (_paper_events_for_envelope) cannot
+                # attach the per-trade PnL that lives only on this event, and a
+                # clean multi-TP winner renders as REQUIRES_REVIEW. Same source
+                # as the closing order (create_order above got pos.correlation_id).
+                "correlation_id": pos.correlation_id,
                 "reason": "tp_tier",
                 "tier_price": tier_price,
                 "tier_qty_share": qty_share,
@@ -1358,6 +1365,12 @@ class PaperExecutionEngine:
             "position_closed",
             {
                 "symbol": symbol,
+                # Trail-Join-Fix (2026-07-02): full-close events carried NO
+                # correlation_id either (production data: 0/294) — the operator
+                # premise "Voll-Closes tragen sie schon" was wrong. Write it at
+                # the source so the trail join attaches per-trade PnL and the
+                # close resolves to CLOSED_TP/CLOSED_SL instead of REQUIRES_REVIEW.
+                "correlation_id": pos.correlation_id,
                 "reason": reason,
                 "quantity": quantity,
                 "entry_price": entry_price,
