@@ -53,11 +53,9 @@ from app.execution.entry_policy import (
 from app.execution.intent_builder import build_executable_intent as _build_executable_intent
 from app.execution.intent_builder import entry_bounds as _entry_bounds
 from app.execution.intent_builder import float_or_none as _float
-from app.execution.models import (
-    IllegalLifecycleTransition,
-    OrderLifecycleState,
-    make_lifecycle_transition,
-)
+from app.execution.models import make_lifecycle_transition
+from app.execution.normalized_signal import IllegalLifecycleTransition
+from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.paper_engine import DuplicateOrderError
 from app.execution.paper_engine_singleton import get_paper_engine
 from app.execution.premium_fastlane import (
@@ -630,7 +628,7 @@ def _select_backfill_envelopes(
             if env_id in envelope_ids:
                 candidates.append(rec)
             continue
-        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        payload = p if isinstance(p := rec.get("payload"), dict) else {}
         disp = str(payload.get("display_symbol") or payload.get("symbol") or "").upper()
         if sym_set is not None and disp not in sym_set:
             continue
@@ -645,7 +643,7 @@ def _select_backfill_envelopes(
     # Dedup per display_symbol: prefer the latest ``*_approved`` envelope.
     best: dict[str, dict[str, object]] = {}
     for rec in candidates:
-        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        payload = p if isinstance(p := rec.get("payload"), dict) else {}
         disp = str(payload.get("display_symbol") or payload.get("symbol") or "").upper()
         src = str(rec.get("source") or "")
         prev = best.get(disp)
@@ -739,7 +737,7 @@ async def _process_one(
 ) -> None:
     envelope_id = str(envelope.get("envelope_id") or "")
     source = _extract_source(envelope)
-    base = lambda stage: _audit_base(  # noqa: E731
+    base: Callable[[str], dict[str, object]] = lambda stage: _audit_base(  # noqa: E731
         envelope_id=envelope_id, stage=stage, source=source, envelope=envelope
     )
     correlation_id = str(
@@ -853,7 +851,7 @@ async def _process_one(
     targets = sorted(
         (
             float(t)
-            for t in (targets_raw or [])
+            for t in (targets_raw if isinstance(targets_raw, list) else [])
             if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
         ),
         reverse=direction == "short",
@@ -1230,7 +1228,7 @@ async def _process_one(
         current_price=current_price,
         target_price=entry_price,
         tolerance_pct=tolerance_pct,
-        side=side_str,
+        side=str(side_str),
     ):
         rec = base("pending")
         rec["reason"] = "price_outside_tolerance"
@@ -1289,7 +1287,7 @@ async def _process_one(
     leverage_for_risk = _float(payload.get("leverage"))
     risk_result = risk.check_order(
         symbol=symbol,
-        side=side_str,
+        side=str(side_str),
         signal_confidence=1.0,
         signal_confluence_count=99,
         stop_loss_price=stop_loss,
@@ -1898,7 +1896,7 @@ async def _process_one(
         source=source,
         payload=payload,
         symbol=symbol,
-        side=side_str,
+        side=str(side_str),
         entry_price=entry_price,
         stop_loss=stop_loss,
         targets=targets,
