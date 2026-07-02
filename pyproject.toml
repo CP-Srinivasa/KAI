@@ -154,7 +154,6 @@ module = [
     "app.cli.commands.ingestion",
     "app.cli.main",
     "app.execution.audit_replay",
-    "app.execution.envelope_to_paper_bridge",
     "app.execution.operator_entry_watch",
     "app.execution.paper_engine",
     "app.execution.portfolio_read",
