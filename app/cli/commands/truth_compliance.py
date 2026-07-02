@@ -40,6 +40,72 @@ def truth_attest_prereg(
     print(json.dumps(result, indent=2))
 
 
+@trading_app.command("truth-attest-verdicts")
+def truth_attest_verdicts(
+    verdicts_dir: str | None = typer.Option(
+        None, "--verdicts-dir", help="Verdict-Report-Verzeichnis (default: kanonischer Pfad)"
+    ),
+    ledger_path: str | None = typer.Option(
+        None, "--ledger-path", help="Truth-Attestation-Ledger JSONL (default: kanonischer Pfad)"
+    ),
+    audit_mirror: bool = typer.Option(
+        True, "--audit-mirror/--no-audit-mirror", help="Attestation in den KAI-Audit spiegeln"
+    ),
+) -> None:
+    """Attestiert alle noch nicht attestierten Falsifikations-Verdikt-Reports (idempotent).
+
+    Manueller Zwilling des automatisierten ``truth_anchor_run.py`` (systemd-Timer).
+    """
+    from app.truth.ledger import DEFAULT_TRUTH_LEDGER_PATH, attest_verdict_reports
+
+    result = attest_verdict_reports(
+        verdicts_dir=Path(verdicts_dir) if verdicts_dir else None,
+        truth_path=Path(ledger_path) if ledger_path else DEFAULT_TRUTH_LEDGER_PATH,
+        mirror_audit=audit_mirror,
+    )
+    print(json.dumps(result, indent=2))
+
+
+@trading_app.command("truth-anchor-status")
+def truth_anchor_status(
+    ledger_path: str | None = typer.Option(
+        None, "--ledger-path", help="Truth-Attestation-Ledger JSONL (default: kanonischer Pfad)"
+    ),
+) -> None:
+    """Read-only Überblick: Chain-Verify + Tip + wie viele Tip-Anker (OTS) existieren.
+
+    Fenster in die Automatisierung: ist die Kette intakt, wo steht der Kopf, und ist
+    der aktuelle Tip on-chain verankert (``truthledger-<tip16>.ots`` im proofs_dir)?
+    """
+    from app.core.integrity_settings import IntegritySettings
+    from app.truth.ledger import DEFAULT_TRUTH_LEDGER_PATH, chain_tip, verify_ledger
+
+    truth_path = Path(ledger_path) if ledger_path else DEFAULT_TRUTH_LEDGER_PATH
+    verify = verify_ledger(truth_path)
+    tip = chain_tip(truth_path)
+    proofs_dir = Path(IntegritySettings().proofs_dir)
+    tip16 = str(tip["record_hash"])[:16]
+    tip_proof = proofs_dir / f"truthledger-{tip16}.ots"
+    all_anchors = (
+        sorted(p.name for p in proofs_dir.glob("truthledger-*.ots")) if proofs_dir.is_dir() else []
+    )
+    print(
+        json.dumps(
+            {
+                "chain_ok": verify["ok"],
+                "records": verify["records"],
+                "errors": verify["errors"],
+                "tip_seq": tip["seq"],
+                "tip_record_hash": tip["record_hash"],
+                "tip_anchored": tip_proof.exists(),
+                "tip_proof_path": str(tip_proof) if tip_proof.exists() else None,
+                "total_tip_anchors": len(all_anchors),
+            },
+            indent=2,
+        )
+    )
+
+
 @trading_app.command("truth-verify")
 def truth_verify(
     ledger_path: str | None = typer.Option(

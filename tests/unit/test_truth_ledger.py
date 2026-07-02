@@ -19,6 +19,8 @@ from app.truth.ledger import (
     TruthLedgerError,
     append_attestation,
     attest_prereg_ledger,
+    attest_verdict_reports,
+    chain_tip,
     verify_ledger,
 )
 
@@ -116,3 +118,83 @@ def test_prereg_backfill_attests_all_then_idempotent(tmp_path) -> None:
     assert second["attested"] == 0
     assert second["skipped"] == 2
     assert verify_ledger(truth_path)["ok"] is True
+
+
+# --- verdict-report attestation + chain tip (automation building blocks) ----------
+
+
+def _write_verdict_report(out_dir, *, hypothesis: str, verdict: str, prereg_id=None):
+    """Persist a real attested verdict report the way the CLI does."""
+    from datetime import UTC, datetime
+
+    from app.research.verdict_report import build_verdict_report, write_verdict_report
+
+    rep = build_verdict_report(
+        {"n": 42, "p": 0.1},
+        hypothesis=hypothesis,
+        prereg_id=prereg_id,
+        verdict=verdict,
+        params={"gate": "P>=0.95"},
+        code_version="deadbee",
+        generated_at=datetime.now(UTC),
+    )
+    return write_verdict_report(rep, out_dir), rep["attestation"]["hash"]
+
+
+def test_chain_tip_empty_is_genesis(tmp_path) -> None:
+    tip = chain_tip(tmp_path / "none.jsonl")
+    assert tip["record_hash"] == GENESIS_HASH and tip["seq"] == 0
+
+
+def test_chain_tip_tracks_head(tmp_path) -> None:
+    path = tmp_path / "truth.jsonl"
+    append_attestation("prereg", "a", {"n": 1}, path=path, mirror_audit=False)
+    r2 = append_attestation("prereg", "b", {"n": 2}, path=path, mirror_audit=False)
+    tip = chain_tip(path)
+    assert tip["seq"] == 2 and tip["record_hash"] == r2["record_hash"]
+
+
+def test_attest_verdict_reports_missing_dir_is_noop(tmp_path) -> None:
+    out = attest_verdict_reports(
+        verdicts_dir=tmp_path / "nope", truth_path=tmp_path / "t.jsonl", mirror_audit=False
+    )
+    assert out == {"total": 0, "attested": 0, "skipped": 0, "ledger": str(tmp_path / "t.jsonl")}
+
+
+def test_attest_verdict_reports_is_idempotent(tmp_path) -> None:
+    verdicts = tmp_path / "verdicts"
+    verdicts.mkdir()
+    truth = tmp_path / "truth.jsonl"
+    _write_verdict_report(verdicts, hypothesis="momentum_24h", verdict="FAILED")
+    _write_verdict_report(verdicts, hypothesis="funding_1h", verdict="FAILED", prereg_id="pid1")
+
+    first = attest_verdict_reports(verdicts_dir=verdicts, truth_path=truth, mirror_audit=False)
+    assert first["attested"] == 2 and first["skipped"] == 0
+    second = attest_verdict_reports(verdicts_dir=verdicts, truth_path=truth, mirror_audit=False)
+    assert second["attested"] == 0 and second["skipped"] == 2
+    # chain stays valid and the verdicts sit under kind="verdict"
+    assert verify_ledger(truth)["ok"] is True
+
+
+def test_attest_verdict_reports_skips_corrupt_files(tmp_path) -> None:
+    verdicts = tmp_path / "verdicts"
+    verdicts.mkdir()
+    truth = tmp_path / "truth.jsonl"
+    (verdicts / "garbage.json").write_text("{not json", encoding="utf-8")
+    (verdicts / "foreign.json").write_text('{"unexpected": true}', encoding="utf-8")
+    _write_verdict_report(verdicts, hypothesis="ok_one", verdict="FAILED")
+
+    out = attest_verdict_reports(verdicts_dir=verdicts, truth_path=truth, mirror_audit=False)
+    assert out["attested"] == 1 and out["total"] == 1
+
+
+def test_attest_verdict_then_prereg_share_one_chain(tmp_path) -> None:
+    """Verdicts and preregs chain into ONE ledger; the tip commits both."""
+    verdicts = tmp_path / "verdicts"
+    verdicts.mkdir()
+    truth = tmp_path / "truth.jsonl"
+    _write_verdict_report(verdicts, hypothesis="h1", verdict="FAILED")
+    attest_verdict_reports(verdicts_dir=verdicts, truth_path=truth, mirror_audit=False)
+    append_attestation("prereg", "pid1", {"name": "h2"}, path=truth, mirror_audit=False)
+    tip = chain_tip(truth)
+    assert tip["seq"] == 2 and verify_ledger(truth)["ok"] is True

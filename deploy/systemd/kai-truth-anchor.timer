@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger KAI L3 Truth-Ledger Anchor daily at 04:35 UTC (after the audit anchor)
+
+[Timer]
+OnCalendar=*-*-* 04:35:00 UTC
+AccuracySec=5min
+Persistent=true
+Unit=kai-truth-anchor.service
+
+[Install]
+WantedBy=timers.target
