@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — KAI / AI-Analyst-Trading-Bot
 
-**Stand:** 2026-05-21 · **Phase:** Re-Entry + Stabilisierung · **Modus:** Paper-First, Live-Disabled
+**Stand:** 2026-07-02 · **Phase:** Truth-Platform-Wegpunkt (ADR 0012) · **Modus:** Paper-First (Messinstrument), Live-Disabled
 
 Dieses Dokument ist der **Architektur-Einstieg für menschliche und KI-Bearbeiter**. Es beschreibt die tragenden Strukturen + bekannte Grenzen. Es ist KEIN vollständiges Spec-Dokument — Details liegen in `docs/adr/`, `docs/architecture/`, `DECISION_LOG.md` und den `artifacts/operator_memos/`.
 
@@ -10,21 +10,40 @@ Dieses Dokument ist der **Architektur-Einstieg für menschliche und KI-Bearbeite
 
 KAI ist ein **modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse** — kein einfacher Trading-Bot und keine Blackbox. Datenaufnahme, Analyse, Risiko, Entscheidung, Audit, Sicherheit, Benutzerinteraktion und optionale Ausführung sind klar getrennt. Die kanonische Identitäts- und Zielbild-Definition (Schichtenmodell A–H mit Reifegraden LIVE/VORBEREITET/ZIELBILD, Robotron=Codename, Persona≠Architektur) ist die **Single Source of Truth in [`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md)**.
 
-**Heute live (Paper-First, Live-Disabled)** ist davon die Crypto-Analyse- und Signal-Pipeline:
-- RSS + TradingView + Telegram-Ingestion
-- LLM- und regelbasierter Analyse
-- Priority-Scoring + Sentiment-Klassifikation
-- Premium-Telegram-Signal → Paper-Trade-Bridge
+**Ziel-Hierarchie (Operator-Klarstellung 2026-07-02):** Diese Vision — institutionelle AI-Finanzanalyse- und Entscheidungs-Infrastruktur — ist das Dach. **Aktueller Wegpunkt darunter: [ADR 0012](docs/adr/0012-north-star-pivot-research-truth-platform.md) — Research-/Truth-Plattform für auditierbare Markt-Signal-Falsifikation.** Die Falsifikations-Disziplin ist die Qualitäts-/Validierungs-Schicht der Vision, kein Ersatz-Zielbild (ADR-0012-Addendum). Zugangs-/Realisierungs-Achse: [ADR 0013](docs/adr/0013-frontier-and-boundary.md).
+
+**Heute live (Paper-First, Live-Disabled):**
+- **Wahrheitskette (Kernwert):** Prä-Registrierungs-Ledger → Hypothesen-Eval → prereg-check → attestiertes Verdikt → Family-Status/Stop-Rule; tamper-evidente Verankerung via Hash-Chain + OpenTimestamps
+- RSS + TradingView + Telegram-Ingestion mit Quellen-Lifecycle (Probation/Trust/Retire)
+- LLM- und regelbasierte Analyse, Priority-Scoring + Sentiment-Klassifikation
+- Premium-Telegram-Signal → Paper-Trade-Bridge (als Messinstrument, siehe unten)
 - AuditStream als zentrale Vertrauensbasis
 - Dashboard + Cloudflare Tunnel für Operator-Remote-Zugang
+- LN-/Blockchain-Kern kapitalfrei (L1 Fee-Truth, L3-OTS); Wert-Schicht policy-gegated inert
 
-Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse im legalen Beobachtungsrahmen, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild dokumentiert und durchgängig gegated — Details und Reifegrad je Schicht in `docs/KAI_IDENTITY.md`.
+Zukunftsschichten (DeFi, KYT, öffentliche Tor-Analyse im legalen Beobachtungsrahmen, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild dokumentiert und durchgängig gegated — Details und Reifegrad je Schicht in `docs/KAI_IDENTITY.md`.
 
 **Nicht-Ziele:**
 - Kein Rewrite — Architektur ist tragfähig.
-- Keine Live-Aktivierung vor Phase-0-Gates (HOTP, server-side-SL, exchange-perms).
+- **Keine neuen naiven Edge-Generatoren/Feeder** (ADR 0012); Edge-Forschung nur prä-registriert/gegated als Seitenkanal.
+- Keine Live-Aktivierung vor Phase-0-Gates (HOTP, server-side-SL, exchange-perms) + `edge_validation_gate`.
 - Kein automatisierter SHADOW_ONLY-Flip vor [[kai-bayes-shadow-only-flip-heuristik]]-Bedingungen.
 - Keine zweite parallele State-Machine zu `LIFECYCLE_TRANSITIONS`.
+
+---
+
+## Messinstrument des Labors — feature-eingefroren, nur Pflege
+
+Die folgenden Schichten wurden für das alte Alpha-Ziel gebaut. Nach ADR 0012 dienen sie als **Messinstrument des Labors**: Sie erzeugen die kosten-ehrliche Fill-/Slippage-/Fee- und Outcome-Wahrheit, auf der Falsifikations-Verdikte stehen. Sie sind **feature-eingefroren — nur Pflege** (Bugfixes, Mess-Genauigkeit, Truth-Härtung), keine neuen Signal-Generatoren, Feeder oder Durchsatz-Lockerungen:
+
+| Schicht | Module (Auszug) | Rolle heute |
+|---|---|---|
+| Signal-Generatoren | `app/signals/` (Bayes-Evidence, Composite-Wiring) | shadow-only Evidenz-Erzeugung für Eval — kein Trust-Promote ohne Gate |
+| Execution/Paper | `app/execution/` (Bridge, Paper-Engine, Entry-Watcher, Lifecycle) | Kosten-/Fill-Wahrheit; Paper-Fills speisen canonical-edge + Cost-Truth |
+| Alerts/Annotation | `app/alerts/` (Auto-Annotator, Outcome-Reports) | Outcome-Grundwahrheit für Hypothesen-Eval |
+| Observability | `app/observability/` (Trail-API, Funnel) | Forensik/Nachvollziehbarkeit der Messkette |
+
+Änderungen an diesen Schichten müssen die Frage beantworten: *macht das die Messung wahrer oder das Instrument stabiler?* Alles andere ist out of scope (ADR 0012 „Stopp: keine neuen naiven Edge-Generatoren/Feeder").
 
 ---
 
@@ -184,7 +203,9 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 
 ---
 
-## Bekannte Grenzen (ehrlich, Stand 2026-05-21)
+## Bekannte Grenzen (historischer Snapshot, Stand 2026-05-21)
+
+> Aktive, gepflegte Risiken stehen im lebenden [`RISK_REGISTER.md`](RISK_REGISTER.md) (R1–R7); aktive Annahmen in [`ASSUMPTIONS.md`](ASSUMPTIONS.md). Die Tabelle unten bleibt als ehrlicher Snapshot ihrer Zeit stehen.
 
 | # | Lücke | Status | Anker |
 |---|---|---|---|
@@ -203,7 +224,10 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 
 ## Verweise
 
-- **ADRs:** `docs/adr/0001..0004` (TradingView, Signal-Consensus-Experimental, DuckDB-Pivot, Premium-Signal-Auto-Fill)
+- **ADRs:** `docs/adr/0001..0013` — Index mit Status + Nummern-Hygiene in [`docs/adr/README.md`](docs/adr/README.md); Leit-ADRs: **0012** (Truth-Platform-Wegpunkt) + **0013** (Frontier & Boundary)
+- **Sicherheit:** [`SECURITY.md`](SECURITY.md) (kanonischer Überblick) → `docs/security/` (11 Specs)
+- **Risiken/Annahmen (lebend):** [`RISK_REGISTER.md`](RISK_REGISTER.md) · [`ASSUMPTIONS.md`](ASSUMPTIONS.md)
+- **Code-Karte:** `docs/CODEMAP.md`
 - **Architektur-Reports:** `docs/architecture/signal_to_execution_gap_analysis_20260510.md`, `signal_to_execution_implementation_report_20260510.md`
 - **Auto-Annotate-Reporting:** `docs/architecture/auto_annotate_reporting_split_spec.md` (V5-Folgepaket: Reporting-Split ohne Threshold-Tuning)
 - **Execution Gate Chain · Truth Layer v2 · RACI:** `docs/architecture/execution_gate_chain_and_truth_layer_v2.md` (Delta-Spec der Schicht H als non-bypassable Gate-Kette mit Owner/Fail-Modus/Audit/Tests je Gate + Metric-Registry-Vertrag + RACI-Matrix; subordiniert `docs/KAI_IDENTITY.md`)

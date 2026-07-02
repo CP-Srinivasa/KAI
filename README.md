@@ -4,20 +4,33 @@
 
 `ai_analyst_trading_bot` ist der Legacy-/Repository-/Paketname; `Robotron` ist ein interner Codename — beide sind nicht die fachliche Produktidentität.
 
-**Heute live (Paper-First, Live-Execution disabled):** crypto/market intelligence pipeline —
-RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild beschrieben und gegated — siehe `docs/KAI_IDENTITY.md`.
+## Ziel-Hierarchie (bindend, Operator-Klarstellung 2026-07-02)
 
-## Current State (2026-05-29)
+Die **Gesamt-Vision ist das Dach und unverändert gültig**: eine institutionelle AI-Finanzanalyse- und Entscheidungs-Infrastruktur — Qualität, probabilistische Entscheidungsfindung, Datenvalidierung, Risikoarchitektur, langfristige Lernfähigkeit, Multi-Agenten-System. Kein gewöhnlicher Trading-Bot. Kanonische Definition: [`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md).
+
+**Current waypoint darunter: [ADR 0012](docs/adr/0012-north-star-pivot-research-truth-platform.md) — Research-/Truth-Plattform für auditierbare Markt-Signal-Falsifikation.** Die Falsifikations-Disziplin IST die Qualitäts- und Validierungs-Schicht der Vision, kein Ersatz für sie (siehe ADR-0012-Addendum 2026-07-02). Zugangs-/Realisierungs-Achse: [ADR 0013](docs/adr/0013-frontier-and-boundary.md). Endziel bleibt ein unverzichtbarer, nachgefragter Use Case, in dem KAI unschlagbar ist.
+
+**Heute real im Betrieb (Paper-First, Live-Execution disabled):**
+
+- **Wahrheitskette live (Pi):** Prä-Registrierungs-Ledger → Hypothesen-Eval → prereg-check → attestiertes Verdikt → Family-Status/Stop-Rule, tamper-evident verankert (Hash-Chain + OpenTimestamps).
+- **Paper-Trading-Maschine läuft bewusst weiter — als Messinstrument des Labors** (kosten-ehrliche Fill-/Slippage-/Fee-Wahrheit für Falsifikations-Urteile), nicht als Alpha-Produkt. Alle zugänglichen Signal-Familien sind statistisch widerlegt (canonical-edge n=68, P(mu_net>0)=10,44 %; Momentum n=178) — siehe ADR 0007/0012.
+- **Ingestion/Analyse-Pipeline:** RSS + TradingView + Telegram → LLM-/Regel-Analyse → Scoring → Alerting → Paper-Bridge; Dashboard + Cloudflare Tunnel für Operator-Remote-Zugang.
+- **LN-/Blockchain-Schicht:** kapitalfreier Kern live (L1 Fee-Truth, L3-OTS); Wert-Schicht (Zahlungen) policy-gegated und inert.
+
+Zukunftsschichten (DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) bleiben im Zielbild beschrieben und gegated — siehe `docs/KAI_IDENTITY.md`.
+
+## Current State (2026-07-02)
 
 | Field | Value |
 |---|---|
-| Phase | Re-entry + Stabilisierung (post-PHASE-5-suspension) |
-| Status | `ACTIVE` — Re-Entry vollzogen; `RE_ENTRY_MODE` live |
+| Phase | Truth-Platform-Wegpunkt (ADR 0012) — Truth-Infra härten, Falsifikations-Qualität |
+| Status | `ACTIVE` — Paper-/Lern-Phase; Live-Gates ungeöffnet |
 | Source of truth | Pi 5 (`ubuntu@192.168.178.23`), live seit 2026-05-07 |
-| Active workstream | Asset-Reserve/Fokusfeld-Layer (D-228/S3), Dispatch-Recall-Proxy (D-227), Diversification enforce (D-226) |
-| Live execution | OFF — paper/approval-mode only; Live-Gates ungeöffnet |
+| Edge-Stand | alle zugänglichen Signal-Familien widerlegt; Zitat NUR via `trading canonical-edge` |
+| Nachfrage | UNBEWIESEN, nicht widerlegt — G0-`/oracle`-Pfad war bis nach dem Pivot gated/ungelistet (ADR-0012-Addendum) |
+| Live execution | OFF — paper/approval-mode only; Triple-Flag + ACK-Sentinel ungeöffnet |
 
-See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (Asset-Reserve + Fokusfeld-Taxonomie + Enforce-Cap), **D-227** (Dispatch-Recall-Proxy + tunable bullish gate), **D-226** (Asset-Diversification enforce). Der frühere `SUSPENDED`-Zustand (D-125, TradingView-Pivot) ist seit dem Re-Entry am 2026-05-07 abgelöst.
+See `DECISION_LOG.md` for decision history; ADRs unter `docs/adr/` (Index: [`docs/adr/README.md`](docs/adr/README.md)). Aktive Risiken: [`RISK_REGISTER.md`](RISK_REGISTER.md) · aktive Annahmen: [`ASSUMPTIONS.md`](ASSUMPTIONS.md) · Sicherheits-Überblick: [`SECURITY.md`](SECURITY.md).
 
 ## Stack at a Glance
 
@@ -26,7 +39,7 @@ See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (A
 | FastAPI server (`app/api/main.py`) | in-process RSS scheduler + position monitor |
 | Telegram operator bot | polling, admin-chat approval flow |
 | Cloudflare Named Tunnel | `kai-trader.org` (live, auto-started by `scripts/server_start.sh`) |
-| Paper-trading cron (Windows Task Scheduler) | every 10 min — BTC/USDT + ETH/USDT paper cycles, monitor, bridge, freshness check, liveness watchdog |
+| Paper-trading scheduling (systemd-Timer auf Pi 5) | paper cycles, position monitor, bridge, entry-watch, freshness check, liveness watchdog |
 | Agent worker | SENTR · Watchdog · Architect · DALI · Neo · SATOSHI (Claude Code only) |
 | Dashboard SPA | React under `/dashboard/` · mobile-friendly |
 
@@ -87,9 +100,13 @@ TV-1..TV-4 stages audit-only, fail-closed, gated by shared-token + HMAC. TV-4b b
 ## Canonical Living Docs
 
 - `docs/KAI_IDENTITY.md` — **Single Source of Truth** für Projektidentität + Zielbild-Schichtenmodell
+- `docs/adr/README.md` — ADR-Index (0001–0013) inkl. Nummern-Hygiene
+- `SECURITY.md` — kanonischer Sicherheits-Überblick (Threat-Model, Audit-/Attestation-Kette, Spec-Index)
+- `RISK_REGISTER.md` — aktive Risiken (lebend)
+- `ASSUMPTIONS.md` — aktive Annahmen mit Status (lebend)
 - `AGENTS.md` — operator constraints, current phase state, agent roster
 - `RUNBOOK.md` — daily operator procedure, dashboard, agent chat
-- `DECISION_LOG.md` — compact decision history (D-1..D-188)
+- `DECISION_LOG.md` — compact decision history
 - `CLAUDE.md` — execution directive for all coding agents
 - `docs/contracts.md` — core contracts and invariants
 
