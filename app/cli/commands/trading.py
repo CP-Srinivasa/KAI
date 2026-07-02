@@ -7,6 +7,7 @@ All commands are read-only or guarded-write (paper/shadow only).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -20,6 +21,7 @@ from app.observability.falsification_verdict import (
 )
 from app.research.ledger import DEFAULT_LEDGER_PATH as _DEFAULT_HYPOTHESIS_LEDGER
 from app.research.prereg_ledger import DEFAULT_PREREG_LEDGER_PATH as _DEFAULT_PREREG_LEDGER
+from app.truth.ledger import DEFAULT_TRUTH_LEDGER_PATH as _DEFAULT_TRUTH_LEDGER
 
 console = Console()
 
@@ -505,6 +507,15 @@ def trading_evidence_window(
         raise typer.Exit(2)
 
 
+def _parse_until_utc(value: str) -> datetime:
+    """Parse an ISO-8601 --until value into a tz-aware UTC datetime (naive -> UTC)."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise typer.BadParameter(f"--until: not an ISO-8601 datetime: {value!r}") from exc
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 @trading_app.command("canonical-edge")
 def trading_canonical_edge(
     exec_audit_path: str = typer.Option(
@@ -523,11 +534,30 @@ def trading_canonical_edge(
     p_threshold_bps: float = typer.Option(
         0.0, "--p-threshold-bps", help="Threshold T for the P(mu_net > T) figure"
     ),
+    until: str | None = typer.Option(
+        None,
+        "--until",
+        help="Bounded window end (ISO-8601 UTC, e.g. 2026-07-01T00:00:00Z). "
+        "Default: full stream (the daily timer runs without it).",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
     attest: bool = typer.Option(
         False,
         "--attest",
-        help="Report zusätzlich im Truth-Attestation-Ledger verankern (hash-chained)",
+        help="Report zusaetzlich im Truth-Attestation-Ledger verankern (hash-chained; "
+        "pinnt Input-Hashes + Code-Commit fuer Dritt-Verifikation)",
+    ),
+    ledger_path: str = typer.Option(
+        str(_DEFAULT_TRUTH_LEDGER),
+        "--ledger-path",
+        help="Truth-attestation ledger path (--attest target / --verify source).",
+    ),
+    verify: int | None = typer.Option(
+        None,
+        "--verify",
+        help="Verify ledger entry <seq>: recompute from the pinned inputs and print "
+        "VERIFY OK/FAIL (exit 0/1). Third-party recomputation in ONE command; "
+        "ignores the report options.",
     ),
 ) -> None:
     """Canonical edge — the ONE defensible edge answer over the REAL generator.
@@ -539,39 +569,76 @@ def trading_canonical_edge(
     stream (memory kai_edge_epoch_contamination_20260623) — can NEVER
     re-contaminate this answer. Counts + safety still cover the full stream.
 
+    ``--attest`` seals the report into the hash-chained truth ledger together with
+    the SHA-256 of every input artifact it read (append-only prefix), the recompute
+    knobs, and the code commit — so ``--verify <seq>`` lets any third party
+    recompute the sealed claim from those pinned inputs in one command.
+
     READ-ONLY. Prefer this over ``evidence-window --since-days 0`` whenever the
     question is "does the generator have an edge".
     """
     import json as _json
 
+    from app.observability.edge_attestation import (
+        build_canonical_edge_payload,
+        verify_canonical_edge_seq,
+    )
     from app.observability.evidence_window import (
         CANONICAL_EDGE_SOURCES,
         build_window_from_audit,
         render_window,
     )
 
-    report = build_window_from_audit(
-        loop_audit_path=loop_audit_path,
-        exec_audit_path=exec_audit_path,
-        p_threshold_bps=p_threshold_bps,
-        min_sample=min_sample,
-        source_allowlist=CANONICAL_EDGE_SOURCES,
-    )
+    # --verify short-circuits the report path: one-command third-party check.
+    if verify is not None:
+        result = verify_canonical_edge_seq(verify, ledger_path=ledger_path)
+        typer.echo(result.message)
+        raise typer.Exit(0 if result.ok else 1)
+
+    until_dt = _parse_until_utc(until) if until else None
+
     if attest:
         from app.truth.ledger import append_attestation
 
-        attested = append_attestation("canonical_edge_report", None, report.to_dict())
+        report, payload = build_canonical_edge_payload(
+            loop_audit_path=loop_audit_path,
+            exec_audit_path=exec_audit_path,
+            until=until_dt,
+            min_sample=min_sample,
+            p_threshold_bps=p_threshold_bps,
+        )
+        attested = append_attestation(
+            "canonical_edge_report", None, payload, path=Path(ledger_path)
+        )
+        pinned = ", ".join(f"{p['role']}={p['lines']}L" for p in payload["inputs"])
+        code = payload.get("code")
+        code_str = (
+            "unknown"
+            if not code
+            else f"{str(code['commit'])[:12]}{'+dirty' if code['dirty'] else ''}"
+        )
         typer.secho(
             f"[truth] canonical-edge report attestiert: seq={attested['seq']} "
-            f"payload_hash={attested['payload_hash'][:16]}…",
+            f"payload_hash={attested['payload_hash'][:16]}... "
+            f"inputs=[{pinned}] code={code_str}",
             err=True,
         )
+    else:
+        report = build_window_from_audit(
+            loop_audit_path=loop_audit_path,
+            exec_audit_path=exec_audit_path,
+            until=until_dt,
+            p_threshold_bps=p_threshold_bps,
+            min_sample=min_sample,
+            source_allowlist=CANONICAL_EDGE_SOURCES,
+        )
+
     if as_json:
         print(_json.dumps(report.to_dict(), indent=2))
     else:
         console.print(render_window(report))
-    # Tripwire wie bei evidence-window: nur UNERKLÄRTE Non-Paper-Fills (der
-    # dokumentiert-benigne Mai-legacy-Marker würde sonst jeden Lauf failen).
+    # Tripwire wie bei evidence-window: nur UNERKLAERTE Non-Paper-Fills (der
+    # dokumentiert-benigne Mai-legacy-Marker wuerde sonst jeden Lauf failen).
     if report.safety.live_orders_unexplained > 0:
         raise typer.Exit(2)
 

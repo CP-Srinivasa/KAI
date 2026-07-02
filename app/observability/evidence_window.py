@@ -791,27 +791,37 @@ def _build_notes(
 # === audit-stream IO (thin edge) ===============================================
 
 
+def _parse_jsonl_lines(lines: Iterable[str], *, source: str = "<lines>") -> list[dict[str, Any]]:
+    """Parse an iterable of JSONL text lines into dict rows (tolerant).
+
+    Blank lines are skipped; malformed lines are logged and dropped (never raise);
+    non-object rows are ignored. Shared by the streaming file loader and the
+    explicit-lines reconstruction path so both parse byte-identically.
+    """
+    out: list[dict[str, Any]] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("[evidence_window] skipping malformed audit line in %s", source)
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
 def _load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     p = Path(path)
     if not p.exists():
         logger.warning("[evidence_window] audit file not found: %s", p)
         return []
-    out: list[dict[str, Any]] = []
     # KAI-01: stream the (multi-MB) audit file line-by-line instead of
     # ``read_text().splitlines()`` to avoid the full-file RAM peak on the Pi.
     with p.open(encoding="utf-8") as handle:
-        for raw in handle:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("[evidence_window] skipping malformed audit line in %s", p)
-                continue
-            if isinstance(obj, dict):
-                out.append(obj)
-    return out
+        return _parse_jsonl_lines(handle, source=str(p))
 
 
 def _within_window(ts: str | None, since: datetime | None, until: datetime | None) -> bool:
@@ -887,6 +897,58 @@ def build_window_from_audit(
     )
     exec_events = _filter_window(
         _load_jsonl(exec_audit_path),
+        ts_keys=("timestamp_utc", "filled_at"),
+        since=since,
+        until=until,
+    )
+    return build_evidence_window(
+        loop_events=loop_events,
+        exec_events=exec_events,
+        cost_model=cost_model,
+        venue=venue,
+        safety_margin_bps=safety_margin_bps,
+        p_threshold_bps=p_threshold_bps,
+        trim_fraction=trim_fraction,
+        bootstrap_n=bootstrap_n,
+        min_sample=min_sample,
+        implausible_move_threshold=implausible_move_threshold,
+        source_allowlist=source_allowlist,
+    )
+
+
+def build_window_from_lines(
+    *,
+    loop_lines: Sequence[str],
+    exec_lines: Sequence[str],
+    since: datetime | None = None,
+    until: datetime | None = None,
+    cost_model: CostModel | None = None,
+    venue: str = "paper",
+    safety_margin_bps: float = 0.0,
+    p_threshold_bps: float = 0.0,
+    trim_fraction: float = _DEFAULT_TRIM_FRACTION,
+    bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
+    min_sample: int = MIN_SAMPLE_FOR_P,
+    implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
+    source_allowlist: frozenset[str] | None = None,
+) -> EvidenceWindowReport:
+    """Build the window from EXPLICIT JSONL lines (not file paths).
+
+    Same parsing/filtering/aggregation as :func:`build_window_from_audit`, but the
+    caller supplies the raw lines. This is the reconstruction entry point for
+    verifiable attestation (B5b): a verifier hashes the pinned prefix, then rebuilds
+    the exact report from those very lines — decoupled from later appends to the
+    live file. For unfiltered inputs it is byte-identical to
+    :func:`build_window_from_audit` over the same content.
+    """
+    loop_events = _filter_window(
+        _parse_jsonl_lines(loop_lines),
+        ts_keys=("started_at", "completed_at", "timestamp_utc"),
+        since=since,
+        until=until,
+    )
+    exec_events = _filter_window(
+        _parse_jsonl_lines(exec_lines),
         ts_keys=("timestamp_utc", "filled_at"),
         since=since,
         until=until,

@@ -415,6 +415,27 @@ def test_build_from_audit_files_end_to_end(tmp_path) -> None:
     assert report.safety.live_orders_attempted == 0
 
 
+def test_build_from_lines_matches_build_from_audit(tmp_path) -> None:
+    """The explicit-lines reconstruction path (B5b) is byte-identical to the file path."""
+    from app.observability.evidence_window import build_window_from_lines
+
+    loop = [
+        _loop_cycle("completed", "BTC/USDT", "2026-06-01T10:00:00+00:00"),
+        _loop_cycle("churn_rejected", "BTC/USDT", "2026-06-01T10:05:00+00:00"),
+    ]
+    exec_events = [
+        _entry_fill("BTC/USDT", "2026-06-01T10:00:01+00:00"),
+        _close("BTC/USDT", 100.0, 102.0, "2026-06-01T10:30:00+00:00", 2.0),
+    ]
+    loop_path, exec_path = _write_streams(tmp_path, loop, exec_events)
+    from_audit = build_window_from_audit(loop_audit_path=loop_path, exec_audit_path=exec_path)
+    from_lines = build_window_from_lines(
+        loop_lines=loop_path.read_text(encoding="utf-8").splitlines(),
+        exec_lines=exec_path.read_text(encoding="utf-8").splitlines(),
+    )
+    assert from_lines.to_dict() == from_audit.to_dict()
+
+
 # --- CANONICAL SOURCE FILTER (2026-06-23 edge-epoch fix) ------------------------
 # The full stream mixes the May canary epoch (unattributed closes) into the edge,
 # which fabricated a fake positive ETH cohort. The canonical edge restricts the
