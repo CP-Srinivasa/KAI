@@ -169,3 +169,77 @@ def test_paid_request_logs_access_granted(client: TestClient) -> None:
     assert r.status_code == 200
     granted = [kw for ev, kw in events if ev == ACCESS_GRANTED]
     assert len(granted) == 1 and granted[0]["payment_hash"] == _PH_HEX
+
+
+# --- /oracle/verdicts — the auditable falsification-verdict product (Stage 3) -----
+
+
+def test_verdicts_unpaid_returns_402_challenge(client: TestClient) -> None:
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+    ):
+        r = client.get("/oracle/verdicts")
+    assert r.status_code == 402
+    assert r.headers.get("WWW-Authenticate", "").startswith("L402 ")
+
+
+def test_verdicts_paid_returns_attested_list(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    rows = [
+        {
+            "file": "20260702_momentum.json",
+            "hypothesis": "momentum_24h",
+            "verdict": "FAILED",
+            "prereg_id": "pid1",
+            "generated_at_utc": "2026-07-02T00:00:00+00:00",
+            "code_version": "deadbee",
+            "attestation_hash": "a" * 64,
+        }
+    ]
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.research.verdict_report.list_verdict_reports", return_value=rows),
+        patch("app.truth.ledger.verify_ledger", return_value={"ok": True, "records": 5}),
+    ):
+        r = client.get(
+            "/oracle/verdicts",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "kai_falsification_platform"
+    assert body["count"] == 1
+    assert body["verdicts"][0]["attestation_hash"] == "a" * 64
+    assert body["attestation_ledger"] == {"chain_ok": True, "records": 5}
+
+
+def test_verdicts_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")  # wrong scope
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+    ):
+        r = client.get(
+            "/oracle/verdicts",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 402  # scope mismatch → re-challenge
