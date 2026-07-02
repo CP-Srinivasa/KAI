@@ -48,7 +48,9 @@ async def test_fee_report_ok_parses_sums(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(adapter_mod, "_build_client", _client_with(httpx.MockTransport(handler)))
-    fr = await get_fee_report(LightningSettings(enabled=True, macaroon_hex="ab"))
+    fr = await get_fee_report(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert fr.available is True
     assert fr.day_fee_sat == 10
     assert fr.week_fee_sat == 70
@@ -60,7 +62,9 @@ async def test_fee_report_node_error_is_fail_closed(monkeypatch) -> None:
         return httpx.Response(503, text="node starting")
 
     monkeypatch.setattr(adapter_mod, "_build_client", _client_with(httpx.MockTransport(handler)))
-    fr = await get_fee_report(LightningSettings(enabled=True, macaroon_hex="ab"))
+    fr = await get_fee_report(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert fr.available is False
 
 

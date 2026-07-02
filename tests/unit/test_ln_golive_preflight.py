@@ -20,6 +20,7 @@ def _ready_cfg() -> LightningSettings:
         pay_enabled=False,
         l402_secret="a" * 32,
         macaroon_hex="deadbeef",
+        tls_cert_path="test-tls.pem",
     )
 
 

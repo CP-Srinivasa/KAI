@@ -33,7 +33,12 @@ from app.lightning.value_layer import (
 
 
 def _cfg(*, pay_enabled: bool = False, receive_enabled: bool = False) -> LightningSettings:
-    return LightningSettings(enabled=True, pay_enabled=pay_enabled, receive_enabled=receive_enabled)
+    return LightningSettings(
+        enabled=True,
+        pay_enabled=pay_enabled,
+        receive_enabled=receive_enabled,
+        tls_cert_path="test-tls.pem",
+    )
 
 
 def _fake_client() -> MagicMock:

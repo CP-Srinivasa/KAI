@@ -29,6 +29,7 @@ from app.core.settings import get_settings
 from app.lightning import value_layer as vl
 from app.lightning.control_gate import plan_hash, verify_capital_confirm
 from app.lightning.demand_evaluator import evaluate_l402_demand
+from app.lightning.idempotency_store import PersistentSeenKeys
 from app.lightning.ops_ledger import spent_today_sat
 from app.lightning.policy import PolicyStore, evaluate_policy
 
@@ -36,12 +37,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard/api/ln", tags=["ln-control"])
 
-# Process-local idempotency ledger for executed confirms (replay guard).
-_seen_idempotency: set[str] = set()
+# File-backed idempotency ledger for executed confirms (replay guard). Persisted +
+# bounded so a process restart cannot re-open the replay window (a process-local set
+# forgot every consumed key on reboot). See app.lightning.idempotency_store.
+_seen_idempotency: PersistentSeenKeys = PersistentSeenKeys()
 
 
 def reset_control_state() -> None:
-    """Test seam: clear the idempotency ledger."""
+    """Test seam: clear the idempotency ledger (in memory AND on disk)."""
     _seen_idempotency.clear()
 
 

@@ -31,6 +31,9 @@ def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
     lc.reset_control_state()
     monkeypatch.setattr(lc.PolicyStore, "load", lambda self: envelope)
     monkeypatch.setattr(lc, "_available_balance_sat", _bal_million)
+    # Isolate the daily-cap input from the shared ops ledger (other tests append
+    # executed spends to the default path) so the policy decision is deterministic.
+    monkeypatch.setattr(lc, "spent_today_sat", lambda: 0)
 
 
 def test_plan_mode_returns_plan_decision_and_hash(monkeypatch) -> None:

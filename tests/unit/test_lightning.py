@@ -154,7 +154,9 @@ async def test_adapter_degraded_when_getinfo_fails(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_node_status(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert status.reachable is True
     assert status.server_state == "SERVER_ACTIVE"
@@ -197,7 +199,9 @@ async def test_adapter_ok_full(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_node_status(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert status.info_available is True
     assert status.block_height == 953644
@@ -229,7 +233,9 @@ async def test_adapter_balances_fail_soft(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_node_status(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert status.info_available is True
     assert status.balances_available is False
@@ -245,7 +251,9 @@ async def test_adapter_disabled_makes_no_call() -> None:
 
 async def test_adapter_unavailable_when_misconfigured() -> None:
     # enabled but no macaroon -> client construction fails -> fail-closed
-    cfg = LightningSettings(enabled=True, macaroon_hex="", macaroon_path="")
+    cfg = LightningSettings(
+        enabled=True, macaroon_hex="", macaroon_path="", tls_cert_path="test-tls.pem"
+    )
     status = await get_node_status(cfg)
     assert status.state == "unavailable"
     assert status.reachable is False
@@ -328,7 +336,9 @@ async def test_get_channels_ok_parses_and_sorts(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_channels(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert status.reachable is True
     # active-first, then capacity desc: big(5000) > small(1000) > inactive(9000)
@@ -340,7 +350,11 @@ async def test_get_channels_ok_parses_and_sorts(monkeypatch) -> None:
 
 
 async def test_get_channels_unavailable_when_misconfigured() -> None:
-    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="", macaroon_path=""))
+    status = await get_channels(
+        LightningSettings(
+            enabled=True, macaroon_hex="", macaroon_path="", tls_cert_path="test-tls.pem"
+        )
+    )
     assert status.state == "unavailable"
     assert status.reachable is False
     assert status.reason
@@ -355,7 +369,9 @@ async def test_get_channels_fail_closed_on_error(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_channels(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "unavailable"
     assert status.channels == []
 
@@ -447,7 +463,9 @@ async def test_get_channels_includes_pending_open(monkeypatch) -> None:
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_channels(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert status.channels == []
     assert len(status.pending) == 1
@@ -485,7 +503,9 @@ async def test_get_channels_pending_failure_keeps_open_channels(monkeypatch) -> 
             base_url="https://x:8080", macaroon_hex="ab", transport=transport
         ),
     )
-    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    status = await get_channels(
+        LightningSettings(enabled=True, macaroon_hex="ab", tls_cert_path="test-tls.pem")
+    )
     assert status.state == "ok"
     assert len(status.channels) == 1
     assert status.pending == []
