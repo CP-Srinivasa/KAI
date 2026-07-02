@@ -15,6 +15,7 @@ from typing import Any
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.eligibility import evaluate_directional_eligibility
 from app.alerts.provenance_metrics import wilson_ci
+from app.storage.jsonl_io import iter_jsonl_tolerant
 
 # D-151 (2026-04-18): Gate now enforces sample-size AND active-precision.
 # Raised from 50 to 200 to match the sprint-plan re-entry rule and to get the
@@ -69,21 +70,11 @@ HOLD_REPORT_MD = "ph5_hold_operator_summary.md"
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for raw in handle:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                rows.append(parsed)
-    return rows
+    # B3: consolidated onto the canonical streaming reader. Behaviour is
+    # identical to the previous inline loop (missing file -> [], blank lines
+    # skipped, malformed lines silently skipped with no retry, non-dict rows
+    # dropped via ``dict_only=True``).
+    return list(iter_jsonl_tolerant(path))
 
 
 def _latest_value(rows: list[dict[str, Any]], key: str) -> str | None:

@@ -32,6 +32,7 @@ from app.observability.shadow_candidate_ledger import (
     RESOLVABLE_CANDIDATE_KINDS,
     Bar,
 )
+from app.storage.jsonl_io import iter_jsonl_tolerant
 
 logger = logging.getLogger(__name__)
 
@@ -147,18 +148,11 @@ def build_comparison(
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        try:
-            out.append(json.loads(s))
-        except json.JSONDecodeError:
-            continue
-    return out
+    # B3: consolidated onto the canonical streaming reader. ``dict_only=False``
+    # preserves the previous behaviour of keeping *any* well-formed JSON value
+    # (non-dict rows were appended too); missing file -> [], blank/malformed
+    # lines skipped silently with no retry.
+    return list(iter_jsonl_tolerant(path, dict_only=False))
 
 
 def _is_comparable_kind(c: dict[str, object]) -> bool:

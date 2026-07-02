@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from app.storage.jsonl_io import iter_jsonl_tolerant
+
 _QUEUE_EVENT = "telegram_signal_exchange_forward_queued"
 _SENT_EVENT = "telegram_signal_exchange_forward_sent"
 _DEAD_EVENT = "telegram_signal_exchange_forward_dead_letter"
@@ -45,20 +47,10 @@ def _now_iso() -> str:
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return rows
+    # B3: consolidated onto the canonical streaming reader. Behaviour-identical
+    # to the previous inline loop (missing file -> [], blank/malformed lines
+    # skipped silently with no retry, non-dict rows dropped via dict_only).
+    return list(iter_jsonl_tolerant(path))
 
 
 def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
