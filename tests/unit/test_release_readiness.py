@@ -234,7 +234,7 @@ def test_current_repo_default_is_not_live_candidate() -> None:
 
 def test_default_ignored_modules_reads_real_pyproject() -> None:
     mods = default_ignored_mypy_modules()
-    # operator_entry_watch is a trading-critical module still ignored today
-    # (audit_replay graduated to mypy-strict in B2.3).
-    assert "app.execution.operator_entry_watch" in mods
+    # portfolio_read is a trading-critical module still ignored today
+    # (operator_entry_watch graduated to mypy-strict in B2.4).
+    assert "app.execution.portfolio_read" in mods
     assert TRADING_CRITICAL_MODULES & set(mods)  # at least one trading-core still ignored
