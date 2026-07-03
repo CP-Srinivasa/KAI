@@ -8,13 +8,14 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
 from app.learning.bayes_quarantine import is_corrupt_close
-from app.market_data.base import MarketDataSnapshot
+from app.market_data.models import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 from app.storage.models.trading import PortfolioStateRecord
 
@@ -204,6 +205,28 @@ class PortfolioSnapshot:
 _AuditReplayResult = AuditReplayResult  # backwards-compat alias for internal callers
 
 
+class _AssetBucket(TypedDict):
+    """Per-asset PnL aggregate accumulated in the closed-trade summary.
+
+    Precise field types (vs. an untyped ``dict[str, object]``) let mypy verify
+    the money-path arithmetic without per-line ignores — the point of graduating
+    this trading-critical module to mypy-strict.
+    """
+
+    symbol: str
+    realized_pnl_usd: float
+    closed_trades: int
+    wins: int
+    losses: int
+    fees_usd_total: float
+    partial_closes: int
+    full_closes: int
+    last_close_utc: str | None
+    quarantined_pnl_usd: float
+    quarantined_closes: int
+    win_rate_pct: NotRequired[float | None]
+
+
 def _coerce_float(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
@@ -292,8 +315,10 @@ def _build_snapshot_from_portfolio_state(
 
     raw = state.positions_json or {}
     if isinstance(raw, dict):
-        positions_data = raw.get("positions", {})  # type: ignore[assignment]
-        cash_usd = float(raw.get("cash", 0.0))  # type: ignore[arg-type]
+        positions_obj = raw.get("positions", {})
+        if isinstance(positions_obj, dict):
+            positions_data = positions_obj
+        cash_usd = _coerce_float(raw.get("cash", 0.0)) or 0.0
 
     position_summaries: list[PositionSummary] = []
     for sym, pos_raw in positions_data.items():
@@ -356,7 +381,8 @@ def _build_snapshot_from_portfolio_state(
         (-1.0 if p.position_side == "short" else 1.0) * p.quantity * p.avg_entry_price
         for p in position_summaries
     )
-    total_fees_db = float(raw.get("total_fees_usd") or 0.0) if isinstance(raw, dict) else 0.0
+    raw_fees = raw.get("total_fees_usd") if isinstance(raw, dict) else None
+    total_fees_db = _coerce_float(raw_fees) or 0.0
 
     return PortfolioSnapshot(
         generated_at_utc=generated_at,
@@ -739,7 +765,7 @@ def compute_realized_by_asset(
 
     result["audit_file_exists"] = True
 
-    per_asset: dict[str, dict[str, float | int | str | None]] = {}
+    per_asset: dict[str, _AssetBucket] = {}
     invalid: list[tuple[int, str]] = []
     last_event_ts: str | None = None
     full_close_total = 0
@@ -841,17 +867,24 @@ def compute_realized_by_asset(
             ep = d.get("entry_price")
             xp = d.get("exit_price")
             qty = d.get("quantity")
-            if all(isinstance(v, (int, float)) for v in (ep, xp, qty)):
+            if (
+                isinstance(ep, (int, float))
+                and isinstance(xp, (int, float))
+                and isinstance(qty, (int, float))
+            ):
                 pnl = (float(xp) - float(ep)) * float(qty)
             else:
                 invalid.append((line_no, "close_event_missing_trade_pnl_usd_and_v1_fields"))
                 continue
-        else:
+        elif isinstance(pnl_raw, (int, float, str)):
             try:
                 pnl = float(pnl_raw)
             except (TypeError, ValueError):
                 invalid.append((line_no, "close_event_pnl_not_numeric"))
                 continue
+        else:
+            invalid.append((line_no, "close_event_pnl_not_numeric"))
+            continue
         fee = 0.0
         fee_raw = d.get("fee_usd")
         if isinstance(fee_raw, (int, float)):
@@ -880,25 +913,25 @@ def compute_realized_by_asset(
         # the generic guard and let the ETH off-market signature (+55%, under the
         # 200% cap) leak into realized PnL.
         if is_corrupt_close(d):
-            bucket["quarantined_pnl_usd"] = float(bucket["quarantined_pnl_usd"]) + pnl  # type: ignore[arg-type]
-            bucket["quarantined_closes"] = int(bucket["quarantined_closes"]) + 1  # type: ignore[arg-type]
+            bucket["quarantined_pnl_usd"] = float(bucket["quarantined_pnl_usd"]) + pnl
+            bucket["quarantined_closes"] = int(bucket["quarantined_closes"]) + 1
             if isinstance(ts, str) and ts:
                 prev_last = bucket["last_close_utc"]
                 if prev_last is None or ts > str(prev_last):
                     bucket["last_close_utc"] = ts
             continue
-        bucket["realized_pnl_usd"] = float(bucket["realized_pnl_usd"]) + pnl  # type: ignore[arg-type]
-        bucket["closed_trades"] = int(bucket["closed_trades"]) + 1  # type: ignore[arg-type]
+        bucket["realized_pnl_usd"] = float(bucket["realized_pnl_usd"]) + pnl
+        bucket["closed_trades"] = int(bucket["closed_trades"]) + 1
         if pnl > 0:
-            bucket["wins"] = int(bucket["wins"]) + 1  # type: ignore[arg-type]
+            bucket["wins"] = int(bucket["wins"]) + 1
         elif pnl < 0:
-            bucket["losses"] = int(bucket["losses"]) + 1  # type: ignore[arg-type]
-        bucket["fees_usd_total"] = float(bucket["fees_usd_total"]) + fee  # type: ignore[arg-type]
+            bucket["losses"] = int(bucket["losses"]) + 1
+        bucket["fees_usd_total"] = float(bucket["fees_usd_total"]) + fee
         if ev == "position_partial_closed":
-            bucket["partial_closes"] = int(bucket["partial_closes"]) + 1  # type: ignore[arg-type]
+            bucket["partial_closes"] = int(bucket["partial_closes"]) + 1
             partial_close_total += 1
         else:
-            bucket["full_closes"] = int(bucket["full_closes"]) + 1  # type: ignore[arg-type]
+            bucket["full_closes"] = int(bucket["full_closes"]) + 1
             full_close_total += 1
         prev_last = bucket["last_close_utc"]
         if isinstance(ts, str) and ts and (prev_last is None or ts > str(prev_last)):
@@ -930,21 +963,21 @@ def compute_realized_by_asset(
     total_quarantined_pnl = 0.0
     total_quarantined_closes = 0
     for _sym, bucket in per_asset.items():
-        n = int(bucket["closed_trades"])  # type: ignore[arg-type]
-        w = int(bucket["wins"])  # type: ignore[arg-type]
+        n = int(bucket["closed_trades"])
+        w = int(bucket["wins"])
         win_rate = round((w / n * 100.0), 2) if n > 0 else None
-        bucket["realized_pnl_usd"] = round(float(bucket["realized_pnl_usd"]), 4)  # type: ignore[arg-type]
-        bucket["fees_usd_total"] = round(float(bucket["fees_usd_total"]), 4)  # type: ignore[arg-type]
-        bucket["quarantined_pnl_usd"] = round(float(bucket["quarantined_pnl_usd"]), 4)  # type: ignore[arg-type]
+        bucket["realized_pnl_usd"] = round(float(bucket["realized_pnl_usd"]), 4)
+        bucket["fees_usd_total"] = round(float(bucket["fees_usd_total"]), 4)
+        bucket["quarantined_pnl_usd"] = round(float(bucket["quarantined_pnl_usd"]), 4)
         bucket["win_rate_pct"] = win_rate
         by_asset.append(dict(bucket))
         total_pnl += float(bucket["realized_pnl_usd"])
         total_trades += n
         total_fees += float(bucket["fees_usd_total"])
         total_quarantined_pnl += float(bucket["quarantined_pnl_usd"])
-        total_quarantined_closes += int(bucket["quarantined_closes"])  # type: ignore[arg-type]
+        total_quarantined_closes += int(bucket["quarantined_closes"])
 
-    by_asset.sort(key=lambda b: float(b["realized_pnl_usd"]), reverse=True)
+    by_asset.sort(key=lambda b: _coerce_float(b["realized_pnl_usd"]) or 0.0, reverse=True)
 
     result["by_asset"] = by_asset
     result["totals"] = {

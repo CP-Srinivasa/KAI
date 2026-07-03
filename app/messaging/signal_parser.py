@@ -11,8 +11,8 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
-from typing import TYPE_CHECKING
+from enum import Enum, StrEnum
+from typing import TYPE_CHECKING, TypedDict, overload
 
 if TYPE_CHECKING:
     from app.messaging.message_models import (
@@ -411,7 +411,19 @@ _ENUM_ALIASES: dict[str, dict[str, str]] = {
 }
 
 
-def _enum_or_default(enum_cls: type, value: str, default: object = None) -> object:
+@overload
+def _enum_or_default[EnumT: Enum](enum_cls: type[EnumT], value: str, default: EnumT) -> EnumT: ...
+
+
+@overload
+def _enum_or_default[EnumT: Enum](
+    enum_cls: type[EnumT], value: str, default: None = None
+) -> EnumT | None: ...
+
+
+def _enum_or_default[EnumT: Enum](
+    enum_cls: type[EnumT], value: str, default: EnumT | None = None
+) -> EnumT | None:
     if not value:
         return default
     normalized = value.strip().lower()
@@ -423,7 +435,29 @@ def _enum_or_default(enum_cls: type, value: str, default: object = None) -> obje
     return default
 
 
-def _extract_heuristic_signal(text: str) -> dict[str, object] | None:
+class _HeuristicSignal(TypedDict):
+    """Fixed-shape result of :func:`_extract_heuristic_signal`.
+
+    Typing the extractor output precisely (vs. ``dict[str, object]``) lets the
+    ``TradingSignal(...)`` construction below type-check without per-argument
+    ignores — part of graduating this trading-critical module to mypy-strict.
+    """
+
+    internal_symbol: str
+    display_symbol: str
+    side: str | None
+    direction: str | None
+    entry_type: str
+    entry_value: float | None
+    entry_min: float | None
+    entry_max: float | None
+    targets: list[float]
+    stop_loss: float | None
+    leverage: int
+    exchange_scope: list[str]
+
+
+def _extract_heuristic_signal(text: str) -> _HeuristicSignal | None:
     """Extract signal fields from free-form text (no explicit header).
 
     Handles common Telegram-group formats:
@@ -634,18 +668,18 @@ def parse_structured_message(
         return TradingSignal(
             signal_id=signal_id,
             source="external_paste",
-            exchange_scope=list(heur["exchange_scope"]),  # type: ignore[arg-type]
+            exchange_scope=list(heur["exchange_scope"]),
             market_type=MarketType.FUTURES,
             symbol=str(heur["internal_symbol"]),
             display_symbol=str(heur["display_symbol"]),
             side=_enum_or_default(Side, str(heur["side"] or "buy"), Side.BUY),
             direction=_enum_or_default(Direction, str(heur["direction"] or "long"), Direction.LONG),
             entry_type=_enum_or_default(EntryType, str(heur["entry_type"]), EntryType.MARKET),
-            entry_value=heur["entry_value"],  # type: ignore[arg-type]
-            entry_min=heur["entry_min"],  # type: ignore[arg-type]
-            entry_max=heur["entry_max"],  # type: ignore[arg-type]
-            targets=list(heur["targets"]),  # type: ignore[arg-type]
-            stop_loss=heur["stop_loss"],  # type: ignore[arg-type]
+            entry_value=heur["entry_value"],
+            entry_min=heur["entry_min"],
+            entry_max=heur["entry_max"],
+            targets=list(heur["targets"]),
+            stop_loss=heur["stop_loss"],
             leverage=int(heur["leverage"]) if heur["leverage"] else 1,
             risk_mode=RiskMode.ISOLATED,
             status=SignalStatus.NEW,
