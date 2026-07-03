@@ -66,6 +66,18 @@ def _canonical_symbol(raw_symbol: str) -> str:
     return candidate
 
 
+def _scalar_float(value: object) -> float:
+    """Coerce a Binance JSON scalar (int/float/numeric-string) to ``float``.
+
+    Raises ``TypeError`` for non-scalar values so the caller's
+    ``except (KeyError, TypeError, ValueError)`` falls through to the
+    ``invalid_ticker_payload`` guard exactly like the original ``float()`` call.
+    """
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    raise TypeError(f"non-numeric ticker field: {type(value).__name__}")
+
+
 def _parse_kline_rows(data: list[object], canonical_symbol: str, timeframe: str) -> list[OHLCV]:
     """Parse + VALIDATE raw Binance kline rows into OHLCV candles.
 
@@ -165,11 +177,11 @@ class BinanceAdapter(BaseMarketDataAdapter):
             return None
 
         try:
-            last = float(data["lastPrice"])
-            bid = float(data.get("bidPrice", last))
-            ask = float(data.get("askPrice", last))
-            volume = float(data.get("volume", 0.0))
-            change_pct = float(data.get("priceChangePercent", 0.0))
+            last = _scalar_float(data["lastPrice"])
+            bid = _scalar_float(data.get("bidPrice", last))
+            ask = _scalar_float(data.get("askPrice", last))
+            volume = _scalar_float(data.get("volume", 0.0))
+            change_pct = _scalar_float(data.get("priceChangePercent", 0.0))
         except (KeyError, TypeError, ValueError):
             self._set_error("invalid_ticker_payload")
             return None

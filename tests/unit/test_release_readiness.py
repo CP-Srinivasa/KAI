@@ -234,7 +234,11 @@ def test_current_repo_default_is_not_live_candidate() -> None:
 
 def test_default_ignored_modules_reads_real_pyproject() -> None:
     mods = default_ignored_mypy_modules()
-    # portfolio_read is a trading-critical module still ignored today
-    # (operator_entry_watch graduated to mypy-strict in B2.4).
-    assert "app.execution.portfolio_read" in mods
-    assert TRADING_CRITICAL_MODULES & set(mods)  # at least one trading-core still ignored
+    # Anchor: a stable non-trading god-file is still ignored — proves the reader
+    # actually parsed the override block, so the ratchet assertion below is not vacuous.
+    assert "app.messaging.telegram_bot" in mods
+    # Terminal ratchet state (B2 series complete, B2.5–B2.8): every trading-critical
+    # module has graduated to mypy-strict, so NONE remains in the ignore_errors
+    # override. This now guards against regression — re-adding any trading-core module
+    # to the override (re-masking money-path type safety) fails here.
+    assert not (TRADING_CRITICAL_MODULES & set(mods))

@@ -154,26 +154,46 @@ def _apply_completions(
     """
     if completions is None:
         return signal
-    changes: dict[str, object] = {}
+    # Typed field-by-field merge (vs. a **dict[str, object] splat) so mypy can
+    # verify each replacement against the dataclass field — same result: only
+    # operator-supplied values override, everything else keeps its parsed value.
+    exchange_scope = signal.exchange_scope
+    stop_loss = signal.stop_loss
+    targets = signal.targets
+    leverage = signal.leverage
+    source = signal.source
+    changed = False
     if completions.exchange_scope:
         normalized = [
             v.strip().lower().replace(" ", "_") for v in completions.exchange_scope if v.strip()
         ]
         if normalized:
-            changes["exchange_scope"] = normalized
+            exchange_scope = normalized
+            changed = True
     if completions.stop_loss is not None:
-        changes["stop_loss"] = completions.stop_loss
+        stop_loss = completions.stop_loss
+        changed = True
     if completions.targets:
         cleaned = [t for t in completions.targets if t > 0]
         if cleaned:
-            changes["targets"] = cleaned
+            targets = cleaned
+            changed = True
     if completions.leverage is not None:
-        changes["leverage"] = completions.leverage
+        leverage = completions.leverage
+        changed = True
     if completions.source:
-        changes["source"] = completions.source
-    if not changes:
+        source = completions.source
+        changed = True
+    if not changed:
         return signal
-    return replace(signal, **changes)
+    return replace(
+        signal,
+        exchange_scope=exchange_scope,
+        stop_loss=stop_loss,
+        targets=targets,
+        leverage=leverage,
+        source=source,
+    )
 
 
 def _signal_preview(signal: TradingSignal) -> dict[str, object]:
@@ -599,12 +619,12 @@ def _as_str_list(value: object) -> list[str]:
 
 
 def _as_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _as_float_list(value: object) -> list[float]:
@@ -612,20 +632,19 @@ def _as_float_list(value: object) -> list[float]:
         return []
     out: list[float] = []
     for x in value:
-        try:
-            out.append(float(x))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            continue
+        coerced = _as_float(x)
+        if coerced is not None:
+            out.append(coerced)
     return out
 
 
 def _as_int(value: object) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, (int, float, str)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 @router.get("/envelope/recent", response_model=EnvelopeRecentResponse)

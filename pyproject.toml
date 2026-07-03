@@ -150,14 +150,10 @@ module = [
     "app.api.middleware.security_headers",
     "app.api.routers.events",
     "app.api.routers.kai",
-    "app.api.routers.signals",
     "app.cli.commands.ingestion",
     "app.cli.main",
-    "app.execution.portfolio_read",
     "app.ingestion.telegram_channel_worker",
     "app.ingestion.youtube.adapter",
-    "app.market_data.binance_adapter",
-    "app.messaging.signal_parser",
     "app.messaging.telegram_bot",
 ]
 ignore_errors = true
