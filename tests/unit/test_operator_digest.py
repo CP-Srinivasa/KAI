@@ -177,13 +177,15 @@ def test_v5_faellig_refires_after_cadence_and_advances_state() -> None:
     assert state["v5"]["last_iso"] == "2026-06-21"  # advanced on fire
 
 
+# The FÄLLIG/ruht cadence only governs a NON-terminal verdict (GO). A terminal
+# NO_GO short-circuits to a "kein Report-Nudge" line — covered separately below.
 def test_edge_faellig_suppressed_without_material_delta() -> None:
     state = {"edge": {"last_iso": "2026-06-12", "last_n": 74}}
     msg = _compose(
         generator_edge={
             "min_resolved": 30,
             "autonomous_generator_resolved": 74,
-            "autonomous_generator_verdict": "NO_GO",
+            "autonomous_generator_verdict": "GO",
         },
         milestone_state=state,
     )
@@ -198,13 +200,46 @@ def test_edge_faellig_refires_on_material_delta_and_advances_state() -> None:
         generator_edge={
             "min_resolved": 30,
             "autonomous_generator_resolved": 90,  # +16 >= gate//2 (15)
-            "autonomous_generator_verdict": "NO_GO",
+            "autonomous_generator_verdict": "GO",
         },
         milestone_state=state,
     )
     assert "EDGE-REPORT FÄLLIG" in msg
     assert "n=90≥30" in msg
     assert state["edge"]["last_n"] == 90  # advanced on fire
+
+
+def test_edge_terminal_verdict_suppresses_nudge_and_ruht() -> None:
+    # A decisive NO_GO at/above the gate: state the terminal verdict once, and
+    # emit NEITHER the FÄLLIG nudge NOR the "ruht … Nudge bei +N Closes" cadence
+    # line — the report was already run and NO_GO IS its answer (V2 truth-härtung).
+    state = {"edge": {"last_iso": "2026-06-12", "last_n": 74}}
+    msg = _compose(
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 74,
+            "autonomous_generator_verdict": "NO_GO",
+        },
+        milestone_state=state,
+    )
+    assert "Edge-Verdikt: NO_GO (terminal, n=74≥30)" in msg
+    assert "EDGE-REPORT FÄLLIG" not in msg
+    assert "Edge-Report ruht" not in msg
+
+
+def test_edge_terminal_verdict_suppresses_even_with_material_delta() -> None:
+    # Even a large NEW-closes delta must not re-fire once the verdict is terminal.
+    state = {"edge": {"last_iso": "2026-06-12", "last_n": 74}}
+    msg = _compose(
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 90,
+            "autonomous_generator_verdict": "NO_GO",
+        },
+        milestone_state=state,
+    )
+    assert "Edge-Verdikt: NO_GO (terminal, n=90≥30)" in msg
+    assert "EDGE-REPORT FÄLLIG" not in msg
 
 
 def test_message_respects_telegram_limit() -> None:
