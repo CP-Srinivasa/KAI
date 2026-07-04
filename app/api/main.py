@@ -25,7 +25,7 @@ except Exception as exc:  # pragma: no cover
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.analysis.factory import create_provider
@@ -306,6 +306,15 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def _root_redirect() -> RedirectResponse:
         return RedirectResponse(url="/dashboard/", status_code=307)
+
+    _paper_path = Path(__file__).parent / "static" / "paper.html"
+
+    @app.get("/paper", include_in_schema=False)
+    async def _paper_page() -> FileResponse:
+        # Public methodology/showcase page (KAI-Lightning). Static, self-contained,
+        # no auth (mirrored in app/security/auth.py public allowlist); the CF-Access
+        # bypass for /paper is configured at the edge.
+        return FileResponse(str(_paper_path), media_type="text/html")
 
     app.include_router(health.router)
     # 2026-05-14 P0 #4: End-to-End-Pipeline-Healthcheck. Wird vom Operator-

@@ -281,7 +281,7 @@ def setup_auth(
             )
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
-        if path in ("", "/health", "/health/premium_pipeline", "/tradingview/webhook"):
+        if path in ("", "/health", "/health/premium_pipeline", "/tradingview/webhook", "/paper"):
             # /health/premium_pipeline (2026-05-14 P0 #4) is public for the
             # same reason as /health — operator dashboards, uptime monitors,
             # and the kai-premium-healthcheck.timer cron call it without

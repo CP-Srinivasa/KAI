@@ -71,6 +71,10 @@ def _app_with_auth(api_key: str, env: str = "production") -> FastAPI:
     async def _health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/paper")
+    async def _paper() -> dict[str, str]:
+        return {"status": "ok"}
+
     setup_auth(app, api_key=api_key, env=env)
     return app
 
@@ -131,6 +135,14 @@ def test_bearer_auth_skips_health_endpoint() -> None:
     app = _app_with_auth("secret-key")
     with TestClient(app) as client:
         response = client.get("/health")
+    assert response.status_code == 200
+
+
+def test_bearer_auth_skips_paper_endpoint() -> None:
+    # /paper is the public KAI-Lightning methodology page — no auth (allowlist).
+    app = _app_with_auth("secret-key")
+    with TestClient(app) as client:
+        response = client.get("/paper")
     assert response.status_code == 200
 
 
