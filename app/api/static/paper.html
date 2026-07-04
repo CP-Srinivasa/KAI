@@ -4,194 +4,252 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="index,follow">
-<meta name="description" content="How KAI pre-registers, measures, judges mechanically and cryptographically seals market-signal claims — and falsified its own trading edge.">
+<meta name="description" content="How KAI pre-registers, measures, mechanically judges and cryptographically seals market-signal claims — and falsified its own trading edge.">
 <title>KAI — How KAI Falsifies and Seals Market Claims</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%A7%89%3C/text%3E%3C/svg%3E">
-</head>
-<body>
 <style>
   :root{
-    --ink:#14181c; --ink-panel:#1b2127; --ink-soft:#232b32;
-    --paper:#eef0f1; --surface:#fcfcfd;
-    --body:#2a3037; --muted:#6b7480; --muted-dark:#8a94a0;
-    --rule:#e0e3e6; --rule-dark:#2c333b;
-    --seal:#b26a2b; --seal-soft:#cf9153;
-    --pass:#2f6b4d; --fail:#9a3730;
-    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
-    --mono:"SFMono-Regular","SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --bg:#06060e; --bg2:#0a0a17; --panel:#0d0d1d; --panel2:#101024;
+    --line:#1e1e38; --line2:#2a2a4a;
+    --cyan:#00e5ff; --cyan-dim:#0aa5c0; --magenta:#ff2ec4; --magenta-dim:#b8188b;
+    --violet:#7b5cff; --green:#3dff9a; --red:#ff3d6e; --amber:#ffc857;
+    --ink:#d8ddf6; --body:#b9c0e2; --muted:#7d84ad;
+    --mono:"Cascadia Code","Consolas","JetBrains Mono","SF Mono",Menlo,monospace;
+    --sans:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--body);
-    font-family:var(--serif);font-size:19px;line-height:1.72;
-    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  html{background:var(--bg)}
+  body{margin:0;background:var(--bg);color:var(--body);
+    font-family:var(--sans);font-size:17.5px;line-height:1.75;
+    -webkit-font-smoothing:antialiased}
+  /* CRT scanlines — static overlay, no motion */
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px);
+    opacity:.35}
 
-  .wrap{width:100%;max-width:720px;margin:0 auto;padding:0 24px}
-  .measure{max-width:680px}
+  .wrap{width:100%;max-width:760px;margin:0 auto;padding:0 22px}
+  .measure{max-width:700px}
 
-  /* ---------- masthead (dark bookend) ---------- */
-  .masthead{background:var(--ink);color:#eceef0;
-    border-bottom:1px solid var(--rule-dark);
-    padding:clamp(52px,9vw,104px) 0 clamp(40px,6vw,72px)}
-  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--muted-dark);margin:0 0 26px}
-  .eyebrow .dot{color:var(--seal-soft);padding:0 .5em}
-  h1.title{font-family:var(--serif);font-weight:600;
-    font-size:clamp(2.05rem,5.4vw,3.15rem);line-height:1.08;
-    letter-spacing:-.012em;text-wrap:balance;margin:0;color:#f6f7f8}
-  .thesis{font-size:clamp(1.06rem,2.2vw,1.28rem);line-height:1.5;
-    color:#c8ccd1;max-width:34em;margin:22px 0 0;text-wrap:pretty}
-  .toc{display:flex;flex-wrap:wrap;gap:2px 0;margin:34px 0 0;
-    font-family:var(--mono);font-size:.76rem;letter-spacing:.02em}
-  .toc a{color:var(--muted-dark);text-decoration:none;padding:5px 16px 5px 0;
-    border-bottom:1px solid transparent;transition:color .15s}
-  .toc a:hover,.toc a:focus-visible{color:var(--seal-soft)}
-  .toc .n{color:#565f68;padding-right:.5em}
+  ::selection{background:var(--magenta);color:#0a0a12}
 
-  .ledger{margin:38px 0 0;padding-top:22px;border-top:1px solid var(--rule-dark);
-    font-family:var(--mono);font-size:.74rem;line-height:1.9;
-    color:#6f7982;word-break:break-all}
-  .ledger b{color:var(--seal-soft);font-weight:400}
-  .ledger .ok{color:#6fae8a}
+  /* ---------- masthead ---------- */
+  .masthead{position:relative;overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #16102e 0%, transparent 60%),
+      var(--bg2);
+    border-bottom:1px solid var(--line2);
+    padding:clamp(56px,9vw,110px) 0 clamp(56px,8vw,96px)}
+  /* perspective grid floor */
+  .masthead::before{content:"";position:absolute;left:-20%;right:-20%;bottom:-2px;height:46%;
+    background:
+      repeating-linear-gradient(0deg,rgba(255,46,196,.28) 0 1px,transparent 1px 26px),
+      repeating-linear-gradient(90deg,rgba(0,229,255,.16) 0 1px,transparent 1px 46px);
+    transform:perspective(340px) rotateX(58deg);transform-origin:50% 100%;
+    -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.9),transparent);
+    mask-image:linear-gradient(to top,rgba(0,0,0,.9),transparent);
+    pointer-events:none}
+  /* horizon line */
+  .masthead::after{content:"";position:absolute;left:0;right:0;bottom:46%;height:2px;
+    background:linear-gradient(90deg,transparent,var(--magenta) 25%,var(--cyan) 75%,transparent);
+    filter:blur(.5px);box-shadow:0 0 18px rgba(255,46,196,.65),0 0 34px rgba(0,229,255,.4);
+    pointer-events:none}
+  .mast-inner{position:relative;z-index:2}
 
-  /* ---------- reading body ---------- */
-  .body{padding:clamp(46px,7vw,84px) 0 20px;background:var(--paper)}
-  .abstract{background:var(--surface);border:1px solid var(--rule);
-    border-left:3px solid var(--seal);padding:26px 30px;margin:0 0 60px;
-    border-radius:2px}
-  .abstract .lang{font-family:var(--mono);font-size:.68rem;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--seal);margin:0 0 12px}
-  .abstract p{margin:0;font-size:1rem;line-height:1.66;color:#3a424b}
+  .wordmark{font-family:var(--mono);font-weight:700;font-size:.95rem;letter-spacing:.5em;
+    text-transform:uppercase;color:var(--magenta);margin:0 0 8px;
+    text-shadow:0 0 8px rgba(255,46,196,.9),0 0 26px rgba(255,46,196,.5)}
+  .byline{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 34px}
+  .byline b{color:var(--cyan);font-weight:400;text-shadow:0 0 10px rgba(0,229,255,.6)}
+  .byline .dot{color:var(--violet);padding:0 .55em}
 
-  section.sec{margin:0 0 58px}
-  .sec-head{display:flex;align-items:baseline;gap:16px;margin:0 0 8px}
-  .sec-num{font-family:var(--mono);font-size:.86rem;color:var(--seal);
-    font-weight:400;letter-spacing:.04em;flex:none;padding-top:.35em}
-  h2{font-family:var(--serif);font-weight:600;font-size:clamp(1.5rem,3vw,1.94rem);
-    line-height:1.16;letter-spacing:-.01em;color:var(--ink);margin:0;text-wrap:balance}
-  h3{font-family:var(--serif);font-weight:600;font-size:1.18rem;color:var(--ink);
-    margin:34px 0 0}
-  p{margin:1.05em 0;max-width:34.5em}
-  a.ref{color:var(--seal);text-decoration:none;border-bottom:1px solid #e6cdb0}
-  a.ref:hover{border-bottom-color:var(--seal)}
-  strong{font-weight:600;color:#20262c}
-  ul.clean{margin:1.05em 0;padding:0;list-style:none;max-width:35em}
-  ul.clean li{position:relative;padding:0 0 .7em 26px;margin:0}
-  ul.clean li::before{content:"";position:absolute;left:4px;top:.62em;
-    width:6px;height:6px;background:var(--seal);border-radius:50%}
-  ol.steps{margin:1.05em 0;padding:0 0 0 1.4em;max-width:35em}
-  ol.steps li{margin:0 0 .7em;padding-left:.3em}
+  h1.title{font-family:var(--mono);font-weight:700;text-transform:uppercase;
+    font-size:clamp(1.5rem,4.6vw,2.6rem);line-height:1.18;letter-spacing:.04em;
+    color:var(--ink);margin:0;text-wrap:balance;
+    text-shadow:0 0 10px rgba(0,229,255,.55),0 0 42px rgba(0,229,255,.25)}
+  h1.title .hot{color:var(--cyan)}
+  .thesis{font-size:clamp(1rem,2vw,1.15rem);line-height:1.6;color:#a7aed4;
+    max-width:36em;margin:22px 0 0;text-wrap:pretty}
+  .thesis em{color:var(--ink);font-style:normal;border-bottom:1px solid var(--magenta-dim)}
 
-  /* code + data */
-  .codewrap{overflow-x:auto;margin:1.3em 0;border:1px solid var(--rule);
-    border-radius:3px;background:#fbfaf8}
-  pre{margin:0;padding:16px 20px;font-family:var(--mono);font-size:.82rem;
-    line-height:1.65;color:#3d444c;white-space:pre}
-  pre .k{color:var(--seal)}
-  code.inline{font-family:var(--mono);font-size:.86em;background:#e9ebec;
-    padding:.08em .4em;border-radius:3px;color:#333b42}
+  .toc{display:flex;flex-wrap:wrap;gap:4px 22px;margin:36px 0 0;
+    font-family:var(--mono);font-size:.74rem;letter-spacing:.04em}
+  .toc a{color:var(--muted);text-decoration:none;transition:color .15s,text-shadow .15s}
+  .toc a:hover,.toc a:focus-visible{color:var(--cyan);text-shadow:0 0 10px rgba(0,229,255,.8)}
+  .toc .n{color:var(--magenta);padding-right:.45em}
 
-  .tablewrap{overflow-x:auto;margin:1.4em 0}
-  table{border-collapse:collapse;width:100%;font-size:.9rem;
-    font-family:var(--serif)}
-  th,td{text-align:left;padding:10px 16px;border-bottom:1px solid var(--rule);
-    vertical-align:top}
-  thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--muted);font-weight:400;
-    border-bottom:1px solid #cfd3d6}
-  td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums;
-    white-space:nowrap}
+  .ledger{margin:40px 0 0;padding:14px 18px;border:1px solid var(--line2);border-radius:4px;
+    background:rgba(10,10,24,.72);
+    font-family:var(--mono);font-size:.72rem;line-height:1.9;color:var(--muted);word-break:break-all;
+    box-shadow:0 0 24px rgba(123,92,255,.14) inset}
+  .ledger b{color:var(--amber);font-weight:400}
+  .ledger .ok{color:var(--green);text-shadow:0 0 8px rgba(61,255,154,.6)}
+
+  /* ---------- body ---------- */
+  .paperbody{padding:clamp(48px,7vw,88px) 0 24px;position:relative;z-index:2}
+
+  .abstract{border:1px solid var(--line2);border-left:3px solid var(--cyan);
+    background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:26px 30px;margin:0 0 64px;border-radius:4px;
+    box-shadow:0 0 30px rgba(0,229,255,.08), inset 0 0 40px rgba(0,229,255,.03)}
+  .abstract .lang{font-family:var(--mono);font-size:.68rem;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--cyan);margin:0 0 12px;
+    text-shadow:0 0 10px rgba(0,229,255,.6)}
+  .abstract p{margin:0;font-size:.98rem;line-height:1.7;color:#c3c9e8}
+
+  section.sec{margin:0 0 62px}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin:0 0 6px}
+  .sec-num{font-family:var(--mono);font-size:.9rem;color:var(--magenta);flex:none;
+    text-shadow:0 0 10px rgba(255,46,196,.7)}
+  h2{font-family:var(--mono);font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+    font-size:clamp(1.12rem,2.6vw,1.5rem);line-height:1.25;color:var(--ink);margin:0;text-wrap:balance}
+  .sec-rule{height:1px;margin:14px 0 20px;border:0;
+    background:linear-gradient(90deg,var(--magenta-dim),var(--cyan-dim) 55%,transparent)}
+  h3{font-family:var(--mono);font-weight:700;font-size:.98rem;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--cyan);margin:34px 0 0;
+    text-shadow:0 0 12px rgba(0,229,255,.4)}
+  p{margin:1.05em 0;max-width:37em}
+  strong{color:var(--ink);font-weight:600}
+  em{color:#cdd3f0}
+  a.ref{color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(0,229,255,.35)}
+  a.ref:hover{text-shadow:0 0 10px rgba(0,229,255,.8)}
+
+  ul.clean{margin:1.05em 0;padding:0;list-style:none;max-width:38em}
+  ul.clean li{position:relative;padding:0 0 .75em 26px;margin:0}
+  ul.clean li::before{content:"";position:absolute;left:2px;top:.66em;width:7px;height:7px;
+    background:var(--magenta);box-shadow:0 0 8px rgba(255,46,196,.9);transform:rotate(45deg)}
+  ol.steps{margin:1.05em 0;padding:0 0 0 1.5em;max-width:38em}
+  ol.steps li{margin:0 0 .75em;padding-left:.3em}
+  ol.steps li::marker{color:var(--cyan);font-family:var(--mono)}
+
+  /* code */
+  .codewrap{overflow-x:auto;margin:1.3em 0;border:1px solid var(--line2);border-radius:4px;
+    background:#0a0a18;box-shadow:inset 0 0 30px rgba(0,229,255,.04)}
+  pre{margin:0;padding:16px 20px;font-family:var(--mono);font-size:.82rem;line-height:1.7;
+    color:#9fe8f5;white-space:pre}
+  pre .k{color:var(--magenta)}
+  pre .c{color:var(--muted)}
+  code.inline{font-family:var(--mono);font-size:.85em;background:#141430;
+    border:1px solid var(--line);padding:.1em .45em;border-radius:3px;color:var(--cyan)}
+
+  /* tables */
+  .tablewrap{overflow-x:auto;margin:1.4em 0;border:1px solid var(--line2);border-radius:4px}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;background:var(--panel)}
+  th,td{text-align:left;padding:10px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--magenta);font-weight:400;border-bottom:1px solid var(--line2);
+    background:var(--panel2)}
+  td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:#cfe9f2}
   tbody tr:last-child td{border-bottom:none}
 
-  /* stat row */
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
-    gap:1px;background:var(--rule);border:1px solid var(--rule);
-    margin:1.6em 0;border-radius:3px;overflow:hidden}
-  .stat{background:var(--surface);padding:20px 22px}
-  .stat .v{font-family:var(--mono);font-size:1.5rem;font-variant-numeric:tabular-nums;
-    color:var(--ink);letter-spacing:-.01em;line-height:1}
-  .stat .v.bad{color:var(--fail)}
-  .stat .l{font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
-    text-transform:uppercase;color:var(--muted);margin-top:9px;line-height:1.4}
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:1.6em 0}
+  .stat{background:linear-gradient(180deg,var(--panel2),var(--panel));
+    border:1px solid var(--line2);border-radius:4px;padding:18px 20px;
+    box-shadow:0 0 22px rgba(0,229,255,.06)}
+  .stat .v{font-family:var(--mono);font-size:1.55rem;font-variant-numeric:tabular-nums;
+    color:var(--cyan);line-height:1;text-shadow:0 0 14px rgba(0,229,255,.55)}
+  .stat .v.bad{color:var(--red);text-shadow:0 0 14px rgba(255,61,110,.55)}
+  .stat .l{font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin-top:10px;line-height:1.5}
 
-  /* verdict blocks */
-  .verdict{border:1px solid var(--rule);border-left:3px solid var(--muted);
-    background:var(--surface);padding:22px 28px;margin:1.5em 0;border-radius:2px}
-  .verdict.no{border-left-color:var(--fail)}
-  .verdict.pass{border-left-color:var(--pass)}
-  .chip{display:inline-block;font-family:var(--mono);font-size:.68rem;
-    letter-spacing:.1em;text-transform:uppercase;padding:4px 10px;border-radius:3px;
-    margin:0 0 12px}
-  .chip.no{background:#f4e4e2;color:var(--fail)}
-  .chip.pass{background:#e2efe8;color:var(--pass)}
-  .chip.neutral{background:#e8eaec;color:var(--muted)}
-  .verdict p{margin:.3em 0;max-width:38em}
-  .verdict .big{font-family:var(--serif);font-size:1.12rem;color:var(--ink);
-    line-height:1.5}
+  /* verdicts */
+  .verdict{border:1px solid var(--line2);border-left:3px solid var(--violet);
+    background:linear-gradient(180deg,var(--panel2),var(--panel));
+    padding:22px 28px;margin:1.5em 0;border-radius:4px}
+  .verdict.no{border-left-color:var(--red);box-shadow:0 0 26px rgba(255,61,110,.10)}
+  .verdict.pass{border-left-color:var(--green);box-shadow:0 0 26px rgba(61,255,154,.10)}
+  .verdict.neutral{border-left-color:var(--amber);box-shadow:0 0 26px rgba(255,200,87,.08)}
+  .chip{display:inline-block;font-family:var(--mono);font-size:.66rem;letter-spacing:.16em;
+    text-transform:uppercase;padding:5px 12px;border-radius:3px;margin:0 0 12px;border:1px solid}
+  .chip.no{color:var(--red);border-color:var(--red);background:rgba(255,61,110,.08);
+    text-shadow:0 0 8px rgba(255,61,110,.7)}
+  .chip.pass{color:var(--green);border-color:var(--green);background:rgba(61,255,154,.07);
+    text-shadow:0 0 8px rgba(61,255,154,.7)}
+  .chip.neutral{color:var(--amber);border-color:var(--amber);background:rgba(255,200,87,.07);
+    text-shadow:0 0 8px rgba(255,200,87,.7)}
+  .verdict p{margin:.3em 0;max-width:40em}
+  .verdict .big{font-size:1.05rem;color:var(--ink);line-height:1.6}
+  .verdict .meta{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-top:14px}
+  .verdict .meta .ok{color:var(--green)}
 
-  /* companion divider */
-  .companion{margin:78px 0 54px;padding-top:8px;text-align:center}
-  .companion .rule{height:1px;background:var(--rule);margin:0 0 28px}
-  .companion .tag{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--seal)}
-  .companion h2{margin:14px 0 6px;text-align:left}
-  .companion .sub{color:var(--muted);font-size:1rem;margin:0;text-align:left;max-width:36em}
+  /* pilot divider */
+  .companion{margin:84px 0 54px}
+  .companion .rule{height:2px;border:0;margin:0 0 30px;
+    background:linear-gradient(90deg,transparent,var(--magenta) 30%,var(--cyan) 70%,transparent);
+    box-shadow:0 0 16px rgba(255,46,196,.5)}
+  .companion .tag{font-family:var(--mono);font-size:.7rem;letter-spacing:.24em;
+    text-transform:uppercase;color:var(--magenta);text-shadow:0 0 10px rgba(255,46,196,.6)}
+  .companion h2{margin:14px 0 8px}
+  .companion .sub{color:var(--muted);font-size:.98rem;margin:0;max-width:38em}
 
   /* colophon */
-  .colophon{background:var(--ink);color:#aab2ba;
-    padding:clamp(44px,6vw,72px) 0 clamp(50px,7vw,80px);
-    border-top:1px solid var(--rule-dark);margin-top:60px}
-  .colophon .eyebrow{color:var(--muted-dark)}
-  .colophon p{font-family:var(--mono);font-size:.82rem;line-height:1.85;
-    color:#8a939c;max-width:40em;margin:0 0 1em}
-  .colophon a{color:var(--seal-soft);text-decoration:none;border-bottom:1px solid #4a3a28}
-  .colophon a:hover{border-bottom-color:var(--seal-soft)}
-  .colophon .verifyline{color:#6fae8a}
+  .colophon{position:relative;background:var(--bg2);border-top:1px solid var(--line2);
+    margin-top:70px;padding:clamp(44px,6vw,72px) 0 clamp(56px,7vw,84px)}
+  .colophon::before{content:"";position:absolute;left:0;right:0;top:-1px;height:1px;
+    background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+    box-shadow:0 0 14px rgba(0,229,255,.6)}
+  .colophon .tag{font-family:var(--mono);font-size:.7rem;letter-spacing:.24em;
+    text-transform:uppercase;color:var(--cyan);margin:0 0 18px;
+    text-shadow:0 0 10px rgba(0,229,255,.6)}
+  .colophon p{font-family:var(--mono);font-size:.8rem;line-height:1.9;color:var(--muted);
+    max-width:44em;margin:0 0 1em}
+  .colophon a{color:var(--magenta);text-decoration:none;border-bottom:1px solid rgba(255,46,196,.4)}
+  .colophon a:hover{text-shadow:0 0 10px rgba(255,46,196,.8)}
+  .colophon .verify{color:var(--green)}
+  .colophon .verify code{color:#8fffc4;background:none;border:none;padding:0}
 
-  :focus-visible{outline:2px solid var(--seal);outline-offset:3px;border-radius:2px}
+  :focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:2px}
 
   @media (prefers-reduced-motion:no-preference){
-    .reveal{opacity:0;transform:translateY(10px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
-    .r1{animation-delay:.05s}.r2{animation-delay:.14s}.r3{animation-delay:.23s}.r4{animation-delay:.34s}
-    @keyframes rise{to{opacity:1;transform:none}}
+    .boot{opacity:0;transform:translateY(12px);animation:boot .8s cubic-bezier(.2,.7,.2,1) forwards}
+    .b1{animation-delay:.05s}.b2{animation-delay:.16s}.b3{animation-delay:.28s}.b4{animation-delay:.42s}
+    @keyframes boot{to{opacity:1;transform:none}}
+    h1.title{animation:flicker 2.4s linear 1}
+    @keyframes flicker{
+      0%,100%{opacity:1} 3%{opacity:.6} 5%{opacity:1} 7%{opacity:.75} 9%{opacity:1}
+      42%{opacity:1} 43%{opacity:.7} 45%{opacity:1}}
   }
   @media (max-width:520px){
-    body{font-size:18px}
+    body{font-size:16.5px}
     .abstract{padding:22px 20px}
     .verdict{padding:18px 20px}
   }
 </style>
-
+</head>
+<body>
 <article>
   <header class="masthead">
-    <div class="wrap">
-      <p class="eyebrow reveal r1">KAI-Lightning<span class="dot">·</span>July 2026<span class="dot">·</span>kai@pay.kai-trader.org</p>
-      <h1 class="title reveal r2">How KAI Falsifies and Seals Market Claims</h1>
-      <p class="thesis reveal r3">Anyone can publish a track record. KAI fixes every claim <em>before</em> the data exists, measures it by machine under a declared cost model, and seals the verdict — whatever it was — where no one can edit it afterwards.</p>
-      <nav class="toc reveal r4" aria-label="Sections">
-        <a href="#s1"><span class="n">§1</span>Cheap track records</a>
-        <a href="#s2"><span class="n">§2</span>The discipline</a>
-        <a href="#s3"><span class="n">§3</span>The sealing</a>
-        <a href="#s4"><span class="n">§4</span>Reproduction</a>
-        <a href="#s5"><span class="n">§5</span>Falsifying our own edge</a>
-        <a href="#s6"><span class="n">§6</span>What it enables</a>
-        <a href="#pilot"><span class="n">▚</span>Pilot audit (DE)</a>
+    <div class="wrap mast-inner">
+      <p class="wordmark boot b1">KAI</p>
+      <p class="byline boot b1"><b>KAI-Lightning</b><span class="dot">//</span>July 2026<span class="dot">//</span>kai@pay.kai-trader.org</p>
+      <h1 class="title boot b2">How KAI <span class="hot">Falsifies</span> and <span class="hot">Seals</span> Market Claims</h1>
+      <p class="thesis boot b3">Anyone can publish a track record. KAI fixes every claim <em>before</em> the data exists, measures it by machine under a declared cost model, and seals the verdict — whatever it was — where no one can edit it afterwards.</p>
+      <nav class="toc boot b4" aria-label="Sections">
+        <a href="#s1"><span class="n">01</span>Cheap track records</a>
+        <a href="#s2"><span class="n">02</span>The discipline</a>
+        <a href="#s3"><span class="n">03</span>The sealing</a>
+        <a href="#s4"><span class="n">04</span>Reproduction</a>
+        <a href="#s5"><span class="n">05</span>Falsifying our own edge</a>
+        <a href="#s6"><span class="n">06</span>What it enables</a>
+        <a href="#pilot"><span class="n">▚▚</span>Pilot audit</a>
       </nav>
-      <div class="ledger reveal r4">
-        truth-ledger&nbsp; seq <b>30</b>&nbsp; · &nbsp;chain <span class="ok">VERIFY OK records=30</span>&nbsp; · &nbsp;canonical-edge payload <b>a524d6c1…c33c91</b>&nbsp; · &nbsp;anchored ⧉ Bitcoin / OpenTimestamps
+      <div class="ledger boot b4">
+        truth-ledger&nbsp; seq <b>30</b>&nbsp; :: &nbsp;chain <span class="ok">VERIFY OK records=30</span>&nbsp; :: &nbsp;canonical-edge payload <b>a524d6c1…c33c91</b>&nbsp; :: &nbsp;anchored → Bitcoin / OpenTimestamps
       </div>
     </div>
   </header>
 
-  <div class="body">
+  <div class="paperbody">
     <div class="wrap">
 
       <div class="abstract measure">
-        <p class="lang">Abstract · Deutsch</p>
-        <p>Jeder kann eine Trefferquote behaupten; nachträgliche Selektion und Survivorship machen die meisten öffentlichen Signal-Claims unüberprüfbar. KAI ist eine solo-betriebene Research-Plattform, die den umgekehrten Weg geht: Jede Markt-Signal-Hypothese wird <strong>vor</strong> der Messung deterministisch registriert (die Claim-Identität ist ein Hash über die normalisierte Hypothese samt maschinenlesbarer Pass-Schwellen), <strong>fill-unabhängig</strong> und mit explizitem Kostenmodell gemessen, <strong>mechanisch</strong> beurteilt (fail-closed, kein Mensch überträgt Zahlen ins Urteil) und das Urteil in einem hash-verketteten, per OpenTimestamps Bitcoin-verankerten Ledger <strong>versiegelt</strong>. Eine kodifizierte Stop-Regel erklärt eine Hypothesen-Familie nach drei prä-registrierten Fehlschlägen für terminal tot — real geschehen mit der News-Richtungs-Familie. Der glaubwürdigste Beleg ist die Selbst-Anwendung: KAI hat den <strong>eigenen</strong> Alpha-Anspruch widerlegt und versiegelt (n=68 abgeschlossene Paper-Trades, P(mu_net&gt;0)=10,44 %, Median −93,8 bps netto; ohne den besten Einzeltrade fällt P auf 3,50 %). Ein attestierter Report wurde auf einer zweiten Maschine <strong>byte-exakt</strong> reproduziert — über OS-, Architektur- und Python-Versions-Grenzen hinweg. Die Grenzen werden explizit benannt: Versiegelung beweist Integrität und Existenzzeitpunkt, nicht Korrektheit; externe Nachfrage ist unbewiesen, nicht widerlegt.</p>
+        <p class="lang">Abstract</p>
+        <p>Anyone can claim a hit rate; post-hoc selection and survivorship make most public signal claims unverifiable. KAI is a solo-operated research platform built the other way around: every market-signal hypothesis is registered deterministically <strong>before</strong> measurement (the claim's identity is a hash over the normalized hypothesis including its machine-readable pass thresholds), measured <strong>fill-independently</strong> under an explicit cost model, judged <strong>mechanically</strong> (fail-closed — no human transcribes numbers into the verdict), and the verdict <strong>sealed</strong> in a hash-chained ledger anchored into Bitcoin via OpenTimestamps. A codified stop rule declares a hypothesis family terminally dead after three pre-registered failures — which actually happened to the news-direction family. The most credible evidence is self-application: KAI falsified and sealed its <strong>own</strong> alpha claim (n=68 closed paper trades, P(mu_net&gt;0)=10.44%, median −93.8 bps net; removing the single best trade drops P to 3.50%). An attested report was reproduced <strong>byte-exactly</strong> on a second machine — across OS, architecture and Python-version boundaries. The limits are stated plainly: sealing proves integrity and time of existence, not correctness; external demand is unproven, not disproven.</p>
       </div>
 
       <section class="sec measure" id="s1">
-        <div class="sec-head"><span class="sec-num">§1</span><h2>The problem: track records are cheap</h2></div>
+        <div class="sec-head"><span class="sec-num">01</span><h2>The problem: track records are cheap</h2></div>
+        <hr class="sec-rule">
         <p>Anyone can publish a track record. The mechanics of doing so dishonestly are well understood and mostly do not even require lying:</p>
         <ul class="clean">
           <li><strong>Post-hoc selection.</strong> Run a hundred variations of a strategy, publish the one that worked, quietly forget the rest. A <em>useless</em> strategy evaluated across roughly a hundred untracked trials produces an expected maximum Sharpe ratio of about 2.5 from selection luck alone. Every untracked trial silently raises the bar an honest result would have to clear.</li>
@@ -204,10 +262,11 @@
       </section>
 
       <section class="sec measure" id="s2">
-        <div class="sec-head"><span class="sec-num">§2</span><h2>The discipline: pre-register, measure, judge mechanically, stop</h2></div>
+        <div class="sec-head"><span class="sec-num">02</span><h2>The discipline: pre-register, measure, judge mechanically, stop</h2></div>
+        <hr class="sec-rule">
         <p>Four mechanisms, all running in production today, none of them aspirational.</p>
 
-        <h3>2.1 &nbsp;Pre-registration before measurement</h3>
+        <h3>2.1 // Pre-registration before measurement</h3>
         <p>A hypothesis enters the system through a CLI command (<code class="inline">trading prereg-register</code>) <em>before</em> any evaluation runs. A registration fixes the claim (name, direction, horizon), the success criteria as free text <strong>and</strong> as a machine-readable gate — a JSON object of pass thresholds — and a sample-size target.</p>
         <p>The registration's identity is deterministic: a SHA-256 over the whitespace- and case-normalized claim, truncated to a 16-hex key. The gate JSON is part of the hashed identity — changing any threshold changes the ID, so a silently relaxed pass bar is a <em>different, visibly new</em> claim, not an edit. A real entry from the ledger:</p>
         <div class="codewrap"><pre><span class="k">prereg_id:</span> f676bcf5a7a1bfb6
@@ -215,22 +274,23 @@
 <span class="k">schema:</span>    prereg/v1</pre></div>
         <p>Eight hypotheses are currently registered. Pre-registration is record-only: it gates no trade and touches no execution path. Its entire job is to make later claims auditable against what was committed in advance.</p>
 
-        <h3>2.2 &nbsp;Fill-independent measurement with an explicit cost model</h3>
+        <h3>2.2 // Fill-independent measurement, explicit costs</h3>
         <p>Outcomes are not measured from the platform's own order fills. Fills entangle a hypothesis with execution luck, queue position and portfolio state. Instead, hypotheses are evaluated against a shadow-outcome pool — currently roughly 8,000 resolved forward outcomes computed from recorded market data, independent of whether any order ever existed. Costs are not an afterthought: the evaluation applies a versioned, explicit cost model (currently 20 bps round-trip, cost model version 1.1.0), and gross figures are computed alongside net. A claim that only survives gross of costs fails.</p>
 
-        <h3>2.3 &nbsp;Mechanical verdicts</h3>
+        <h3>2.3 // Mechanical verdicts</h3>
         <p>The verdict step (<code class="inline">trading prereg-check</code>) compares measured metrics against the registered gate JSON. It is fail-closed: missing data, ambiguous fields or an unresolvable gate produce a non-pass, never a benefit of the doubt. No human transcribes numbers into the verdict, which removes the most common corruption point in research reporting — the step where "0.104" becomes "roughly significant" in prose.</p>
 
-        <h3>2.4 &nbsp;Family stop rules</h3>
+        <h3>2.4 // Family stop rules</h3>
         <p>Falsification without a stop rule degenerates into whack-a-mole: the backlog refills with variations of already-dead ideas. KAI codifies the stop rule in code (changing it requires a reviewed pull request):</p>
         <div class="codewrap"><pre><span class="k">STOP_RULE_FAILS = 3</span>
-# 3 pre-registered falsifications across DISTINCT constructions
-# =&gt; the hypothesis family is TERMINAL_DEAD.</pre></div>
+<span class="c"># 3 pre-registered falsifications across DISTINCT constructions</span>
+<span class="c"># =&gt; the hypothesis family is TERMINAL_DEAD.</span></pre></div>
         <p>Registering a new hypothesis into a terminal-dead family is refused unless explicitly overridden, and the override itself is recorded. This is not hypothetical: the <strong>news_direction</strong> family — "news sentiment predicts short-horizon price direction" — was declared terminal dead after three pre-registered failed constructions. That family can no longer quietly consume research budget.</p>
       </section>
 
       <section class="sec measure" id="s3">
-        <div class="sec-head"><span class="sec-num">§3</span><h2>The sealing: what each layer proves — and what it does not</h2></div>
+        <div class="sec-head"><span class="sec-num">03</span><h2>The sealing: what each layer proves — and what it does not</h2></div>
+        <hr class="sec-rule">
         <p>A verdict that can be edited after the fact is worthless. KAI seals its outputs in three layers.</p>
         <ul class="clean">
           <li><strong>Layer 1 — canonical content hash.</strong> Every attested payload is rendered as canonical JSON — keys sorted at every depth, compact separators, UTF-8, NaN/Infinity rejected — and hashed with SHA-256. The same logical content always yields the same bytes and the same hash, regardless of machine or key insertion order. This proves <em>integrity of one claim</em>.</li>
@@ -241,20 +301,22 @@
       </section>
 
       <section class="sec measure" id="s4">
-        <div class="sec-head"><span class="sec-num">§4</span><h2>The reproduction: the missing keystone, and how it was closed</h2></div>
+        <div class="sec-head"><span class="sec-num">04</span><h2>The reproduction: the missing keystone, and how it was closed</h2></div>
+        <hr class="sec-rule">
         <p>Until this month, no sealed KAI report had ever been recomputed by anyone outside the production machine. That was the honest gap in the whole construction, so it was tested deliberately.</p>
-        <p><strong>The experiment.</strong> Take the most recent attested canonical-edge report (ledger seq 11, payload hash <code class="inline">a524d6c1…c33c91</code>), produced on the production host — a Raspberry Pi 5, Linux/ARM, Python 3.12 — and attempt full recomputation on an independent machine: a Windows 11 workstation, x64, Python 3.13, from a fresh checkout of the same code commit and read-only copies of the two input artifacts.</p>
+        <p><strong>The experiment.</strong> Take the most recent attested canonical-edge report (ledger seq 11, payload hash <code class="inline">a524d6c1…c33c91</code>), produced on the production host — Linux/ARM, Python 3.12 — and attempt full recomputation on an independent machine: a Windows 11 workstation, x64, Python 3.13, from a fresh checkout of the same code commit and read-only copies of the two input artifacts.</p>
         <ul class="clean">
           <li><strong>Result A — the ledger layer verified fully offline.</strong> All 21 ledger records checked out on the second machine: per-record payload hash, record-hash integrity, chain linkage, no sequence gaps. This layer already met the "any third party" bar.</li>
           <li><strong>Result B — a naive re-run diverged, and the divergence was instructive.</strong> Running the same CLI on the copied inputs produced <em>different</em> numbers (75 trades became 76). Cause: the inputs are append-only audit logs that had grown for ~seven hours between attestation and copy, and nothing pinned which file state the computation consumed. Without input pinning, "reproduce the report" is not even a well-defined instruction.</li>
           <li><strong>Result C — with the window fixed, the reproduction was byte-exact.</strong> Bounding the evaluation window to the attested end timestamp reproduced the <em>entire</em> payload bit-identically — the recomputed SHA-256 equals the attested payload hash — across an OS boundary, an architecture boundary and a Python version boundary. The determinism is by construction: canonical JSON, a seeded bootstrap for all probabilistic figures, pure file inputs, no dependence on clock, environment or database.</li>
         </ul>
         <p>The gaps found were closed the same day, in code: every attested report now seals the exact input state it consumed (<code class="inline">{role, path, sha256, lines}</code>); the evaluation window is a CLI flag (<code class="inline">--until</code>); one-command third-party verification exists (<code class="inline">trading canonical-edge --verify &lt;seq&gt;</code> recomputes the sealed claim from pinned inputs and exits 0 or 1); and the code commit is co-attested so drift is visible.</p>
-        <p><strong>Honest remaining limits.</strong> The input artifacts (~38 MB of audit JSONL) currently live only on the production node. A third party <em>without</em> access can verify layers 1–3 — content integrity, chain integrity, Bitcoin timestamp — but cannot yet recompute the numbers. For that hash layer a dependency-free reproduction bundle now exists: a copy of the attestation ledger plus a ~30-line standalone verifier (Python standard library only, no KAI code) that recomputes every payload hash, every record hash and the full chain linkage — demonstrated on an unrelated machine against the live ledger (<code class="inline">VERIFY OK</code>, exit 0). The <em>full numeric</em> reproduction package is still gated, because those inputs live only on the production node — two different trust levels, and we say so. Reproduction verifies <em>computation</em>, not <em>data collection</em>: a byte-exact reproduction faithfully repeats a wrong upstream price.</p>
+        <p><strong>Honest remaining limits.</strong> The input artifacts (~38 MB of audit JSONL) currently live only on the production node. A third party <em>without</em> access can verify layers 1–3 — content integrity, chain integrity, Bitcoin timestamp — but cannot yet recompute the numbers. For that hash layer a dependency-free reproduction bundle now exists: a copy of the attestation ledger plus a small standalone verifier (Python standard library only, no KAI code) that recomputes every payload hash, every record hash and the full chain linkage — demonstrated on an unrelated machine against the live ledger (<code class="inline">VERIFY OK</code>, exit 0). The <em>full numeric</em> reproduction package is still gated, because those inputs live only on the production node — two different trust levels, and we say so. Reproduction verifies <em>computation</em>, not <em>data collection</em>: a byte-exact reproduction faithfully repeats a wrong upstream price.</p>
       </section>
 
       <section class="sec measure" id="s5">
-        <div class="sec-head"><span class="sec-num">§5</span><h2>The credibility asset: we falsified our own alpha claim</h2></div>
+        <div class="sec-head"><span class="sec-num">05</span><h2>The credibility asset: we falsified our own alpha claim</h2></div>
+        <hr class="sec-rule">
         <p>Most entities that evaluate trading signals have a structural conflict of interest: they sell what survives. KAI's first fully sealed result points the machinery at its own premise. The platform began as an alpha-seeking trading bot. Its accessible signal families were tested with the discipline above — and fell, one after another.</p>
 
         <div class="stats">
@@ -272,14 +334,15 @@
         </ul>
 
         <div class="verdict no">
-          <span class="chip no">Verdict · NO-GO · sealed</span>
+          <span class="chip no">Verdict :: NO-GO :: sealed</span>
           <p class="big">The negative verdicts are produced and sealed by exactly the machinery being offered — a live demonstration, at the operator's own expense. The platform now sells no signals; its only output is verdicts. An auditor with no signal to sell has no incentive to find survivors.</p>
         </div>
         <p>Scope honesty: these results falsify the <em>tested, retail-accessible</em> signal families under a declared cost model. They are not a claim that no market edge exists anywhere for anyone.</p>
       </section>
 
       <section class="sec measure" id="s6">
-        <div class="sec-head"><span class="sec-num">§6</span><h2>What this enables</h2></div>
+        <div class="sec-head"><span class="sec-num">06</span><h2>What this enables</h2></div>
+        <hr class="sec-rule">
         <p>Three concrete applications, in increasing order of ambition — with their current status stated plainly.</p>
         <ol class="steps">
           <li><strong>Independent signal audits.</strong> A third party's track record can be run through the same pipeline: pre-registered criteria, fill-independent outcomes, explicit costs, mechanical verdict, sealed result. A first pilot audit of an anonymized external channel has been run (below); its honest verdict was "not provable, n too small". <em>Status: pilot, not a product.</em></li>
@@ -289,63 +352,64 @@
         <p>The platform's methodology forbids it from overclaiming its own prospects: it is solo-operated; external demand is untested; and the next milestone is not a feature but an external validation event — one person outside the project reproducing one sealed report and saying so. The verification path for that person is now one command.</p>
       </section>
 
-      <!-- ---------- companion: K1 pilot (German) ---------- -->
+      <!-- ---------- pilot audit (worked example) ---------- -->
       <div class="companion measure" id="pilot">
-        <div class="rule"></div>
-        <p class="tag">Worked example · Pilot-Audit · Deutsch</p>
-        <h2>KAI Signal-TÜV — Pilot-Audit eines anonymisierten Dritt-Signalkanals</h2>
-        <p class="sub">Ein <em>ehrlicher</em> Signal-Audit, kein Performance-Marketing. Sein Ergebnis ist ein Nicht-Ergebnis — und gerade das ist der Punkt: dieselbe Disziplin, mit der die Plattform ihren eigenen Alpha-Anspruch widerlegt hat, angewandt auf einen fremden Kanal. Das Kill-Kriterium wurde <strong>vor</strong> der Veröffentlichung versiegelt.</p>
+        <hr class="rule">
+        <p class="tag">Worked example :: pilot audit</p>
+        <h2>Signal audit — pilot: an anonymized third-party channel</h2>
+        <p class="sub">An <em>honest</em> signal audit, not performance marketing. Its result is a non-result — and that is the point: the same measurement and falsification discipline the platform used to refute its own alpha claim, applied to someone else's channel. The kill criterion was sealed <strong>before</strong> publication.</p>
       </div>
 
       <section class="sec measure">
-        <h3>Was geprüft wurde, Datenbasis, Zeitraum</h3>
-        <p>Geprüft wurde die realisierte Netto-Performance der Signale von „Channel A" — einem anonymisierten Dritt-Signalkanal (Krypto, ausnahmslos Long, Microcap-lastig) — so wie ein Paper-Messinstrument sie unter einem expliziten Kostenmodell ausgeführt hat: kein Backtest, sondern die zeitstempelgenaue Live-Mitschrift einer automatischen Paper-Execution-Pipeline, alle Schritte append-only auditiert. <strong>Zeitraum:</strong> 2026-04-29 bis 2026-07-02 (65 Tage). <strong>65 Signale</strong> (~1/Tag), ausnahmslos Long, 50 verschiedene Symbole.</p>
+        <h3>What was audited, data basis, period</h3>
+        <p>Audited was the realized net performance of the signals of "Channel A" — an anonymized third-party signal channel (crypto, long-only, microcap-heavy) — exactly as a paper measurement instrument executed them under an explicit cost model: no backtest, no after-the-fact price reconstruction, but the timestamp-exact live record of an automated paper-execution pipeline (ingestion → envelope → approval → bridge → paper engine), every step append-only audited. <strong>Period:</strong> 2026-04-29 to 2026-07-02 (65 days). <strong>65 signals</strong> (~1/day), all long, 50 distinct symbols (USDT pairs, mostly microcaps).</p>
         <div class="tablewrap">
           <table>
-            <thead><tr><th>Funnel-Stufe</th><th class="num">n</th><th class="num">Anteil</th></tr></thead>
+            <thead><tr><th>Funnel stage</th><th class="num">n</th><th class="num">share</th></tr></thead>
             <tbody>
-              <tr><td>Signale empfangen + geparst</td><td class="num">65</td><td class="num">100 %</td></tr>
-              <tr><td>Nie eröffnet (34× nicht freigeschaltet, 6× Bridge-Reject)</td><td class="num">40</td><td class="num">62 %</td></tr>
-              <tr><td>Position eröffnet</td><td class="num">25</td><td class="num">38 %</td></tr>
-              <tr><td>— markt-aufgelöst (TP/SL, quantifiziert)</td><td class="num">19</td><td class="num">29 %</td></tr>
-              <tr><td>— administrativ geschlossen (kein Markt-Outcome)</td><td class="num">4</td><td class="num">6 %</td></tr>
-              <tr><td>— degeneriert (Underflow-Artefakt)</td><td class="num">2</td><td class="num">3 %</td></tr>
+              <tr><td>Signals received + parsed</td><td class="num">65</td><td class="num">100%</td></tr>
+              <tr><td>Never opened (34× source not enabled in that window, 6× bridge reject: risk/scale)</td><td class="num">40</td><td class="num">62%</td></tr>
+              <tr><td>Position opened</td><td class="num">25</td><td class="num">38%</td></tr>
+              <tr><td>— market-resolved (TP/SL, quantified)</td><td class="num">19</td><td class="num">29%</td></tr>
+              <tr><td>— administratively closed (no market outcome)</td><td class="num">4</td><td class="num">6%</td></tr>
+              <tr><td>— degenerate (quantity-underflow artifact)</td><td class="num">2</td><td class="num">3%</td></tr>
             </tbody>
           </table>
         </div>
-        <p>Die Messabdeckung beträgt damit <strong>19/65 = 29 %</strong> — eine Eigenschaft des Messinstruments im Audit-Zeitraum (Freischalt-Fenster, Risk-Gates), <strong>keine</strong> Eigenschaft des Kanals.</p>
+        <p>Measurement coverage is therefore <strong>19/65 = 29%</strong> — a property of the measurement instrument during the audit period (enablement windows, risk gates), <strong>not</strong> a property of the channel.</p>
       </section>
 
       <section class="sec measure">
-        <h3>Befund: primäres Maß — messvalide Epoche (Juni, n = 11)</h3>
+        <h3>Findings — primary measure, measurement-valid epoch (June, n = 11)</h3>
         <div class="tablewrap">
           <table>
-            <thead><tr><th>Kennzahl</th><th>Wert</th></tr></thead>
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
             <tbody>
-              <tr><td>Aufgelöste Signale</td><td class="num">11 (6 Gewinner / 5 Verlierer)</td></tr>
-              <tr><td>Hit-Rate</td><td class="num">54,5 % — Wilson-95%: [28,0 %; 78,7 %]</td></tr>
-              <tr><td>Mittel netto</td><td class="num">+49,0 bps — Bootstrap-95%: [−185; +341]</td></tr>
-              <tr><td>Median netto</td><td class="num">+112,6 bps</td></tr>
-              <tr><td>P(Mittelwert &gt; 0), Bootstrap</td><td class="num">0,62</td></tr>
-              <tr><td>Ohne besten Trade (+1.288 bps)</td><td class="num">Mittel −74,9 bps · P(&gt;0) = 0,18</td></tr>
-              <tr><td>$-gewichtet</td><td class="num">+101,1 bps (+491,69 USD auf 48.615,92 USD)</td></tr>
+              <tr><td>Resolved signals</td><td class="num">11 (6 winners / 5 losers)</td></tr>
+              <tr><td>Hit rate</td><td class="num">54.5% — Wilson 95%: [28.0%; 78.7%]</td></tr>
+              <tr><td>Mean net</td><td class="num">+49.0 bps — bootstrap 95%: [−185; +341]</td></tr>
+              <tr><td>Median net</td><td class="num">+112.6 bps</td></tr>
+              <tr><td>P(mean &gt; 0), bootstrap</td><td class="num">0.62</td></tr>
+              <tr><td>Without best trade (+1,288 bps)</td><td class="num">mean −74.9 bps · P(&gt;0) = 0.18</td></tr>
+              <tr><td>$-weighted</td><td class="num">+101.1 bps (+$491.69 on $48,615.92 deployed)</td></tr>
             </tbody>
           </table>
         </div>
-        <div class="verdict">
-          <span class="chip neutral">TÜV-Verdikt · nicht belegbar</span>
-          <p class="big">„Nicht belegbar (n zu klein)" — auf der messvaliden Datenbasis (11 aufgelöste Signale, Juni 2026) lässt sich <strong>weder ein positiver Edge noch dessen Abwesenheit</strong> belastbar nachweisen. Die Punktschätzung ist leicht positiv (+49 bps netto/Signal), das 95%-Band [−185; +341] schließt Null breit ein, und das Vorzeichen kippt bereits beim Entfernen eines einzigen Trades (−75 bps). Ein belastbares Urteil erfordert n ≥ 100–200 aufgelöste Signale unter konstantem Regime.</p>
+        <div class="verdict neutral">
+          <span class="chip neutral">Audit verdict :: not provable</span>
+          <p class="big">"Not provable (n too small)" — on the measurement-valid data basis (11 resolved signals, June 2026), <strong>neither a positive edge nor its absence</strong> can be established. The point estimate is slightly positive (+49 bps net per signal), the 95% band [−185; +341] includes zero broadly, and the sign already flips on removing a single trade (−75 bps). A robust verdict requires on the order of n ≥ 100–200 resolved signals under a constant measurement regime.</p>
         </div>
-        <p><strong>Wert des Verfahrens selbst:</strong> Der Audit identifizierte und schloss 4 administrative Closes, 2 degenerierte Underflow-Positionen und 1 Preisfeed-Artefakt (ein +7.398-bps-Trade mit +140 % Intraday-Sprung aus der dokumentierten Mai-Korruptions-Ära) aus — genau die stillen Kontaminationen, die einen naiven „Trefferquoten"-Report aufblähen würden. Der Ausschluss senkt die ausgewiesene Kanal-Performance, ist also konservativ gegen den Kanal.</p>
+        <p><strong>The value of the process itself:</strong> the audit identified and excluded 4 administrative closes, 2 degenerate underflow positions, and 1 price-feed artifact (a +7,398 bps trade containing a +140% intraday jump from a documented feed-corruption era) — exactly the silent contaminations that inflate a naive "hit rate" report. Each exclusion lowers the reported channel performance, i.e. it is conservative against the channel.</p>
+        <p><strong>Stated limitations:</strong> 62% of signals were never opened (selection gap of unknown direction) · paper ≠ live (slippage/fee model, microcap liquidity) · exactly one pre-chosen measure, no horizon shopping · no benchmark baseline at this n · a single channel says nothing about the population of similar channels.</p>
       </section>
 
       <section class="sec measure">
-        <h3>Nachvollzug &amp; vorab versiegeltes Kriterium</h3>
-        <p>Datenbasis sha256-versiegelt (append-only Snapshot 2026-07-02); die Per-Signal-Ergebnistabelle wird bewusst <strong>nicht</strong> veröffentlicht — Symbol-Datum-Paare würden den Kanal re-identifizierbar machen —, ist aber im versiegelten <code class="inline">k1_final.json</code> enthalten und auf begründete Anfrage nachprüfbar.</p>
+        <h3>Verifiability &amp; the pre-sealed criterion</h3>
+        <p>The data basis is sha256-sealed (append-only snapshot, 2026-07-02); the per-signal result table is deliberately <strong>not</strong> published — symbol-date pairs would re-identify the channel — but is contained in the sealed <code class="inline">k1_final.json</code> and can be verified on reasoned request.</p>
         <div class="verdict pass">
-          <span class="chip pass">Vorab versiegelt · seq 30</span>
-          <p class="big">≥ 5 qualifizierte Inbound-Anfragen (schriftlich, je mit konkretem Audit-Wunsch für einen benennbaren Signal-Anbieter <em>oder</em> klarem Zahlungsbereitschafts-Signal) innerhalb von 30 Tagen nach dieser Publikation. Bei &lt; 5: <strong>Kill</strong> für das Angebot „öffentlicher Einzel-Kanal-TÜV". Nicht gezählt: Spam, Selbstwerbung, interne Anfragen.</p>
-          <p style="font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-top:14px">prereg_id = 00c75a76a2b0e78b · Truth-Ledger seq 30 · chain <span style="color:var(--pass)">VERIFY OK records=30</span></p>
+          <span class="chip pass">Pre-sealed :: seq 30</span>
+          <p class="big">≥ 5 qualified inbound requests (written, each with a concrete audit wish for a nameable signal provider <em>or</em> a clear willingness-to-pay signal) within 30 days of this publication. If &lt; 5: <strong>kill</strong> for the "public single-channel audit" offering. Not counted: spam, self-promotion by signal providers without an audit mandate, internal requests.</p>
+          <p class="meta">prereg_id = 00c75a76a2b0e78b :: truth-ledger seq 30 :: chain <span class="ok">VERIFY OK records=30</span></p>
         </div>
       </section>
 
@@ -354,13 +418,12 @@
 
   <footer class="colophon">
     <div class="wrap measure">
-      <p class="eyebrow">Colophon</p>
-      <p>KAI-Lightning · July 2026. All numbers here are taken from sealed ledger entries and the second-machine reproduction protocol; the underlying code — attestation, input pinning, pre-registration ledger, family stop rules — is exactly the code described. Reproduction and independent verification reports are the point, not a formality.</p>
-      <p class="verifyline">Independent verification path — one command: <code style="color:#8fc7a6">trading canonical-edge --verify &lt;seq&gt;</code></p>
+      <p class="tag">// Colophon</p>
+      <p>KAI-Lightning · July 2026. All numbers on this page are taken from sealed ledger entries and the second-machine reproduction protocol; the code described — attestation, input pinning, pre-registration ledger, family stop rules — is exactly the code running. Reproduction and independent verification reports are the point, not a formality.</p>
+      <p class="verify">Independent verification path — one command: <code>trading canonical-edge --verify &lt;seq&gt;</code></p>
       <p>Feedback, questions, independent reproduction reports and tips → <a href="mailto:kai@pay.kai-trader.org">kai@pay.kai-trader.org</a> (Lightning address).</p>
     </div>
   </footer>
 </article>
-
 </body>
 </html>
