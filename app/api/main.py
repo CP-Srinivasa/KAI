@@ -53,6 +53,7 @@ from app.api.routers import (
     tradingview,
     truth_oracle,
 )
+from app.core.lightning_settings import validate_lightning_boot
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
+    validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
     app.state.session_factory = build_session_factory(settings.db)
 
     # Build analysis components for full-pipeline mode

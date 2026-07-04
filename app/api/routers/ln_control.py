@@ -30,8 +30,8 @@ from app.lightning import value_layer as vl
 from app.lightning.control_gate import plan_hash, verify_capital_confirm
 from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.idempotency_store import PersistentSeenKeys
-from app.lightning.ops_ledger import spent_today_sat
-from app.lightning.policy import PolicyStore, evaluate_policy
+from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat
+from app.lightning.policy import PolicyDecision, PolicyStore, evaluate_policy
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,26 @@ async def _available_balance_sat() -> int:
         return 0
 
 
+def _effective_amount_sat(
+    action: str, params: dict[str, Any], spec: _ActionSpec
+) -> tuple[int, bool]:
+    """Outgoing spend amount for the policy + whether it is KNOWN.
+
+    ``pay_invoice`` carries NO amount param — the sat value is encoded in the BOLT11
+    invoice itself. Without parsing it the policy would see 0 and wave the payment
+    through as ``auto_execute`` (bypassing per-action/daily cap, the reserve-floor
+    backstop AND the HOTP confirm-threshold) — a covert spend hole on the primary
+    spend action. We derive it from the invoice HRP; an amountless invoice returns
+    ``known=False`` so the caller fails closed to ``needs_confirm``.
+    """
+    if action == "pay_invoice":
+        amt = bolt11_amount_sat(str(params.get("payment_request", "")))
+        return amt, amt > 0
+    if spec.amount_key:
+        return int(params.get(spec.amount_key, 0) or 0), True
+    return 0, True  # non-spend actions (create_invoice / close_channel)
+
+
 def _build_hotp_verifier() -> Any:
     from pathlib import Path
 
@@ -112,7 +132,7 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     if spec is None:
         raise HTTPException(status_code=422, detail=f"unknown action: {body.action}")
 
-    amount = int(body.params.get(spec.amount_key, 0) or 0) if spec.amount_key else 0
+    amount, amount_known = _effective_amount_sat(body.action, body.params, spec)
     recipient = body.params.get(spec.recipient_key) if spec.recipient_key else None
     envelope = PolicyStore().load()
     available = await _available_balance_sat()
@@ -121,11 +141,16 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         amount_sat=amount,
         recipient=recipient,
         # Gesamtaudit-P0 geschlossen: Tages-Cap zählt jetzt die real executed,
-        # wert-abfließenden Sends des UTC-Tages aus dem Ops-Ledger.
+        # wert-abfließenden Sends des UTC-Tages aus dem Ops-Ledger. Für pay_invoice
+        # stammt ``amount`` aus dem BOLT11 (nicht aus params) → Caps/Floor greifen jetzt.
         spent_today_sat=spent_today_sat(),
         available_balance_sat=available,
         envelope=envelope,
     )
+    # Fail-closed: a spend whose amount we could NOT determine (amountless BOLT11)
+    # must never auto-execute — force operator confirm (HOTP) instead of silent pass.
+    if not amount_known and decision.decision == "auto_execute":
+        decision = PolicyDecision("needs_confirm", "amount unknown (amountless invoice)")
     ph = plan_hash(body.action, body.params)
 
     async def _call(**extra: Any) -> Any:

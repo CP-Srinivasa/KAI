@@ -10,6 +10,9 @@ plan, macaroon-permission matrix and threat model.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -108,3 +111,54 @@ class LightningSettings(BaseSettings):
     @property
     def base_url(self) -> str:
         return f"https://{self.host}:{self.rest_port}"
+
+
+class LightningBootError(RuntimeError):
+    """An ENABLED Lightning client is misconfigured in a way that would fail OPEN
+    (missing/unreadable/expired TLS cert). Raised at startup to abort the boot."""
+
+
+def validate_lightning_boot(cfg: LightningSettings) -> None:
+    """Fail-closed startup guardrail for an ENABLED Lightning client.
+
+    The model-validator already refuses an EMPTY ``tls_cert_path``. This runs ONCE at
+    real application startup (not on every settings construction — unit tests may pass
+    placeholder cert paths) and additionally proves the configured cert is actually
+    USABLE, so an enabled client can never silently ride a broken trust anchor:
+
+      * the file exists and is readable (not a stale/typo'd path);
+      * it parses as a PEM X.509 certificate (not truncated/garbage);
+      * it is not expired (an expired ``tls.cert`` makes every node call fail with an
+        opaque TLS error deep in the request path — here it aborts boot with the
+        precise reason instead).
+
+    A disabled client (``enabled=False``) never touches the node → no-op.
+    """
+    if not cfg.enabled:
+        return
+    cert_path = Path(cfg.tls_cert_path.strip())
+    try:
+        raw = cert_path.read_bytes()
+    except FileNotFoundError as exc:
+        raise LightningBootError(
+            f"APP_LN_TLS_CERT_PATH does not exist: {cert_path} — refusing to boot fail-open"
+        ) from exc
+    except OSError as exc:
+        raise LightningBootError(
+            f"APP_LN_TLS_CERT_PATH is unreadable ({cert_path}): {exc} — refusing to boot"
+        ) from exc
+    if not raw.strip():
+        raise LightningBootError(f"APP_LN_TLS_CERT_PATH is an empty file: {cert_path}")
+    try:
+        from cryptography import x509
+
+        cert = x509.load_pem_x509_certificate(raw)
+    except Exception as exc:  # noqa: BLE001 — any parse failure is a hard boot-blocker
+        raise LightningBootError(
+            f"APP_LN_TLS_CERT_PATH is not a valid PEM X.509 certificate ({cert_path}): {exc}"
+        ) from exc
+    if cert.not_valid_after_utc < datetime.now(UTC):
+        raise LightningBootError(
+            f"lnd TLS cert expired at {cert.not_valid_after_utc.isoformat()} "
+            f"({cert_path}) — refusing to boot with an expired trust anchor"
+        )
