@@ -124,6 +124,20 @@ def edge_reminder_due(
     return days_since is None or days_since >= cadence_days
 
 
+# A DECISIVE-negative generator-edge verdict (NO_GO) means more closes cannot
+# change the answer — so the edge-report milestone must stop nudging to "run the
+# report for a belastbares Verdict" once that verdict is already terminal. A
+# truth platform must not nag itself about a question it has already answered
+# (ADR-0012 attention hygiene / truth-in-own-reporting). GO stays loud (we WANT
+# to hear about a live edge); INSUFFICIENT is not terminal (it still accumulates).
+_TERMINAL_EDGE_VERDICTS = frozenset({"NO_GO"})
+
+
+def edge_verdict_is_terminal(verdict: object) -> bool:
+    """True when the generator-edge verdict is a decisive negative (NO_GO)."""
+    return isinstance(verdict, str) and verdict.strip().upper() in _TERMINAL_EDGE_VERDICTS
+
+
 def _load_milestone_state(path: Path = _MILESTONE_STATE_PATH) -> dict[str, Any]:
     """Read reminder-cadence bookkeeping (never raises; {} if absent/corrupt)."""
     try:
@@ -666,10 +680,21 @@ def compose_digest_message(
     shadow_ctx = f"shadow-resolved n={shadow_n}" if isinstance(shadow_n, int) else "shadow-n n/a"
     gate = generator_edge.get("min_resolved", EDGE_GATE_MIN_RESOLVED)
     gen_resolved = generator_edge.get("autonomous_generator_resolved")
+    edge_verdict = generator_edge.get("autonomous_generator_verdict")
     if isinstance(gen_resolved, int):
         edge_state = state.get("edge") if isinstance(state.get("edge"), dict) else {}
         min_delta = max(1, gate // 2)
-        if edge_reminder_due(
+        if gen_resolved >= gate and edge_verdict_is_terminal(edge_verdict):
+            # Decisive terminal verdict already on record — the report was already
+            # run and NO_GO IS its answer, so nudging to "run it for a belastbares
+            # Verdict" nags about a settled question. State it once; re-opening
+            # needs a NEW pre-registered construction, not another report run.
+            lines.append(
+                f"  • Edge-Verdikt: {edge_verdict} (terminal, n={gen_resolved}≥{gate}) — "
+                f"kein Report-Nudge; Re-open nur via neuer prä-registrierter Konstruktion "
+                f"· {shadow_ctx}"
+            )
+        elif edge_reminder_due(
             gen_resolved=gen_resolved,
             gate=gate,
             state=edge_state,

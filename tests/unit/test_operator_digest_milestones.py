@@ -88,6 +88,25 @@ def test_edge_reminder_due_refires_after_cadence_even_without_delta():
     )
 
 
+def test_edge_verdict_is_terminal_no_go_only():
+    # Decisive negative suppresses the edge-report nudge...
+    assert od.edge_verdict_is_terminal("NO_GO") is True
+    assert od.edge_verdict_is_terminal("no_go") is True
+    assert od.edge_verdict_is_terminal("  No_Go  ") is True
+
+
+def test_edge_verdict_is_terminal_go_and_insufficient_not_terminal():
+    # ...but a live edge (GO) must stay loud, and INSUFFICIENT still accumulates.
+    assert od.edge_verdict_is_terminal("GO") is False
+    assert od.edge_verdict_is_terminal("INSUFFICIENT") is False
+
+
+def test_edge_verdict_is_terminal_tolerates_non_str():
+    assert od.edge_verdict_is_terminal(None) is False
+    assert od.edge_verdict_is_terminal("") is False
+    assert od.edge_verdict_is_terminal(42) is False
+
+
 def test_milestone_state_roundtrip(tmp_path):
     p = tmp_path / "state.json"
     assert od._load_milestone_state(p) == {}  # absent -> {}
