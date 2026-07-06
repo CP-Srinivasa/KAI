@@ -2,7 +2,7 @@
 
 - **Status:** ACCEPTED — Operator-Entscheid 2026-07-01
 - **Datum:** 2026-07-01
-- **Betroffen:** Plattform-/Zugangs-/Wallet-/Kapital-Strategie; erweitert ADR 0012 (Research-/Truth-Plattform) um die Zugangs- & Realisierungs-Achse
+- **Betroffen:** Plattform-/Zugangs-/Wallet-/Kapital-Strategie; erweitert ADR 0012 (Research-/Truth-Plattform) um die Zugangs- & Realisierungs-Achse; ergänzt durch ADR 0014 (KAI-Protocol-Zielbild & Schichtenkarte)
 - **Referenz-Plan:** Full-Spectrum-Strategieplan (Operator-Freigabe 2026-07-01)
 
 ## Kontext
