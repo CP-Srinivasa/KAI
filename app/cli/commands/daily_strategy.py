@@ -273,6 +273,16 @@ def _build_skeleton(
     except Exception:  # pragma: no cover — best-effort metric
         dedupe_report = None
 
+    # V1 (2026-07-07): episode-deduped precision — parallel signal paths
+    # resolving on the same market move (07-06 backlog batch: ~150 rows,
+    # 1-2 BTC episodes) count as ONE observation each.
+    try:
+        from app.observability.outcome_dedupe_report import build_episode_dedupe_report
+
+        episode_report = build_episode_dedupe_report()
+    except Exception:  # pragma: no cover — best-effort metric
+        episode_report = None
+
     tv_pending = _tv_pending_count()
     paper_fills = _paper_fills_count()
 
@@ -296,6 +306,15 @@ def _build_skeleton(
             f"{dedupe_report.deduped_precision_str} "
             f"(raw {dedupe_report.raw_precision_str}; "
             f"dropped {dedupe_report.dropped_inconclusive_dupes} duplicate inconclusives)"
+        )
+
+    episode_line = "—"
+    if episode_report is not None and episode_report.resolved_rows > 0:
+        episode_line = (
+            f"{episode_report.episode_precision_str} "
+            f"({episode_report.resolved_rows} resolved rows in "
+            f"{episode_report.episode_total} Episoden; größte "
+            f"{episode_report.largest_episode_size})"
         )
 
     # Sync-Health-Banner: prominent at the top when the operator MUST know that
@@ -326,6 +345,7 @@ Horizont-Anker: {horizon_line}
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
 | Baseline-Precision | {precision_line} |
 | Deduped Precision (latest per document_id) | {deduped_line} |
+| Episoden-Precision (Cross-Path-Cluster) | {episode_line} |
 | TV pending events (unpromoted) | {tv_pending} |
 | Paper-Trading abgeschlossene Trades | {paper_fills} |
 | Tage bis TV-Pivot Re-Entry | {d_reentry} |

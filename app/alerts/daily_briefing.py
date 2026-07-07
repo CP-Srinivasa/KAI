@@ -16,9 +16,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.alerts.audit import (
+    ALERT_AUDIT_JSONL_FILENAME,
+    ALERT_OUTCOMES_JSONL_FILENAME,
     load_alert_audits,
     load_outcome_annotations,
 )
+from app.observability.outcome_dedupe_report import build_episode_dedupe_report
 from app.orchestrator.trading_loop import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
@@ -48,6 +51,13 @@ class BriefingData:
     p10_resolved_7d: int = 0
     p10_hits_7d: int = 0
     p10_precision_pct_7d: float | None = None
+    # V1 (2026-07-07): episode-deduped precision — parallel signal paths
+    # resolving on the same market move count as ONE observation. Raw
+    # precision stays above; this line keeps it honest.
+    episode_rows: int = 0
+    episode_count: int = 0
+    episode_hits: int = 0
+    episode_precision_pct: float | None = None
 
     # Trading loop stats (24h window)
     cycles_total: int = 0
@@ -104,6 +114,12 @@ class BriefingData:
         lines.append(f"  Inconclusive: {self.inconclusive}")
         if self.precision_pct is not None:
             lines.append(f"  Precision:    {self.precision_pct:.1f}%")
+        if self.episode_precision_pct is not None:
+            lines.append(
+                f"  Episode-dedup: {self.episode_precision_pct:.1f}% "
+                f"({self.episode_hits}/{self.episode_count} episodes "
+                f"from {self.episode_rows} resolved rows)"
+            )
         if self.p10_resolved_7d > 0:
             p10_pct = self.p10_precision_pct_7d
             pct_str = f"{p10_pct:.1f}%" if p10_pct is not None else "n/a"
@@ -236,6 +252,22 @@ def build_daily_briefing(
     data.p10_resolved_7d = p10_resolved_7d
     if p10_resolved_7d > 0:
         data.p10_precision_pct_7d = p10_hits_7d / p10_resolved_7d * 100
+
+    # V1 (2026-07-07): episode-deduped precision — the 2026-07-06 backlog
+    # batch showed parallel TV signal paths resolving on one BTC move being
+    # counted as ~150 independent hits. Best-effort: absent on error.
+    try:
+        episode = build_episode_dedupe_report(
+            audit_path=adir / ALERT_OUTCOMES_JSONL_FILENAME,
+            alert_audit_path=adir / ALERT_AUDIT_JSONL_FILENAME,
+        )
+    except Exception:
+        episode = None
+    if episode is not None and episode.episode_total > 0:
+        data.episode_rows = episode.resolved_rows
+        data.episode_count = episode.episode_total
+        data.episode_hits = episode.episode_hit
+        data.episode_precision_pct = episode.episode_hit / episode.episode_total * 100
 
     # ── Trading loop cycles ──────────────────────────────────────────
     try:

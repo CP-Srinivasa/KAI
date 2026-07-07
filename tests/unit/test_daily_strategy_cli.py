@@ -86,6 +86,58 @@ def test_bootstrap_writes_skeleton_with_stub_markers(runner: CliRunner, repo_cwd
         assert marker in text
 
 
+def test_bootstrap_skeleton_includes_episode_precision_row(
+    runner: CliRunner, repo_cwd: Path
+) -> None:
+    """V1 (2026-07-07): the skeleton carries an episode-deduped
+    precision row; without artifacts it renders the em-dash."""
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "| Episoden-Precision (Cross-Path-Cluster) | — |" in text
+
+
+def test_bootstrap_episode_precision_row_with_data(runner: CliRunner, repo_cwd: Path) -> None:
+    artifacts = repo_cwd / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    note = "auto@4h: bullish BTC/USDT $100.00->$104.00 (+4.00% over 4.0h, thr=0.42%)"
+    with (artifacts / "alert_outcomes.jsonl").open("a", encoding="utf-8") as f:
+        for i in range(3):
+            f.write(
+                json.dumps(
+                    {
+                        "document_id": f"d{i}",
+                        "outcome": "hit",
+                        "annotated_at": "2026-07-06T18:30:00+00:00",
+                        "asset": "BTC/USDT",
+                        "note": note,
+                    }
+                )
+                + "\n"
+            )
+    with (artifacts / "alert_audit.jsonl").open("a", encoding="utf-8") as f:
+        for i in range(3):
+            f.write(
+                json.dumps(
+                    {
+                        "document_id": f"d{i}",
+                        "channel": "telegram",
+                        "message_id": None,
+                        "is_digest": False,
+                        "dispatched_at": f"2026-07-06T10:0{i}:00+00:00",
+                        "sentiment_label": "bullish",
+                    }
+                )
+                + "\n"
+            )
+
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "100.0% (1/1)" in text
+    assert "3 resolved rows" in text
+
+
 def test_bootstrap_is_idempotent(runner: CliRunner, repo_cwd: Path) -> None:
     today_path = _today_path(repo_cwd)
     today_path.parent.mkdir(parents=True, exist_ok=True)
