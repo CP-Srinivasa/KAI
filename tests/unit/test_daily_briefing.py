@@ -117,6 +117,75 @@ def test_briefing_to_text(tmp_path: Path) -> None:
     assert "Dispatched:" in text
 
 
+# ── V1 (2026-07-07): episode-deduped precision ──────────────────────
+
+
+def _write_outcome_with_note(
+    tmp_path: Path,
+    doc_id: str,
+    outcome: str,
+    *,
+    note: str,
+    asset: str = "BTC/USDT",
+) -> None:
+    path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    data = {
+        "document_id": doc_id,
+        "outcome": outcome,
+        "annotated_at": datetime.now(UTC).isoformat(),
+        "asset": asset,
+        "note": note,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(data) + "\n")
+
+
+def test_briefing_episode_dedup_collapses_parallel_paths(tmp_path: Path) -> None:
+    """Three parallel-path hits on the same move = one episode; a
+    separate ETH miss = a second episode -> 50% episode precision
+    while raw precision reads 75%."""
+    note = "auto@4h: bullish BTC/USDT $100.00->$104.00 (+4.00% over 4.0h, thr=0.42%)"
+    base = datetime.now(UTC)
+    for i in range(3):
+        _write_audit(
+            tmp_path,
+            document_id=f"d{i}",
+            dispatched_at=(base - timedelta(minutes=30 - i * 5)).isoformat(),
+        )
+        _write_outcome_with_note(tmp_path, f"d{i}", "hit", note=note)
+    _write_audit(
+        tmp_path,
+        document_id="e1",
+        dispatched_at=base.isoformat(),
+        affected_assets=["ETH/USDT"],
+    )
+    _write_outcome_with_note(
+        tmp_path,
+        "e1",
+        "miss",
+        note="auto@4h: bullish ETH/USDT $50.00->$49.00 (-2.00% over 4.0h, thr=0.42%)",
+        asset="ETH/USDT",
+    )
+
+    data = build_daily_briefing(tmp_path)
+    assert data.precision_pct is not None
+    assert abs(data.precision_pct - 75.0) < 0.1  # raw: 3 hits / 4 resolved
+    assert data.episode_rows == 4
+    assert data.episode_count == 2
+    assert data.episode_hits == 1
+    assert data.episode_precision_pct is not None
+    assert abs(data.episode_precision_pct - 50.0) < 0.1
+
+
+def test_briefing_to_text_includes_episode_line(tmp_path: Path) -> None:
+    note = "auto@4h: bullish BTC/USDT $100.00->$104.00 (+4.00% over 4.0h, thr=0.42%)"
+    _write_audit(tmp_path, document_id="d1")
+    _write_outcome_with_note(tmp_path, "d1", "hit", note=note)
+
+    text = build_daily_briefing(tmp_path).to_text()
+    assert "Episode-dedup:" in text
+
+
 # ── D-150: P10 high-conviction tier metrics ─────────────────────────
 
 
