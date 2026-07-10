@@ -162,12 +162,15 @@ def test_degrades_honestly_without_data() -> None:
 # MIT State feuert der FÄLLIG-Nudge nur bei materieller Änderung / Wochenkadenz.
 
 
-def test_v5_faellig_suppressed_when_recently_reminded() -> None:
+def test_v5_faellig_nudges_daily_even_when_recently_reminded() -> None:
+    # Daily 07-10 V3: FÄLLIG nudges EVERY day until a verdict exists. The
+    # weekly cadence let the due V5 eval go quiet for 7 days while the eval
+    # harness was silently broken — a due, sealed date must stay loud.
     state = {"v5": {"last_iso": "2026-06-20", "day": 9}}
     msg = _compose(today=date(2026, 6, 21), milestone_state=state)
-    assert "V5-Auswertung FÄLLIG" not in msg
-    assert "V5-Auswertung ruht" in msg
-    assert state["v5"]["last_iso"] == "2026-06-20"  # not re-fired → unchanged
+    assert "V5-Auswertung FÄLLIG" in msg
+    assert "V5-Auswertung ruht" not in msg
+    assert state["v5"]["last_iso"] == "2026-06-21"  # advanced on fire
 
 
 def test_v5_faellig_refires_after_cadence_and_advances_state() -> None:
@@ -175,6 +178,23 @@ def test_v5_faellig_refires_after_cadence_and_advances_state() -> None:
     msg = _compose(today=date(2026, 6, 21), milestone_state=state)
     assert "V5-Auswertung FÄLLIG" in msg
     assert state["v5"]["last_iso"] == "2026-06-21"  # advanced on fire
+
+
+def test_v5_verdict_on_record_settles_milestone() -> None:
+    # An attested verdict answers the question — no nudge, state the verdict.
+    msg = _compose(
+        today=date(2026, 7, 10),
+        v5_verdict={
+            "hypothesis": "funding_premium_meanrev_1h",
+            "verdict": "NOT_MET at pre-registered criteria (n=308)",
+            "generated_at_utc": "2026-07-10T18:50:15+00:00",
+            "prereg_id": "f676bcf5a7a1bfb6",
+        },
+    )
+    assert "V5-Auswertung FÄLLIG" not in msg
+    assert "V5-Verdikt liegt vor" in msg
+    assert "NOT_MET" in msg
+    assert "Prä-Registrierung" in msg
 
 
 # The FÄLLIG/ruht cadence only governs a NON-terminal verdict (GO). A terminal
