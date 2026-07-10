@@ -1,6 +1,6 @@
 # ADR-Index (`docs/adr/`)
 
-**Stand:** 2026-07-06 · Architecture Decision Records von KAI.
+**Stand:** 2026-07-11 · Architecture Decision Records von KAI.
 
 **Konvention:** fortlaufende Nummern; Historie wird nie umgeschrieben — Korrekturen/Präzisierungen kommen als `## Addendum` in die bestehende ADR oder als neue ADR, die die alte supersedet.
 
@@ -9,7 +9,7 @@
 - **0006 ist doppelt vergeben** (`0006-fastlane-fail-closed-bypass-defaults.md` UND `0006-source-intake-exploration-grey-area.md`).
 - **0008 wurde nie vergeben** (Lücke zwischen 0007 und 0009).
 
-Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dateinamen — rückwirkende Umnummerierung würde die Verweis-Stabilität brechen. Bei Zitaten von „ADR 0006" den vollen Dateinamen nennen. Neue ADRs setzen bei der nächsten freien Nummer fort (**nächste: 0015**).
+Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dateinamen — rückwirkende Umnummerierung würde die Verweis-Stabilität brechen. Bei Zitaten von „ADR 0006" den vollen Dateinamen nennen. Neue ADRs setzen bei der nächsten freien Nummer fort (**nächste: 0016**).
 
 ## Index
 
@@ -30,6 +30,7 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 | [0012](0012-north-star-pivot-research-truth-platform.md) | NORTH_STAR-Pivot: von Alpha-Jagd zu Research-/Truth-Plattform (Hybrid) | **ACCEPTED (2026-06-29) + Addendum 2026-07-02** — aktueller Wegpunkt |
 | [0013](0013-frontier-and-boundary.md) | Frontier & Boundary: souveräner Zugang statt Umgehung | ACCEPTED (2026-07-01) |
 | [0014](0014-kai-protocol-zielbild.md) | KAI Protocol: Zielbild & Schichtenkarte (Verifiable AI Finance) | ACCEPTED (2026-07-06) |
+| [0015](0015-kai-local-intelligence-layer.md) | KAI Local Intelligence Layer (lokales LLM als auditierbare Shadow-Schicht) | ACCEPTED (2026-07-11) |
 
 **Hinweis:** „0006a/0006b" sind nur Index-Labels dieses Dokuments zur Unterscheidung — die Dateien selbst heißen beide `0006-*` und behalten ihre Namen.
 
