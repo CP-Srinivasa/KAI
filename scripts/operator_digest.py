@@ -803,12 +803,15 @@ def compose_digest_message(
         )
 
     # Source-Discovery: der autonome Loop (Scout → Probation → Graduation),
-    # konsistent mit dem Dashboard-Panel „Quellen-Discovery".
+    # konsistent mit dem Dashboard-Panel „Quellen-Discovery". V5 (Daily 07-10):
+    # „N nahe Graduation" war eine Vanity-Metrik — Graduation ist unter ADR-0012
+    # strukturell geschlossen (kein Edge, in den graduiert werden könnte);
+    # discovery_enabled=false heißt seit dem Seed-Freeze „eingefroren".
     sd = source_discovery or {}
     if not sd.get("available"):
         lines.append("🔭 *Quellen-Discovery:* kein Lauf / Loop aus")
     else:
-        armed = "scharf" if sd.get("discovery_enabled") else "Beobachtung"
+        armed = "scharf" if sd.get("discovery_enabled") else "eingefroren — Seed-Freeze"
         last_str = ""
         if sd.get("last_mode"):
             last_str = (
@@ -817,7 +820,7 @@ def compose_digest_message(
             )
         lines.append(
             f"🔭 *Quellen-Discovery ({armed}):* {sd.get('probation', 0)} in Probation "
-            f"({sd.get('near_graduation', 0)} nahe Graduation) · "
+            "(Graduation strukturell geschlossen — ADR-0012) · "
             f"{sd.get('proposals', 0)} Vorschläge{last_str}"
         )
 

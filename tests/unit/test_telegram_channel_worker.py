@@ -571,3 +571,40 @@ class TestVerboseObserverHandler:
                 Path("./_unused_test_heartbeat_path").unlink()
             except FileNotFoundError:
                 pass
+
+
+# ── V6 (Daily 07-10): News-/Policy-Relays → eigenes Outcome ──────────────────
+
+
+def test_news_commentary_gets_own_outcome_and_no_envelope(tmp_path: Path) -> None:
+    """Erkannte News-Relays dürfen nicht als not_a_signal ins Feedback-Rauschen.
+
+    Fixture = die reale SBR-Message (2026-07-07T06:07Z), die den stündlichen
+    Parser-Feedback-Alert auslöste, obwohl der Typ sicher kein Signal ist.
+    """
+    raw_log = tmp_path / "raw.jsonl"
+    spy = _EmitSpy(return_value={"envelope_id": "ENV-X"})
+    text = (
+        '🇺🇸 White House says the US government is working to "structure" '
+        "its Strategic Bitcoin Reserve and crypto stockpile."
+    )
+    result = process_message(
+        text,
+        source_tag="telegram_premium_channel",
+        chat_id=-100111222,
+        raw_log_path=raw_log,
+        emit_fn=spy,
+    )
+    assert result == {
+        "parsed": False,
+        "emitted": False,
+        "envelope_id": None,
+        "reason": "news_commentary",
+    }
+    assert spy.calls == []
+    logged = _read_jsonl(raw_log)
+    assert len(logged) == 1
+    assert logged[0]["outcome"] == "news_commentary"
+    # Preview bleibt für Audit erhalten, aber der Aggregator (filtert
+    # not_a_signal) nudgt nicht mehr.
+    assert "Strategic Bitcoin Reserve" in logged[0]["text_preview"]

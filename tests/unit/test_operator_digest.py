@@ -501,9 +501,33 @@ def test_source_discovery_line_present_when_armed() -> None:
     )
     assert "Quellen-Discovery (scharf):" in msg
     assert "11 in Probation" in msg
-    assert "2 nahe Graduation" in msg
+    # V5 (Daily 07-10): „nahe Graduation" war eine Vanity-Metrik — Graduation
+    # ist unter ADR-0012 strukturell geschlossen (kein Edge als Ziel).
+    assert "nahe Graduation" not in msg
+    assert "Graduation strukturell geschlossen" in msg
     assert "11 Vorschläge" in msg
     assert "11 onboardet" in msg
+
+
+def test_source_discovery_line_frozen_label_when_disabled() -> None:
+    # Seed-Freeze (V5): discovery_enabled=false heißt eingefroren, nicht
+    # „Beobachtung" — die Zeile muss den Freeze-Zustand ehrlich benennen.
+    msg = _compose(
+        source_discovery={
+            "available": True,
+            "discovery_enabled": False,
+            "scout_enabled": False,
+            "proposals": 0,
+            "probation": 28,
+            "near_graduation": 11,
+            "last_mode": "live",
+            "last_onboarded": 0,
+            "last_swaps": 0,
+        }
+    )
+    assert "Quellen-Discovery (eingefroren — Seed-Freeze):" in msg
+    assert "28 in Probation" in msg
+    assert "Graduation strukturell geschlossen" in msg
 
 
 def test_source_discovery_line_honest_when_unavailable() -> None:

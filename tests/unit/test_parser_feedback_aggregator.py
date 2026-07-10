@@ -169,3 +169,19 @@ def test_format_alert_truncates_long_preview():
     # Preview must be truncated to PREVIEW_LIMIT (200) chars in the alert
     assert "x" * 500 not in text
     assert "x" * 200 in text
+
+
+def test_scan_ignores_recognized_news_commentary(tmp_path: Path):
+    """V6: erkannte News-Relays (outcome=news_commentary) sind KEIN Feedback-Fall."""
+    log = tmp_path / "raw.jsonl"
+    rec = {
+        "timestamp_utc": "2026-07-07T06:07:10+00:00",
+        "outcome": "news_commentary",
+        "text_len": 115,
+        "text_preview": "🇺🇸 White House says ...",
+    }
+    log.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 7, 7, 6, 30, tzinfo=UTC)
+    assert pfa.scan_unparsed(log, now=now) == []

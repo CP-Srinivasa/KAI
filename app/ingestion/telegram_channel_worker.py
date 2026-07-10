@@ -45,6 +45,7 @@ from app.ingestion.telegram_channel_approval import (
 from app.ingestion.telegram_channel_envelope import emit_parsed_signal
 from app.ingestion.telegram_channel_parser import (
     TargetCompletionEvent,
+    is_news_commentary,
     parse_premium_channel_message,
     parse_target_completion,
 )
@@ -434,6 +435,20 @@ def process_message(
                 "completion_symbol": completion.display_symbol,
                 "completion_touch_price": completion.touch_price,
                 "completion_raw_text": completion.raw_text,
+            }
+        # V6 (Daily 07-10): erkannte News-/Policy-Relays (Reporting-Verb, keine
+        # Ziffern) sind sicher KEINE Signale — eigenes Outcome, damit der
+        # stündliche Parser-Feedback-Alert (filtert not_a_signal) nicht über
+        # bekannt-harmlose Regierungs-Statements nudgt. Preview bleibt für Audit.
+        if is_news_commentary(text or ""):
+            base["outcome"] = "news_commentary"
+            base["text_preview"] = (text or "")[:200]
+            _append_raw_log(raw_log_path, base)
+            return {
+                "parsed": False,
+                "emitted": False,
+                "envelope_id": None,
+                "reason": "news_commentary",
             }
         base["outcome"] = "not_a_signal"
         # 2026-05-14 P1 #10: Parser-Feedback-Loop braucht ein Preview vom Roh-
