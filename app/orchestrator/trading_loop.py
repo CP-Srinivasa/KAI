@@ -381,6 +381,30 @@ class TradingLoop:
         adapter_note = f"market_data_source:{market_data.source}"
         notes.append(adapter_note)
 
+        # Fail-closed (SUMR/MIM/"USDT/USDT" 2026-06/07): a REAL provider chain
+        # that exhausts every venue and falls through to the synthetic mock
+        # last-resort means the symbol has no real market — filling a paper
+        # position at invented ~100$ prices books phantom PnL (same failure
+        # class as MATIC/POL +73k). Only refused when the loop was wired for
+        # real data; a directly-injected mock adapter (tests, provider=mock)
+        # keeps filling.
+        if market_data.source == "mock" and self._market_data.adapter_name != "mock":
+            logger.warning(
+                "[LOOP] SKIP cycle %s: synthetic last-resort price refused (adapter=%s)",
+                symbol,
+                self._market_data.adapter_name,
+            )
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.NO_MARKET_DATA,
+                market_data_fetched=True,
+                notes=notes + [f"synthetic_last_resort_refused:{symbol}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
         # Freshness enforcement: stale data → skip cycle explicitly (never silently)
         if market_data.is_stale:
             logger.warning(

@@ -318,6 +318,33 @@ async def test_run_cycle_completes_with_mock_adapter(tmp_path):
     assert cycle.market_data_fetched
 
 
+class _ChainWrappedMock(MockMarketDataAdapter):
+    """Mimics the production fallback chain: chain-level adapter_name, but the
+    resolved point still carries the inner mock's ``source="mock"``."""
+
+    @property
+    def adapter_name(self) -> str:
+        return "fallback:bybit,binance_futures,okx,bitmex,binance,coingecko,mock"
+
+    async def get_market_data_point(self, symbol):
+        return await MockMarketDataAdapter().get_market_data_point(symbol)
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_refuses_synthetic_last_resort_price(tmp_path):
+    """Regression SUMR/MIM/USDT-USDT (2026-07-06/-06-23/-06-25): when a REAL
+    provider chain falls through to the synthetic mock last-resort, the cycle
+    must skip (NO_MARKET_DATA) instead of filling a paper position at an
+    invented ~100$ price."""
+    loop = _loop(tmp_path)
+    loop._market_data = _ChainWrappedMock()
+    cycle = await loop.run_cycle(_strong_bullish_analysis(), "SUMR/USDT")
+    assert cycle.status == CycleStatus.NO_MARKET_DATA
+    assert cycle.market_data_fetched
+    assert any("synthetic_last_resort_refused" in n for n in cycle.notes)
+    assert not cycle.fill_simulated
+
+
 # ── Portfolio exposure ────────────────────────────────────────────────────────
 
 
