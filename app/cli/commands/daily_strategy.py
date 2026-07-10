@@ -330,6 +330,20 @@ def _build_skeleton(
             " mit Verbose-Logs, ggf. SSH-Pfad prüfen.\n"
         )
 
+    # V2 (2026-07-10): migrate open progress rows from the last filled review
+    # so carry-over survives skeleton-only days without a Claude session.
+    carry = _carryover_progress_rows(before=today)
+    if carry is not None and carry[1]:
+        src_date, open_rows = carry
+        progress_rows = "\n".join(open_rows)
+        progress_note = (
+            f"\n_Carry-over automatisch migriert aus `{src_date.isoformat()}.md`"
+            " (offene Punkte; ✅-Zeilen bleiben im Quell-Review)._\n"
+        )
+    else:
+        progress_rows = "| — | (Carry-over aus Vortagen bitte hier migrieren) | — | ⏳ offen | — |"
+        progress_note = ""
+
     return f"""# KAI Daily Strategy Review — {today.isoformat()}
 
 Erstellt: {today.isoformat()} · automatischer Skelett-Bootstrap (CLI: `daily-strategy bootstrap`)
@@ -390,8 +404,8 @@ _Bitte Claude füllen — Stunden/Tage, Blocker, Abhängigkeiten._
 
 | ID | Titel | Prio | Status | Ergebnis / Verweis |
 |---|---|---|---|---|
-| — | (Carry-over aus Vortagen bitte hier migrieren) | — | ⏳ offen | — |
-
+{progress_rows}
+{progress_note}
 **Abarbeitungsmodus:** Punkt für Punkt.
 Nicht abgeschlossene Punkte wandern in das nächste Daily-File.
 """
@@ -450,7 +464,7 @@ def _iter_review_files() -> list[tuple[date, Path]]:
     return sorted(out, key=lambda t: t[0], reverse=True)
 
 
-def _last_filled_review_date(before: date | None = None) -> date | None:
+def _last_filled_review(before: date | None = None) -> tuple[date, Path] | None:
     """Most recent review whose sections are fully filled (0 stub markers).
 
     ``before`` excludes the cutoff date (typically today) so the reminder
@@ -465,8 +479,66 @@ def _last_filled_review_date(before: date | None = None) -> date | None:
         except OSError:
             continue
         if _stub_section_count(text) == 0:
-            return d
+            return d, p
     return None
+
+
+def _last_filled_review_date(before: date | None = None) -> date | None:
+    found = _last_filled_review(before=before)
+    return found[0] if found is not None else None
+
+
+# Progress-table rows are carried over ONLY while not done; a ✅ in the Status
+# cell means the row's history stays in the source review.
+_PROGRESS_HEADING = "## Progress-Tabelle"
+_PROGRESS_DONE_MARK = "✅"
+
+
+def _parse_progress_rows(text: str) -> list[str]:
+    """Data rows of the ``## Progress-Tabelle`` section, verbatim.
+
+    Header and ``|---|`` separator rows are skipped; parsing stops at the first
+    non-table line after the table started. Cells are assumed pipe-free (the
+    de-facto format since 2026-07-04).
+    """
+    rows: list[str] = []
+    in_section = False
+    in_table = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_PROGRESS_HEADING):
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if stripped.startswith("|"):
+            in_table = True
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            if not cells or set(cells[0]) <= {"-", ":"} or cells[0] == "ID":
+                continue
+            rows.append(stripped)
+        elif in_table:
+            break
+    return rows
+
+
+def _carryover_progress_rows(before: date) -> tuple[date, list[str]] | None:
+    """Open rows (Status without ✅) from the last filled review, with source date."""
+    found = _last_filled_review(before=before)
+    if found is None:
+        return None
+    src_date, src_path = found
+    try:
+        text = src_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    open_rows = []
+    for row in _parse_progress_rows(text):
+        cells = [c.strip() for c in row.split("|")[1:-1]]
+        status = cells[3] if len(cells) > 3 else ""
+        if _PROGRESS_DONE_MARK not in status:
+            open_rows.append(row)
+    return src_date, open_rows
 
 
 def _staleness_line(today: date) -> str:
