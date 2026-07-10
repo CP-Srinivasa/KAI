@@ -123,17 +123,22 @@ def evaluate_feature_direction(
     confirms both groups (high reliably adverse + low reliably favourable →
     ``contrarian``; the mirror → ``pro_trend``). Otherwise ``inconclusive``; below
     ``min_sample`` per group ``insufficient``. Never assumes a direction (B-003).
+
+    Measurements whose feature value is recorded as an explicit ``null`` (producer
+    logs "source unavailable", e.g. fee endpoint down) carry no information for the
+    split — they are excluded and counted honestly in ``n_null_feature``.
     """
-    high = [
-        float(o["net_bps"])
-        for m, o in pairs
-        if o.get("net_bps") is not None and float(m.get(feature_key, 0.5)) > 0.5
-    ]
-    low = [
-        float(o["net_bps"])
-        for m, o in pairs
-        if o.get("net_bps") is not None and float(m.get(feature_key, 0.5)) <= 0.5
-    ]
+    high: list[float] = []
+    low: list[float] = []
+    n_null_feature = 0
+    for m, o in pairs:
+        if o.get("net_bps") is None:
+            continue
+        feat = m.get(feature_key, 0.5)
+        if feat is None:
+            n_null_feature += 1
+            continue
+        (high if float(feat) > 0.5 else low).append(float(o["net_bps"]))
     n_high, n_low = len(high), len(low)
     mean_high = sum(high) / n_high if high else 0.0
     mean_low = sum(low) / n_low if low else 0.0
@@ -160,6 +165,7 @@ def evaluate_feature_direction(
         "feature": feature_key,
         "n_high": n_high,
         "n_low": n_low,
+        "n_null_feature": n_null_feature,
         "mean_high": mean_high,
         "mean_low": mean_low,
         "p_high_positive": p_high,
