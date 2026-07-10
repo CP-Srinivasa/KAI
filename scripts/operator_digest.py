@@ -17,9 +17,10 @@ Stages (24h), Shadow-Real-Funnel (#175) und D-227-Blocked-Outcomes — plus die
 Versand über die etablierten ``ALERT_TELEGRAM_TOKEN``/``ALERT_TELEGRAM_CHAT_ID``
 Env-Variablen (gleicher Vertrag wie pi_health_digest.sh). ``--dry-run`` druckt
 die Nachricht nur (Test-/Lokal-Pfad, kein Netz). Read-only gegenüber KAI-Zustand;
-persistiert nur die eigene Reminder-Kadenz (operator_digest_milestone_state.json),
-um tägliches FÄLLIG-Rauschen zu vermeiden — und nur bei echtem Versand, nicht bei
-``--dry-run``.
+persistiert nur die eigene Reminder-Kadenz (operator_digest_milestone_state.json)
+— und nur bei echtem Versand, nicht bei ``--dry-run``. Fällige Auswertungen ohne
+Verdikt nudgen TÄGLICH bis das Verdikt existiert (Daily 07-10 V3); die Kadenz
+drosselt nur noch Meilensteine, deren Verdict bereits vorliegt.
 """
 
 from __future__ import annotations
@@ -57,10 +58,13 @@ EDGE_GATE_MIN_RESOLVED = 30
 # Telegram hard limit is 4096 chars — truncate honestly instead of failing.
 _TELEGRAM_LIMIT = 4000
 
-# Once a milestone threshold is crossed, re-nudge only on MATERIAL new evidence or
-# the weekly cadence — NOT every single day. A daily "FÄLLIG" that never changes is
-# zero-information noise; this trades daily nagging for state-delta triggering
-# (ADR-0012 attention-hygiene, 2026-07-01). State lives in its own bookkeeping file.
+# Nudge-Kadenz (Daily 07-10 V3 revidiert 2026-07-01): Ein Meilenstein im Zustand
+# FÄLLIG — Schwelle überschritten, aber noch KEIN Verdikt auf Platte — nudgt
+# TÄGLICH, bis das Verdikt existiert. Die Wochenkadenz ließ die fällige
+# V5-Auswertung 7 Tage verstummen, während der Eval-Harness still kaputt war
+# (9 Tage Blindflug); ein fälliges, versiegeltes Datum darf nicht leiser sein
+# als ein leeres Daily-Skeleton. Die Kadenz unten gilt nur noch für den
+# Edge-Report-Meilenstein, dessen Verdict bereits vorliegt und nur akkumuliert.
 MILESTONE_CADENCE_DAYS = 7
 _MILESTONE_STATE_PATH = _ARTIFACTS / "operator_digest_milestone_state.json"
 
@@ -80,21 +84,15 @@ def _days_between(iso_a: str | None, iso_b: str) -> int | None:
 def v5_reminder_due(
     *,
     v5_day: int,
-    state: dict[str, Any],
-    today_iso: str,
+    verdict_exists: bool = False,
     after_days: int = V5_REVIEW_AFTER_DAYS,
-    cadence_days: int = MILESTONE_CADENCE_DAYS,
 ) -> bool:
-    """Fire the V5 FÄLLIG nudge only past the review window AND (first time OR the
-    weekly cadence has elapsed). No cheap per-day change signal exists for V5, so
-    cadence is the trigger — it stops the daily repeat, not the reminder itself."""
-    if v5_day < after_days:
+    """Fire the V5 FÄLLIG nudge every day past the review window until an
+    attested verdict exists (Daily 07-10 V3). Once the question is answered,
+    the nudge stops for good — re-opening needs a new pre-registration."""
+    if verdict_exists:
         return False
-    last_iso = state.get("last_iso")
-    if not last_iso:
-        return True
-    days_since = _days_between(str(last_iso), today_iso)
-    return days_since is None or days_since >= cadence_days
+    return v5_day >= after_days
 
 
 def edge_reminder_due(
@@ -316,6 +314,30 @@ def collect_generator_edge() -> dict[str, Any]:
     return out
 
 
+def collect_v5_verdict(verdicts_dir: Path | None = None) -> dict[str, Any] | None:
+    """Latest attested verdict that answers the V5 funding/oi evidence question.
+
+    Daily 07-10 V3: the FÄLLIG nudge stops exactly when a verdict exists —
+    this is that check. Matches the funding/oi hypothesis family by name
+    prefix in the canonical verdicts dir (attested reports only). Read-only;
+    never raises (a broken check must not kill the digest)."""
+    try:
+        from app.research.verdict_report import DEFAULT_VERDICTS_DIR, list_verdict_reports
+
+        reports = list_verdict_reports(
+            verdicts_dir if verdicts_dir is not None else DEFAULT_VERDICTS_DIR
+        )
+    except Exception as exc:  # noqa: BLE001 — collector boundary
+        logger.warning("collect_v5_verdict failed: %s", exc)
+        return None
+    family = [
+        r for r in reports if str(r.get("hypothesis", "")).lower().startswith(("funding", "oi_"))
+    ]
+    if not family:
+        return None
+    return max(family, key=lambda r: str(r.get("generated_at_utc", "")))
+
+
 def collect_d227() -> dict[str, Any]:
     try:
         from app.alerts.blocked_outcome_report import build_blocked_outcome_report
@@ -530,6 +552,7 @@ def compose_digest_message(
     source_lifecycle: dict[str, Any] | None = None,
     source_discovery: dict[str, Any] | None = None,
     milestone_state: dict[str, Any] | None = None,
+    v5_verdict: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Testbar.
 
@@ -653,21 +676,28 @@ def compose_digest_message(
     today_iso = today.isoformat()
 
     v5_day = (today - v5_activated_on).days
-    v5_state = state.get("v5") if isinstance(state.get("v5"), dict) else {}
-    if v5_reminder_due(v5_day=v5_day, state=v5_state, today_iso=today_iso):
+    verdict_info = v5_verdict or {}
+    if verdict_info.get("verdict"):
+        # Attested verdict on record — the question is answered. State it,
+        # never nudge again (Re-open nur via neuer Prä-Registrierung).
+        v_short = str(verdict_info["verdict"])
+        if len(v_short) > 100:
+            v_short = v_short[:97] + "..."
+        v_gen = str(verdict_info.get("generated_at_utc", "?"))[:10]
         lines.append(
-            f"  ➡️ *V5-Auswertung FÄLLIG* (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}): "
+            f"  • V5-Verdikt liegt vor: {v_short} "
+            f"(`{verdict_info.get('hypothesis', '?')}`, attestiert {v_gen}) — kein Nudge; "
+            "Re-open nur via neuer Prä-Registrierung."
+        )
+    elif v5_reminder_due(v5_day=v5_day):
+        lines.append(
+            f"  ➡️ *V5-Auswertung FÄLLIG* (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}, "
+            "nudgt täglich bis Verdikt): "
             "Shadow-Logs (funding/oi_evidence_shadow.jsonl) gegen Outcomes auswerten, "
             "dann trust-Entscheidung (0.5 → ?)."
         )
         if milestone_state is not None:
             milestone_state["v5"] = {"last_iso": today_iso, "day": v5_day}
-    elif v5_day >= V5_REVIEW_AFTER_DAYS:
-        last = v5_state.get("last_iso", "?")
-        lines.append(
-            f"  • V5-Auswertung ruht (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}; zuletzt erinnert "
-            f"{last}, nächster Nudge nach {MILESTONE_CADENCE_DAYS}d)"
-        )
     else:
         lines.append(f"  • V5-Messphase: Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}")
 
@@ -854,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
             source_discovery=collect_source_discovery(),
             v5_activated_on=v5_activated_on,
             milestone_state=milestone_state,
+            v5_verdict=collect_v5_verdict(),
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")

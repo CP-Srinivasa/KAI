@@ -23,21 +23,26 @@ def test_days_between_basic_and_tolerant():
 
 
 def test_v5_reminder_due_below_window_never_fires():
-    assert od.v5_reminder_due(v5_day=6, state={}, today_iso="2026-07-01") is False
+    assert od.v5_reminder_due(v5_day=6) is False
 
 
 def test_v5_reminder_due_first_time_fires():
-    assert od.v5_reminder_due(v5_day=7, state={}, today_iso="2026-07-01") is True
+    assert od.v5_reminder_due(v5_day=7) is True
 
 
-def test_v5_reminder_due_suppressed_within_cadence():
-    state = {"last_iso": "2026-06-28"}
-    assert od.v5_reminder_due(v5_day=20, state=state, today_iso="2026-07-01") is False
+def test_v5_reminder_due_due_without_verdict_fires_daily():
+    # Daily 07-10 V3: a due, sealed evaluation date must NOT go quiet for a
+    # week — FÄLLIG nudges every day until a verdict exists. Day 20 with a
+    # reminder sent yesterday still fires.
+    assert od.v5_reminder_due(v5_day=20) is True
+    assert od.v5_reminder_due(v5_day=20, verdict_exists=False) is True
 
 
-def test_v5_reminder_due_refires_after_cadence():
-    state = {"last_iso": "2026-06-20"}
-    assert od.v5_reminder_due(v5_day=20, state=state, today_iso="2026-07-01") is True
+def test_v5_reminder_due_verdict_exists_never_fires():
+    # Once the question is answered (attested verdict report on record), the
+    # nudge stops entirely — a truth platform does not nag about settled facts.
+    assert od.v5_reminder_due(v5_day=20, verdict_exists=True) is False
+    assert od.v5_reminder_due(v5_day=7, verdict_exists=True) is False
 
 
 def test_edge_reminder_due_below_gate_never_fires():
@@ -105,6 +110,44 @@ def test_edge_verdict_is_terminal_tolerates_non_str():
     assert od.edge_verdict_is_terminal(None) is False
     assert od.edge_verdict_is_terminal("") is False
     assert od.edge_verdict_is_terminal(42) is False
+
+
+def _write_verdict(tmp_path, hypothesis: str, ts: str) -> None:
+    from datetime import datetime
+
+    from app.research.verdict_report import build_verdict_report, write_verdict_report
+
+    report = build_verdict_report(
+        {"n": 1},
+        hypothesis=hypothesis,
+        prereg_id="testpreregid0000",
+        verdict="NOT_MET at pre-registered criteria",
+        params={},
+        code_version="test",
+        generated_at=datetime.fromisoformat(ts),
+    )
+    write_verdict_report(report, tmp_path)
+
+
+def test_collect_v5_verdict_picks_latest_funding_family(tmp_path):
+    _write_verdict(tmp_path, "directional_news_hedged_1d_drift", "2026-07-02T05:51:00+00:00")
+    _write_verdict(tmp_path, "funding_premium_meanrev_1h", "2026-07-10T18:50:15+00:00")
+    _write_verdict(tmp_path, "funding_carry_probe", "2026-06-20T10:00:00+00:00")
+    got = od.collect_v5_verdict(tmp_path)
+    assert got is not None
+    assert got["hypothesis"] == "funding_premium_meanrev_1h"
+    assert got["verdict"].startswith("NOT_MET")
+
+
+def test_collect_v5_verdict_none_without_family_match(tmp_path):
+    # News verdicts do NOT answer the funding/oi evidence question.
+    _write_verdict(tmp_path, "directional_news_micro_1m", "2026-07-02T05:51:00+00:00")
+    assert od.collect_v5_verdict(tmp_path) is None
+
+
+def test_collect_v5_verdict_none_on_empty_or_missing_dir(tmp_path):
+    assert od.collect_v5_verdict(tmp_path) is None
+    assert od.collect_v5_verdict(tmp_path / "nope") is None
 
 
 def test_milestone_state_roundtrip(tmp_path):
