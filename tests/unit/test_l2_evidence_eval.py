@@ -93,3 +93,17 @@ def test_evaluate_feature_direction_insufficient_is_honest() -> None:
     pairs = [({"fee_percentile": 0.9}, {"net_bps": -1.0})]
     result = evaluate_feature_direction(pairs, feature_key="fee_percentile", min_sample=8)
     assert result["direction"] == "insufficient"
+
+
+def test_evaluate_feature_direction_tolerates_null_feature_values() -> None:
+    # Producer records "source unavailable" as explicit null (live since 2026-07-01:
+    # fee_percentile null in l2_evidence_shadow.jsonl). Must exclude + count, not crash.
+    pairs = [
+        ({"fee_percentile": None}, {"net_bps": 5.0}),
+        ({"fee_percentile": 0.9}, {"net_bps": -10.0}),
+        ({"fee_percentile": 0.1}, {"net_bps": 10.0}),
+    ]
+    result = evaluate_feature_direction(pairs, feature_key="fee_percentile", min_sample=8)
+    assert result["n_high"] == 1 and result["n_low"] == 1
+    assert result["n_null_feature"] == 1
+    assert result["direction"] == "insufficient"
