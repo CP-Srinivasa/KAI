@@ -3,7 +3,8 @@
 Verbindet 4 voneinander getrennte JSONL-Audit-Streams zu einem
 operatorzentrierten Trail pro Premium-Signal:
 
-1. ``telegram_channel_raw.jsonl``       — Parser-Outcome (parsed / not_a_signal / target_completion)
+1. ``telegram_channel_raw.jsonl``       — Parser-Outcome (parsed / not_a_signal /
+   news_commentary / target_completion)
 2. ``telegram_message_envelope.jsonl``   — Envelope (accepted) + Approval-Re-Emit
 3. ``bridge_pending_orders.jsonl``       — Bridge-Stage (pending / filled / rejected_* / skipped)
 4. ``paper_execution_audit.jsonl``       — Paper-Engine (created / rejected / filled / closed)

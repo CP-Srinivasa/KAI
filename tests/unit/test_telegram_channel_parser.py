@@ -23,6 +23,7 @@ import pytest
 from app.ingestion.telegram_channel_parser import (
     _normalize_symbol,
     _parse_targets_dashlist,
+    is_news_commentary,
     parse_premium_channel_message,
     parse_target_completion,
 )
@@ -538,3 +539,39 @@ def test_target_completion_no_price_variant() -> None:
     assert event is not None
     assert event.display_symbol == "BTC/USDT"
     assert event.touch_price is None
+
+
+# ── V6 (Daily 07-10): News-/Policy-Relays sind ERKANNTE Nicht-Signale ─────────
+# Fixture verbatim aus artifacts/telegram_channel_raw.jsonl 2026-07-07T06:07Z
+# (len=115) — löste stündliches Parser-Feedback aus, obwohl der Nachrichtentyp
+# (Regierungs-Statement mit Anführungszeichen) sicher kein Signal ist.
+
+SBR_NEWS = (
+    '🇺🇸 White House says the US government is working to "structure" '
+    "its Strategic Bitcoin Reserve and crypto stockpile."
+)
+
+
+def test_news_commentary_recognizes_policy_statement() -> None:
+    assert is_news_commentary(SBR_NEWS) is True
+
+
+def test_news_commentary_never_matches_signal_messages() -> None:
+    # Signale tragen Ziffern (Entry/Targets/SL) — Ziffern-Gate hält sie raus.
+    assert is_news_commentary(SAMPLE_GUN) is False
+    assert is_news_commentary(SAMPLE_SOL_EMOJI) is False
+
+
+def test_news_commentary_rejects_prose_with_digits() -> None:
+    # Konservativ: News MIT Zahlen bleiben not_a_signal (Feedback-Loop sieht sie).
+    assert is_news_commentary("MicroStrategy says it bought 12000 BTC at 98k avg") is False
+
+
+def test_news_commentary_rejects_short_noise_and_plain_prose() -> None:
+    assert is_news_commentary("ok thanks") is False
+    assert is_news_commentary("") is False
+    # lang + ziffernlos, aber ohne Reporting-Verb → kein News-Relay
+    assert (
+        is_news_commentary("Good morning traders! Market is ranging, stay patient out there.")
+        is False
+    )

@@ -466,6 +466,34 @@ def parse_target_completion(text: str) -> TargetCompletionEvent | None:
     return None
 
 
+# V6 (Daily 07-10): Reporting-Verben, wie sie Regierungs-/Policy-Relays im
+# Channel tragen ("White House says …"). Bewusst eng gehalten — der Zweck ist
+# nur, ERKANNTE Nicht-Signale vom stündlichen Parser-Feedback fernzuhalten.
+_NEWS_REPORTING_RE = re.compile(
+    r"\b(says?|said|announce[sd]?|reports?|reported|confirm(?:s|ed)?|"
+    r"denies|denied|warns?|warned)\b",
+    re.IGNORECASE,
+)
+
+
+def is_news_commentary(text: str) -> bool:
+    """True für Prosa-News-/Policy-Relays, die sicher KEINE Trade-Signale sind.
+
+    Zwei harte Gates halten das konservativ (fail-open Richtung Feedback-Alert):
+      1. Ziffern-Gate — Signale tragen immer Zahlen (Entry/Targets/SL/Leverage);
+         jede Nachricht mit einer Ziffer bleibt beim not_a_signal-Feedback-Pfad.
+      2. Reporting-Verb — nur Relays im Stil "X says/announces/reports …"
+         zählen; ziffernlose Prosa ohne Reporting-Verb bleibt ebenfalls Feedback.
+    Kurznachrichten (≤ 50 Zeichen) sind Chat-Rauschen und ohnehin alert-frei.
+    """
+    t = (text or "").strip()
+    if len(t) <= 50:
+        return False
+    if any(ch.isdigit() for ch in t):
+        return False
+    return bool(_NEWS_REPORTING_RE.search(t))
+
+
 def parse_premium_channel_message(text: str) -> ParsedSignal | None:
     """Return a ParsedSignal or None. None = not a new-signal message.
 
