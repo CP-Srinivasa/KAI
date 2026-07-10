@@ -60,6 +60,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `blocked_outcomes.jsonl` — geblockte Alerts + ~28h-Outcome (asset/dir/move im `note`)
 - `blocked_alerts.jsonl` — geblockte Alerts (reason; KEIN Symbol/Dir)
 - `alert_outcomes.jsonl` — resolved directional alerts (hit/miss)
+- `app/intelligence/` — Local Intelligence Layer (ADR 0015): TaskRouter/Provider/ContextBuilder/Audit; Flags `KAI_LLM_*` (default-off); Trail `artifacts/intelligence_audit.jsonl`; CLI `intelligence {daily-summary,anomaly-explain,doc-qa}`
 - `funding_evidence_shadow.jsonl` / `oi_evidence_shadow.jsonl` / `hype_evidence_shadow.jsonl` — V5-Evidence (shadow)
 - `bridge_pending_orders.jsonl` — TV-Bridge pending/promoted
 - `trading_loop_audit.jsonl` — Cycle-Trace · `decision_journal.jsonl` — Operator-Entscheide · `risk_gate_audit.jsonl` — Gate-Decisions

@@ -1,0 +1,18 @@
+# KAI Local Intelligence Layer — shadow tick (ADR 0015 Phase 2).
+# VORBEREITET, NICHT ENABLED: Aktivierung ist ein bewusster Operator-Schritt
+# (KAI_LLM_* in .env + systemctl enable). Flag-gated no-op solange disabled.
+[Unit]
+Description=KAI LLM shadow tick (untrusted analysis, ADR 0015)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python scripts/llm_shadow_tick.py
+MemoryMax=512M
+CPUQuota=80%
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

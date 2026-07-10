@@ -111,6 +111,7 @@ app.add_typer(alerts_app, name="alerts")
 from app.cli.commands.audit import audit_app  # noqa: E402
 from app.cli.commands.daily_strategy import daily_strategy_app  # noqa: E402
 from app.cli.commands.ingestion import ingestion_app  # noqa: E402
+from app.cli.commands.intelligence import intelligence_app  # noqa: E402
 from app.cli.commands.learning import learning_app  # noqa: E402
 from app.cli.commands.source import source_app  # noqa: E402
 from app.cli.commands.trading import trading_app  # noqa: E402
@@ -125,6 +126,7 @@ app.add_typer(learning_app, name="learning")
 app.add_typer(source_app, name="source")
 app.add_typer(audit_app, name="audit")
 app.add_typer(universe_app, name="momentum-universe")
+app.add_typer(intelligence_app, name="intelligence")
 
 
 @app.callback()
