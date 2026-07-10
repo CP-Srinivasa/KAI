@@ -470,6 +470,80 @@ def test_reminder_partial_fill_still_flags_remaining_stubs(
     assert "Sektion" in result.stdout
 
 
+# --- progress-table carry-over (V2 2026-07-10) -----------------------------
+
+
+_FILLED_REVIEW_WITH_PROGRESS = """# KAI Daily Strategy Review — 2026-01-05
+
+## 1. Lagebild
+Done.
+
+## Progress-Tabelle
+
+| ID | Titel | Prio | Status | Ergebnis / Verweis |
+|---|---|---|---|---|
+| V1 | Erledigtes Item | P1 | ✅ erledigt | PR #999 |
+| V2 | Offenes Item | P1 | ⏳ offen | naechster Schritt |
+| V3 | Teils erledigtes Item | P2 | ◐ teils | Rest offen |
+| OP | Operator-Item | P0 | ⛔ Operator | wartet auf Send |
+| X1 | Geparktes Item | ⏸ | ⏸ geparkt | bis C1-Ende |
+
+**Abarbeitungsmodus:** Punkt für Punkt.
+"""
+
+
+def test_bootstrap_migrates_open_progress_rows(runner: CliRunner, repo_cwd: Path) -> None:
+    """V2 (2026-07-10): bootstrap carries open rows (not ✅) from the last
+    FILLED review's Progress-Tabelle into the new skeleton — carry-over must
+    not depend on a Claude session migrating it by hand."""
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "2026-01-05.md").write_text(_FILLED_REVIEW_WITH_PROGRESS, encoding="utf-8")
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    # Open / partial / gated / parked rows are migrated verbatim.
+    assert "| V2 | Offenes Item | P1 | ⏳ offen | naechster Schritt |" in text
+    assert "| V3 | Teils erledigtes Item | P2 | ◐ teils | Rest offen |" in text
+    assert "| OP | Operator-Item | P0 | ⛔ Operator | wartet auf Send |" in text
+    assert "| X1 | Geparktes Item | ⏸ | ⏸ geparkt | bis C1-Ende |" in text
+    # Done rows stay in the source review; the manual-migration stub is gone.
+    assert "Erledigtes Item" not in text
+    assert "(Carry-over aus Vortagen bitte hier migrieren)" not in text
+    # Provenance: the skeleton says where the rows came from.
+    assert "2026-01-05" in text
+
+
+def test_bootstrap_keeps_stub_row_when_no_filled_review(runner: CliRunner, repo_cwd: Path) -> None:
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    # Only a stub-only (unfilled) prior review exists -> nothing to migrate.
+    (d / "2026-01-05.md").write_text(
+        "## 1. Lagebild\n" + _STUB_MARKERS[0] + "_\n", encoding="utf-8"
+    )
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "(Carry-over aus Vortagen bitte hier migrieren)" in text
+
+
+def test_bootstrap_keeps_stub_row_when_all_rows_done(runner: CliRunner, repo_cwd: Path) -> None:
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    filled_all_done = (
+        "## 1. Lagebild\nDone.\n\n## Progress-Tabelle\n\n"
+        "| ID | Titel | Prio | Status | Ergebnis / Verweis |\n"
+        "|---|---|---|---|---|\n"
+        "| V1 | Fertig | P1 | ✅ erledigt | PR #1 |\n"
+    )
+    (d / "2026-01-05.md").write_text(filled_all_done, encoding="utf-8")
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "(Carry-over aus Vortagen bitte hier migrieren)" in text
+    assert "Fertig" not in text
+
+
 # --- staleness surfacing (V3 2026-06-22) ----------------------------------
 
 
