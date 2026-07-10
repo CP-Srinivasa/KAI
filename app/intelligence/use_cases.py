@@ -12,7 +12,6 @@ from pathlib import Path
 from app.intelligence.context import BuiltContext, ContextBuilder
 from app.intelligence.core import LLMResult
 from app.intelligence.router import TaskRouter
-from app.intelligence.settings import get_llm_settings
 
 _PROMPTS = {
     "daily_review_summary": (
@@ -42,11 +41,13 @@ def _run(
     workspace_root: Path | None = None,
     router: TaskRouter | None = None,
 ) -> tuple[LLMResult, BuiltContext]:
-    settings = get_llm_settings()
+    active_router = router or TaskRouter()
+    # Allowlist MUST come from the same settings as the router — a caller-injected
+    # router with eigener Config darf nicht stillschweigend von den Guards abweichen.
+    settings = active_router.settings
     builder = ContextBuilder(workspace_root or Path.cwd(), settings.allowlist_paths())
     context = builder.build(doc_paths)
     prompt = f"{_PROMPTS[task_type]}\n\n{extra}\n\n{context.text}".strip()
-    active_router = router or TaskRouter()
     result = active_router.run(
         task_type,
         prompt,

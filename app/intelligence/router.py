@@ -81,6 +81,10 @@ class TaskRouter:
         self._provider = provider or build_provider(self._settings)
         self._audit_path = audit_path
 
+    @property
+    def settings(self) -> LlmSettings:
+        return self._settings
+
     def run(
         self,
         task_type: str,
