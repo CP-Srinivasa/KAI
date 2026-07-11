@@ -221,6 +221,55 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     ]
 
 
+def _tl004_metrics(ctx: LintContext) -> dict[str, Any]:
+    """Klassifikations-Metriken für TL-004 (Operator-Nachtrag 07-11).
+
+    Rohe Zeilenzahl darf NIE als unabhängige Episodenanzahl gelesen werden —
+    darum trägt jede TL-004-Verletzung die Dimensionen, die Transparenz
+    (dieselbe Episode über legitime, DISTINKTE Beobachtungspfade) von echter
+    Inflation (dieselben Ereignisse mehrfach als unabhängige Evidenz)
+    unterscheidbar machen."""
+    raw_rows = 0
+    doc_ids: set[str] = set()
+    path_ids: set[str] = set()
+    null_path_rows = 0
+    for rec in iter_jsonl_tolerant(ctx.alert_outcomes):
+        if rec.get("outcome") not in ("hit", "miss"):
+            continue
+        raw_rows += 1
+        doc = rec.get("document_id")
+        if isinstance(doc, str) and doc:
+            doc_ids.add(doc)
+        prov = rec.get("provenance")
+        pid = prov.get("signal_path_id") if isinstance(prov, dict) else None
+        if isinstance(pid, str) and pid:
+            path_ids.add(pid)
+        else:
+            null_path_rows += 1
+    duplicate_ratio = round(1.0 - (len(doc_ids) / raw_rows), 4) if raw_rows else 0.0
+    return {
+        "raw_rows": raw_rows,
+        "distinct_document_ids": len(doc_ids),
+        "duplicate_ratio": duplicate_ratio,
+        "distinct_signal_path_ids": len(path_ids),
+        "null_path_rows": null_path_rows,
+    }
+
+
+def _tl004_previous_largest(ctx: LintContext) -> int | None:
+    """largest_episode_size des VORHERIGEN Lint-Laufs (read-only) für
+    growth_since_last_run; None wenn kein früherer TL-004-Eintrag existiert."""
+    prev: int | None = None
+    for rec in iter_jsonl_tolerant(ctx.artifacts_dir / "truth_lint_report.jsonl"):
+        for v in rec.get("violations") or []:
+            if v.get("invariant_id") != "TL-004":
+                continue
+            size = (v.get("evidence") or {}).get("largest_episode_size")
+            if isinstance(size, int):
+                prev = size
+    return prev
+
+
 def _check_cross_path_episode_inflation(ctx: LintContext) -> list[Violation]:
     """TL-004: Ein einzelner Markt-Move darf die Outcome-Zählung nicht über
     parallele Signalpfade aufblähen (#579-Klasse). Reuse der kanonischen
@@ -247,19 +296,26 @@ def _check_cross_path_episode_inflation(ctx: LintContext) -> list[Violation]:
     largest = int(getattr(report, "largest_episode_size", 0) or 0)
     if largest <= 40:
         return []
+    metrics = _tl004_metrics(ctx)
+    prev_largest = _tl004_previous_largest(ctx)
+    episode_total = int(getattr(report, "episode_total", 0) or 0)
     return [
         Violation(
             invariant_id="TL-004",
             severity=Severity.WARNING,
             dataset="alert_outcomes.jsonl",
             message=(
-                f"größte Markt-Episode umfasst {largest} resolved Rows — korrelierte "
-                "Cross-Path-Zählung; Metriken NUR episoden-dedupliziert zitieren"
+                f"größte Markt-Episode umfasst {largest} resolved Rows "
+                f"({episode_total} kanonische Episoden) — rohe Zeilenzahl NIE als "
+                "unabhängige Episodenanzahl verwenden; nur episoden-dedupliziert zitieren"
             ),
             evidence={
                 "largest_episode_size": largest,
-                "episode_total": int(getattr(report, "episode_total", 0) or 0),
-                "resolved_rows": int(getattr(report, "resolved_rows", 0) or 0),
+                "canonical_episode_count": episode_total,
+                "growth_since_last_run": (
+                    largest - prev_largest if prev_largest is not None else None
+                ),
+                **metrics,
             },
         )
     ]
