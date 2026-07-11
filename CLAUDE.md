@@ -588,6 +588,7 @@ The repository should evolve into a platform with the following capability layer
 - `app/schemas/` → runtime validator, schema binding
 - `app/security/` → idempotency store, rate-limit store, brute-force guard, auth guards
 - `app/signals/` → SignalGenerator (6 filters, confluence, SL/TP), SignalCandidate models
+- `app/intelligence/` → Local Intelligence Layer (ADR 0015): shadow-only LLM tasks, fail-closed, no execution influence
 - `app/audit/` → tamper-evident audit primitives (decision hash-chain, audit replay)
 - `app/learning/` → adaptive-learning snapshots, reasoning journal, outcome correlation
 - `app/observability/` → metrics, provenance, pipeline-latency + health surfacing

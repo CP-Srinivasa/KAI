@@ -1,0 +1,11 @@
+# Paar zu kai-llm-shadow.service — VORBEREITET, NICHT ENABLED (ADR 0015).
+[Unit]
+Description=Daily KAI LLM shadow tick (disabled by default)
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+RandomizedDelaySec=300
+Persistent=false
+
+[Install]
+WantedBy=timers.target
