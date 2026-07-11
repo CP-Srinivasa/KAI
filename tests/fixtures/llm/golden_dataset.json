@@ -1,0 +1,248 @@
+[
+ {
+  "id": "G01",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: V5-Verdikt NOT_MET, trust bleibt 0.5 shadow-only; Carry-over-Automatik shipped.",
+  "expected": {
+   "summary": "V5-Verdikt NOT_MET, trust bleibt 0.5 shadow-only; Carry-over-Automatik shipped.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-10.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G02",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Precision episoden-dedupliziert 52,5%; Kadenz-Regression benannt.",
+  "expected": {
+   "summary": "Precision episoden-dedupliziert 52,5%; Kadenz-Regression benannt.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-07.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G03",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: C1-Demand-Fenster laeuft; Kontaminationsverbot ist die Hauptmassnahme.",
+  "expected": {
+   "summary": "C1-Demand-Fenster laeuft; Kontaminationsverbot ist die Hauptmassnahme.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-04.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G04",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Edge NO_GO terminal; keine neuen Generatoren.",
+  "expected": {
+   "summary": "Edge NO_GO terminal; keine neuen Generatoren.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-06-29.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G05",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Momentum-Universe widerlegt (n=178, netto negativ).",
+  "expected": {
+   "summary": "Momentum-Universe widerlegt (n=178, netto negativ).",
+   "evidence": [
+    "artifacts/daily_strategy/2026-06-29.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G06",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: LN-Wert-Schicht armiert; P0-Fixes deployed.",
+  "expected": {
+   "summary": "LN-Wert-Schicht armiert; P0-Fixes deployed.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-02.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G07",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Seed-Freeze: Graduation strukturell geschlossen.",
+  "expected": {
+   "summary": "Seed-Freeze: Graduation strukturell geschlossen.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-11.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G08",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Mock-Fill-Gate schliesst Phantom-Preis-Loch.",
+  "expected": {
+   "summary": "Mock-Fill-Gate schliesst Phantom-Preis-Loch.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-11.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G09",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: Analyst-Probe versiegelt, Versand offen (Operator).",
+  "expected": {
+   "summary": "Analyst-Probe versiegelt, Versand offen (Operator).",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-06.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G10",
+  "task_type": "daily_review_summary",
+  "input": "Fasse den Review zusammen: TV-pending waechst; Rotation erst ab 5 MB.",
+  "expected": {
+   "summary": "TV-pending waechst; Rotation erst ab 5 MB.",
+   "evidence": [
+    "artifacts/daily_strategy/2026-07-10.md"
+   ],
+   "confidence": 0.7
+  }
+ },
+ {
+  "id": "G11",
+  "task_type": "anomaly_explain",
+  "input": "Erklaere: Timer feuert, Service startet nie: versionierter WindowsApps-pwsh-Pfad nach Store-Update tot (0x80070002).",
+  "expected": {
+   "summary": "Timer feuert, Service startet nie: versionierter WindowsApps-pwsh-Pfad nach Store-Update tot (0x80070002).",
+   "evidence": [
+    "docs/runbooks/backup.md"
+   ],
+   "confidence": 0.6,
+   "caveats": [
+    "Pfad-Alias pruefen"
+   ]
+  }
+ },
+ {
+  "id": "G12",
+  "task_type": "anomaly_explain",
+  "input": "Erklaere: kai-server-Stop legte paper-trading.timer lahm: Requires=-Kaskade propagiert Stop, aber nicht Start.",
+  "expected": {
+   "summary": "kai-server-Stop legte paper-trading.timer lahm: Requires=-Kaskade propagiert Stop, aber nicht Start.",
+   "evidence": [
+    "docs/runbooks/systemd.md"
+   ],
+   "confidence": 0.6
+  }
+ },
+ {
+  "id": "G13",
+  "task_type": "anomaly_explain",
+  "input": "Erklaere: LastTrigger aktuell, aber keine Runs: Liveness muss InactiveEnterTimestamp des Service pruefen.",
+  "expected": {
+   "summary": "LastTrigger aktuell, aber keine Runs: Liveness muss InactiveEnterTimestamp des Service pruefen.",
+   "evidence": [
+    "docs/runbooks/systemd.md"
+   ],
+   "confidence": 0.6
+  }
+ },
+ {
+  "id": "G14",
+  "task_type": "anomaly_explain",
+  "input": "Erklaere: Feed liefert 403 nur in Prod: Discovery-Probe nutzte anderen User-Agent als Produktion.",
+  "expected": {
+   "summary": "Feed liefert 403 nur in Prod: Discovery-Probe nutzte anderen User-Agent als Produktion.",
+   "evidence": [
+    "docs/runbooks/sources.md"
+   ],
+   "confidence": 0.6,
+   "caveats": [
+    "UA-Paritaet erzwingen"
+   ]
+  }
+ },
+ {
+  "id": "G15",
+  "task_type": "anomaly_explain",
+  "input": "Erklaere: EnvironmentFile-Crash-Loop: Inline-Kommentare in systemd-EnvFile sind unzulaessig.",
+  "expected": {
+   "summary": "EnvironmentFile-Crash-Loop: Inline-Kommentare in systemd-EnvFile sind unzulaessig.",
+   "evidence": [
+    "docs/runbooks/systemd.md"
+   ],
+   "confidence": 0.6
+  }
+ },
+ {
+  "id": "G16",
+  "task_type": "doc_qa",
+  "input": "Was verbietet ADR 0015 dem LLM-Layer?",
+  "expected": {
+   "summary": "Trades ausloesen, Gates aendern, Env-Flags setzen, deployen — influences_execution ist konstant false.",
+   "evidence": [
+    "docs/adr/0015-kai-local-intelligence-layer.md"
+   ],
+   "confidence": 0.8
+  }
+ },
+ {
+  "id": "G17",
+  "task_type": "doc_qa",
+  "input": "Wann darf EVM-Code gebaut werden laut ADR 0014?",
+  "expected": {
+   "summary": "Nur mit benanntem Onchain-Konsument (G-EVM-Gate).",
+   "evidence": [
+    "docs/adr/0014-kai-protocol-zielbild.md"
+   ],
+   "confidence": 0.8
+  }
+ },
+ {
+  "id": "G18",
+  "task_type": "doc_qa",
+  "input": "Was ist der kanonische Weg, Edge zu zitieren?",
+  "expected": {
+   "summary": "Ausschliesslich via canonical-edge Gate, nie aus dem vollen Stream.",
+   "evidence": [
+    "docs/adr/0007-generator-path-no-edge.md"
+   ],
+   "confidence": 0.8
+  }
+ },
+ {
+  "id": "G19",
+  "task_type": "doc_qa",
+  "input": "Warum wurde Companion-ML entfernt?",
+  "expected": {
+   "summary": "D-107: extern gedachtes Fine-Tuning mit Promotion-Ambition ohne falsifizierbaren Nutzen.",
+   "evidence": [
+    "docs/analysis/llm_intelligence_layer_audit_20260711.md"
+   ],
+   "confidence": 0.8
+  }
+ },
+ {
+  "id": "G20",
+  "task_type": "doc_qa",
+  "input": "Was bedeutet NOT_MET im Prae-Reg-Ledger?",
+  "expected": {
+   "summary": "Die versiegelten Kriterien wurden bei vollem Sample verfehlt; Re-open nur via neuer Prae-Registrierung.",
+   "evidence": [
+    "docs/adr/0011-g0-demand-probe-preregistration.md"
+   ],
+   "confidence": 0.8
+  }
+ }
+]

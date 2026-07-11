@@ -96,11 +96,7 @@ def test_golden_dataset_fixture_integrity() -> None:
 
     from app.intelligence.router import SHADOW_RESULT_SCHEMA, TASK_TYPES
 
-    rows = [
-        json.loads(line)
-        for line in (_FIXTURES / "golden_dataset.jsonl").read_text("utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = json.loads((_FIXTURES / "golden_dataset.json").read_text("utf-8"))
     assert len(rows) >= 20
     assert {r["task_type"] for r in rows} == set(TASK_TYPES)
     for row in rows:
@@ -109,11 +105,7 @@ def test_golden_dataset_fixture_integrity() -> None:
 
 
 def test_golden_cases_pass_through_router_via_mock(tmp_path: Path) -> None:
-    rows = [
-        json.loads(line)
-        for line in (_FIXTURES / "golden_dataset.jsonl").read_text("utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = json.loads((_FIXTURES / "golden_dataset.json").read_text("utf-8"))
     for row in rows[:5]:
         router = _router(tmp_path, {row["task_type"]: row["expected"]})
         result = router.run(row["task_type"], row["input"])
