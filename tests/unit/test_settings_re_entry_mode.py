@@ -153,9 +153,32 @@ def test_watchdog_heartbeat_path_set_passes() -> None:
     assert settings.telegram_channel_ingest.heartbeat_path == "artifacts/heartbeat.txt"
 
 
-def test_observability_enforce_blocks_boot_until_b002_lands() -> None:
-    # B-002 capability flag is hard-coded False. Flipping the enforce
-    # switch must boot-fail -- that's the whole point of opt-in here.
+def test_observability_enforce_passes_since_b002_landed() -> None:
+    # B-002 landed 2026-07-11 (Audit F-5, app/observability/llm_telemetry):
+    # the capability is probed at boot and the enforce switch now passes.
+    settings = AppSettings(
+        re_entry_mode=_enabled_profile(
+            enforce_observability_complete=True,
+        ),
+    )
+    assert settings.re_entry_mode.enforce_observability_complete is True
+
+
+def test_observability_enforce_blocks_boot_when_telemetry_broken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The probe is load-bearing: if the telemetry surface breaks, the
+    # enforce switch must fail boot loudly again (fail-closed).
+    import builtins
+
+    real_import = builtins.__import__
+
+    def broken_import(name, *args, **kwargs):
+        if name == "app.observability.llm_telemetry":
+            raise ImportError("simulated telemetry breakage")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken_import)
     with pytest.raises(ConfigurationError, match="B-002"):
         AppSettings(
             re_entry_mode=_enabled_profile(

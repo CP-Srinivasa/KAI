@@ -1666,7 +1666,6 @@ async def dashboard_provenance_api() -> JSONResponse:
     )
 
 
-@router.get("/dashboard/api/integrations", tags=["dashboard"])
 def _llm_telemetry_block() -> dict[str, Any]:
     """B-002 telemetry, fail-soft: dashboard must render even if telemetry breaks."""
     try:
@@ -1677,6 +1676,7 @@ def _llm_telemetry_block() -> dict[str, Any]:
         return {"implemented": True, "error": "telemetry_unavailable"}
 
 
+@router.get("/dashboard/api/integrations", tags=["dashboard"])
 async def dashboard_integrations_api() -> JSONResponse:
     """Echter Konfigurations-/Aktiv-Zustand der externen Integrationen.
 
