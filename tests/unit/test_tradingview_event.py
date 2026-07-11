@@ -46,8 +46,9 @@ class TestNormalize:
         assert isinstance(event.provenance, SignalProvenance)
         assert event.provenance.source == "tradingview_webhook"
         assert event.provenance.version == "tv-3"
-        assert event.provenance.signal_path_id is not None
-        assert event.provenance.signal_path_id.startswith("tvpath_")
+        # Operator-GO 07-11: Pfad-Identität ist eine PIPELINE-Konstante (D-125),
+        # kein Event-Unikat — Event-Identität tragen event_id & Co.
+        assert event.provenance.signal_path_id == "tvpath_webhook_v1"
 
     def test_happy_path_full(self) -> None:
         event = _normalize(
@@ -68,11 +69,25 @@ class TestNormalize:
     def test_action_close_accepted(self) -> None:
         assert _normalize({"ticker": "BTC/USDT", "action": "close"}).action == "close"
 
-    def test_unique_ids_per_call(self) -> None:
+    def test_event_ids_unique_but_signal_path_constant(self) -> None:
+        # Pflichtprüfung 1 (Operator 07-11): zwei Events -> verschiedene
+        # event_id, GLEICHE signal_path_id (Pipeline-Identität, kein Unikat).
         a = _normalize({"ticker": "X", "action": "buy"})
         b = _normalize({"ticker": "X", "action": "buy"})
         assert a.event_id != b.event_id
-        assert a.provenance.signal_path_id != b.provenance.signal_path_id
+        assert a.provenance.signal_path_id == b.provenance.signal_path_id == "tvpath_webhook_v1"
+        # Event-scoped Identitäten bleiben eventbezogen erhalten.
+        assert a.source_request_id == b.source_request_id == _REQUEST_ID
+        assert a.source_payload_hash == _PAYLOAD_HASH
+
+    def test_provenance_hmac_with_pipeline_constant(self) -> None:
+        # Pflichtprüfung 4: HMAC-Siegel wird mit der Konstante korrekt
+        # erzeugt und verifiziert.
+        event = _normalize({"ticker": "BTC", "action": "buy"})
+        sealed = event.provenance.with_hash("test-secret")
+        assert sealed.signal_path_id == "tvpath_webhook_v1"
+        assert sealed.verify_hash("test-secret") is True
+        assert sealed.verify_hash("wrong-secret") is False
 
     def test_external_event_id_read_from_payload(self) -> None:
         event = _normalize({"ticker": "BTC", "action": "buy", "event_id": "alert-9"})
@@ -196,7 +211,7 @@ class TestSerialization:
         # Provenance is flattened by asdict.
         assert round_tripped["provenance"]["source"] == "tradingview_webhook"
         assert round_tripped["provenance"]["version"] == "tv-3"
-        assert round_tripped["provenance"]["signal_path_id"].startswith("tvpath_")
+        assert round_tripped["provenance"]["signal_path_id"] == "tvpath_webhook_v1"
 
     def test_append_pending_signal_writes_one_line(self, tmp_path: Path) -> None:
         out = tmp_path / "sub" / "pending.jsonl"  # exercise mkdir

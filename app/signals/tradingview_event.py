@@ -45,8 +45,16 @@ def _new_event_id() -> str:
     return f"tvsig_{uuid4().hex[:16]}"
 
 
-def _new_signal_path_id() -> str:
-    return f"tvpath_{uuid4().hex[:12]}"
+# TL-004/TL-008-Nachlese (Operator-GO 07-11): signal_path_id ist per D-125 die
+# PIPELINE-Identität (RSS vs. tradingview_webhook vs. binance_ohlcv_rsi), kein
+# Event-Unikat — Event-Identität tragen bereits event_id, external_event_id,
+# source_request_id und source_payload_hash. Die frühere per-Event-UUID
+# (tvpath_<uuid>) zerstörte die Pfadsemantik; Bestand (559 IDs) bleibt als
+# historische Schema-Wahrheit unangetastet (path_semantics=legacy_event_scoped
+# vor diesem Commit, pipeline_scoped danach). Versionsregel: v1 -> v2 NUR bei
+# materieller Änderung des Verarbeitungspfads, nie bei Refactorings; Strategie/
+# Config gehören in eigene Felder (strategy_id/route_config_id), nie hierher.
+TV_SIGNAL_PATH_ID = "tvpath_webhook_v1"
 
 
 @dataclass(frozen=True)
@@ -184,7 +192,7 @@ def normalize_tradingview_payload(
     provenance = SignalProvenance(
         source=_TV_SOURCE,
         version=_TV_VERSION,
-        signal_path_id=_new_signal_path_id(),
+        signal_path_id=TV_SIGNAL_PATH_ID,
         auth_method=auth_method,
     )
     return TradingViewSignalEvent(
