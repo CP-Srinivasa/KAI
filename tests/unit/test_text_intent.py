@@ -15,15 +15,26 @@ def _make_processor(api_key: str = "test-key") -> TextIntentProcessor:
 
 
 def _fake_openai_response(intent: str, response: str, **extra: object) -> MagicMock:
-    """Build a mock httpx response mimicking OpenAI chat completions."""
+    """Build a mock SDK chat-completions response (Audit F-1: SDK statt httpx)."""
     content = json.dumps({"intent": intent, "response": response, **extra})
+    return _sdk_response(content)
+
+
+def _sdk_response(content: str) -> MagicMock:
     resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {
-        "choices": [{"message": {"content": content}}],
-    }
+    resp.choices = [MagicMock(message=MagicMock(content=content))]
     return resp
+
+
+def _patch_sdk(result: MagicMock | None = None, error: Exception | None = None):
+    """Patch AsyncOpenAI so chat.completions.create returns *result* or raises."""
+    client = MagicMock()
+    if error is not None:
+        client.chat.completions.create = AsyncMock(side_effect=error)
+    else:
+        client.chat.completions.create = AsyncMock(return_value=result)
+    mock_cls = MagicMock(return_value=client)
+    return patch("app.messaging.text_intent.AsyncOpenAI", mock_cls)
 
 
 class TestTextIntentProcessor:
@@ -53,16 +64,7 @@ class TestTextIntentProcessor:
             signal={"asset": "BTC", "direction": "bullish", "reasoning": "Breakout"},
         )
 
-        async def fake_post(url, headers=None, json=None):
-            return fake_resp
-
-        with patch("app.messaging.text_intent.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = fake_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with _patch_sdk(fake_resp):
             result = await p.process("Signal: BTC bullish, Breakout über 90k")
 
         assert result.intent == "signal"
@@ -79,16 +81,7 @@ class TestTextIntentProcessor:
             mapped_command="status",
         )
 
-        async def fake_post(url, headers=None, json=None):
-            return fake_resp
-
-        with patch("app.messaging.text_intent.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = fake_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with _patch_sdk(fake_resp):
             result = await p.process("Wie ist der Status?")
 
         assert result.intent == "command"
@@ -102,16 +95,7 @@ class TestTextIntentProcessor:
             response="Bitcoin steht aktuell bei...",
         )
 
-        async def fake_post(url, headers=None, json=None):
-            return fake_resp
-
-        with patch("app.messaging.text_intent.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = fake_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with _patch_sdk(fake_resp):
             result = await p.process("Wie steht Bitcoin?")
 
         assert result.intent == "query"
@@ -121,16 +105,7 @@ class TestTextIntentProcessor:
     async def test_handles_http_error_gracefully(self) -> None:
         p = _make_processor()
 
-        async def failing_post(url, headers=None, json=None):
-            raise ConnectionError("network down")
-
-        with patch("app.messaging.text_intent.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = failing_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with _patch_sdk(error=ConnectionError("network down")):
             result = await p.process("Test")
 
         assert result.intent == "chat"
@@ -140,22 +115,7 @@ class TestTextIntentProcessor:
     async def test_handles_malformed_json_response(self) -> None:
         p = _make_processor()
 
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {
-            "choices": [{"message": {"content": "not valid json{"}}],
-        }
-
-        async def fake_post(url, headers=None, json=None):
-            return resp
-
-        with patch("app.messaging.text_intent.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_client.post = fake_post
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_client
-
+        with _patch_sdk(_sdk_response("not valid json{")):
             result = await p.process("Test")
 
         assert result.intent == "chat"

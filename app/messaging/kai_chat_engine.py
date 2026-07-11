@@ -343,8 +343,6 @@ async def transcribe_audio_via_whisper(
     from the file extension (browser-supplied). On error: silent None,
     handler logs a warning. Caller decides what to surface to the user.
     """
-    import httpx
-
     settings = get_settings()
     api_key = settings.providers.openai_api_key
     if not api_key:
@@ -362,9 +360,7 @@ async def transcribe_audio_via_whisper(
         "wav": "audio/wav",
     }
     mime = mime_map.get(ext, "audio/webm")
-    headers = {"Authorization": f"Bearer {api_key}"}
-    files = {"file": (f"voice.{ext}", audio_data, mime)}
-    data = {"model": "whisper-1", "language": language if language in ("de", "en") else "de"}
+    lang = language if language in ("de", "en") else "de"
 
     head_hex = audio_data[:8].hex()
     logger.info(
@@ -372,36 +368,36 @@ async def transcribe_audio_via_whisper(
         len(audio_data),
         ext,
         mime,
-        data["language"],
+        lang,
         head_hex,
     )
+    # Audit F-2 (2026-07-11): Whisper ueber den offiziellen SDK-Client statt rohem
+    # httpx-Multipart — gleiche Transport-Konventionen wie der Chat-Pfad oben.
+    from openai import AsyncOpenAI
+
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(
-                "https://api.openai.com/v1/audio/transcriptions",
-                headers=headers,
-                files=files,
-                data=data,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            text = (payload.get("text") or "").strip()
-            if text and _is_whisper_hallucination(text):
-                logger.warning(
-                    "[kai-voice] whisper hallucination filtered: %r (size=%d)",
-                    text[:120],
-                    len(audio_data),
-                )
-                return None
-            if text:
-                logger.info("[kai-voice] transcribed %d chars: %s", len(text), text[:120])
-                return text
+        client = AsyncOpenAI(api_key=api_key, timeout=90.0)
+        transcription = await client.audio.transcriptions.create(
+            model="whisper-1",
+            language=lang,
+            file=(f"voice.{ext}", audio_data, mime),
+        )
+        text = (transcription.text or "").strip()
+        if text and _is_whisper_hallucination(text):
             logger.warning(
-                "[kai-voice] whisper returned empty. size=%d mime=%s payload-keys=%s",
+                "[kai-voice] whisper hallucination filtered: %r (size=%d)",
+                text[:120],
                 len(audio_data),
-                mime,
-                list(payload.keys()),
             )
+            return None
+        if text:
+            logger.info("[kai-voice] transcribed %d chars: %s", len(text), text[:120])
+            return text
+        logger.warning(
+            "[kai-voice] whisper returned empty. size=%d mime=%s",
+            len(audio_data),
+            mime,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-voice] whisper error: %s", exc)
     return None

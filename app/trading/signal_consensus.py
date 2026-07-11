@@ -41,6 +41,7 @@ from typing import Any
 
 import structlog
 from openai import AsyncOpenAI
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.market_data.models import MarketDataPoint
 from app.signals.models import SignalCandidate
@@ -85,6 +86,16 @@ Contradicting factors: {contradicting}
 
 Do you agree with this {direction} trade? Respond with JSON only.\
 """
+
+
+class _ConsensusVerdict(BaseModel):
+    """Strict contract for the validator LLM's JSON verdict (Audit F-3)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    agree: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reasoning: str = ""
 
 
 @dataclass(frozen=True)
@@ -269,9 +280,13 @@ class SignalConsensusValidator:
 
         raw = (response.choices[0].message.content or "").strip()
 
+        # Audit F-3 (2026-07-11): Schema-Zwang statt freiem json.loads — ein
+        # nicht-konformes LLM-Payload (Liste, confidence="high", agree fehlt)
+        # ist jetzt derselbe fail-closed Pfad wie kaputtes JSON.
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError:
+            verdict = _ConsensusVerdict.model_validate(data)
+        except (json.JSONDecodeError, ValidationError, TypeError):
             log.warning(
                 "consensus.parse_error",
                 model=cfg.model,
@@ -290,7 +305,7 @@ class SignalConsensusValidator:
         return SingleValidatorResult(
             label=cfg.display_label,
             model=cfg.model,
-            agreed=bool(data.get("agree", False)),
-            confidence=float(data.get("confidence", 0.0)),
-            reasoning=str(data.get("reasoning", "")),
+            agreed=verdict.agree,
+            confidence=verdict.confidence,
+            reasoning=verdict.reasoning,
         )

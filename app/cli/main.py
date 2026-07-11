@@ -54,44 +54,14 @@ def _safe_text(text: str) -> str:
         )
 
 
-def _build_primary_provider() -> Any:
-    """Build Ensemble (OpenAI -> Gemini -> Grok) provider with fallback. None if unconfigured."""
-    settings = get_settings()
-    providers: list[Any] = []
-    if settings.providers.openai_api_key:
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
-
-        providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
-    if settings.providers.gemini_api_key:
-        from app.integrations.gemini.provider import GeminiAnalysisProvider
-
-        providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
-    if settings.providers.xai_fallback_enabled and settings.providers.xai_api_key:
-        from app.integrations.xai.provider import GrokAnalysisProvider
-
-        providers.append(GrokAnalysisProvider.from_settings(settings.providers))
-    if not providers:
-        return None
-    if len(providers) == 1:
-        return providers[0]
-    from app.analysis.ensemble.provider import EnsembleProvider
-
-    return EnsembleProvider(providers)
-
-
-def _maybe_gemini_shadow() -> Any:
-    """Return shadow analysis provider, preferring Anthropic/Claude for independent signal."""
-    settings = get_settings()
-    if settings.providers.anthropic_api_key:
-        from app.integrations.anthropic.provider import AnthropicAnalysisProvider
-
-        return AnthropicAnalysisProvider.from_settings(settings.providers)
-    if settings.providers.gemini_api_key:
-        from app.integrations.gemini.provider import GeminiAnalysisProvider
-
-        return GeminiAnalysisProvider.from_settings(settings.providers)
-    return None
-
+# Audit F-4 (2026-07-11): kanonische Provider-Verdrahtung lebt in app/analysis/factory —
+# hier nur Aliase, damit Call-Sites und app/cli/commands/ingestion.py stabil bleiben.
+from app.analysis.factory import (  # noqa: E402
+    create_cli_primary_provider as _build_primary_provider,
+)
+from app.analysis.factory import (  # noqa: E402
+    create_shadow_provider as _maybe_gemini_shadow,
+)
 
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)

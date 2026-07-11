@@ -15,7 +15,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-import httpx
+from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -131,35 +131,31 @@ class TextIntentProcessor:
         else:
             user_content = text
 
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.3,
-            "max_tokens": 800,
-        }
-
+        # Audit F-1 (2026-07-11): offizieller SDK-Client statt rohem httpx —
+        # gleiche Transport-Konventionen (Retries/Timeout/Fehlerklassen) wie der
+        # Rest des Systems; CLAUDE.md §LLM Integration.
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                parsed = json.loads(content)
-                return IntentResult(
-                    intent=parsed.get("intent", "chat"),
-                    response=parsed.get("response", "Keine Antwort generiert."),
-                    signal=parsed.get("signal"),
-                    mapped_command=parsed.get("mapped_command"),
-                )
+            client = AsyncOpenAI(api_key=self._api_key, timeout=self._timeout)
+            resp = await client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=800,
+            )
+            content = resp.choices[0].message.content or ""
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("intent payload is not a JSON object")
+            return IntentResult(
+                intent=parsed.get("intent", "chat"),
+                response=parsed.get("response", "Keine Antwort generiert."),
+                signal=parsed.get("signal"),
+                mapped_command=parsed.get("mapped_command"),
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("[TEXT_INTENT] Processing error: %s", exc)
             return _FALLBACK

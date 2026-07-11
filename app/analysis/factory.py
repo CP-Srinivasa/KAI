@@ -94,3 +94,53 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
         return GrokAnalysisProvider.from_settings(settings.providers)
 
     raise ValueError(f"Unsupported analysis provider: {provider_type!r}")
+
+
+def create_cli_primary_provider() -> BaseAnalysisProvider | None:
+    """Primary chain for CLI/ingestion pipelines: OpenAI -> Gemini -> (Grok).
+
+    Deliberately EXCLUDES Anthropic (reserved as independent shadow, see
+    :func:`create_shadow_provider`) and the internal fallback (``None`` means
+    "no external LLM configured" and lets callers run rule-based). Single
+    source of truth since 2026-07-11 (Audit F-4) — previously duplicated in
+    ``app/cli/main.py``.
+    """
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+    providers: list[BaseAnalysisProvider] = []
+    if settings.providers.openai_api_key:
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+
+        providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+
+        providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
+    if settings.providers.xai_fallback_enabled and settings.providers.xai_api_key:
+        from app.integrations.xai.provider import GrokAnalysisProvider
+
+        providers.append(GrokAnalysisProvider.from_settings(settings.providers))
+    if not providers:
+        return None
+    if len(providers) == 1:
+        return providers[0]
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    return EnsembleProvider(providers)
+
+
+def create_shadow_provider() -> BaseAnalysisProvider | None:
+    """Independent shadow analyst: prefer Anthropic, else Gemini, else None."""
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+    if settings.providers.anthropic_api_key:
+        from app.integrations.anthropic.provider import AnthropicAnalysisProvider
+
+        return AnthropicAnalysisProvider.from_settings(settings.providers)
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+
+        return GeminiAnalysisProvider.from_settings(settings.providers)
+    return None
