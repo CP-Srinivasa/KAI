@@ -193,6 +193,14 @@ async def post_kai_transcribe(
     if not audio_data:
         raise HTTPException(status_code=400, detail="empty_audio")
     if len(audio_data) > 25 * 1024 * 1024:  # OpenAI Whisper hard limit ~25MB
+        # Groesse loggen: die 413 vom 2026-07-12-Voice-Smoke war ohne diese
+        # Zeile nicht diagnostizierbar (Parser vs. Cap). Tipp fuer den Client:
+        # webm/opus statt wav aufnehmen — 25 MB wav sind nur ~2 Minuten.
+        logger.warning(
+            "[kai-voice] upload rejected: %d bytes > 25MB Whisper hard limit (filename=%s)",
+            len(audio_data),
+            audio.filename,
+        )
         raise HTTPException(status_code=413, detail="audio_too_large_max_25mb")
 
     text = await transcribe_audio_via_whisper(
