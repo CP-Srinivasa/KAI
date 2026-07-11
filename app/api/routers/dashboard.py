@@ -1667,6 +1667,16 @@ async def dashboard_provenance_api() -> JSONResponse:
 
 
 @router.get("/dashboard/api/integrations", tags=["dashboard"])
+def _llm_telemetry_block() -> dict[str, Any]:
+    """B-002 telemetry, fail-soft: dashboard must render even if telemetry breaks."""
+    try:
+        from app.observability.llm_telemetry import llm_telemetry_summary
+
+        return llm_telemetry_summary()
+    except Exception:  # noqa: BLE001
+        return {"implemented": True, "error": "telemetry_unavailable"}
+
+
 async def dashboard_integrations_api() -> JSONResponse:
     """Echter Konfigurations-/Aktiv-Zustand der externen Integrationen.
 
@@ -1741,6 +1751,8 @@ async def dashboard_integrations_api() -> JSONResponse:
             "llm": {
                 "status": "active" if llm_providers else "disabled",
                 "providers": llm_providers,
+                # B-002 (Audit F-5): failure-rate + latency p50/p95, 24h-Fenster
+                "telemetry": _llm_telemetry_block(),
             },
             "tradingview": {
                 "status": "active" if tv_mounted else "disabled",

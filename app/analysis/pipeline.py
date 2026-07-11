@@ -28,8 +28,8 @@ Topologie (primary / shadow / ensemble)
            ▼                              ▼
     ┌──────────────────────────────────┐
     │ ENSEMBLE (optional, flag-gated)  │  merges primary + shadow
-    │   if ensemble.enabled:           │  via confidence-weighted
-    │     blend → AnalysisResult       │  averaging (see ensemble.py)
+    │   if ensemble.enabled:           │  via first-success
+    │     blend → AnalysisResult       │  fallback (see ensemble.py)
     │   else:                          │
     │     primary → AnalysisResult     │
     └──────────────────────────────────┘
@@ -507,6 +507,38 @@ class AnalysisPipeline:
         shadow_name = self._shadow_provider.provider_name.strip().lower()
         return any(isinstance(name, str) and name.strip().lower() == shadow_name for name in chain)
 
+    async def _timed_primary_analyze(
+        self, *, title: str, text: str, context: dict[str, Any] | None
+    ) -> LLMAnalysisOutput:
+        """Primary analyze with B-002 telemetry (Audit F-5): latency + ok/fail."""
+        from time import monotonic
+
+        from app.observability.llm_telemetry import record_llm_call
+
+        assert self._provider is not None
+        name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
+        started = monotonic()
+        try:
+            output = await self._provider.analyze(title=title, text=text, context=context)
+        except Exception as exc:
+            record_llm_call(
+                provider=name,
+                model=getattr(self._provider, "model", ""),
+                ok=False,
+                latency_ms=(monotonic() - started) * 1000.0,
+                role="primary",
+                error_type=type(exc).__name__,
+            )
+            raise
+        record_llm_call(
+            provider=output.provider_used or name,
+            model=getattr(self._provider, "model", ""),
+            ok=True,
+            latency_ms=(monotonic() - started) * 1000.0,
+            role="primary",
+        )
+        return output
+
     async def _run_shadow_analysis(
         self,
         doc: CanonicalDocument,
@@ -521,13 +553,33 @@ class AnalysisPipeline:
             _resolve_runtime_provider_name(self._shadow_provider)
             or self._shadow_provider.provider_name
         )
+        from time import monotonic
+
+        from app.observability.llm_telemetry import record_llm_call
+
+        _started = monotonic()
         try:
             output = await self._shadow_provider.analyze(
                 title=doc.title,
                 text=text,
                 context=context,
             )
+            record_llm_call(
+                provider=shadow_provider_name,
+                model=getattr(self._shadow_provider, "model", ""),
+                ok=True,
+                latency_ms=(monotonic() - _started) * 1000.0,
+                role="shadow",
+            )
         except Exception as exc:
+            record_llm_call(
+                provider=shadow_provider_name,
+                model=getattr(self._shadow_provider, "model", ""),
+                ok=False,
+                latency_ms=(monotonic() - _started) * 1000.0,
+                role="shadow",
+                error_type=type(exc).__name__,
+            )
             error = str(exc)
             logger.warning(
                 "shadow_provider_failed",
@@ -651,7 +703,7 @@ class AnalysisPipeline:
         elif self._provider is not None:
             try:
                 primary_task = asyncio.create_task(
-                    self._provider.analyze(
+                    self._timed_primary_analyze(
                         title=doc.title,
                         text=text,
                         context=context,

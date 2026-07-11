@@ -1658,19 +1658,25 @@ class AppSettings(BaseSettings):
                     "INGESTION_TELEGRAM_CHANNEL_HEARTBEAT_PATH is empty (S-003)."
                 )
 
-        # B-002: complete observability surface — capability flag.
-        # Telemetry for LLM-failure-rate / latency p95 is not implemented
-        # yet (see /status). We model that as a hard-coded capability
-        # flag here so flipping the enforce switch deliberately fails
-        # boot until the implementation lands.
+        # B-002: complete observability surface — capability check.
+        # LLM-failure-rate / latency p95 landed 2026-07-11 (Audit F-5,
+        # app/observability/llm_telemetry.py + Dashboard-Integrations-Block).
+        # The capability is probed, not hard-coded, so a broken import keeps
+        # failing boot loudly instead of silently passing.
         if gate.enforce_observability_complete:
-            observability_complete = False  # B-002 not yet implemented.
+            try:
+                from app.observability.llm_telemetry import llm_telemetry_summary
+
+                observability_complete = bool(
+                    llm_telemetry_summary(window_hours=0.0).get("implemented")
+                )
+            except Exception:  # noqa: BLE001
+                observability_complete = False
             if not observability_complete:
                 violations.append(
-                    "RE_ENTRY_MODE_ENFORCE_OBSERVABILITY_COMPLETE=1 but "
-                    "B-002 (LLM-failure-rate, latency p95) is not yet "
-                    "implemented — /status still returns 'not_implemented' "
-                    "for those fields."
+                    "RE_ENTRY_MODE_ENFORCE_OBSERVABILITY_COMPLETE=1 but the "
+                    "B-002 telemetry surface (app/observability/llm_telemetry) "
+                    "is not importable/functional."
                 )
 
         if violations:
