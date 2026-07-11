@@ -36,7 +36,7 @@ def test_multipart_over_one_megabyte_parses(megabytes: int) -> None:
 
 def test_transcribe_route_cap_stays_at_whisper_limit() -> None:
     # Die 25-MB-Grenze der Route ist das OpenAI-Whisper-Hard-Limit und bleibt.
-    from pathlib import Path
+    # Konstante statt Source-Grep (Operator-Review: refactoring-fest).
+    from app.api.routers.kai import MAX_TRANSCRIBE_BYTES
 
-    src = Path("app/api/routers/kai.py").read_text(encoding="utf-8")
-    assert "25 * 1024 * 1024" in src and "audio_too_large_max_25mb" in src
+    assert MAX_TRANSCRIBE_BYTES == 25 * 1024 * 1024
