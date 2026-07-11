@@ -678,13 +678,22 @@ def compose_digest_message(
         tl_max = truth_lint.get("max_severity")
         tl_active = truth_lint.get("registry_active", "?")
         tl_total = truth_lint.get("registry_total", "?")
+        tl_planned = truth_lint.get("registry_planned", "?")
+        try:
+            tl_pct = f"{100 * int(tl_active) / int(tl_total):.0f}%"
+        except (TypeError, ValueError, ZeroDivisionError):
+            tl_pct = "?"
         if not tl_viol:
-            lines.append(f"🧪 *Truth-Lint:* OK ({tl_active}/{tl_total} Invarianten aktiv)")
+            lines.append(
+                f"🧪 *Truth-Lint:* OK — Registry {tl_total} · aktiv {tl_active} · "
+                f"geplant {tl_planned} (aktive Abdeckung {tl_pct})"
+            )
         else:
             head = {
                 "WARNING": "⚠️ *Truth-Lint: Status DEGRADED*",
                 "ERROR": "⛔ *Truth-Lint: Quarantäne gesetzt*",
-                "CRITICAL": "🛑 *Truth-Lint CRITICAL — Evidence-Claims blockiert*",
+                "CRITICAL": "🛑 *Truth-Lint CRITICAL — Evidence-Claim-Block fällig "
+                "(Gate verfügbar, noch nicht systemweit verdrahtet)*",
             }.get(str(tl_max), "🧪 *Truth-Lint*")
             lines.append(f"{head} — {len(tl_viol)} Verletzung(en):")
             for v in tl_viol[:2]:

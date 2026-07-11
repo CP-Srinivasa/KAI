@@ -13,7 +13,11 @@ Design (bindend, Operator 07-11):
   die Abdeckungslücke sichtbar bleibt statt zu verschwinden.
 * **Severity-Semantik:** INFO → Digest-Zeile · WARNING → Truth-Status
   degraded · ERROR → Dataset/Report-Quarantäne-Marker · CRITICAL →
-  Freigabe-/Evidence-Claim-Block (``--gate`` Exit 2).
+  Freigabe-/Evidence-Claim-Block (``--gate`` Exit 2). **Ehrliche Grenze:**
+  das Gate ist VERFÜGBAR, aber noch nicht systemweit an Publikations-/
+  Evidence-Pfade verdrahtet — bis der (bewusst kleine) Consumer-PR existiert
+  gilt: „Blocker verfügbar, nicht enforced". Analyse/Forensik laufen bei
+  einem Block weiter; gesperrt wird nur der belastbare Evidence-Claim.
 * **NIE stillschweigend korrigieren.** Lint erkennt, kennzeichnet und
   quarantänisiert (append-only Marker) — es verändert keine Quelldaten.
 

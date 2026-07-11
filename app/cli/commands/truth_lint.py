@@ -24,8 +24,8 @@ def truth_lint(
     gate: bool = typer.Option(
         False,
         "--gate",
-        help="Gate-Modus: Exit 1 bei ERROR, Exit 2 bei CRITICAL (Evidence-Claim-Block). "
-        "Ohne --gate immer Exit 0 (Observability).",
+        help="Gate-Modus: Exit 1 bei ERROR, Exit 2 bei CRITICAL (Evidence-Claim-Block; "
+        "verfügbar, noch nicht systemweit verdrahtet). Ohne --gate immer Exit 0.",
     ),
     write: bool = typer.Option(
         True,
