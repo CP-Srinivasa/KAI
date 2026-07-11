@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
@@ -41,6 +42,10 @@ from app.messaging.kai_state_resolver import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/kai", tags=["kai"])
+
+# OpenAI-Whisper-Hard-Limit. Konstante statt Literal, damit Route und Tests
+# dieselbe Quelle haben (Operator-Review #594-Nachhaertung).
+MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024
 
 
 @router.get("/persona")
@@ -192,14 +197,19 @@ async def post_kai_transcribe(
     audio_data = await audio.read()
     if not audio_data:
         raise HTTPException(status_code=400, detail="empty_audio")
-    if len(audio_data) > 25 * 1024 * 1024:  # OpenAI Whisper hard limit ~25MB
+    if len(audio_data) > MAX_TRANSCRIBE_BYTES:
         # Groesse loggen: die 413 vom 2026-07-12-Voice-Smoke war ohne diese
-        # Zeile nicht diagnostizierbar (Parser vs. Cap). Tipp fuer den Client:
+        # Zeile nicht diagnostizierbar (Parser vs. Cap). Kein roher
+        # Client-Dateiname im Log (Injection/Offenlegung) — size, content_type
+        # und sanitisierte Endung reichen fuer die Diagnose. Client-Tipp:
         # webm/opus statt wav aufnehmen — 25 MB wav sind nur ~2 Minuten.
+        suffix = Path(audio.filename or "").suffix.lower()[:16]
         logger.warning(
-            "[kai-voice] upload rejected: %d bytes > 25MB Whisper hard limit (filename=%s)",
+            "[kai-voice] upload rejected: size_bytes=%d limit_bytes=%d content_type=%r suffix=%r",
             len(audio_data),
-            audio.filename,
+            MAX_TRANSCRIBE_BYTES,
+            audio.content_type,
+            suffix,
         )
         raise HTTPException(status_code=413, detail="audio_too_large_max_25mb")
 
