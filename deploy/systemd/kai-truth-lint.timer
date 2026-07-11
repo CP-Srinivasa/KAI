@@ -1,0 +1,14 @@
+[Unit]
+Description=Trigger KAI Truth-Lint taeglich
+
+[Timer]
+# Taeglich 05:10 lokal — nach den naechtlichen Feeds/Refreshs, vor dem
+# Operator-Digest, damit dessen Truth-Lint-Zeile den frischen Lauf zeigt.
+# Lint ist read-/append-only (Report + Quarantaene-Marker, nie Quelldaten).
+OnCalendar=*-*-* 05:10:00
+Persistent=true
+AccuracySec=120s
+Unit=kai-truth-lint.service
+
+[Install]
+WantedBy=timers.target

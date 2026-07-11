@@ -1,0 +1,17 @@
+[Unit]
+Description=KAI Truth-Lint — Invariant-Registry ueber die eigenen Ledger (Operator-Direktive 07-11)
+After=kai-server.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading truth-lint
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
