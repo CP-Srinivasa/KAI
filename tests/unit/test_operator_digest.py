@@ -572,15 +572,21 @@ def test_truth_lint_line_absent_run_is_honest() -> None:
 
 
 def test_truth_lint_line_ok_when_clean() -> None:
+    # Abdeckung ehrlich: Registry-Zahl darf nie "11 Invarianten schützen"
+    # suggerieren — aktiv/geplant/Prozent werden explizit ausgewiesen.
     msg = _compose(
         truth_lint={
             "violations": [],
             "max_severity": None,
             "registry_active": 5,
             "registry_total": 11,
+            "registry_planned": 6,
         }
     )
-    assert "Truth-Lint:* OK (5/11 Invarianten aktiv)" in msg
+    assert "Registry 11" in msg
+    assert "aktiv 5" in msg
+    assert "geplant 6" in msg
+    assert "aktive Abdeckung 45%" in msg
 
 
 def test_truth_lint_critical_blocks_loudly() -> None:
@@ -598,7 +604,9 @@ def test_truth_lint_critical_blocks_loudly() -> None:
             "registry_total": 11,
         }
     )
-    assert "Truth-Lint CRITICAL — Evidence-Claims blockiert" in msg
+    # Kein Overclaim: Gate ist verfügbar, aber noch nicht systemweit enforced.
+    assert "Evidence-Claim-Block fällig" in msg
+    assert "noch nicht systemweit verdrahtet" in msg
     assert "TL-011" in msg
 
 
