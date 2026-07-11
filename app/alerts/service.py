@@ -69,6 +69,15 @@ _FUZZY_JACCARD_THRESHOLD = 0.4
 _ASSET_RATE_LIMIT_HOURS = 6
 
 
+# TL-008-Fix (Truth-Lint 07-11): Der RSS-News-Pfad setzte signal_path_id=None
+# AM URSPRUNG — 401 resolved Outcome-Rows ohne Pfad-Anker (10 davon nach der
+# Provenance-Baseline 07-01). signal_path_id ist per D-125 die PIPELINE-Identität
+# (RSS vs. tradingview_webhook vs. binance_ohlcv_rsi), kein Event-Unikat: für
+# künftige Rows ein stabiles, deterministisches Pfad-Label. Bestands-Rows werden
+# NICHT backfilled (kein erfundener Beweis) — sie bleiben TL-008-gekennzeichnet.
+RSS_SIGNAL_PATH_ID = "rsspath_news_v1"
+
+
 def _resolve_rss_source(source_name: str | None) -> str:
     """RSS-alert provenance source: the feed's source_name, or generic ``"rss"``.
 
@@ -505,7 +514,7 @@ def _log_result(
             provenance = SignalProvenance(
                 source=rss_source,
                 version="rss-1",
-                signal_path_id=None,
+                signal_path_id=RSS_SIGNAL_PATH_ID,
                 auth_method="n/a",
                 ingest_event_id=doc_id,
             ).with_hash(_get_settings().alerts.provenance_secret)

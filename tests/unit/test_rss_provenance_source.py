@@ -21,3 +21,12 @@ def test_resolve_rss_source_maps_unknown_and_empty_to_rss() -> None:
     assert _resolve_rss_source("") == "rss"
     assert _resolve_rss_source("   ") == "rss"
     assert _resolve_rss_source(None) == "rss"
+
+
+def test_rss_signal_path_id_is_stable_path_label() -> None:
+    """TL-008-Fix: RSS-Rows tragen künftig eine PIPELINE-Identität (D-125),
+    kein None und kein Event-Unikat. Wert ist Vertrag — Änderung = bewusste
+    neue Pfad-Version, nie stiller Drift."""
+    from app.alerts.service import RSS_SIGNAL_PATH_ID
+
+    assert RSS_SIGNAL_PATH_ID == "rsspath_news_v1"

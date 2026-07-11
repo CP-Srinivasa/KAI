@@ -234,3 +234,71 @@ def test_clean_artifacts_produce_no_violations_and_no_quarantine(tmp_path: Path)
 
 def test_severity_ordering_matches_gate_semantics() -> None:
     assert Severity.INFO < Severity.WARNING < Severity.ERROR < Severity.CRITICAL
+
+
+# ── TL-004 Klassifikations-Metriken (Operator-Nachtrag 07-11) ────────────────
+
+
+def test_tl004_evidence_carries_classification_metrics(tmp_path, monkeypatch) -> None:
+    """Rohe Zeilenzahl NIE als Episodenanzahl: die Verletzung trägt die
+    Dimensionen, die Transparenz von echter Inflation unterscheiden."""
+    from types import SimpleNamespace
+
+    import app.observability.outcome_dedupe_report as odr
+    from app.truth.lint import LintContext, _check_cross_path_episode_inflation
+
+    art = _artifacts(tmp_path)
+    rows = []
+    # 4 resolved Rows: 2 teilen dieselbe document_id (Duplikat), 1 ohne Pfad-ID.
+    for i, (doc, pid) in enumerate(
+        [("d1", "tvpath_a"), ("d1", "tvpath_b"), ("d2", "rsspath_news_v1"), ("d3", None)]
+    ):
+        rows.append(
+            {
+                "outcome": "hit",
+                "asset": "BTC/USDT",
+                "document_id": doc,
+                "annotated_at": f"2026-07-1{i}T08:00:00+00:00",
+                "provenance": {"signal_path_id": pid} if pid else {},
+            }
+        )
+    _write_jsonl(art / "alert_outcomes.jsonl", rows)
+    # Vorheriger Lint-Lauf mit TL-004 largest=58 → growth = 70-58 = 12.
+    _write_jsonl(
+        art / "truth_lint_report.jsonl",
+        [{"violations": [{"invariant_id": "TL-004", "evidence": {"largest_episode_size": 58}}]}],
+    )
+    monkeypatch.setattr(
+        odr,
+        "build_episode_dedupe_report",
+        lambda **_kw: SimpleNamespace(largest_episode_size=70, episode_total=9, resolved_rows=120),
+    )
+    violations = _check_cross_path_episode_inflation(LintContext(artifacts_dir=art))
+    assert len(violations) == 1
+    ev = violations[0].evidence
+    assert ev["largest_episode_size"] == 70
+    assert ev["canonical_episode_count"] == 9
+    assert ev["growth_since_last_run"] == 12
+    assert ev["raw_rows"] == 4
+    assert ev["distinct_document_ids"] == 3
+    assert ev["duplicate_ratio"] == 0.25
+    assert ev["distinct_signal_path_ids"] == 3
+    assert ev["null_path_rows"] == 1
+    assert "NIE als" in violations[0].message
+
+
+def test_tl004_growth_none_without_previous_run(tmp_path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import app.observability.outcome_dedupe_report as odr
+    from app.truth.lint import LintContext, _check_cross_path_episode_inflation
+
+    art = _artifacts(tmp_path)
+    _write_jsonl(art / "alert_outcomes.jsonl", [{"outcome": "hit", "document_id": "d1"}])
+    monkeypatch.setattr(
+        odr,
+        "build_episode_dedupe_report",
+        lambda **_kw: SimpleNamespace(largest_episode_size=41, episode_total=1, resolved_rows=41),
+    )
+    violations = _check_cross_path_episode_inflation(LintContext(artifacts_dir=art))
+    assert violations[0].evidence["growth_since_last_run"] is None
