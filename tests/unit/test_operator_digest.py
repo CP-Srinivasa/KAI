@@ -562,3 +562,69 @@ def test_collect_source_discovery_empty_when_no_files(tmp_path: Path) -> None:
         state_path=tmp_path / "no.json",
     )
     assert out["available"] is False
+
+
+# ── Truth-Lint-Zeile (Invariant-Registry, Operator-Direktive 07-11) ──────────
+
+
+def test_truth_lint_line_absent_run_is_honest() -> None:
+    assert "Truth-Lint:* noch kein Lauf" in _compose()  # default None
+
+
+def test_truth_lint_line_ok_when_clean() -> None:
+    msg = _compose(
+        truth_lint={
+            "violations": [],
+            "max_severity": None,
+            "registry_active": 5,
+            "registry_total": 11,
+        }
+    )
+    assert "Truth-Lint:* OK (5/11 Invarianten aktiv)" in msg
+
+
+def test_truth_lint_critical_blocks_loudly() -> None:
+    msg = _compose(
+        truth_lint={
+            "violations": [
+                {
+                    "invariant_id": "TL-011",
+                    "severity": "CRITICAL",
+                    "message": "Attestation-Hash stimmt nicht mit Payload überein",
+                }
+            ],
+            "max_severity": "CRITICAL",
+            "registry_active": 5,
+            "registry_total": 11,
+        }
+    )
+    assert "Truth-Lint CRITICAL — Evidence-Claims blockiert" in msg
+    assert "TL-011" in msg
+
+
+def test_truth_lint_warning_reads_degraded() -> None:
+    msg = _compose(
+        truth_lint={
+            "violations": [
+                {"invariant_id": "TL-002", "severity": "WARNING", "message": "Preisband"}
+            ],
+            "max_severity": "WARNING",
+            "registry_active": 5,
+            "registry_total": 11,
+        }
+    )
+    assert "Status DEGRADED" in msg
+
+
+def test_collect_truth_lint_reads_last_run(tmp_path: Path) -> None:
+    p = tmp_path / "truth_lint_report.jsonl"
+    p.write_text(
+        json.dumps({"ts_utc": "1", "violations": []})
+        + "\n"
+        + json.dumps({"ts_utc": "2", "violations": [], "max_severity": None})
+        + "\n",
+        encoding="utf-8",
+    )
+    got = od.collect_truth_lint(p)
+    assert got is not None and got["ts_utc"] == "2"
+    assert od.collect_truth_lint(tmp_path / "missing.jsonl") is None

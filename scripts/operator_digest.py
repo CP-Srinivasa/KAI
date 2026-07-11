@@ -338,6 +338,16 @@ def collect_v5_verdict(verdicts_dir: Path | None = None) -> dict[str, Any] | Non
     return max(family, key=lambda r: str(r.get("generated_at_utc", "")))
 
 
+def collect_truth_lint(report_path: Path | None = None) -> dict[str, Any] | None:
+    """Letzter Truth-Lint-Lauf (artifacts/truth_lint_report.jsonl, read-only).
+
+    Severity-Semantik (Operator 07-11): INFO -> Digest-Zeile, WARNING ->
+    Truth-Status degraded, ERROR -> Quarantaene-Marker, CRITICAL ->
+    Evidence-Claim-Block. Der Digest zeigt den letzten Lauf ehrlich an."""
+    rows = _read_jsonl_tail(report_path or (_ARTIFACTS / "truth_lint_report.jsonl"), max_lines=3)
+    return rows[-1] if rows else None
+
+
 def collect_d227() -> dict[str, Any]:
     try:
         from app.alerts.blocked_outcome_report import build_blocked_outcome_report
@@ -553,6 +563,7 @@ def compose_digest_message(
     source_discovery: dict[str, Any] | None = None,
     milestone_state: dict[str, Any] | None = None,
     v5_verdict: dict[str, Any] | None = None,
+    truth_lint: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Testbar.
 
@@ -658,6 +669,28 @@ def compose_digest_message(
                 "allein KEIN Grund für Gate-Lockerung. Tradeable Edge nur via "
                 "side-adjusted Median-Return gegen Kostenhürde belegbar (separat)."
             )
+
+    # Truth-Lint (Invariant-Registry, Operator-Direktive 07-11).
+    if truth_lint is None:
+        lines.append("🧪 *Truth-Lint:* noch kein Lauf (`trading truth-lint`)")
+    else:
+        tl_viol = truth_lint.get("violations") or []
+        tl_max = truth_lint.get("max_severity")
+        tl_active = truth_lint.get("registry_active", "?")
+        tl_total = truth_lint.get("registry_total", "?")
+        if not tl_viol:
+            lines.append(f"🧪 *Truth-Lint:* OK ({tl_active}/{tl_total} Invarianten aktiv)")
+        else:
+            head = {
+                "WARNING": "⚠️ *Truth-Lint: Status DEGRADED*",
+                "ERROR": "⛔ *Truth-Lint: Quarantäne gesetzt*",
+                "CRITICAL": "🛑 *Truth-Lint CRITICAL — Evidence-Claims blockiert*",
+            }.get(str(tl_max), "🧪 *Truth-Lint*")
+            lines.append(f"{head} — {len(tl_viol)} Verletzung(en):")
+            for v in tl_viol[:2]:
+                lines.append(
+                    f"  • [{v.get('severity')}] {v.get('invariant_id')}: {str(v.get('message'))[:110]}"
+                )
 
     # V5-Evidence-Frische.
     fund_age, oi_age = v5_freshness.get("funding"), v5_freshness.get("oi")
@@ -888,6 +921,7 @@ def main(argv: list[str] | None = None) -> int:
             v5_activated_on=v5_activated_on,
             milestone_state=milestone_state,
             v5_verdict=collect_v5_verdict(),
+            truth_lint=collect_truth_lint(),
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")
