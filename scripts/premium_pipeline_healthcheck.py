@@ -42,7 +42,10 @@ import urllib.parse  # noqa: E402
 import urllib.request  # noqa: E402
 
 from app.execution.envelope_to_paper_bridge import run_tick  # noqa: E402
-from app.observability.premium_pipeline_health import compute_pipeline_health  # noqa: E402
+from app.observability.premium_pipeline_health import (  # noqa: E402
+    compute_pipeline_health,
+    read_paper_writer_freeze,
+)
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -102,6 +105,14 @@ def _auto_reprocess_pending() -> None:
     the health-report (which counts ``re_pending`` age separately).
     """
     if os.environ.get("KAI_HEALTHCHECK_AUTO_REPROCESS", "1") == "0":
+        return
+    # Do NOT mutate the paper book during a declared writer-freeze (Weg-B+ epoch
+    # reset). run_tick() replays the paper engine and re-pends envelopes into the
+    # bridge queue — both are portfolio-adjacent writes the freeze forbids
+    # ("keine Portfolio-Mutationen; Daten nur lesen"). The 2026-07-12 incident:
+    # this very timer kept re-pending TradingView envelopes against the frozen book.
+    if read_paper_writer_freeze() is not None:
+        logger.info("auto-reprocess skipped: paper-writer frozen (epoch reset)")
         return
     try:
         result = asyncio.run(run_tick())

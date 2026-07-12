@@ -77,6 +77,9 @@ def _health_report(**kwargs):
     defaults = {
         "_semantic_canary_check_fn": _fake_canary_check_fn,
         "_approval_hmac_check_fn": _fake_hmac_check_fn,
+        # Default: no active freeze, so existing tests stay deterministic even if a
+        # real artifacts/paper_writer_freeze.json is present in the cwd.
+        "_freeze_fn": lambda: None,
     }
     defaults.update(kwargs)
     return pph.compute_pipeline_health(**defaults)
@@ -420,3 +423,107 @@ def test_timer_never_fired_but_service_recent_is_ok() -> None:
     )
     assert result.ok is True
     assert "service ran" in result.detail
+
+
+# ── Paper-writer freeze awareness (2026-07-12 Weg-B+ epoch reset) ──
+
+
+def _fake_freeze():
+    return {
+        "frozen": True,
+        "reason": "historical_accounting_contamination_epoch_reset",
+        "since_utc": "2026-07-12T10:40:00+00:00",
+    }
+
+
+def test_freeze_suppresses_only_paper_writer_checks_listener_stays_live():
+    """With an active freeze the paper-writer units + last-trigger are suppressed
+    (loud OK), but the tg-listener — NOT a paper-writer unit — still FAILs when
+    inactive. This is the exact 2026-07-12 incident: 347 false FAILs were driven
+    solely by the three intentionally-frozen paper signals."""
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    report = _health_report(
+        now=now,
+        _freeze_fn=_fake_freeze,
+        _service_check_fn=_fake_service_check_factory("inactive"),  # ALL units inactive
+        _paper_timer_check_fn=_fake_timer_check_factory(ok=False, age_seconds=99 * 60),
+        _heartbeat_check_fn=_fake_hb_check_factory(ok=True),
+        _bridge_audit_check_fn=_fake_audit_check_fn,
+    )
+    # Only the listener (non-paper-writer) contributes a failure.
+    assert report.failure_modes == ["systemd:kai-tg-listener.service"]
+    # Still 8 checks — frozen units keep a forensic (loud, OK) row.
+    assert len(report.checks) == 8
+    frozen = {c.name for c in report.checks if "FROZEN" in c.detail}
+    assert frozen == {
+        "systemd:kai-paper-trading.timer",
+        "systemd:kai-entry-watch.service",
+        "paper_timer_last_trigger",
+    }
+    assert all(c.ok for c in report.checks if "FROZEN" in c.detail)
+
+
+def test_freeze_with_healthy_listener_yields_healthy_true():
+    """Steady-state during the freeze: listener/heartbeat/canary/hmac green,
+    paper-writer suppressed → report healthy → cron exits 0 silently → no Telegram
+    spam. A stale paper timer that WOULD fail live is ignored while frozen."""
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    report = _health_report(
+        now=now,
+        _freeze_fn=_fake_freeze,
+        _service_check_fn=_fake_service_check_factory("active"),  # only listener queried
+        _paper_timer_check_fn=_fake_timer_check_factory(ok=False, age_seconds=99 * 60),
+        _heartbeat_check_fn=_fake_hb_check_factory(ok=True),
+        _bridge_audit_check_fn=_fake_audit_check_fn,
+    )
+    assert report.healthy is True
+    assert report.failure_modes == []
+
+
+def test_no_freeze_keeps_paper_checks_live_regression():
+    """Without a freeze the paper-writer checks fail exactly as before (the whole
+    point of the probe). Guards against the gate leaking into normal operation."""
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    report = _health_report(
+        now=now,
+        _freeze_fn=lambda: None,
+        _service_check_fn=_fake_service_check_factory("inactive"),
+        _paper_timer_check_fn=_fake_timer_check_factory(ok=False, age_seconds=99 * 60),
+        _heartbeat_check_fn=_fake_hb_check_factory(ok=True),
+        _bridge_audit_check_fn=_fake_audit_check_fn,
+    )
+    assert report.healthy is False
+    assert "paper_timer_last_trigger" in report.failure_modes
+    assert "systemd:kai-paper-trading.timer" in report.failure_modes
+    assert "systemd:kai-entry-watch.service" in report.failure_modes
+
+
+def test_read_freeze_marker_present_and_valid(tmp_path: Path):
+    m = tmp_path / "paper_writer_freeze.json"
+    m.write_text(json.dumps({"frozen": True, "reason": "epoch_reset"}))
+    result = pph.read_paper_writer_freeze(path=m)
+    assert result is not None
+    assert result["reason"] == "epoch_reset"
+
+
+def test_read_freeze_marker_absent_returns_none(tmp_path: Path):
+    assert pph.read_paper_writer_freeze(path=tmp_path / "nope.json") is None
+
+
+def test_read_freeze_marker_frozen_false_returns_none(tmp_path: Path):
+    m = tmp_path / "paper_writer_freeze.json"
+    m.write_text(json.dumps({"frozen": False, "reason": "x"}))
+    assert pph.read_paper_writer_freeze(path=m) is None
+
+
+def test_read_freeze_marker_corrupt_returns_none_failsafe(tmp_path: Path):
+    """A monitor must never silence itself on a corrupt marker — corrupt => live."""
+    m = tmp_path / "paper_writer_freeze.json"
+    m.write_text("{ this is not valid json")
+    assert pph.read_paper_writer_freeze(path=m) is None
+
+
+def test_read_freeze_marker_non_dict_returns_none_failsafe(tmp_path: Path):
+    m = tmp_path / "paper_writer_freeze.json"
+    m.write_text(json.dumps([1, 2, 3]))
+    assert pph.read_paper_writer_freeze(path=m) is None
