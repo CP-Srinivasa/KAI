@@ -1459,6 +1459,11 @@ export type PortfolioSnapshot = {
   // 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC) zur Tages-Fee-Last.
   total_fees_today_usd?: number;
   fills_today?: number;
+  // Epoche v2 (Weg B+, 2026-07-12): aktive Buch-Epoche. "paper_v2_attested" =
+  // attestierter Track-Record ab epoch_started_at_utc; "legacy" = Alt-Buch
+  // (accounting-kontaminiert, nicht als Performance verwendbar).
+  epoch_id?: string;
+  epoch_started_at_utc?: string | null;
   position_count: number;
   positions: PaperPosition[];
 };

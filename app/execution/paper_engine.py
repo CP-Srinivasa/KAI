@@ -183,6 +183,20 @@ class DuplicateOrderError(RuntimeError):
     """
 
 
+class PaperMutationBlockedError(RuntimeError):
+    """Raised when a mutation hits a fail-closed paper book.
+
+    Epoche v2 (Weg B+, 2026-07-12) — zwei Zustände blockieren JEDE Mutation:
+
+    - ``paper_book_frozen``: EXECUTION_PAPER_FROZEN=true (Reset-Fenster). Das
+      Buch ist read-only; kein Entry, kein Auto-Exit, keine Audit-Zeile.
+    - ``paper_state_unverified``: rehydrate_from_audit() ist fehlgeschlagen,
+      der In-Memory-Zustand ist damit NICHT die Wahrheit des Audit-Logs. Ohne
+      dieses Gate würde der Engine still auf dem Konstruktor-Startkapital
+      weiterhandeln (genau der Legacy-Kontaminationsmechanismus).
+    """
+
+
 # NEO-P-005: event-types the paper engine broadcasts to the dashboard SSE
 # bus. We map internal audit-names to public event-names so the dashboard can
 # stay stable if the audit schema ever gets a rename.
@@ -224,12 +238,24 @@ class PaperExecutionEngine:
         live_enabled: bool = False,
         audit_log_path: str | None = None,
         regime_max_hold_seconds: dict[str, int] | None = None,
+        frozen: bool = False,
     ) -> None:
         if live_enabled:
             raise ValueError(
                 "PaperExecutionEngine: live_enabled=True is not allowed. "
                 "Use a live execution adapter instead."
             )
+        # Epoche v2: hartes Mutations-Gate für das Reset-Fenster. Bewusst als
+        # Konstruktor-Snapshot (EXECUTION_PAPER_FROZEN wird beim Prozessstart
+        # gelesen, nicht im Hot-Loop — get_settings() re-parst .env pro Call);
+        # Freeze/Unfreeze verlangt ohnehin einen Service-Restart.
+        self._frozen = frozen
+        # Fail-closed: True sobald ein rehydrate_from_audit() fehlschlägt —
+        # dann ist der In-Memory-Zustand unverifiziert und Mutationen sind
+        # gesperrt, statt still auf dem Konstruktor-Startkapital zu handeln.
+        self._state_unverified = False
+        self._epoch_id = "legacy"
+        self._epoch_started_at_utc: str | None = None
         self._fee_pct = fee_pct / 100
         self._slippage_pct = slippage_pct / 100
         # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter Time-Stop.
@@ -243,7 +269,20 @@ class PaperExecutionEngine:
         self._lifecycle_state_by_correlation_id: dict[str, OrderLifecycleState] = {}
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+        if frozen:
+            logger.warning(
+                "[PAPER] Engine initialized FROZEN (EXECUTION_PAPER_FROZEN) — "
+                "all book mutations are refused fail-closed."
+            )
         logger.info("[PAPER] Engine initialized. equity=%.2f", initial_equity)
+
+    def _mutations_blocked_reason(self) -> str | None:
+        """Fail-closed gate shared by every mutating entry point."""
+        if self._frozen:
+            return "paper_book_frozen"
+        if self._state_unverified:
+            return "paper_state_unverified"
+        return None
 
     @property
     def portfolio(self) -> PaperPortfolio:
@@ -270,6 +309,10 @@ class PaperExecutionEngine:
             "cash": self._portfolio.cash,
             "realized_pnl_usd": self._portfolio.realized_pnl_usd,
             "filled_idempotency_keys": len(self._filled_keys),
+            "epoch_id": self._epoch_id,
+            "epoch_started_at_utc": self._epoch_started_at_utc,
+            "frozen": self._frozen,
+            "state_unverified": self._state_unverified,
         }
 
     def rehydrate_from_audit(self, audit_path: str | Path | None = None) -> bool:
@@ -289,12 +332,33 @@ class PaperExecutionEngine:
         path = Path(audit_path) if audit_path is not None else self._audit_path
         result = replay_paper_audit(path)
         if not result.available:
-            logger.warning("[PAPER] audit replay failed: %s", result.error)
+            # Epoche v2: ein fehlgeschlagener Replay bei existierendem Audit
+            # heißt "Zustand unbekannt" — Mutationen bleiben gesperrt bis ein
+            # späterer Rehydrate gelingt (kein stiller 10k-Fallback mehr).
+            self._state_unverified = True
+            logger.error(
+                "[PAPER] audit replay failed — mutations blocked fail-closed: %s",
+                result.error,
+            )
             return False
+        self._state_unverified = False
         self._portfolio.positions = dict(result.positions)
-        if result.cash_usd:
+        # Falsy-Zero-Fix (Weg B+ P0): eine nachweisliche 0.0 wird wiederher-
+        # gestellt; nur wenn das Audit gar keine Cash-Evidenz enthält, bleibt
+        # das Konstruktor-Startkapital stehen.
+        if result.cash_observed:
             self._portfolio.cash = result.cash_usd
         self._portfolio.realized_pnl_usd = result.realized_pnl_usd
+        self._epoch_id = result.epoch_id
+        self._epoch_started_at_utc = result.epoch_started_at_utc
+        if result.integrity_warnings:
+            logger.warning(
+                "[PAPER] audit-replay ledger observed %d cash-chain discontinuit%s: %s",
+                len(result.integrity_warnings),
+                "y" if len(result.integrity_warnings) == 1 else "ies",
+                "; ".join(f"line {ln}: {reason}" for ln, reason in result.integrity_warnings[:3])
+                + ("; ..." if len(result.integrity_warnings) > 3 else ""),
+            )
         # Sprint C: persistent dedup-Set aus audit-replay übernehmen.
         self._filled_keys.update(result.filled_idempotency_keys)
         self._lifecycle_state_by_correlation_id = {
@@ -451,6 +515,14 @@ class PaperExecutionEngine:
         Crosswalk anzeigen kann. Beide optional — Legacy-Tests ohne diese
         Felder bleiben funktional.
         """
+        blocked = self._mutations_blocked_reason()
+        if blocked is not None:
+            # Fail-closed UND laut: während Freeze/unverifiziertem Zustand darf
+            # kein Aufrufer still weiterarbeiten — er soll den Betriebszustand
+            # sehen, nicht ein leeres Ergebnis interpretieren müssen.
+            raise PaperMutationBlockedError(
+                f"create_order refused ({blocked}): paper book mutations are disabled"
+            )
         if position_side not in {"long", "short"}:
             raise ValueError("position_side must be 'long' or 'short'")
         if (
@@ -531,6 +603,16 @@ class PaperExecutionEngine:
         Execute a paper fill for an order.
         Returns None if: duplicate (idempotency), insufficient cash, or invalid price.
         """
+        blocked = self._mutations_blocked_reason()
+        if blocked is not None:
+            logger.error(
+                "[PAPER] fill_order refused (%s): %s %s qty=%s",
+                blocked,
+                order.side,
+                order.symbol,
+                order.quantity,
+            )
+            return None
         if order.idempotency_key in self._filled_keys:
             logger.warning("[PAPER] Duplicate order rejected: key=%s", order.idempotency_key)
             return None
@@ -705,6 +787,12 @@ class PaperExecutionEngine:
                     order.symbol,
                 )
                 return None
+
+        # Epoche v2 (Weg B+): Cash-Delta ↔ Order-Notional je Event nachvollziehbar.
+        # cash_before/cash_delta wandern auf die order_filled-Zeile, damit (a) der
+        # Ledger-Replay Deltas statt Writer-Snapshots bucht und (b) Forensik einen
+        # Bruch der Cash-Kette pro Zeile erkennt statt ihn zu erben.
+        cash_before = self._portfolio.cash
 
         if order.position_side == "long" and order.side == "buy":
             # 2026-06-25 DQ-Fix: no long entry while a SHORT is open on the same
@@ -930,6 +1018,8 @@ class PaperExecutionEngine:
             {
                 **fill.__dict__,
                 "portfolio_cash": self._portfolio.cash,
+                "cash_before_usd": cash_before,
+                "cash_delta_usd": self._portfolio.cash - cash_before,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
                 "requested_quantity": requested_quantity,
                 "filled_quantity": fill_quantity,
@@ -1053,6 +1143,13 @@ class PaperExecutionEngine:
         position. Setting an empty list reverts to legacy single-TP behaviour.
         Audit event: ``position_tp_tiers_set``.
         """
+        if self._mutations_blocked_reason() is not None:
+            logger.warning(
+                "[PAPER] set_position_tp_tiers refused (%s): %s",
+                self._mutations_blocked_reason(),
+                symbol,
+            )
+            return False
         pos = self._portfolio.positions.get(symbol)
         if pos is None:
             return False
@@ -1249,6 +1346,13 @@ class PaperExecutionEngine:
         Appends a ``position_adjusted`` audit event so replay reconstructs
         state correctly. Returns True iff a position existed and was updated.
         """
+        if self._mutations_blocked_reason() is not None:
+            logger.warning(
+                "[PAPER] adjust_position refused (%s): %s",
+                self._mutations_blocked_reason(),
+                symbol,
+            )
+            return False
         pos = self._portfolio.positions.get(symbol)
         if pos is None:
             return False
@@ -1313,6 +1417,13 @@ class PaperExecutionEngine:
         corrected to match reality so the new /premium-signals/position-repair
         consumer can type-check.
         """
+        if self._mutations_blocked_reason() is not None:
+            logger.warning(
+                "[PAPER] close_position refused (%s): %s",
+                self._mutations_blocked_reason(),
+                symbol,
+            )
+            return None
         pos = self._portfolio.positions.get(symbol)
         if not pos:
             return None
@@ -1450,6 +1561,12 @@ class PaperExecutionEngine:
         — a stop hit closes the full residual position regardless of tiers.
         """
         fills: list[PaperFill] = []
+        if self._mutations_blocked_reason() is not None:
+            logger.warning(
+                "[PAPER] monitor_positions refused (%s): auto-exits disabled",
+                self._mutations_blocked_reason(),
+            )
+            return fills
         for symbol in list(self._portfolio.positions.keys()):
             price = prices_by_symbol.get(symbol)
             if price is None or price <= 0:

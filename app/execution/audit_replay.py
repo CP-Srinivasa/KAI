@@ -74,6 +74,24 @@ class AuditReplayResult:
     # recovery available when legacy/corrupt lifecycle rows are encountered.
     lifecycle_history: dict[str, tuple[LifecycleTransition, ...]] = field(default_factory=dict)
     lifecycle_replay_errors: tuple[str, ...] = ()
+    # Epoche v2 (Weg B+, 2026-07-12): cash_observed unterscheidet "Cash ist
+    # nachweislich X" (auch X=0.0!) von "Audit enthält keine Cash-Evidenz".
+    # Rehydrate darf das Startkapital NUR im zweiten Fall behalten — die alte
+    # falsy-Prüfung (`if result.cash_usd:`) hat eine echte 0 als "keine
+    # Evidenz" fehlgedeutet (Restart-Cash-Reset-Kontamination).
+    cash_observed: bool = False
+    # Aktive Buch-Epoche: "legacy" bis zum ersten portfolio_epoch_reset-Event,
+    # danach dessen new_epoch_id. Ab der Epochengrenze läuft der Replay im
+    # Ledger-Modus: Cash = Start-Cash + Σ validierter Fill-Deltas statt blinder
+    # Übernahme des letzten portfolio_cash-Snapshots (Multi-Writer-Schutz).
+    epoch_id: str = "legacy"
+    epoch_started_at_utc: str | None = None
+    epoch_starting_cash_usd: float | None = None
+    # Ledger-Forensik: (line_number, reason) für angewandte Events, deren
+    # aufgezeichneter portfolio_cash-Snapshot vom Ledger-Stand abweicht
+    # (Signatur eines stale Multi-Writer-Snapshots). Events werden trotzdem
+    # gebucht — die Warnung macht die Divergenz sichtbar statt sie zu schlucken.
+    integrity_warnings: tuple[tuple[int, str], ...] = field(default_factory=tuple)
 
 
 def _coerce_float(value: object) -> float | None:
@@ -133,6 +151,39 @@ def _coerce_lifecycle_transition(
     )
 
 
+def last_epoch_reset_info(audit_path: Path) -> tuple[str, str] | None:
+    """Return ``(new_epoch_id, timestamp_utc)`` of the LAST portfolio_epoch_reset.
+
+    Leichtgewichtiger Scan (Substring-Vorfilter, kein voller Replay) für
+    Read-Pfade, die nur die Epochengrenze brauchen — z.B. den DB-primary-Guard
+    in build_portfolio_snapshot, der keinen Prä-Epoch-Datenbank-Snapshot mehr
+    servieren darf. None = Buch ohne Epoch-Event (legacy).
+    """
+    if not audit_path.exists():
+        return None
+    info: tuple[str, str] | None = None
+    try:
+        text = audit_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        if "portfolio_epoch_reset" not in raw_line:
+            continue
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if _coerce_str(payload.get("event_type")) != "portfolio_epoch_reset":
+            continue
+        epoch_id = _coerce_str(payload.get("new_epoch_id"))
+        ts = _coerce_str(payload.get("timestamp_utc"))
+        if epoch_id is not None and ts is not None:
+            info = (epoch_id, ts)
+    return info
+
+
 def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> AuditReplayResult:
     """Replay the paper execution audit JSONL into an AuditReplayResult.
 
@@ -171,6 +222,16 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
     fills_today = 0
     # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
     skipped: list[tuple[int, str]] = []
+    # Epoche v2 (2026-07-12): Ledger-Zustand. cash_observed=True sobald das
+    # Audit echte Cash-Evidenz liefert (Snapshot, Delta oder Epoch-Seed).
+    cash_observed = False
+    ledger_mode = False
+    epoch_id = "legacy"
+    epoch_started_at: str | None = None
+    epoch_starting_cash: float | None = None
+    integrity_warnings: list[tuple[int, str]] = []
+    # Invariante 9 (doppeltes Event-Replay ändert Zustand nur 1×): fill_id-Dedup.
+    seen_fill_ids: set[str] = set()
 
     for line_number, raw_line in enumerate(
         audit_path.read_text(encoding="utf-8").splitlines(),
@@ -200,6 +261,44 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             )
 
         event_type = _coerce_str(payload.get("event_type"))
+        if event_type == "portfolio_epoch_reset":
+            # Weg B+ (Operator-Direktive 2026-07-12): attestierter Epochenwechsel.
+            # Alles vor diesem Event ist legacy_contaminated und geht NICHT in
+            # den neuen Zustand ein — Positionen werden an der Epochengrenze
+            # invalidiert (nicht geschlossen), Cash wird auf den attestierten
+            # Startwert geseedet, PnL-/Fee-Zähler beginnen bei 0. Ab hier läuft
+            # der Replay im Ledger-Modus (Cash aus Fill-Deltas, siehe unten).
+            _epoch_cash = _coerce_float(payload.get("new_starting_cash_usd"))
+            _epoch_new_id = _coerce_str(payload.get("new_epoch_id"))
+            if _epoch_cash is None or _epoch_cash <= 0.0 or _epoch_new_id is None:
+                # Ein defektes Epoch-Event ist ein fataler Buchzustand — hier
+                # gibt es keinen sinnvollen "weiter wie bisher"-Modus.
+                return AuditReplayResult(
+                    positions={},
+                    cash_usd=0.0,
+                    realized_pnl_usd=0.0,
+                    available=False,
+                    error=f"audit_epoch_reset_invalid_line_{line_number}",
+                )
+            positions.clear()
+            cash_usd = _epoch_cash
+            cash_observed = True
+            realized_pnl_usd = 0.0
+            total_fees_usd = 0.0
+            total_fees_artifact_usd = 0.0
+            total_fees_phantom_usd = 0.0
+            phantom_fills = 0
+            total_fees_today_usd = 0.0
+            fills_today = 0
+            ledger_mode = True
+            epoch_id = _epoch_new_id
+            epoch_started_at = _coerce_str(payload.get("timestamp_utc"))
+            epoch_starting_cash = _epoch_cash
+            # filled_keys/seen_fill_ids bleiben absichtlich stehen: ein nach
+            # dem Reset nachzügelnder Duplikat-Fill aus der Legacy-Ära darf im
+            # neuen Buch ebenso wenig landen wie vor dem Reset.
+            continue
+
         if event_type == "portfolio_correction":
             # DS-20260529-V1: explicit, auditable book correction. cash_usd and
             # realized_pnl_usd are reconstructed as the *latest snapshot* from
@@ -215,6 +314,7 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             cash_delta = _coerce_float(payload.get("cash_delta_usd"))
             if cash_delta is not None:
                 cash_usd += cash_delta
+                cash_observed = True
             continue
 
         if event_type == "lifecycle_transition":
@@ -354,6 +454,19 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             )
             skipped.append((line_number, reason))
             continue
+
+        # Invariante 9 (Epoche v2, 2026-07-12): identische Fill-Zeilen (gleiche
+        # fill_id) dürfen den Zustand nur EINMAL ändern — doppeltes Replay einer
+        # Zeile (Multi-Writer-Race, versehentliche Doppel-Appends) wird als
+        # Duplikat übersprungen und forensisch gemeldet.
+        _fill_id = _coerce_str(payload.get("fill_id"))
+        if _fill_id is not None:
+            if _fill_id in seen_fill_ids:
+                reason = f"duplicate_fill_id_line_{line_number}"
+                logger.warning("[audit_replay] skip %s (fill_id=%s)", reason, _fill_id)
+                skipped.append((line_number, reason))
+                continue
+            seen_fill_ids.add(_fill_id)
 
         # 2026-06-25: Fees über alle gültigen Fills summieren (Entry + Exit).
         # 60-bps-Fills = Mai-error-path-Artefakt (Tabelle v1.0.0) → separat, nicht
@@ -527,16 +640,55 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             continue
 
         portfolio_cash = _coerce_float(payload.get("portfolio_cash"))
-        if portfolio_cash is not None:
-            cash_usd = portfolio_cash
-        # NEO-P-101-r2 / DECISION_LOG D-209: payload["realized_pnl_usd"]
-        # is the KUMULATIVE portfolio total per fill — NEVER per-trade. Per-trade
-        # NETTO PnL lives in payload["trade_pnl_usd"] on schema_version=v2
-        # position_closed events. Reading here is correct: we want the latest
-        # cumulative snapshot to seed self._portfolio.realized_pnl_usd.
-        realized = _coerce_float(payload.get("realized_pnl_usd"))
-        if realized is not None:
-            realized_pnl_usd = realized
+        if ledger_mode:
+            # Epoche v2: Cash ist ein deterministisches Ledger — Start-Cash der
+            # Epoche + Σ Fill-Deltas. Der aufgezeichnete portfolio_cash-Snapshot
+            # eines einzelnen Writers wird NICHT mehr übernommen (genau diese
+            # blinde Übernahme hat bei parallelen Writern die unerklärten
+            # Cash-Sprünge der Legacy-Ära erzeugt); er dient nur noch als
+            # Konsistenz-Check und produziert bei Abweichung eine Warnung.
+            cash_delta = _coerce_float(payload.get("cash_delta_usd"))
+            if cash_delta is None:
+                notional = quantity * fill_price
+                if is_open:
+                    # Long-Entry belastet Cash (Kauf), Short-Entry schreibt
+                    # die Verkaufserlöse gut — Fee je exakt einmal.
+                    cash_delta = (
+                        -(notional + _fee) if position_side_val == "long" else notional - _fee
+                    )
+                else:
+                    # Long-Exit schreibt Erlöse gut, Short-Cover belastet Cash.
+                    cash_delta = (
+                        notional - _fee if position_side_val == "long" else -(notional + _fee)
+                    )
+            cash_usd += cash_delta
+            cash_observed = True
+            if portfolio_cash is not None and abs(cash_usd - portfolio_cash) > 0.01:
+                integrity_warnings.append(
+                    (
+                        line_number,
+                        "cash_chain_discontinuity "
+                        f"ledger={cash_usd:.2f} recorded={portfolio_cash:.2f}",
+                    )
+                )
+            # Realized-PnL ebenfalls als Ledger: Σ per-Fill-Netto-PnL
+            # (pnl_usd ist auf Close-Fills der per-trade NETTO-Wert; Entry-Fills
+            # tragen 0.0). Kein kumulativer Snapshot-Import mehr.
+            _fill_pnl = _coerce_float(payload.get("pnl_usd"))
+            if is_close and _fill_pnl is not None:
+                realized_pnl_usd += _fill_pnl
+        else:
+            if portfolio_cash is not None:
+                cash_usd = portfolio_cash
+                cash_observed = True
+            # NEO-P-101-r2 / DECISION_LOG D-209: payload["realized_pnl_usd"]
+            # is the KUMULATIVE portfolio total per fill — NEVER per-trade. Per-trade
+            # NETTO PnL lives in payload["trade_pnl_usd"] on schema_version=v2
+            # position_closed events. Reading here is correct: we want the latest
+            # cumulative snapshot to seed self._portfolio.realized_pnl_usd.
+            realized = _coerce_float(payload.get("realized_pnl_usd"))
+            if realized is not None:
+                realized_pnl_usd = realized
 
     return AuditReplayResult(
         positions=positions,
@@ -552,6 +704,11 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
         fills_today=fills_today,
         filled_idempotency_keys=frozenset(filled_keys),
         skipped_events=tuple(skipped),
+        cash_observed=cash_observed,
+        epoch_id=epoch_id,
+        epoch_started_at_utc=epoch_started_at,
+        epoch_starting_cash_usd=epoch_starting_cash,
+        integrity_warnings=tuple(integrity_warnings),
         lifecycle_history={
             correlation_id: tuple(transitions)
             for correlation_id, transitions in lifecycle_history.items()

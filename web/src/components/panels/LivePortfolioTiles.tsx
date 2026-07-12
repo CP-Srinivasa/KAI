@@ -104,6 +104,16 @@ function PortfolioTile() {
         />
       ) : (
         <div>
+          {/* Epoche v2 (Weg B+): Sprachregel — attestierter Track-Record beginnt
+              mit dem Epochenwechsel; die Legacy-Kurve ist keine Performance. */}
+          {q.data.epoch_id === "paper_v2_attested" && (
+            <p className="text-2xs text-fg-subtle">
+              Paper Portfolio v2 · Start 10.000 USD · Track-Record gültig ab{" "}
+              {q.data.epoch_started_at_utc
+                ? q.data.epoch_started_at_utc.slice(0, 10)
+                : "Epochenwechsel"}
+            </p>
+          )}
           {/* Gesamt-Equity = was wirklich drin ist (Cash + Marktwert offener
               Positionen, short-aware), inkl. realisierter + unrealisierter G/V,
               Fees sind bereits abgezogen. */}

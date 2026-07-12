@@ -13,7 +13,11 @@ from typing import NotRequired, TypedDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
+from app.execution.audit_replay import (
+    AuditReplayResult,
+    last_epoch_reset_info,
+    replay_paper_audit,
+)
 from app.learning.bayes_quarantine import is_corrupt_close
 from app.market_data.models import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
@@ -175,10 +179,19 @@ class PortfolioSnapshot:
     # Tages-Fee-Last neben der Gesamtsumme.
     total_fees_today_usd: float = 0.0
     fills_today: int = 0
+    # Epoche v2 (Weg B+, 2026-07-12): aktive Buch-Epoche. "legacy" = Buch ohne
+    # portfolio_epoch_reset-Event (Alt-Track-Record: INVALID_FOR_PERFORMANCE),
+    # sonst new_epoch_id des letzten Reset-Events. Ab Epoche v2 gilt: Track-
+    # Record beginnt bei epoch_started_at_utc; nichts wird epochenübergreifend
+    # kumuliert (Operator-Direktive kai_paper_epoch_reset_directive_20260712).
+    epoch_id: str = "legacy"
+    epoch_started_at_utc: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         return {
             "report_type": "paper_portfolio_snapshot",
+            "epoch_id": self.epoch_id,
+            "epoch_started_at_utc": self.epoch_started_at_utc,
             "generated_at": self.generated_at_utc,
             "source": self.source,
             "audit_path": self.audit_path,
@@ -300,9 +313,32 @@ async def _query_db_latest_portfolio_state(
         return None
 
 
+def _record_predates_epoch(state: PortfolioStateRecord, epoch_ts_iso: str) -> bool:
+    """True when the DB snapshot was written BEFORE the epoch boundary.
+
+    Epoche v2: ein PortfolioStateRecord aus der Legacy-Ära darf nach dem
+    attestierten Reset nicht mehr als DB-primary-Snapshot serviert werden —
+    er trägt invalidierten Zustand. Nicht parsebare Zeitstempel werden
+    fail-closed als "veraltet" behandelt (Replay ist die Ground-Truth).
+    """
+    try:
+        epoch_dt = datetime.fromisoformat(epoch_ts_iso)
+    except ValueError:
+        return True
+    created = getattr(state, "created_at", None)
+    if not isinstance(created, datetime):
+        return True
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    if epoch_dt.tzinfo is None:
+        epoch_dt = epoch_dt.replace(tzinfo=UTC)
+    return created < epoch_dt
+
+
 def _build_snapshot_from_portfolio_state(
     state: PortfolioStateRecord,
     generated_at: str,
+    epoch_info: tuple[str, str] | None = None,
 ) -> PortfolioSnapshot:
     """Build a PortfolioSnapshot from a PortfolioStateRecord (DB-primary path).
 
@@ -406,6 +442,8 @@ def _build_snapshot_from_portfolio_state(
         total_fees_phantom_usd=0.0,
         total_fees_today_usd=0.0,
         fills_today=0,
+        epoch_id=epoch_info[0] if epoch_info is not None else "legacy",
+        epoch_started_at_utc=epoch_info[1] if epoch_info is not None else None,
     )
 
 
@@ -528,18 +566,30 @@ async def build_portfolio_snapshot(
     """
     generated_at = datetime.now(UTC).isoformat()
 
+    resolved_path = Path(audit_path).resolve()
+    # Epoche v2: Epochengrenze VOR dem DB-primary-Pfad bestimmen — ein
+    # PortfolioStateRecord aus der Legacy-Ära (geschrieben vor dem attestierten
+    # Reset) trägt invalidierten Zustand und darf nicht serviert werden.
+    epoch_info = last_epoch_reset_info(resolved_path)
+
     # DB-primary: open a scoped session, query latest portfolio state
     if session_factory is not None:
         try:
             async with session_factory() as session:
                 state = await _query_db_latest_portfolio_state(session)
             if state is not None:
-                return _build_snapshot_from_portfolio_state(state, generated_at)
+                if epoch_info is not None and _record_predates_epoch(state, epoch_info[1]):
+                    logger.warning(
+                        "[PORTFOLIO] DB snapshot predates epoch %s (%s) — "
+                        "falling back to JSONL replay",
+                        epoch_info[0],
+                        epoch_info[1],
+                    )
+                else:
+                    return _build_snapshot_from_portfolio_state(state, generated_at, epoch_info)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[PORTFOLIO] DB-primary path failed, falling back to JSONL: %s", exc)
-        # DB empty or query failed → fall through to JSONL
-
-    resolved_path = Path(audit_path).resolve()
+        # DB empty, pre-epoch or query failed → fall through to JSONL
     # today_utc derived from the snapshot's generation time → per-day fee tracking.
     replay = _replay_paper_audit(resolved_path, today_utc=generated_at[:10])
 
@@ -558,6 +608,8 @@ async def build_portfolio_snapshot(
             exposure_summary=empty_exposure,
             available=False,
             error=replay.error,
+            epoch_id=epoch_info[0] if epoch_info is not None else "legacy",
+            epoch_started_at_utc=epoch_info[1] if epoch_info is not None else None,
         )
 
     sorted_symbols = sorted(replay.positions)
@@ -677,6 +729,8 @@ async def build_portfolio_snapshot(
         total_fees_phantom_usd=round(replay.total_fees_phantom_usd, 8),
         total_fees_today_usd=round(replay.total_fees_today_usd, 8),
         fills_today=replay.fills_today,
+        epoch_id=replay.epoch_id,
+        epoch_started_at_utc=replay.epoch_started_at_utc,
     )
 
 
@@ -757,6 +811,11 @@ def compute_realized_by_asset(
         "available": False,
         "error": None,
         "invalid_lines": [],
+        # Epoche v2: Closes vor der letzten Epochengrenze sind
+        # INVALID_FOR_PERFORMANCE und werden hier NICHT aggregiert.
+        "epoch_id": "legacy",
+        "epoch_started_at_utc": None,
+        "pre_epoch_closes_excluded": 0,
     }
 
     if not audit_path.exists():
@@ -781,6 +840,8 @@ def compute_realized_by_asset(
     parsed_records: list[tuple[int, dict[str, object]]] = []
     source_by_order: dict[str, str] = {}
     source_by_correlation: dict[str, str] = {}
+    epoch_boundary_line = 0
+    pre_epoch_excluded = 0
     for line_no, raw_line in enumerate(raw.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
@@ -793,6 +854,14 @@ def compute_realized_by_asset(
         if not isinstance(d, dict):
             invalid.append((line_no, "non_object_payload"))
             continue
+        if d.get("event_type") == "portfolio_epoch_reset":
+            # Letzte Epochengrenze gewinnt; alles davor bleibt auditierbar,
+            # geht aber nicht mehr in Performance-Aggregate ein (Weg B+).
+            epoch_boundary_line = line_no
+            nid = d.get("new_epoch_id")
+            result["epoch_id"] = nid.strip() if isinstance(nid, str) and nid.strip() else "unknown"
+            tsr = d.get("timestamp_utc")
+            result["epoch_started_at_utc"] = tsr if isinstance(tsr, str) and tsr else None
         parsed_records.append((line_no, d))
         source_raw = d.get("signal_source") or d.get("source")
         source = source_raw.strip() if isinstance(source_raw, str) and source_raw.strip() else None
@@ -811,6 +880,9 @@ def compute_realized_by_asset(
                 last_event_ts = ts
         ev = d.get("event_type")
         if ev not in {"position_closed", "position_partial_closed"}:
+            continue
+        if epoch_boundary_line and line_no < epoch_boundary_line:
+            pre_epoch_excluded += 1
             continue
         # Resolve source attribution and close reason
         sig_source = (
@@ -997,6 +1069,7 @@ def compute_realized_by_asset(
     recent_trades.sort(key=lambda r: str(r.get("closed_at_utc") or ""), reverse=True)
     result["recent_trades"] = recent_trades[:20]
     result["audit_last_event_utc"] = last_event_ts
+    result["pre_epoch_closes_excluded"] = pre_epoch_excluded
     result["available"] = True
     result["invalid_lines"] = invalid
     return result
