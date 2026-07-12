@@ -370,6 +370,8 @@ async def auto_annotate_pending(
 
     from app.core.settings import get_settings
 
+    no_price_symbols: dict[str, int] = {}
+    too_young = 0
     adapter = CoinGeckoAdapter(
         timeout_seconds=15,
         api_key=get_settings().coingecko_api_key or None,
@@ -469,6 +471,14 @@ async def auto_annotate_pending(
                 any_opposite_cross = True
 
         if not any_data_seen:
+            if api_calls_this_alert:
+                # Preisquelle liefert fuer dieses Symbol nichts (Exoten wie
+                # CASHCAT sind auf CoinGecko unpreisbar) — diese Alerts bleiben
+                # STRUKTURELL unannotiert und duerfen den Backlog-Zaehler nicht
+                # als "Annotator kaputt" einfaerben (Daily 07-12 V2).
+                no_price_symbols[symbol] = no_price_symbols.get(symbol, 0) + 1
+            else:
+                too_young += 1
             log.warning(
                 "auto_annotate.price_unavailable",
                 document_id=rec.document_id,
@@ -559,6 +569,11 @@ async def auto_annotate_pending(
         hits=sum(1 for a in results if a.outcome == "hit"),
         misses=sum(1 for a in results if a.outcome == "miss"),
         inconclusive=sum(1 for a in results if a.outcome == "inconclusive"),
+        # V2 (Daily 07-12): Rest-Backlog aufschluesseln — strukturell
+        # unpreisbare Symbole sichtbar machen statt Dauerrauschen.
+        no_price=sum(no_price_symbols.values()),
+        no_price_symbols=dict(sorted(no_price_symbols.items(), key=lambda kv: -kv[1])[:5]),
+        too_young_windows=too_young,
     )
     # V-DB5 audit S-B1/H-1: Lock release am Ende des Run.
     # Bei Exception in der CoinGecko-Loop bleibt Lock liegen — wird bei

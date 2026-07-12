@@ -132,6 +132,73 @@ def test_tl002_warns_on_fill_in_mock_band(tmp_path: Path) -> None:
     assert v[0]["evidence"]["per_symbol"] == {"ABC/USDT": 1}
 
 
+def test_tl002_excludes_band_fill_with_real_source(tmp_path: Path) -> None:
+    """V1 (Daily 07-12): AAVE~98$ mit realer market_data_source ist kein
+    Mock-Verdacht; mock-Quelle und fehlender Join bleiben WARNING (fail-closed)."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {  # reale Quelle -> ausgenommen, nur Evidence-Zaehler
+                "event_type": "order_filled",
+                "order_id": "ord_real",
+                "symbol": "AAVE/USDT",
+                "fill_price": 98.77,
+                "timestamp_utc": "2026-07-12T09:00:00+00:00",
+            },
+            {  # mock-Quelle -> Verletzung
+                "event_type": "order_filled",
+                "order_id": "ord_mock",
+                "symbol": "XYZ/USDT",
+                "fill_price": 100.10,
+                "timestamp_utc": "2026-07-12T09:00:00+00:00",
+            },
+            {  # kein Join -> Verletzung (fail-closed)
+                "event_type": "order_filled",
+                "order_id": "ord_unknown",
+                "symbol": "QQQ/USDT",
+                "fill_price": 99.50,
+                "timestamp_utc": "2026-07-12T09:00:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(
+        art / "trading_loop_audit.jsonl",
+        [
+            {"order_id": "ord_real", "notes": ["market_data_source:bybit"]},
+            {"order_id": "ord_mock", "notes": ["market_data_source:mock"]},
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 2
+    assert v[0]["evidence"]["band_real_source_excluded"] == 1
+    assert "AAVE/USDT" not in v[0]["evidence"]["per_symbol"]
+
+
+def test_tl002_silent_when_all_band_fills_have_real_source(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_real",
+                "symbol": "AAVE/USDT",
+                "fill_price": 98.77,
+                "timestamp_utc": "2026-07-12T09:00:00+00:00",
+            }
+        ],
+    )
+    _write_jsonl(
+        art / "trading_loop_audit.jsonl",
+        [{"order_id": "ord_real", "notes": ["market_data_source:coingecko"]}],
+    )
+    result = run_lint(art)
+    assert not [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+
+
 # ── TL-008 fehlende Provenance ───────────────────────────────────────────────
 
 
