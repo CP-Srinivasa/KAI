@@ -48,6 +48,9 @@ def get_paper_engine() -> PaperExecutionEngine:
         live_enabled=False,
         # WP-A: regime-konditionierter Time-Stop nur wenn explizit aktiviert.
         regime_max_hold_seconds=(s.regime_exit_max_hold_seconds if s.regime_exit_enabled else None),
+        # Epoche v2: EXECUTION_PAPER_FROZEN=true sperrt alle Buch-Mutationen
+        # fail-closed (Reset-Fenster). Prozessstart-Snapshot, siehe Engine-Doku.
+        frozen=s.paper_frozen,
     )
 
 

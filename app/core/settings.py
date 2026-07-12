@@ -523,6 +523,10 @@ class ExecutionSettings(BaseSettings):
     paper_initial_equity: float = Field(default=10000.0)
     paper_fee_pct: float = Field(default=0.1)  # 0.1% fee
     paper_slippage_pct: float = Field(default=0.05)  # 0.05% slippage
+    # Epoche v2 (Weg B+, 2026-07-12): EXECUTION_PAPER_FROZEN=true ⇒ Engine
+    # verweigert JEDE Buch-Mutation fail-closed (Reset-Fenster). Prozessstart-
+    # Snapshot — Freeze/Unfreeze verlangt Service-Restart (kein Hot-Toggle).
+    paper_frozen: bool = Field(default=False)
 
     # WP-A regime-edge-capture (2026-06-15). Regime-konditionierter Time-Stop im
     # PaperExecutionEngine: schließt Positionen, deren Regime-at-Entry ein
