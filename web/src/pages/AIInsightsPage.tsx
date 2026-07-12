@@ -182,7 +182,7 @@ export function AIInsightsPage() {
         const stageHeadline =
           stage === "ready" ? "Gate kann freigegeben werden"
           : stage === "active" ? "Gate hält noch — Bedingungen nicht erfüllt"
-          : stage === "released" ? "Gate freigegeben — Live-Mode möglich"
+          : stage === "released" ? "Hold gelöst — Live-Pfad bleibt gesperrt (Edge NO_GO)"
           : "Gate-Status unbekannt";
         const stageTone: "pos" | "warn" | "neg" | "muted" =
           stage === "ready" ? "pos"
