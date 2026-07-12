@@ -192,8 +192,8 @@ export function AIInsightsPage() {
         return (
           <Card padded className="synthwave-pulse-edge overflow-hidden">
             <CardHeader
-              title="Production-Gate für Live-Trading"
-              subtitle="Bevor KAI auf echtes Geld umschalten darf, müssen drei Stufen erfüllt sein."
+              title="Production-Gate (Quality-Hold)"
+              subtitle="Misst nur die Pipeline-Qualität. Live-Trading bleibt unabhängig davon gesperrt: Edge-Verdikt NO_GO terminal — Re-Open nur via neuer Prä-Registrierung + expliziter Operator-Freigabe."
               right={
                 <Badge tone={stageTone} dot>
                   {stageHeadline}
@@ -221,8 +221,8 @@ export function AIInsightsPage() {
                 />
                 <span className="h-px flex-1 min-w-[20px] bg-fg-subtle/30" aria-hidden />
                 <GateStage
-                  label="3. Freigegeben"
-                  hint="Live-Mode möglich (Operator-Approval extra)"
+                  label="3. Hold gelöst"
+                  hint="Qualitäts-Hold aufgehoben — KEIN Live-Pfad: Edge NO_GO terminal, Operator-Gate bleibt zu"
                   state={stage === "released" ? "current" : "pending"}
                 />
               </div>
