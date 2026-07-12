@@ -138,7 +138,7 @@ function IntegrationsTab() {
         />
         <IntegrationRow
           label={tk("llm_label")}
-          provider={tk("llm_provider")}
+          provider={it?.llm.providers?.length ? it.llm.providers.join(" + ") : tk("llm_provider")}
           status={rowStatus(it?.llm.status)}
           note={note("llm_note", it?.llm.status === "active")}
         />
