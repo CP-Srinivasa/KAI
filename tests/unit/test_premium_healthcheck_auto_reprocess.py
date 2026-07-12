@@ -138,3 +138,37 @@ def test_auto_reprocess_handles_disabled_bridge(
     monkeypatch.setattr(healthcheck_module, "run_tick", fake_tick)
     # No raise, no crash.
     healthcheck_module._auto_reprocess_pending()
+
+
+def test_auto_reprocess_skipped_when_paper_writer_frozen(
+    monkeypatch: pytest.MonkeyPatch, healthcheck_module
+):
+    """During a declared writer-freeze the pre-step must NOT run_tick — that would
+    replay the paper engine and re-pend envelopes against the read-only book
+    (the 2026-07-12 freeze-violation this very timer was causing)."""
+    monkeypatch.setenv("KAI_HEALTHCHECK_AUTO_REPROCESS", "1")
+    calls = {"n": 0}
+
+    async def fake_run_tick():
+        calls["n"] += 1
+        return BridgeTickResult(enabled=True)
+
+    monkeypatch.setattr(healthcheck_module, "run_tick", fake_run_tick)
+    monkeypatch.setattr(healthcheck_module, "read_paper_writer_freeze", lambda: {"frozen": True})
+    healthcheck_module._auto_reprocess_pending()
+    assert calls["n"] == 0, "run_tick must not run while the paper writer is frozen"
+
+
+def test_auto_reprocess_runs_when_not_frozen(monkeypatch: pytest.MonkeyPatch, healthcheck_module):
+    """Regression: no freeze => the pre-step still runs run_tick as before."""
+    monkeypatch.setenv("KAI_HEALTHCHECK_AUTO_REPROCESS", "1")
+    calls = {"n": 0}
+
+    async def fake_run_tick():
+        calls["n"] += 1
+        return BridgeTickResult(enabled=True, envelopes_scanned=0)
+
+    monkeypatch.setattr(healthcheck_module, "run_tick", fake_run_tick)
+    monkeypatch.setattr(healthcheck_module, "read_paper_writer_freeze", lambda: None)
+    healthcheck_module._auto_reprocess_pending()
+    assert calls["n"] == 1

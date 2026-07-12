@@ -64,6 +64,14 @@ DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC = 8 * 60
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _HEARTBEAT_FILE = Path("artifacts/telegram_listener_heartbeat")
 _SEMANTIC_CANARY_FILE = Path("artifacts/telegram_channel_semantic_canary.json")
+_PAPER_WRITER_FREEZE_MARKER = Path("artifacts/paper_writer_freeze.json")
+
+# During a declared paper-writer freeze (2026-07-12 Weg-B+ epoch reset) the
+# paper-trading timer + entry-watch service are INTENTIONALLY stopped and the paper
+# book is read-only. Without a gate the liveness checks below false-alarm on every
+# 60s tick (347 Telegram FAILs on 2026-07-12). These are the ONLY checks the freeze
+# legitimately silences — the listener/heartbeat/canary stay live regardless.
+PAPER_WRITER_UNITS = frozenset({"kai-paper-trading.timer", "kai-entry-watch.service"})
 
 _SYSTEMD_OBJECT = "/org/freedesktop/systemd1"
 _SYSTEMD_BUS = "org.freedesktop.systemd1"
@@ -484,6 +492,52 @@ def _check_approval_hmac() -> CheckResult:
     )
 
 
+def read_paper_writer_freeze(path: Path | None = None) -> dict[str, Any] | None:
+    """Return the active paper-writer freeze descriptor, or ``None`` if not frozen.
+
+    The marker (``artifacts/paper_writer_freeze.json``) is written by the
+    operator-approved writer-freeze step (Weg-B+ epoch reset, 2026-07-12). While it
+    is present with ``frozen: true`` the paper-trading timer + entry-watch service
+    are intentionally stopped and the paper book is read-only, so the paper-writer
+    liveness checks would otherwise emit a false ``premium-pipeline FAIL`` every tick.
+
+    Fail-safe direction: ANY doubt -> ``None`` (NOT frozen -> checks stay live). A
+    monitor must never silence itself on a missing or corrupt marker — the whole
+    point of this probe is to catch a silent paper-timer outage (2026-05-12 48h
+    case). Only an explicit, parseable ``frozen: true`` marker suppresses.
+    """
+    target = path or _PAPER_WRITER_FREEZE_MARKER
+    if not target.exists():
+        return None
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("paper-writer freeze marker unreadable (%s) — treating as NOT frozen", exc)
+        return None
+    if not isinstance(data, dict) or data.get("frozen") is not True:
+        return None
+    return data
+
+
+def _frozen_paper_check(name: str, freeze: dict[str, Any]) -> CheckResult:
+    """A loud OK result for a paper-writer check suppressed by an active freeze.
+
+    ``ok=True`` keeps the report healthy (no Telegram spam) while the detail makes
+    the intentional-outage state unmistakable in the ``/health/premium_pipeline``
+    route and the journal.
+    """
+    since = freeze.get("since_utc", "unknown")
+    reason = freeze.get("reason", "paper_writer_freeze")
+    return CheckResult(
+        name=name,
+        ok=True,
+        detail=(
+            f"PAPER-WRITER FROZEN (reason={reason}, since={since}) — "
+            "check suppressed; reactivation gated"
+        ),
+    )
+
+
 def compute_pipeline_health(
     *,
     paper_timer_max_age_sec: int = DEFAULT_PAPER_TIMER_TICK_MAX_AGE_SEC,
@@ -497,6 +551,7 @@ def compute_pipeline_health(
     _bridge_audit_check_fn: Any = None,
     _semantic_canary_check_fn: Any = None,
     _approval_hmac_check_fn: Any = None,
+    _freeze_fn: Any = None,
 ) -> PipelineHealthReport:
     """Run all liveness checks and aggregate into a single report.
 
@@ -510,9 +565,24 @@ def compute_pipeline_health(
     audit_check = _bridge_audit_check_fn or _check_bridge_audit_freshness
     canary_check = _semantic_canary_check_fn or _check_semantic_canary
     hmac_check = _approval_hmac_check_fn or _check_approval_hmac
+    freeze_fn = _freeze_fn or read_paper_writer_freeze
 
-    checks: list[CheckResult] = [svc_check(svc, now=now) for svc in CRITICAL_SERVICES]
-    checks.append(timer_check(paper_timer_max_age_sec, now=now))
+    # An active operator-declared paper-writer freeze suppresses ONLY the
+    # paper-writer liveness checks (timer / entry-watch / last-trigger); every
+    # other check stays live so a real listener/heartbeat/canary outage is still
+    # caught. Fail-safe: freeze_fn returns None on any doubt -> full live checks.
+    freeze = freeze_fn()
+
+    checks: list[CheckResult] = []
+    for svc in CRITICAL_SERVICES:
+        if freeze is not None and svc in PAPER_WRITER_UNITS:
+            checks.append(_frozen_paper_check(f"systemd:{svc}", freeze))
+        else:
+            checks.append(svc_check(svc, now=now))
+    if freeze is not None:
+        checks.append(_frozen_paper_check("paper_timer_last_trigger", freeze))
+    else:
+        checks.append(timer_check(paper_timer_max_age_sec, now=now))
     checks.append(hb_check(heartbeat_max_age_sec, now=now))
     checks.append(canary_check(semantic_canary_max_age_sec, now=now))
     checks.append(hmac_check())
@@ -529,7 +599,9 @@ def compute_pipeline_health(
 
 __all__ = [
     "CRITICAL_SERVICES",
+    "PAPER_WRITER_UNITS",
     "CheckResult",
     "PipelineHealthReport",
     "compute_pipeline_health",
+    "read_paper_writer_freeze",
 ]
