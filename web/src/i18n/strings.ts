@@ -43,7 +43,7 @@ const de: Dict = {
     mode_current: "Aktiv",
     mode_warning_live: "Echtgeld-Modus — alle Aktionen treffen echte Orders",
     mode_warning_sim: "Isolierter Simulationsraum — getrennt von Paper-Engine",
-    env_phase: "Phase 5",
+    env_phase: "ADR-0014",
     env_split: "Split-Release",
     currency: "Anzeigewährung",
     currency_note: "Historische Werte werden mit dem Kurs zum Zeitpunkt der Erfassung umgerechnet",
@@ -217,7 +217,7 @@ const de: Dict = {
   pages: {
     dashboard: {
       title: "Übersicht",
-      sub: "KAI arbeitet. Phase 5 · Split-Release · Forward-Precision {p}% auf {n} resolved.",
+      sub: "KAI arbeitet. Wegpunkt ADR-0012/0014 · Forward-Precision {p}% auf {n} resolved.",
     },
     signals: {
       title: "Signale",
@@ -517,7 +517,7 @@ const en: Dict = {
     mode_current: "Active",
     mode_warning_live: "Real-money mode — all actions hit the live exchange",
     mode_warning_sim: "Isolated simulation room — separate from paper engine",
-    env_phase: "Phase 5",
+    env_phase: "ADR-0014",
     env_split: "Split-Release",
     currency: "Display currency",
     currency_note: "Historical values are converted at the FX rate captured at the time of the event",
@@ -691,7 +691,7 @@ const en: Dict = {
   pages: {
     dashboard: {
       title: "Overview",
-      sub: "KAI is running. Phase 5 · Split-Release · Forward precision {p}% on {n} resolved.",
+      sub: "KAI is running. Waypoint ADR-0012/0014 · Forward precision {p}% on {n} resolved.",
     },
     signals: {
       title: "Signals",
