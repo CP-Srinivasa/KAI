@@ -3299,4 +3299,9 @@ def trading_source_intelligence(
 # prereg-check / prereg-maturity / verdict-anchor (mechanische Verdikt-Kette)
 # auf trading_app — eigene Module, damit weder diese Datei noch der God-File
 # app/cli/main.py wächst.
-from app.cli.commands import research_verdicts, truth_compliance, truth_lint  # noqa: E402,F401
+from app.cli.commands import (  # noqa: E402,F401
+    research_verdicts,
+    truth_compliance,
+    truth_lint,
+    verdict_bundle_cli,
+)
