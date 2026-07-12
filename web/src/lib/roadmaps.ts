@@ -64,7 +64,7 @@ export const ROADMAPS: Roadmap[] = [
         id: "t0",
         label: "T0 · Pivot: Alpha-These selbst widerlegt",
         status: "done",
-        note: "canonical-edge NO_GO versiegelt (n=68, P(mu_net>0)=10,4 %, median −93,8 bps); Momentum n=178 + Execution-Alpha + news_direction (terminal_dead) falsifiziert",
+        note: "canonical-edge NO_GO terminal (episoden-dedupliziert n=104; Detail via canonical-edge CLI); Momentum n=178 + Execution-Alpha + news_direction (terminal_dead) falsifiziert",
       },
       {
         id: "t1",

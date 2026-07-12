@@ -42,7 +42,7 @@ export function MomentumUniversePanel() {
   const header = (
     <CardHeader
       title="Momentum-Universe"
-      subtitle="Meist-gehandelt × Best-Performer aus eigenen Börsendaten — reine Sicht, kein Handel"
+      subtitle="Historische Sicht — Feed DEAKTIVIERT, Momentum-Edge widerlegt (n=178, netto negativ)"
     />
   );
 
@@ -139,8 +139,8 @@ export function MomentumUniversePanel() {
             </p>
             <p>
               Aus <span className="text-fg">eigenen</span> Börsendaten gerechnet — kein
-              TradingView-Scraping (ToS). READ-ONLY Sicht: beeinflusst noch KEIN Sizing/Kapital;
-              Rotation (G1) und kosten-netto Edge-Messung/Promote (G2/G5) folgen.
+              TradingView-Scraping (ToS). READ-ONLY Sicht: beeinflusst KEIN Sizing/Kapital. Der Feed ist
+              deaktiviert und der Momentum-Edge widerlegt (n=178) — keine weiteren Stufen geplant.
             </p>
           </div>
         )}

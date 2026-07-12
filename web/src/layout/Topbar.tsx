@@ -1,7 +1,6 @@
 import { Moon, Search, Sun, Languages, Menu, Rows3, Rows2 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/theme/ThemeProvider";
-import { Badge } from "@/components/ui/Primitives";
 import { ModeSelector } from "@/components/trading/ModeSelector";
 import { useT } from "@/i18n/I18nProvider";
 import { useCurrency, type Currency } from "@/state/CurrencyProvider";
@@ -166,13 +165,6 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
         </button>
 
         <NotificationsBell />
-
-        <div className="hidden xl:flex items-center gap-2 rounded-sm border border-line-subtle bg-bg-2 px-2.5 h-8">
-          <Badge tone="warn" dot>
-            {t("topbar.env_split")}
-          </Badge>
-          <span className="text-2xs text-fg-subtle font-mono">D-137</span>
-        </div>
 
         {/* Identitäts-Badge, KEIN Button: es gibt (noch) keine Profil-/Logout-
             Aktion im Backend, also keine klickbare Optik vortäuschen (war ein

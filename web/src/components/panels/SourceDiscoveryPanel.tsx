@@ -101,7 +101,7 @@ export function SourceDiscoveryPanel() {
             Quellen-Discovery
           </span>
         }
-        subtitle="Autonom gefunden, geprüft, in Probation evaluiert — bewährt sich eine Quelle, wechselt sie 1-zu-1 einen Schwächling aus."
+        subtitle="Autonom gefunden, geprüft, in Probation evaluiert — Graduation ist aktuell eingefroren (Seed-Freeze) — reine Beobachtung, kein Einwechseln."
         right={
           <div className="flex items-center gap-2">
             <LiveDot state={polling.state} generatedAt={null} staleAfterMs={26 * 60 * 60 * 1000} />

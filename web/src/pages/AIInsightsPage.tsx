@@ -248,7 +248,7 @@ export function AIInsightsPage() {
               <div className="rounded-md border border-pos/30 bg-pos/5 p-3">
                 <div className="text-xs font-semibold text-pos">Alle Bedingungen erfüllt</div>
                 <div className="mt-1 text-2xs text-fg-muted leading-relaxed">
-                  Die Quality-Werte halten die Schwellen. Operator kann das Gate manuell freigeben — Live-Mode bleibt aber bis zur Phase-0-Sprint-Approval gesperrt.
+                  Die Quality-Werte halten die Schwellen. Operator kann das Gate manuell freigeben — Live-Mode bleibt aber bis zur expliziten Operator-Approval gesperrt.
                 </div>
               </div>
             )}
