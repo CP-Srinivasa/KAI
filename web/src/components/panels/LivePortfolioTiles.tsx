@@ -110,7 +110,11 @@ function PortfolioTile() {
             <p className="text-2xs text-fg-subtle">
               Paper Portfolio v2 · Start 10.000 USD · Track-Record gültig ab{" "}
               {q.data.epoch_started_at_utc
-                ? q.data.epoch_started_at_utc.slice(0, 10)
+                ? new Date(q.data.epoch_started_at_utc).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })
                 : "Epochenwechsel"}
             </p>
           )}
