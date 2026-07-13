@@ -215,6 +215,9 @@ _paper_freeze_preflight() {
     if (( PAPER_WRITER_FREEZE_STATE == 10 )); then
         echo "PAPER_WRITER_FREEZE_ACTIVE — geschützte Paper-Writer werden übersprungen (kein start/restart/enable/reset-failed/unmask):"
         printf '    %s\n' "${PAPER_WRITER_PROTECTED_UNITS[@]}"
+    elif (( PAPER_WRITER_FREEZE_STATE == 0 )) && paper_writer_freeze_marker_present; then
+        # Valider Marker mit frozen=false → veraltet; Betrieb normal, aber Hinweis.
+        echo "WARN: PAPER_WRITER_FREEZE_MARKER_STALE — Marker vorhanden mit frozen=false; sollte entfernt werden." >&2
     fi
     return 0
 }
@@ -222,6 +225,26 @@ _paper_freeze_preflight() {
 # 0 wenn die Unit bei aktivem Freeze übersprungen werden muss.
 _paper_freeze_skip() {
     (( PAPER_WRITER_FREEZE_STATE == 10 )) && paper_writer_is_protected "$1"
+}
+
+# Enable-Schleife als eigene Funktion (source-bar für Tests). Guard identisch
+# zum Reactivate-Pfad: invalider Marker = HOLD (return 3, keine Mutation),
+# frozen = geschützte Writer überspringen. Rückgabe 0 = ok, 3 = HOLD.
+enable_on_install_units() {
+    echo ""
+    echo "Enabling units so they start at boot…"
+    if ! _paper_freeze_preflight; then
+        return 3
+    fi
+    local unit
+    for unit in "${ENABLE_ON_INSTALL[@]}"; do
+        if _paper_freeze_skip "$unit"; then
+            echo "  SKIP  $unit — PAPER_WRITER_FREEZE_ACTIVE (eingefrorener Writer; nicht enabled)"
+            continue
+        fi
+        run systemctl enable --now "$unit"
+    done
+    return 0
 }
 
 reactivate_critical() {
@@ -370,19 +393,10 @@ install() {
         return
     fi
 
-    echo ""
-    echo "Enabling units so they start at boot…"
-    if ! _paper_freeze_preflight; then
+    if ! enable_on_install_units; then
         echo "Abbruch vor dem Enable: Freeze-Marker ungültig (fail-closed)." >&2
         exit 3
     fi
-    for unit in "${ENABLE_ON_INSTALL[@]}"; do
-        if _paper_freeze_skip "$unit"; then
-            echo "  SKIP  $unit — PAPER_WRITER_FREEZE_ACTIVE (eingefrorener Writer; nicht enabled)"
-            continue
-        fi
-        run systemctl enable --now "$unit"
-    done
 
     if (( DRY_RUN == 0 )); then
         reactivate_critical || true

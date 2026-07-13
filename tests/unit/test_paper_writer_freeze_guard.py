@@ -214,3 +214,91 @@ def test_incident_regression_frozen_deploy_touches_no_writer(tmp_path: Path) -> 
     for verb in ("restart", "reset-failed", "enable", "start", "unmask"):
         for unit in PROTECTED:
             assert f"{verb} {unit}" not in calls
+
+
+def test_reactivate_stale_marker_warns_but_runs_normally(tmp_path: Path) -> None:
+    # Valider Marker mit frozen=false = veraltet: Betrieb normal + Warnung.
+    res, calls = _run_reactivate(tmp_path, '{"frozen": false}')
+    assert "PAPER_WRITER_FREEZE_MARKER_STALE" in (res.stdout + res.stderr)
+    assert "restart kai-paper-trading.timer" in calls  # nicht übersprungen
+
+
+# --------------------------------------------------------------------------- #
+# Integration: ENABLE_ON_INSTALL (enable --now) mit gestubbtem systemctl
+# --------------------------------------------------------------------------- #
+
+
+def _run_enable(
+    tmp_path: Path, marker_content: str | None
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    env, log = _stub_systemctl(tmp_path)
+    env.update(_marker(tmp_path, marker_content))
+    res = _bash(
+        f'source "{INSTALLER}"; DRY_RUN=0; '
+        'if enable_on_install_units; then rc=0; else rc=$?; fi; echo "RC=$rc"',
+        env=env,
+    )
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    return res, calls
+
+
+def test_enable_not_frozen_enables_writers(tmp_path: Path) -> None:
+    res, calls = _run_enable(tmp_path, None)
+    assert _rc(res) == 0
+    assert "enable --now kai-paper-trading.timer" in calls
+    assert "enable --now kai-entry-watch.service" in calls
+
+
+def test_enable_frozen_skips_protected_writers(tmp_path: Path) -> None:
+    res, calls = _run_enable(tmp_path, '{"frozen": true}')
+    assert _rc(res) == 0
+    assert "PAPER_WRITER_FREEZE_ACTIVE" in res.stdout
+    for unit in PROTECTED:
+        assert f"enable --now {unit}" not in calls
+    # Nicht-Writer werden weiter enabled.
+    assert "enable --now kai-server.service" in calls
+
+
+def test_enable_invalid_marker_aborts_before_any_mutation(tmp_path: Path) -> None:
+    res, calls = _run_enable(tmp_path, "{corrupt")
+    assert _rc(res) == 3
+    assert "PAPER_WRITER_FREEZE_MARKER_INVALID" in (res.stdout + res.stderr)
+    assert calls.strip() == "", f"mutation despite invalid marker: {calls!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Wrapper-Guard: paper_writer_freeze_guard_restart (für kai_deploy.sh --restart)
+# --------------------------------------------------------------------------- #
+
+
+def _guard_restart(
+    tmp_path: Path, marker_content: str | None, units: str
+) -> subprocess.CompletedProcess[str]:
+    return _bash(
+        f'source "{HELPER}"; '
+        f"if paper_writer_freeze_guard_restart {units}; then rc=0; else rc=$?; fi; "
+        'echo "RC=$rc"',
+        env=_marker(tmp_path, marker_content),
+    )
+
+
+def test_guard_restart_not_frozen_allows(tmp_path: Path) -> None:
+    res = _guard_restart(tmp_path, None, "kai-paper-trading.timer kai-server.service")
+    assert _rc(res) == 0
+
+
+def test_guard_restart_frozen_refuses_protected_writer(tmp_path: Path) -> None:
+    res = _guard_restart(tmp_path, '{"frozen": true}', "kai-server.service kai-entry-watch.service")
+    assert _rc(res) == 10
+    assert "kai-entry-watch.service" in res.stderr
+
+
+def test_guard_restart_frozen_allows_non_writer_only(tmp_path: Path) -> None:
+    res = _guard_restart(tmp_path, '{"frozen": true}', "kai-server.service kai-tg-listener.service")
+    assert _rc(res) == 0
+
+
+def test_guard_restart_invalid_marker_refuses(tmp_path: Path) -> None:
+    res = _guard_restart(tmp_path, "{corrupt", "kai-paper-trading.timer")
+    assert _rc(res) == 20
+    assert "PAPER_WRITER_FREEZE_MARKER_INVALID" in res.stderr

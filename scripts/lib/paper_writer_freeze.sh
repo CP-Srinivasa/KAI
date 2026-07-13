@@ -48,6 +48,12 @@ paper_writer_freeze_marker_path() {
     printf '%s/artifacts/paper_writer_freeze.json' "$(_paper_writer_freeze_repo_root)"
 }
 
+# 0 wenn eine Marker-Datei existiert (unabhängig von frozen-Wert). Für die
+# Stale-Warnung: Marker vorhanden + state=0 ⇒ valides frozen=false ⇒ veraltet.
+paper_writer_freeze_marker_present() {
+    [[ -e "$(paper_writer_freeze_marker_path)" ]]
+}
+
 # 0 wenn $1 eine geschützte Writer-Unit ist, sonst 1.
 paper_writer_is_protected() {
     local unit="$1" u
@@ -93,4 +99,32 @@ PY
         NOT_FROZEN) return 0 ;;
         *) return 20 ;;  # INVALID oder leer (python-Fehler) → fail-closed
     esac
+}
+
+# Wrapper-Guard für Restart-Pfade (z. B. kai_deploy.sh --restart <units...>).
+# Versionierte, getestete Entscheidung — jeder Restart-Wrapper ruft NUR diese
+# Funktion, statt die Logik neu zu bauen. Rückgabe:
+#   0  = erlaubt (kein Freeze ODER keine geschützten Writer in der Liste)
+#   10 = VERWEIGERT (Freeze aktiv UND >=1 geschützter Writer angefragt)
+#   20 = Marker INVALID (fail-closed → verweigern)
+# Bei 10/20 wird eine erklärende Zeile auf stderr ausgegeben.
+paper_writer_freeze_guard_restart() {
+    paper_writer_freeze_state
+    local st=$?
+    if (( st == 20 )); then
+        echo "PAPER_WRITER_FREEZE_MARKER_INVALID — Restart fail-closed verweigert." >&2
+        return 20
+    fi
+    (( st == 10 )) || return 0  # nicht eingefroren → erlaubt
+
+    local blocked=() u
+    for u in "$@"; do
+        paper_writer_is_protected "$u" && blocked+=("$u")
+    done
+    if (( ${#blocked[@]} > 0 )); then
+        echo "PAPER_WRITER_FREEZE_ACTIVE — Restart geschützter Writer verweigert: ${blocked[*]}" >&2
+        echo "  Writer-Reaktivierung ist ein eigener, geclaimter OPS-Vorgang (Unfreeze)." >&2
+        return 10
+    fi
+    return 0
 }
