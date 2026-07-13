@@ -25,8 +25,16 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_SRC="${REPO_ROOT}/deploy/systemd"
+
+# Paper-Writer-Freeze-Guard (2026-07-13): gemeinsame Marker-Semantik, damit der
+# Reactivate-/Enable-Pfad einen versiegelten Weg-B+-Writer-Freeze respektiert.
+# Ursache-Fix zum 2026-07-12-Leak (blindes reset-failed+restart eingefrorener
+# Writer → Trade in die kontaminierte Alt-Epoche).
+# shellcheck source=scripts/lib/paper_writer_freeze.sh
+source "${REPO_ROOT}/scripts/lib/paper_writer_freeze.sh"
+PAPER_WRITER_FREEZE_STATE=0  # 0/10/20, je Lauf via _paper_freeze_preflight gesetzt
 UNIT_DST="/etc/systemd/system"
 TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
 TMPFILES_DST="/etc/tmpfiles.d/kai.conf"
@@ -193,11 +201,41 @@ _is_healthy_active_state() {
     esac
 }
 
+# Freeze-Preflight: Marker EINMAL auswerten (vor jeder Schleife → kein partieller
+# Reactivate, bevor ein Fehler erkannt wird). Fail-CLOSED: invalider Marker = HOLD.
+# Rückgabe: 0 = weiter (evtl. mit Skips), 1 = HOLD (Aufrufer muss abbrechen).
+_paper_freeze_preflight() {
+    paper_writer_freeze_state
+    PAPER_WRITER_FREEZE_STATE=$?
+    if (( PAPER_WRITER_FREEZE_STATE == 20 )); then
+        echo "ERROR: PAPER_WRITER_FREEZE_MARKER_INVALID — Marker vorhanden, aber unlesbar/ungültiges Schema." >&2
+        echo "       Fail-closed: KEINE Unit wird reaktiviert/enabled. Marker prüfen oder entfernen." >&2
+        return 1
+    fi
+    if (( PAPER_WRITER_FREEZE_STATE == 10 )); then
+        echo "PAPER_WRITER_FREEZE_ACTIVE — geschützte Paper-Writer werden übersprungen (kein start/restart/enable/reset-failed/unmask):"
+        printf '    %s\n' "${PAPER_WRITER_PROTECTED_UNITS[@]}"
+    fi
+    return 0
+}
+
+# 0 wenn die Unit bei aktivem Freeze übersprungen werden muss.
+_paper_freeze_skip() {
+    (( PAPER_WRITER_FREEZE_STATE == 10 )) && paper_writer_is_protected "$1"
+}
+
 reactivate_critical() {
     local failed=0
     echo ""
     echo "=== Reactivate-Hook: verifying critical services ==="
+    if ! _paper_freeze_preflight; then
+        return 3
+    fi
     for unit in "${CRITICAL_REACTIVATE[@]}"; do
+        if _paper_freeze_skip "$unit"; then
+            echo "  SKIP  $unit — PAPER_WRITER_FREEZE_ACTIVE (eingefrorener Writer; nicht angefasst)"
+            continue
+        fi
         local state
         state="$(systemctl is-active "$unit" 2>/dev/null || true)"
         if _is_healthy_active_state "$state"; then
@@ -334,7 +372,15 @@ install() {
 
     echo ""
     echo "Enabling units so they start at boot…"
+    if ! _paper_freeze_preflight; then
+        echo "Abbruch vor dem Enable: Freeze-Marker ungültig (fail-closed)." >&2
+        exit 3
+    fi
     for unit in "${ENABLE_ON_INSTALL[@]}"; do
+        if _paper_freeze_skip "$unit"; then
+            echo "  SKIP  $unit — PAPER_WRITER_FREEZE_ACTIVE (eingefrorener Writer; nicht enabled)"
+            continue
+        fi
         run systemctl enable --now "$unit"
     done
 
@@ -359,11 +405,14 @@ reactivate_only() {
     reactivate_critical
 }
 
-if (( REACTIVATE_ONLY == 1 )); then
-    reactivate_only
-    exit $?
-elif (( UNINSTALL == 1 )); then
-    uninstall
-else
-    install
+# Nur ausführen, wenn direkt gestartet — beim Sourcen (Tests) NICHT dispatchen.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    if (( REACTIVATE_ONLY == 1 )); then
+        reactivate_only
+        exit $?
+    elif (( UNINSTALL == 1 )); then
+        uninstall
+    else
+        install
+    fi
 fi
