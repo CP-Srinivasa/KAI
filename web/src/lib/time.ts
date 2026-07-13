@@ -75,3 +75,23 @@ export function formatShortDate(value: string | null | undefined): string {
   if (!d) return value ?? "—";
   return d.toLocaleDateString(DATE_LOCALE, SHORT_DATE_OPTS);
 }
+
+const FULL_DATE_BERLIN_OPTS: Intl.DateTimeFormatOptions = {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "Europe/Berlin",
+};
+
+/** Full calendar date "DD.MM.YYYY" pinned to Europe/Berlin.
+ *
+ *  Unlike the viewer-local helpers above, this is fixed to Berlin time: it is
+ *  for canonical/attested timestamps (e.g. the paper-portfolio epoch boundary)
+ *  that must read as ONE unambiguous German calendar date for every viewer,
+ *  independent of browser timezone. The epoch reset at 2026-07-12T22:22:09Z is
+ *  2026-07-13 in Berlin (CEST), so this renders "13.07.2026". */
+export function formatBerlinDate(value: string | null | undefined): string {
+  const d = parseIso(value);
+  if (!d) return value ?? "—";
+  return d.toLocaleDateString(DATE_LOCALE, FULL_DATE_BERLIN_OPTS);
+}

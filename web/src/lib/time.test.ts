@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DATE_LOCALE,
   formatAbsolute,
+  formatBerlinDate,
   formatClock,
   formatDayTime,
   formatDuration,
@@ -75,5 +76,20 @@ describe("existing helpers still behave (regression)", () => {
     expect(formatDuration(ISO, "2026-06-15T12:00:30Z")).toBe("+30s");
     expect(formatDuration(ISO, "2026-06-15T12:05:00Z")).toBe("+5m");
     expect(formatDuration(null, ISO)).toBe("—");
+  });
+});
+
+describe("formatBerlinDate — canonical German date, fixed Europe/Berlin", () => {
+  it("renders the paper-epoch reset (22:22:09Z on the 12th) as 13.07.2026 in Berlin (CEST)", () => {
+    // Deterministic regardless of the runner's/viewer's timezone: 22:22 UTC on
+    // 2026-07-12 is already 2026-07-13 00:22 in Berlin summer time.
+    expect(formatBerlinDate("2026-07-12T22:22:09.568711+00:00")).toBe("13.07.2026");
+  });
+  it("keeps a same-day UTC timestamp on its Berlin calendar day with 2-digit parts", () => {
+    expect(formatBerlinDate("2026-01-05T10:00:00Z")).toBe("05.01.2026");
+  });
+  it("returns an em-dash for empty input", () => {
+    expect(formatBerlinDate(null)).toBe("—");
+    expect(formatBerlinDate(undefined)).toBe("—");
   });
 });

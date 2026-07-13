@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { computeEquityComposition } from "@/lib/portfolio";
+import { formatBerlinDate } from "@/lib/time";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 // Quick-Win-Tiles: ersetzen die früheren PreparedPanel-Stubs (Portfolio Snapshot,
@@ -110,7 +111,7 @@ function PortfolioTile() {
             <p className="text-2xs text-fg-subtle">
               Paper Portfolio v2 · Start 10.000 USD · Track-Record gültig ab{" "}
               {q.data.epoch_started_at_utc
-                ? q.data.epoch_started_at_utc.slice(0, 10)
+                ? formatBerlinDate(q.data.epoch_started_at_utc)
                 : "Epochenwechsel"}
             </p>
           )}
