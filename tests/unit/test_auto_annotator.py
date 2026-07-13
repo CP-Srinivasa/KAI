@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import structlog
+
 from app.alerts.audit import (
     ALERT_AUDIT_JSONL_FILENAME,
     ALERT_OUTCOMES_JSONL_FILENAME,
@@ -797,3 +799,104 @@ async def test_inconclusive_cap_inactive_before_168h_elapsed(tmp_path: Path, mon
 
     assert len(results) == 1
     assert adapter.get_price_change_between.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-12 Daily V2: Rest-Backlog-Aufschlüsselung (no_price / too_young)
+# Beweist das ÖFFENTLICH sichtbare Observability-Ergebnis (auto_annotate.done),
+# nicht lokale Hilfsvariablen — das ist der gesamte fachliche Zweck von V2.
+# ---------------------------------------------------------------------------
+
+
+async def test_v2_backlog_breakdown_splits_no_price_too_young_and_priceable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Ein Lauf mit drei Alerts: (A) API rief, Preisquelle liefert nichts →
+    no_price + Symbol; (B) Fenster noch nicht reif, kein API-Call →
+    too_young_windows; (C) preisbar → annotiert, in KEINER Backlog-Kategorie.
+
+    Die V2-Zähler werden aus dem gebundenen ``auto_annotate.done``-Log gelesen,
+    nicht aus lokalen Variablen.
+    """
+    monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
+
+    # A: unpreisbarer Exot, 12h alt → 1h+4h-Fenster elapsed, API liefert None.
+    _write_audit(tmp_path, _make_audit(doc_id="a-noprice", assets=["CASHCAT"], hours_ago=12.0))
+    # B: 0.75h alt → nicht mal das 1h-Fenster elapsed → kein API-Call (too_young).
+    _write_audit(tmp_path, _make_audit(doc_id="b-tooyoung", assets=["FRESHT"], hours_ago=0.75))
+    # C: preisbar + annotierbar (+2% bullish → hit@1h).
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="c-priceable", assets=["BTC"], sentiment="bullish", hours_ago=12.0),
+    )
+
+    def _price(symbol: str, *, start_utc: datetime, end_utc: datetime):
+        # Nur BTC ist preisbar; CASHCAT liefert None (strukturell unpreisbar).
+        if symbol == "BTC/USDT":
+            return (65000.0, 66300.0, 2.0)
+        return None
+
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(side_effect=_price)
+        with structlog.testing.capture_logs() as logs:
+            # min_age_hours=0.5 macht B (0.75h) pending, ohne ein Fenster zu erreichen.
+            results = await auto_annotate_pending(tmp_path, min_age_hours=0.5)
+
+    done = [e for e in logs if e["event"] == "auto_annotate.done"]
+    assert len(done) == 1
+    ev = done[0]
+
+    # no_price: genau der eine unpreisbare Alert, Symbol sichtbar.
+    assert ev["no_price"] == 1
+    assert ev["no_price_symbols"] == {"CASHCAT/USDT": 1}
+    # too_young: genau der eine zu-junge Alert; färbt no_price NICHT ein.
+    assert ev["too_young_windows"] == 1
+    # C wurde annotiert und taucht in KEINER Backlog-Kategorie auf.
+    assert ev["total"] == 1
+    assert ev["hits"] == 1
+    assert len(results) == 1
+    assert results[0].outcome == "hit"
+    assert results[0].asset == "BTC/USDT"
+
+
+async def test_v2_no_price_symbols_sorted_desc_and_capped_at_5(tmp_path: Path, monkeypatch) -> None:
+    """no_price_symbols ist nach Häufigkeit absteigend sortiert und auf max. 5
+    Symbole begrenzt; der no_price-Gesamtzähler summiert aber ALLE unpreisbaren
+    Alerts (nicht nur die angezeigten Top-5)."""
+    monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
+
+    # 6 unpreisbare Symbole mit strikt fallenden Häufigkeiten (6>5>4>3>2>1).
+    freqs = {"AAA": 6, "BBB": 5, "CCC": 4, "DDD": 3, "EEE": 2, "FFF": 1}
+    for sym, n in freqs.items():
+        for i in range(n):
+            _write_audit(
+                tmp_path,
+                _make_audit(doc_id=f"{sym}-{i}", assets=[sym], hours_ago=12.0),
+            )
+
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(return_value=None)
+        with structlog.testing.capture_logs() as logs:
+            results = await auto_annotate_pending(tmp_path, min_age_hours=6)
+
+    assert results == []  # nichts preisbar → keine Annotation
+    done = [e for e in logs if e["event"] == "auto_annotate.done"]
+    assert len(done) == 1
+    ev = done[0]
+
+    # Gesamtzähler vollständig: alle 21 unpreisbaren Alerts.
+    assert ev["no_price"] == 21
+    # Anzeige: Top-5, absteigend sortiert; FFF (freq 1) fällt raus.
+    assert list(ev["no_price_symbols"].items()) == [
+        ("AAA/USDT", 6),
+        ("BBB/USDT", 5),
+        ("CCC/USDT", 4),
+        ("DDD/USDT", 3),
+        ("EEE/USDT", 2),
+    ]
+    assert "FFF/USDT" not in ev["no_price_symbols"]
+    assert ev["too_young_windows"] == 0

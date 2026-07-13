@@ -189,7 +189,22 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     KÖNNEN dort handeln — darum WARNING (Hinweis auf Sichtprüfung), nie ERROR.
     """
     band_lo, band_hi = 95.0, 105.0
+    # Praezisierung V1 (Daily 07-12, nach 2 False Positives AAVE~98$): Fills,
+    # deren Loop-Cycle nachweislich mit einer REALEN market_data_source lief,
+    # sind kein Mock-Verdacht — sie wandern in die Evidence (band_real_source)
+    # statt in die Verletzung. FAIL-CLOSED: mock oder fehlender Join bleibt
+    # WARNING; die Warnung darf nie stiller werden als der Roh-Band-Check.
+    source_by_order: dict[str, str] = {}
+    for cyc in iter_jsonl_tolerant(ctx.loop_audit):
+        oid = cyc.get("order_id")
+        if not oid:
+            continue
+        for note in cyc.get("notes") or []:
+            if isinstance(note, str) and note.startswith("market_data_source:"):
+                source_by_order[str(oid)] = note.split(":", 1)[1]
+                break
     per_symbol: dict[str, int] = {}
+    real_source = 0
     total = 0
     for rec in iter_jsonl_tolerant(ctx.paper_audit):
         if rec.get("event_type") != "order_filled":
@@ -200,10 +215,15 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             price = float(rec.get("fill_price") or 0.0)
         except (TypeError, ValueError):
             continue
-        if band_lo <= price <= band_hi:
-            total += 1
-            sym = str(rec.get("symbol"))
-            per_symbol[sym] = per_symbol.get(sym, 0) + 1
+        if not (band_lo <= price <= band_hi):
+            continue
+        src = source_by_order.get(str(rec.get("order_id") or ""))
+        if src and src != "mock":
+            real_source += 1
+            continue
+        total += 1
+        sym = str(rec.get("symbol"))
+        per_symbol[sym] = per_symbol.get(sym, 0) + 1
     if not total:
         return []
     top = sorted(per_symbol.items(), key=lambda kv: -kv[1])[:_EVIDENCE_CAP]
@@ -214,9 +234,14 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             dataset="paper_execution_audit.jsonl",
             message=(
                 f"{total} Fills im Mock-Preisband [{band_lo:.0f},{band_hi:.0f}] seit "
-                f"{BASELINE_MOCK_GATE_UTC[:10]} — gegen reale Venue-Preise sichtprüfen"
+                f"{BASELINE_MOCK_GATE_UTC[:10]} ohne belegte reale Preisquelle — "
+                f"sichtpruefen ({real_source} weitere im Band mit realer Quelle ausgenommen)"
             ),
-            evidence={"count": total, "per_symbol": dict(top)},
+            evidence={
+                "count": total,
+                "per_symbol": dict(top),
+                "band_real_source_excluded": real_source,
+            },
         )
     ]
 
