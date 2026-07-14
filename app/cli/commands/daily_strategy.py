@@ -103,6 +103,50 @@ def _paper_fills_count() -> int:
     return n
 
 
+def _paper_fills_since_epoch() -> tuple[int, str | None, str | None]:
+    """Closed paper trades since the most recent epoch reset.
+
+    After the 2026-07-12 epoch reset (#603) the audit interleaves the archived
+    ``legacy_contaminated`` epoch (INVALID_FOR_PERFORMANCE) with the honest
+    ``paper_v2_attested`` epoch, so the cumulative count is not citeable as a
+    track record. This counts only ``position_closed`` /
+    ``position_partial_closed`` events emitted AFTER the last
+    ``portfolio_epoch_reset`` marker and returns ``(count, epoch_id,
+    reset_date_iso)``. ``epoch_id`` / ``reset_date`` are ``None`` when no reset
+    marker is present (pre-#603 install or fixture) — the caller then renders
+    the unqualified count, identical to :func:`_paper_fills_count`.
+    """
+    path = Path("artifacts/paper_execution_audit.jsonl")
+    if not path.exists():
+        return 0, None, None
+    count = 0
+    epoch_id: str | None = None
+    reset_date: str | None = None
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event_type = rec.get("event_type")
+            if event_type == "portfolio_epoch_reset":
+                # Reset boundary: restart the count and adopt the new epoch.
+                count = 0
+                new_epoch = rec.get("new_epoch_id")
+                if isinstance(new_epoch, str) and new_epoch:
+                    epoch_id = new_epoch
+                ts = rec.get("timestamp_utc")
+                if isinstance(ts, str) and len(ts) >= 10:
+                    reset_date = ts[:10]
+                continue
+            if event_type in ("position_closed", "position_partial_closed"):
+                count += 1
+    return count, epoch_id, reset_date
+
+
 def _days_until(target: date, today: date) -> int:
     return (target - today).days
 
@@ -284,7 +328,12 @@ def _build_skeleton(
         episode_report = None
 
     tv_pending = _tv_pending_count()
+    # Cumulative count feeds the Re-Entry-Gate (historical ">=10 fills" fact).
     paper_fills = _paper_fills_count()
+    # V1 (2026-07-14): epoch-scoped display — post-#603 the citeable trade
+    # count is the one since the paper_v2_attested reset, not the epoch-mixing
+    # cumulative.
+    epoch_fills, epoch_id, epoch_reset_date = _paper_fills_since_epoch()
 
     d_pi = _days_until(PI_MIGRATION_DATE, today)
     d_reentry = _days_until(TV_REENTRY_DATE, today)
@@ -316,6 +365,17 @@ def _build_skeleton(
             f"{episode_report.episode_total} Episoden; größte "
             f"{episode_report.largest_episode_size})"
         )
+
+    if epoch_id is not None:
+        paper_fills_line = f"{epoch_fills} (seit Epoche {epoch_id}, Reset {epoch_reset_date})"
+    else:
+        paper_fills_line = str(epoch_fills)
+
+    precision_rule_note = (
+        "> **Precision-Sprachregel (bindend):** episoden-dedupliziert zitieren "
+        "(Cross-Path-Cluster). Baseline-Precision ist Cross-Path-inflations-anfällig "
+        "(#579) und nur als Rohwert-Footnote zulässig."
+    )
 
     # Sync-Health-Banner: prominent at the top when the operator MUST know that
     # Live-Metriken are based on stale Workstation snapshots. Skipped entirely
@@ -357,14 +417,16 @@ Horizont-Anker: {horizon_line}
 | Metrik | Wert |
 |---|---|
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
-| Baseline-Precision | {precision_line} |
-| Deduped Precision (latest per document_id) | {deduped_line} |
 | Episoden-Precision (Cross-Path-Cluster) | {episode_line} |
+| Deduped Precision (latest per document_id) | {deduped_line} |
+| Baseline-Precision (raw, nicht einzeln zitieren) | {precision_line} |
 | TV pending events (unpromoted) | {tv_pending} |
-| Paper-Trading abgeschlossene Trades | {paper_fills} |
+| Paper-Trading abgeschlossene Trades | {paper_fills_line} |
 | Tage bis TV-Pivot Re-Entry | {d_reentry} |
 | Tage bis Pi-Migration | {d_pi} |
 | Tage bis Multi-Agent-Gate | {d_gate} |
+
+{precision_rule_note}
 
 **Re-Entry-Gate (2026-05-16):** ≥200 resolved directional alerts ODER ≥10 Paper-Fills mit PnL.
 Aktueller Status: {_gate_status_line(directional, paper_fills)}

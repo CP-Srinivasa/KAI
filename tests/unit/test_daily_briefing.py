@@ -186,6 +186,20 @@ def test_briefing_to_text_includes_episode_line(tmp_path: Path) -> None:
     assert "Episode-dedup:" in text
 
 
+def test_briefing_episode_dedup_leads_raw_precision(tmp_path: Path) -> None:
+    """V2 (2026-07-14): episode-deduped precision is the citeable number and
+    must be rendered before the raw baseline, which is demoted to '(raw)'
+    (Precision-Sprachregel #579)."""
+    note = "auto@4h: bullish BTC/USDT $100.00->$104.00 (+4.00% over 4.0h, thr=0.42%)"
+    _write_audit(tmp_path, document_id="d1")
+    _write_outcome_with_note(tmp_path, "d1", "hit", note=note)
+
+    text = build_daily_briefing(tmp_path).to_text()
+    assert "Episode-dedup:" in text
+    assert "Precision (raw):" in text
+    assert text.index("Episode-dedup:") < text.index("Precision (raw):")
+
+
 # ── D-150: P10 high-conviction tier metrics ─────────────────────────
 
 

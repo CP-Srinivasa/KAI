@@ -138,6 +138,84 @@ def test_bootstrap_episode_precision_row_with_data(runner: CliRunner, repo_cwd: 
     assert "3 resolved rows" in text
 
 
+def _write_closed_trade(fh, symbol: str = "BTC/USDT") -> None:
+    fh.write(
+        json.dumps({"schema_version": "v2", "event_type": "position_closed", "symbol": symbol})
+        + "\n"
+    )
+
+
+def test_bootstrap_paper_fills_scoped_to_current_epoch(runner: CliRunner, repo_cwd: Path) -> None:
+    """V1 (2026-07-14): after the 07-12 epoch reset (#603) the audit mixes the
+    archived legacy_contaminated epoch with paper_v2_attested. The displayed
+    trade count must be scoped to the current epoch (post-reset only), labelled
+    with the epoch id + reset date — otherwise the operator cites a
+    epoch-mixing cumulative number."""
+    audit = repo_cwd / "artifacts" / "paper_execution_audit.jsonl"
+    with audit.open("w", encoding="utf-8") as f:
+        for _ in range(12):  # legacy (INVALID) epoch: 12 closed trades
+            _write_closed_trade(f)
+        f.write(
+            json.dumps(
+                {
+                    "schema_version": "v2",
+                    "event_type": "portfolio_epoch_reset",
+                    "new_epoch_id": "paper_v2_attested",
+                    "timestamp_utc": "2026-07-12T22:22:09.568711+00:00",
+                    "new_starting_cash_usd": 10000.0,
+                }
+            )
+            + "\n"
+        )
+        for _ in range(2):  # honest epoch: 2 closed trades
+            _write_closed_trade(f)
+
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    # display is epoch-scoped (2, not 14) and carries the epoch label
+    assert (
+        "| Paper-Trading abgeschlossene Trades | 2 (seit Epoche paper_v2_attested,"
+        " Reset 2026-07-12) |" in text
+    )
+    assert "| Paper-Trading abgeschlossene Trades | 14 |" not in text
+    # the Re-Entry-Gate keeps counting cumulatively (14 >= 10) — the historical
+    # fact that >=10 fills occurred is preserved even though display is scoped
+    assert "✅ Gate ≥10 Fills erreicht" in text
+
+
+def test_bootstrap_paper_fills_plain_count_without_epoch_marker(
+    runner: CliRunner, repo_cwd: Path
+) -> None:
+    """Backward-compat: a book with no epoch-reset marker (pre-#603 install or
+    fixture) renders the unqualified cumulative count, no epoch suffix."""
+    audit = repo_cwd / "artifacts" / "paper_execution_audit.jsonl"
+    with audit.open("w", encoding="utf-8") as f:
+        for _ in range(3):
+            _write_closed_trade(f)
+
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "| Paper-Trading abgeschlossene Trades | 3 |" in text
+    assert "seit Epoche" not in text
+
+
+def test_bootstrap_precision_episode_leads_baseline_demoted(
+    runner: CliRunner, repo_cwd: Path
+) -> None:
+    """V2 (2026-07-14): the episode-deduped precision is the citeable metric
+    (Sprachregel #579); it must lead the precision block, and the raw baseline
+    must be demoted and marked as not-citeable."""
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    epi = text.index("Episoden-Precision (Cross-Path-Cluster)")
+    base = text.index("Baseline-Precision")
+    assert epi < base, "episode-deduped precision must lead the raw baseline"
+    assert "Baseline-Precision (raw" in text
+
+
 def test_bootstrap_is_idempotent(runner: CliRunner, repo_cwd: Path) -> None:
     today_path = _today_path(repo_cwd)
     today_path.parent.mkdir(parents=True, exist_ok=True)
