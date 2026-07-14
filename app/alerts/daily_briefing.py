@@ -112,14 +112,17 @@ class BriefingData:
         lines.append(f"  Hits:         {self.hits}")
         lines.append(f"  Misses:       {self.misses}")
         lines.append(f"  Inconclusive: {self.inconclusive}")
-        if self.precision_pct is not None:
-            lines.append(f"  Precision:    {self.precision_pct:.1f}%")
+        # V2 (2026-07-14): episode-deduped precision is the citeable metric
+        # (Sprachregel #579) → render it first; the raw baseline follows,
+        # explicitly marked '(raw)' so it is not cited on its own.
         if self.episode_precision_pct is not None:
             lines.append(
                 f"  Episode-dedup: {self.episode_precision_pct:.1f}% "
                 f"({self.episode_hits}/{self.episode_count} episodes "
                 f"from {self.episode_rows} resolved rows)"
             )
+        if self.precision_pct is not None:
+            lines.append(f"  Precision (raw): {self.precision_pct:.1f}%")
         if self.p10_resolved_7d > 0:
             p10_pct = self.p10_precision_pct_7d
             pct_str = f"{p10_pct:.1f}%" if p10_pct is not None else "n/a"
