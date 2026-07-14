@@ -1,0 +1,13 @@
+[Unit]
+Description=KAI OKX-Announcements — poll every 30 min
+Requires=kai-okx-announcements.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

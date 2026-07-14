@@ -1,0 +1,18 @@
+[Unit]
+Description=KAI OKX-Announcements — exchange listings/delistings into the analysis pipeline (source-scout 2026-06-14)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/trading-bot ingestion okx-announcements
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+MemoryMax=512M
+CPUQuota=60%

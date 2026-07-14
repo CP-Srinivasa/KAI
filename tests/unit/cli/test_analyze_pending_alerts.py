@@ -74,7 +74,9 @@ def test_analyze_pending_dispatches_alerts_for_high_priority_docs(monkeypatch) -
 
     async def fake_process_document(self, doc, result, spam_probability=0.0):
         dispatched.append(doc.id)
-        return [object()]  # non-empty → alert fired
+        from app.alerts.base.interfaces import AlertDeliveryResult
+
+        return [AlertDeliveryResult(channel="telegram", success=True, message_id="m1")]
 
     from app.alerts import service as alert_service_mod
 
@@ -97,7 +99,9 @@ def test_analyze_pending_no_alerts_flag_suppresses_dispatch(monkeypatch) -> None
 
     async def fake_process_document(self, doc, result, spam_probability=0.0):
         dispatched.append(doc.id)
-        return [object()]
+        from app.alerts.base.interfaces import AlertDeliveryResult
+
+        return [AlertDeliveryResult(channel="telegram", success=True, message_id="m1")]
 
     from app.alerts import service as alert_service_mod
 
@@ -133,3 +137,54 @@ def test_analyze_pending_alert_failure_does_not_abort_analysis(monkeypatch) -> N
     assert result.exit_code == 0, result.output
     assert "Analysis complete! 2 success" in result.output
     assert "Alerts dispatched" not in result.output
+
+
+def test_analyze_pending_failed_deliveries_not_counted_as_dispatched(monkeypatch) -> None:
+    """A delivery list of only-failed AlertDeliveryResult must not count as dispatched.
+
+    Regression for the `if deliveries:` truthiness bug: process_document returns
+    the attempt list even when every channel failed; counting those as
+    "Alerts dispatched" misreports delivery success to the operator.
+    """
+    from app.alerts.base.interfaces import AlertDeliveryResult
+
+    doc = CanonicalDocument(url="https://example.com/hot-news", title="BTC Moon")
+    _patch_analysis_infra(monkeypatch, [doc], priority_score=9)
+
+    async def failed_process_document(self, doc, result, spam_probability=0.0):
+        return [
+            AlertDeliveryResult(channel="telegram", success=False, error="timeout"),
+            AlertDeliveryResult(channel="email", success=False, error="smtp down"),
+        ]
+
+    from app.alerts import service as alert_service_mod
+
+    monkeypatch.setattr(alert_service_mod.AlertService, "process_document", failed_process_document)
+
+    result = runner.invoke(app, ["query", "analyze-pending", "--limit", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "Alerts dispatched" not in result.output
+
+
+def test_analyze_pending_partial_failure_counts_as_dispatched(monkeypatch) -> None:
+    """One successful channel among failures is still a dispatched alert."""
+    from app.alerts.base.interfaces import AlertDeliveryResult
+
+    doc = CanonicalDocument(url="https://example.com/hot-news", title="BTC Moon")
+    _patch_analysis_infra(monkeypatch, [doc], priority_score=9)
+
+    async def mixed_process_document(self, doc, result, spam_probability=0.0):
+        return [
+            AlertDeliveryResult(channel="telegram", success=False, error="timeout"),
+            AlertDeliveryResult(channel="email", success=True, message_id="m1"),
+        ]
+
+    from app.alerts import service as alert_service_mod
+
+    monkeypatch.setattr(alert_service_mod.AlertService, "process_document", mixed_process_document)
+
+    result = runner.invoke(app, ["query", "analyze-pending", "--limit", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "Alerts dispatched: 1" in result.output

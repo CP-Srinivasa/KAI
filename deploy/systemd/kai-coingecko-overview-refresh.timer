@@ -1,0 +1,16 @@
+[Unit]
+Description=KAI CoinGecko-Overview-Refresh — warm overview snapshot every 15 min
+Requires=kai-coingecko-overview-refresh.service
+
+[Timer]
+# market_cap_rank/market_cap move slowly; 15 min is ample vs the 15-min TTL.
+# NOT enabled by default — operator runs `systemctl enable --now
+# kai-coingecko-overview-refresh.timer` only after APP_COINGECKO_OVERVIEW_ENABLED=true.
+OnBootSec=3min
+OnUnitActiveSec=15min
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

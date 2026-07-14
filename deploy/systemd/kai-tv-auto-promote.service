@@ -1,0 +1,9 @@
+[Unit]
+Description=KAI TradingView Auto-Promote — accepted webhook events → technical-path candidates (WP-C, gated)
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/trading-bot tradingview auto-promote

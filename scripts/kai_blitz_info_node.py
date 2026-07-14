@@ -7,13 +7,16 @@ node never breaks the caller.
 """
 
 import json
+import shlex
 import subprocess
 import time
 
 
 def run(cmd: str, timeout: int = 20) -> str:
+    # All callers pass simple argv-style commands (no pipes/redirects), so
+    # shlex.split + shell=False avoids any shell-injection surface.
     try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=timeout)
         return p.stdout.strip()
     except Exception:
         return ""

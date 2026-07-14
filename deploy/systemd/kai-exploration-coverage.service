@@ -1,0 +1,29 @@
+[Unit]
+Description=KAI Exploration daily coverage report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+Environment=EXPLORATION_ENABLED=true
+Environment=EXPLORATION_COINGECKO_ENABLED=true
+Environment=EXPLORATION_COINGECKO_SCRAPE_ENABLED=true
+Environment=EXPLORATION_MESSARI_ENABLED=true
+Environment=EXPLORATION_MESSARI_SCRAPE_ENABLED=true
+Environment=EXPLORATION_COINMARKETCAP_ENABLED=true
+Environment=EXPLORATION_COINMARKETCAP_SCRAPE_ENABLED=true
+Environment=EXPLORATION_COINGLASS_ENABLED=true
+Environment=EXPLORATION_COINGLASS_SCRAPE_ENABLED=true
+Environment=EXPLORATION_DUNE_ENABLED=true
+Environment=EXPLORATION_GLASSNODE_ENABLED=true
+Environment=EXPLORATION_NANSEN_ENABLED=true
+Environment=EXPLORATION_SNAPSHOTS_ENABLED=true
+Environment=EXPLORATION_SCRAPE_BROWSER_UA_ENABLED=true
+Environment=EXPLORATION_DUMMY_ENABLED=false
+ExecStartPre=/bin/bash -c 'rm -rf /home/ubuntu/ai_analyst_trading_bot/artifacts/exploration/raw /home/ubuntu/ai_analyst_trading_bot/artifacts/exploration/normalized'
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.exploration.cli run
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.exploration.cli report
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/exploration_notify.py
