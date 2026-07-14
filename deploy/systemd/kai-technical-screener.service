@@ -1,0 +1,9 @@
+[Unit]
+Description=KAI Technical Screener — asset-agnostic price/flow signals (shadow-only, WP-D 2026-06-15)
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/trading-bot ingestion technical-screen

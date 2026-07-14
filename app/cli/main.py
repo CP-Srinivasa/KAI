@@ -795,7 +795,7 @@ def analyze_pending(
                         res.analysis_result,
                         spam_probability=res.document.spam_probability or 0.0,
                     )
-                    if deliveries:
+                    if any(d.success for d in deliveries):
                         alert_count += 1
                 except Exception as exc:
                     logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)

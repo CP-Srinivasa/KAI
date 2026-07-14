@@ -1,0 +1,15 @@
+[Unit]
+Description=KAI Edge-IC watch — notify Telegram when n or IC-positive-set moves
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/edge_ic_watch.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=180

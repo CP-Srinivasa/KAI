@@ -1,0 +1,10 @@
+[Unit]
+Description=KAI Edge-IC check — one-time 2026-06-18 08:00 (after the 07:30 digest)
+
+[Timer]
+OnCalendar=2026-06-18 08:00:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
