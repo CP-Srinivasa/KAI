@@ -27,6 +27,7 @@ Usage (CLI):
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -42,7 +43,9 @@ from app.alerts.audit import (
     load_outcome_annotations,
 )
 from app.alerts.eligibility import evaluate_directional_eligibility
+from app.market_data.binance_adapter import BinanceAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
+from app.signals.models import SignalProvenance
 
 log = structlog.get_logger(__name__)
 
@@ -100,6 +103,88 @@ def _window_label(window_hours: float) -> str:
 # Default batch size for stale inconclusive backfill.
 # Limits API calls per run to avoid rate exhaustion in cron.
 _DEFAULT_BACKFILL_BATCH = 30
+
+# ── W2 Quoten-Sprint (2026-07-29) ────────────────────────────────────────
+# Preisquelle der Outcome-Aufloesung. Default "binance": eigene OHLCV-Basis
+# (public, kein Key, gleiche Preisbasis wie die Paper-Execution) statt des
+# CoinGecko-Free-Tiers, dessen Rate-Limit die 5-s-Delays, Batch-Caps und den
+# Annotations-Backlog erzwang. CoinGecko bleibt Fallback je Fenster-Aufruf.
+_PRICE_SOURCE_ENV = "ALERTS_OUTCOME_PRICE_SOURCE"
+
+# Befund 2026-07-29: 62 eigene technical_paper-Fills hatten NULL Outcome-
+# Annotationen — gehandelte und gemessene Population waren disjunkt. Eigene
+# Signale werden deshalb als synthetische Pendings aus dem Paper-Audit
+# gespeist (in-memory; alert_audit.jsonl bleibt unveraendert die reine
+# Dispatch-Historie). SIG-TVP-* haengt am tv:-Alert (keine Doppel-Messung),
+# fremde UUID-Feeds bleiben bewusst aussen vor (eigener Folgeschritt).
+_PAPER_AUDIT_FILENAME = "paper_execution_audit.jsonl"
+_TECHNICAL_DOC_PREFIX = "technical_paper"
+_TECHNICAL_PROVENANCE = SignalProvenance(
+    source="technical_paper",
+    version="paper-fill-v1",
+    signal_path_id="technical_paper_v1",
+)
+
+
+def _load_technical_paper_pendings(audit_dir: Path) -> list[AlertAuditRecord]:
+    """Synthetische AlertAuditRecords aus eigenen technical_paper-Fills.
+
+    Nur der ERSTE eroeffnende Fill je Dokument zaehlt (buy+long / sell+short);
+    Schliess-Fills derselben document_id werden ignoriert. Richtung → Sentiment:
+    long=bullish, short=bearish. Fehlerhafte Zeilen werden uebersprungen —
+    das Audit darf die Annotation nie blocken.
+    """
+    path = audit_dir / _PAPER_AUDIT_FILENAME
+    if not path.exists():
+        return []
+    records: list[AlertAuditRecord] = []
+    seen: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("event_type") != "order_filled":
+                    continue
+                doc = row.get("document_id")
+                if not isinstance(doc, str) or not doc.startswith(_TECHNICAL_DOC_PREFIX):
+                    continue
+                if doc in seen:
+                    continue
+                side = row.get("side")
+                position_side = row.get("position_side")
+                is_opening = (side == "buy" and position_side == "long") or (
+                    side == "sell" and position_side == "short"
+                )
+                if not is_opening:
+                    continue
+                symbol = row.get("symbol")
+                ts = row.get("timestamp_utc")
+                if not isinstance(symbol, str) or not isinstance(ts, str):
+                    continue
+                seen.add(doc)
+                records.append(
+                    AlertAuditRecord(
+                        document_id=doc,
+                        channel="paper",
+                        message_id=None,
+                        is_digest=False,
+                        dispatched_at=ts,
+                        sentiment_label=("bullish" if position_side == "long" else "bearish"),
+                        affected_assets=[symbol],
+                        directional_eligible=True,
+                        source_name="technical_paper",
+                        provenance=_TECHNICAL_PROVENANCE,
+                    )
+                )
+    except OSError:
+        return []
+    return records
 
 
 def _scaled_threshold(
@@ -253,6 +338,12 @@ async def auto_annotate_pending(
             return []
 
     audits = load_alert_audits(audit_dir)
+    # W2: eigene technical_paper-Signale mitmessen. Ein echter Audit-Record
+    # gewinnt immer — synthetisiert wird nur, was dort fehlt.
+    known_docs = {a.document_id for a in audits}
+    audits.extend(
+        p for p in _load_technical_paper_pendings(audit_dir) if p.document_id not in known_docs
+    )
     existing = load_outcome_annotations(audit_dir)
 
     # Latest annotation per document_id (last entry wins).
@@ -385,10 +476,16 @@ async def auto_annotate_pending(
     # W1: seit write-on-change ist "evaluiert" != "geschrieben". Beide Zahlen
     # gehoeren ins done-Log, sonst wirkt die geschrumpfte JSONL wie Datenverlust.
     written = 0
-    adapter = CoinGeckoAdapter(
+    coingecko = CoinGeckoAdapter(
         timeout_seconds=15,
         api_key=get_settings().coingecko_api_key or None,
     )
+    # W2: Binance ist Default-Preisquelle (eigene OHLCV-Basis, kein Rate-
+    # Limit-Delay); CoinGecko bleibt Fallback je Aufruf. Env zur LAUFZEIT
+    # gelesen, damit Tests/Deploys ohne Restart-Semantik umschalten koennen.
+    price_source = os.getenv(_PRICE_SOURCE_ENV, "binance").strip().lower()
+    adapter = coingecko if price_source == "coingecko" else BinanceAdapter(timeout_seconds=15)
+    log.info("auto_annotate.price_source", source=price_source)
 
     # Fetch current volatility for threshold scaling.
     volatility_24h: float | None = None
@@ -445,7 +542,21 @@ async def auto_annotate_pending(
                 start_utc=dispatch_time,
                 end_utc=eval_end,
             )
-            await asyncio.sleep(_API_DELAY_SECONDS)
+            # W2: CoinGecko-Fallback, wenn Binance nichts liefert (Symbol
+            # nicht gelistet, Luecke, Transportfehler). Das Free-Tier-Delay
+            # gilt NUR fuer CoinGecko-Aufrufe — der Binance-Pfad laeuft ohne
+            # kuenstliche Bremse, was den Annotations-Backlog abbaut.
+            used_coingecko = adapter is coingecko
+            if price_data is None and not used_coingecko:
+                api_calls_this_alert += 1
+                price_data = await coingecko.get_price_change_between(
+                    symbol,
+                    start_utc=dispatch_time,
+                    end_utc=eval_end,
+                )
+                used_coingecko = True
+            if used_coingecko:
+                await asyncio.sleep(_API_DELAY_SECONDS)
 
             if price_data is None:
                 continue
