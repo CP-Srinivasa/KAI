@@ -142,6 +142,23 @@ class AlertOutcomeAnnotation:
     # triggered hit in. One of "1h"/"4h"/"24h"/"72h"/"168h" or None when
     # outcome != "hit" or annotation predates the multi-window patch.
     hit_at_window: str | None = None
+    # ── Quoten-Sprint W1 (2026-07-29) ────────────────────────────────────
+    # Alle vier Felder sind additiv: Altzeilen ohne sie bleiben unverändert
+    # ladbar (``load_outcome_annotations`` liest sie mit ``.get``).
+    #
+    # Auflösungs-Zeitstempel, NUR beim Übergang nach hit/miss gesetzt. Vorher
+    # gab es ausschliesslich ``annotated_at`` — damit war die Resolutions-Kadenz
+    # nicht ableitbar (Quoten-Audit Q8).
+    resolved_at: str | None = None
+    # Gate-Dimensionen aus dem zugehörigen AlertAuditRecord. Erlauben die
+    # Trennschärfe-Gegenprobe auf der DURCHGELASSENEN Seite (bisher nur auf der
+    # geblockten möglich) und die Q1-Aufschlüsselung nach Priorität.
+    directional_confidence: float | None = None
+    priority: int | None = None
+    # Fortlaufender Re-Eval-Zähler. Trägt den Terminal-Cap
+    # (``_MAX_INCONCLUSIVE_REEVAL_ATTEMPTS``), seit write-on-change genau die
+    # Wiederholungszeilen einspart, die vorher als dessen Zählbasis dienten.
+    reeval_attempt: int | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -157,6 +174,14 @@ class AlertOutcomeAnnotation:
             d["provenance"] = self.provenance.to_dict()
         if self.hit_at_window is not None:
             d["hit_at_window"] = self.hit_at_window
+        if self.resolved_at is not None:
+            d["resolved_at"] = self.resolved_at
+        if self.directional_confidence is not None:
+            d["directional_confidence"] = self.directional_confidence
+        if self.priority is not None:
+            d["priority"] = self.priority
+        if self.reeval_attempt is not None:
+            d["reeval_attempt"] = self.reeval_attempt
         return d
 
 
@@ -203,6 +228,12 @@ def load_outcome_annotations(
                     note=data.get("note"),
                     provenance=SignalProvenance.from_dict(data.get("provenance")),
                     hit_at_window=data.get("hit_at_window"),
+                    # W1: additiv — Altzeilen liefern hier None und verhalten
+                    # sich exakt wie vor der Erweiterung.
+                    resolved_at=data.get("resolved_at"),
+                    directional_confidence=data.get("directional_confidence"),
+                    priority=data.get("priority"),
+                    reeval_attempt=data.get("reeval_attempt"),
                 )
             )
         except KeyError:
