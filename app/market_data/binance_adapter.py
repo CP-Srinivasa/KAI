@@ -252,6 +252,70 @@ class BinanceAdapter(BaseMarketDataAdapter):
             self._set_error("empty_klines")
         return candles
 
+    async def get_price_change_between(
+        self,
+        symbol: str,
+        *,
+        start_utc: datetime,
+        end_utc: datetime,
+        max_point_gap_seconds: int = 3 * 3600,
+        padding_seconds: int = 2 * 3600,
+    ) -> tuple[float, float, float] | None:
+        """Historischer Move zwischen zwei Zeitpunkten aus 1h-Klines.
+
+        W2 Quoten-Sprint (2026-07-29): Drop-in-Gegenstück zu
+        ``CoinGeckoAdapter.get_price_change_between`` — gleiche Signatur,
+        gleicher Rückgabevertrag ``(price_at_start, price_at_end, move_pct)``
+        oder ``None``. Damit kann der Outcome-Annotator die Preisquelle
+        wechseln, ohne seine Logik zu ändern. Nearest-Neighbor je Zeitpunkt
+        mit demselben ``max_point_gap_seconds``-Fail-Closed wie CoinGecko:
+        liegt kein Candle nah genug, wird ``None`` geliefert statt geraten.
+        """
+        if end_utc <= start_utc:
+            return None
+        span_hours = int((end_utc - start_utc).total_seconds() // 3600) + 1
+        pad_hours = int(padding_seconds // 3600) + 1
+        limit = min(1000, span_hours + 2 * pad_hours + 2)
+        start_time_ms = int((start_utc.timestamp() - padding_seconds) * 1000)
+        candles = await self.get_ohlcv(
+            symbol,
+            timeframe="1h",
+            limit=limit,
+            start_time_ms=max(start_time_ms, 0),
+        )
+        if not candles:
+            return None
+
+        points: list[tuple[datetime, float]] = []
+        for candle in candles:
+            try:
+                ts = datetime.fromisoformat(candle.timestamp_utc.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            points.append((ts, candle.close))
+        if not points:
+            return None
+
+        def _nearest(target: datetime) -> float | None:
+            best_price: float | None = None
+            best_gap: float | None = None
+            for ts, price in points:
+                gap = abs((ts - target).total_seconds())
+                if best_gap is None or gap < best_gap:
+                    best_gap, best_price = gap, price
+            if best_gap is None or best_gap > max_point_gap_seconds:
+                return None
+            return best_price
+
+        price_start = _nearest(start_utc)
+        price_end = _nearest(end_utc)
+        if price_start is None or price_end is None or price_start <= 0:
+            return None
+        move_pct = (price_end - price_start) / price_start * 100.0
+        return (price_start, price_end, move_pct)
+
     async def get_market_data_snapshot(self, symbol: str) -> MarketDataSnapshot:
         retrieved_at = datetime.now(UTC).isoformat()
         ticker = await self.get_ticker(symbol)
