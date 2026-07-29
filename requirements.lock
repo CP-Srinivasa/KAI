@@ -159,7 +159,7 @@ markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
     # via mako
-mcp==1.27.1
+mcp==1.28.1
     # via ai-analyst-trading-bot (pyproject.toml)
 mdurl==0.1.2
     # via markdown-it-py
@@ -187,7 +187,7 @@ psycopg2-binary==2.9.12
     # via ai-analyst-trading-bot (pyproject.toml)
 pyaes==1.6.1
     # via telethon
-pyasn1==0.6.3
+pyasn1==0.6.4
     # via
     #   pyasn1-modules
     #   rsa
