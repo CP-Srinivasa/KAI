@@ -263,6 +263,16 @@ async def auto_annotate_pending(
         latest_by_doc[a.document_id] = a.outcome
         if a.outcome == "inconclusive":
             inconclusive_attempts[a.document_id] = inconclusive_attempts.get(a.document_id, 0) + 1
+            # Quoten-Sprint W1 (2026-07-29): Seit write-on-change werden
+            # bestaetigende Wiederholungen nicht mehr als eigene Zeile
+            # geschrieben — die reine Zeilen-Zaehlung oben wuerde den Terminal-
+            # Cap unten also nie mehr erreichen (Endlos-Re-Eval + unbegrenzte
+            # CoinGecko-Calls). Der explizite Zaehler ist die neue Wahrheit;
+            # max() haelt Altzeilen ohne das Feld korrekt.
+            if a.reeval_attempt is not None:
+                inconclusive_attempts[a.document_id] = max(
+                    inconclusive_attempts[a.document_id], a.reeval_attempt
+                )
 
     now = datetime.now(UTC)
     min_cutoff = now - timedelta(hours=min_age_hours)
@@ -372,6 +382,9 @@ async def auto_annotate_pending(
 
     no_price_symbols: dict[str, int] = {}
     too_young = 0
+    # W1: seit write-on-change ist "evaluiert" != "geschrieben". Beide Zahlen
+    # gehoeren ins done-Log, sonst wirkt die geschrumpfte JSONL wie Datenverlust.
+    written = 0
     adapter = CoinGeckoAdapter(
         timeout_seconds=15,
         api_key=get_settings().coingecko_api_key or None,
@@ -537,6 +550,17 @@ async def auto_annotate_pending(
             f"thr={(chosen_thr or 0):.2f}%)"
         )
 
+        # ── Quoten-Sprint W1 (2026-07-29) ────────────────────────────────
+        # Q6-Befund: 9,15 Zeilen pro Dokument, 85,1 % aller Zeilen im obersten
+        # Dezil, ein Dokument mit 840 Zeilen — weil hier bisher bei JEDEM Lauf
+        # geschrieben wurde, auch wenn der Re-Eval denselben Outcome bestaetigte.
+        prior_outcome = latest_by_doc.get(rec.document_id)
+        outcome_changed = prior_outcome != outcome
+        fully_elapsed_now = dispatch_time < (now - timedelta(hours=_STALE_REEVAL_WINDOW_HOURS))
+        next_attempt: int | None = None
+        if outcome == "inconclusive":
+            next_attempt = inconclusive_attempts.get(rec.document_id, 0) + 1
+
         annotation = AlertOutcomeAnnotation(
             document_id=rec.document_id,
             outcome=outcome,  # type: ignore[arg-type]
@@ -544,6 +568,12 @@ async def auto_annotate_pending(
             note=note,
             provenance=rec.provenance,
             hit_at_window=hit_at_window,
+            # Q8: erst dieser Zeitstempel macht die Resolutions-Kadenz messbar.
+            resolved_at=(datetime.now(UTC).isoformat() if outcome in ("hit", "miss") else None),
+            # Q3-Gegenprobe: beide Felder liegen im AlertAuditRecord bereits vor.
+            directional_confidence=rec.directional_confidence,
+            priority=rec.priority,
+            reeval_attempt=next_attempt,
         )
 
         log.info(
@@ -558,14 +588,23 @@ async def auto_annotate_pending(
             reeval=is_reeval,
         )
 
-        if not dry_run:
+        # write-on-change: nur echte Zustandswechsel werden persistiert. Ausnahme
+        # sind vollstaendig abgelaufene Dokumente — deren bestaetigende Zeilen
+        # sind cap-relevant (siehe _MAX_INCONCLUSIVE_REEVAL_ATTEMPTS oben) und
+        # duerfen NICHT gespart werden, sonst terminiert der Re-Eval nie.
+        should_write = outcome_changed or fully_elapsed_now
+        if not dry_run and should_write:
             append_outcome_annotation(annotation, audit_dir)
+            written += 1
 
         results.append(annotation)
 
     log.info(
         "auto_annotate.done",
         total=len(results),
+        # W1: geschriebene Zeilen (Zustandswechsel + cap-relevante Bestaetigungen).
+        # Differenz zu `total` = eingesparte Wiederholungen.
+        written=written,
         hits=sum(1 for a in results if a.outcome == "hit"),
         misses=sum(1 for a in results if a.outcome == "miss"),
         inconclusive=sum(1 for a in results if a.outcome == "inconclusive"),
