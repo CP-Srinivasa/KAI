@@ -186,6 +186,16 @@ class PortfolioSnapshot:
     # kumuliert (Operator-Direktive kai_paper_epoch_reset_directive_20260712).
     epoch_id: str = "legacy"
     epoch_started_at_utc: str | None = None
+    # P0-03 (Review 07-30): Equity-Wahrheit. Eine unbepreiste offene Position
+    # trug bisher 0 zum net_market_value bei — total_equity_usd sah praezise aus,
+    # unterschlug aber still ~den Positionswert. equity_complete=False heisst:
+    # total_equity_usd ist eine UNTERGRENZE (Cash + bepreiste Positionen);
+    # total_equity_incl_entry_fallback_usd ergaenzt unbepreiste Positionen zu
+    # Entry-Basis als ehrliche Schaetzung (kein Marktwert!).
+    equity_complete: bool = True
+    unpriced_position_count: int = 0
+    unpriced_symbols: tuple[str, ...] = ()
+    total_equity_incl_entry_fallback_usd: float | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -212,6 +222,10 @@ class PortfolioSnapshot:
             "error": self.error,
             "execution_enabled": self.execution_enabled,
             "write_back_allowed": self.write_back_allowed,
+            "equity_complete": self.equity_complete,
+            "unpriced_position_count": self.unpriced_position_count,
+            "unpriced_symbols": list(self.unpriced_symbols),
+            "total_equity_incl_entry_fallback_usd": self.total_equity_incl_entry_fallback_usd,
         }
 
 
@@ -428,6 +442,12 @@ def _build_snapshot_from_portfolio_state(
         realized_pnl_usd=realized_pnl_usd,
         total_market_value_usd=round(total_market_value, 8),
         total_equity_usd=round(cash_usd + net_entry_value, 8),
+        # P0-03: DB-Pfad hat keine Live-Preise — Equity ist Entry-Basis und
+        # damit nie "complete" im Markt-Sinn; Fallback-Summe == Equity selbst.
+        equity_complete=not position_summaries,
+        unpriced_position_count=len(position_summaries),
+        unpriced_symbols=tuple(p.symbol for p in position_summaries),
+        total_equity_incl_entry_fallback_usd=round(cash_usd + net_entry_value, 8),
         position_count=len(position_summaries),
         positions=tuple(position_summaries),
         exposure_summary=exposure,
@@ -709,6 +729,16 @@ async def build_portfolio_snapshot(
     )
     total_equity = round(replay.cash_usd + net_market_value, 8)
     has_unpriced_positions = bool(positions_tuple) and exposure_summary.priced_position_count == 0
+    # P0-03: EINE unbepreiste Position reicht, um total_equity_usd zur
+    # Untergrenze zu machen (sie steuert 0 zum net_market_value bei). Die
+    # Entry-Fallback-Summe macht die Luecke beziffert statt unsichtbar.
+    unpriced = tuple(p.symbol for p in positions_tuple if p.market_value_usd is None)
+    net_incl_fallback = sum(
+        (-1.0 if p.position_side == "short" else 1.0)
+        * (p.market_value_usd if p.market_value_usd is not None else p.quantity * p.avg_entry_price)
+        for p in positions_tuple
+    )
+    equity_incl_fallback = round(replay.cash_usd + net_incl_fallback, 8)
 
     return PortfolioSnapshot(
         generated_at_utc=generated_at,
@@ -728,6 +758,10 @@ async def build_portfolio_snapshot(
         total_fees_artifact_usd=round(replay.total_fees_artifact_usd, 8),
         total_fees_phantom_usd=round(replay.total_fees_phantom_usd, 8),
         total_fees_today_usd=round(replay.total_fees_today_usd, 8),
+        equity_complete=not unpriced,
+        unpriced_position_count=len(unpriced),
+        unpriced_symbols=unpriced,
+        total_equity_incl_entry_fallback_usd=equity_incl_fallback,
         fills_today=replay.fills_today,
         epoch_id=replay.epoch_id,
         epoch_started_at_utc=replay.epoch_started_at_utc,

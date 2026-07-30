@@ -7,6 +7,19 @@ three most-recent closures (ETH stop -276.67, HYPE take +53.25, BTC
 stop -126.37) tilted negative. Without a coupled-view CLI, "≥10
 fills" looked like a green light when the underlying quality was poor.
 
+P0-Truth-Repair 2026-07-30 (Review-Befund, Operator-Go):
+
+* **Fail-closed PnL:** Zeilen ohne ``trade_pnl_usd`` flossen bisher mit dem
+  KUMULATIVEN ``realized_pnl_usd`` in die Summen (TL-003-Klasse) — dadurch
+  entstanden ökonomisch unmögliche per-Asset-Ergebnisse, die über
+  ``by_symbol`` die Asset-Rotation speisten. Jetzt zählen ausschließlich
+  Zeilen mit ``trade_pnl_usd``; der Rest wird ausgeschlossen und in
+  ``rows_missing_trade_pnl`` sichtbar gemacht.
+* **Epochen-Scope:** Das Fenster lief bisher epochenübergreifend über das
+  INVALID-Legacy-Buch hinweg. ``epoch_scope=True`` (Default) schneidet am
+  letzten ``portfolio_epoch_reset``-Event; ``epoch_start_utc`` trägt den
+  Schnitt, ``"legacy"``-Bücher ohne Reset bleiben unbeschnitten.
+
 This module is intentionally read-only. It iterates the paper-execution
 audit JSONL, picks position_closed events, and produces both an
 aggregate and per-symbol / per-reason cuts.
@@ -21,6 +34,9 @@ from pathlib import Path
 
 _DEFAULT_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
 _CLOSE_EVENTS = ("position_closed", "position_partial_closed")
+_EPOCH_RESET_EVENT = "portfolio_epoch_reset"
+
+PNL_BASIS = "trade_pnl_usd_fail_closed"
 
 
 def _coerce_float(value: object) -> float | None:
@@ -44,6 +60,11 @@ class PaperQualitySnapshot:
     by_symbol: dict[str, dict[str, float]]
     by_reason: dict[str, dict[str, float]]
     audit_path: str
+    # P0-Truth-Repair 2026-07-30 (alle additiv):
+    pnl_basis: str = PNL_BASIS
+    rows_missing_trade_pnl: int = 0
+    epoch_scoped: bool = False
+    epoch_start_utc: str | None = None
 
 
 @dataclass
@@ -58,12 +79,14 @@ def build_paper_quality_snapshot(
     *,
     audit_path: str | Path = _DEFAULT_AUDIT,
     last_n: int = 25,
+    epoch_scope: bool = True,
 ) -> PaperQualitySnapshot:
     if last_n < 1:
         raise ValueError("last_n must be >= 1")
 
     path = Path(audit_path)
     closures: list[dict[str, object]] = []
+    epoch_start_utc: str | None = None
     if path.exists():
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
@@ -75,7 +98,14 @@ def build_paper_quality_snapshot(
                 continue
             if not isinstance(rec, dict):
                 continue
-            if rec.get("event_type") in _CLOSE_EVENTS:
+            event_type = rec.get("event_type")
+            if epoch_scope and event_type == _EPOCH_RESET_EVENT:
+                # Neue Epoche: alles davor gehört zum archivierten Buch
+                # (INVALID_FOR_PERFORMANCE) und darf keine Quoten mehr speisen.
+                closures.clear()
+                epoch_start_utc = str(rec.get("timestamp_utc") or "") or None
+                continue
+            if event_type in _CLOSE_EVENTS:
                 closures.append(rec)
 
     total = len(closures)
@@ -83,6 +113,7 @@ def build_paper_quality_snapshot(
     wins = 0
     losses = 0
     sum_pnl = 0.0
+    missing_pnl = 0
     latest_realized: float | None = None
     by_symbol: dict[str, _SymCounter] = defaultdict(_SymCounter)
     by_reason: dict[str, _SymCounter] = defaultdict(_SymCounter)
@@ -90,7 +121,10 @@ def build_paper_quality_snapshot(
     for rec in window:
         pnl = _coerce_float(rec.get("trade_pnl_usd"))
         if pnl is None:
-            pnl = _coerce_float(rec.get("realized_pnl_usd")) or 0.0
+            # Fail-closed: realized_pnl_usd ist KUMULATIV (NEO-P-101-r2) und
+            # niemals ein Trade-PnL-Ersatz. Ausschließen + sichtbar zählen.
+            missing_pnl += 1
+            continue
         sum_pnl += pnl
         if pnl > 0:
             wins += 1
@@ -123,8 +157,9 @@ def build_paper_quality_snapshot(
             break
 
     decided = wins + losses
+    counted = len(window) - missing_pnl
     win_rate = (wins / decided) if decided > 0 else 0.0
-    avg_pnl = (sum_pnl / len(window)) if window else 0.0
+    avg_pnl = (sum_pnl / counted) if counted else 0.0
 
     return PaperQualitySnapshot(
         closures_total=total,
@@ -153,7 +188,11 @@ def build_paper_quality_snapshot(
             for reason, rc in by_reason.items()
         },
         audit_path=str(path),
+        pnl_basis=PNL_BASIS,
+        rows_missing_trade_pnl=missing_pnl,
+        epoch_scoped=epoch_scope,
+        epoch_start_utc=epoch_start_utc,
     )
 
 
-__all__ = ["PaperQualitySnapshot", "build_paper_quality_snapshot"]
+__all__ = ["PNL_BASIS", "PaperQualitySnapshot", "build_paper_quality_snapshot"]

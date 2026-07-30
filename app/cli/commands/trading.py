@@ -1311,6 +1311,14 @@ def trading_news_eval(
     lookback_days: int = typer.Option(
         120, "--lookback-days", help="Only score news published within this window (0=all)"
     ),
+    published_after: str = typer.Option(
+        "",
+        "--published-after",
+        help="FESTER OOS-Anker (ISO-UTC, z. B. created_at_utc der Prä-Reg). "
+        "Schneidet exakt an diesem Zeitpunkt statt am wandernden Lookback-Fenster — "
+        "Pflicht für Verdikt-Läufe (P0-01): ein zu großes Lookback holt In-Sample "
+        "zurück, ein zu kleines wirft frühe OOS-Events weg.",
+    ),
     min_confidence: float = typer.Option(
         0.0, "--min-confidence", help="Min directional_confidence to include an event"
     ),
@@ -1400,6 +1408,13 @@ def trading_news_eval(
         base_cost += hedge_leg_cost_bps
 
     since = datetime.now(UTC) - timedelta(days=lookback_days) if lookback_days > 0 else None
+    if published_after:
+        # Fester Anker dominiert: exakter Schnitt an der Registrierungszeit,
+        # unabhängig davon, wann der Lauf startet.
+        anchor = datetime.fromisoformat(published_after.replace("Z", "+00:00"))
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=UTC)
+        since = anchor
     interval_ms = interval_to_ms(tf)
     max_h = max(horizons)
 
@@ -1492,6 +1507,10 @@ def trading_news_eval(
             "n_outcomes": len(outcomes),
             "n_symbols": len(kept),
             "n_symbols_dropped": dropped_syms,
+            # P0-01: der wirksame Publikations-Schnitt gehört in die Evidenz —
+            # ein Verdikt-Report ohne Anker ist nicht reproduzierbar.
+            "since_utc": since.isoformat() if since else None,
+            "published_after_anchor": published_after or None,
             "timeframe": tf,
             "base_cost_bps": round(base_cost, 2),
             "cost_tiering": bool(cost_map),

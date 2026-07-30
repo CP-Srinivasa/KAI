@@ -690,3 +690,108 @@ async def test_build_portfolio_snapshot_fail_closed_on_invalid_audit_json(
     assert snapshot.available is False
     assert snapshot.error == "audit_json_decode_error_line_1"
     assert snapshot.position_count == 0
+
+
+@pytest.mark.asyncio
+async def test_equity_truth_marks_single_unpriced_position(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P0-03 (Review 07-30, 1INCH-Fall): EINE unbepreiste Position machte
+    total_equity_usd bisher still zur Untergrenze — jetzt wird die Luecke
+    markiert und zu Entry-Basis beziffert."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.2,
+                "fill_price": 50000.0,
+                "filled_at": "2026-03-21T10:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_2",
+                "symbol": "1INCH/USDT",
+                "side": "buy",
+                "quantity": 10000.0,
+                "fill_price": 0.3,
+                "filled_at": "2026-03-21T10:01:00+00:00",
+                "portfolio_cash": 6000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    async def fake_market_data_snapshot(**kwargs):  # noqa: ANN003
+        if kwargs["symbol"] == "BTC/USDT":
+            return _market_snapshot(
+                symbol="BTC/USDT", price=60000.0, is_stale=False, available=True, error=None
+            )
+        return _market_snapshot(
+            symbol="1INCH/USDT", price=None, is_stale=False, available=False, error="not_listed"
+        )
+
+    monkeypatch.setattr(
+        "app.execution.portfolio_read.get_market_data_snapshot",
+        fake_market_data_snapshot,
+    )
+
+    snapshot = await build_portfolio_snapshot(audit_path=audit_path)
+
+    assert snapshot.equity_complete is False
+    assert snapshot.unpriced_position_count == 1
+    assert snapshot.unpriced_symbols == ("1INCH/USDT",)
+    # Untergrenze: Cash 6000 + BTC-MTM 12000; die 1INCH-Position steuert 0 bei.
+    assert snapshot.total_equity_usd == pytest.approx(18000.0)
+    # Ehrliche Schaetzung: + Entry-Basis der unbepreisten Position (3000).
+    assert snapshot.total_equity_incl_entry_fallback_usd == pytest.approx(21000.0)
+    # JSON-Sicht traegt die Wahrheit fuer Dashboard/Reports:
+    d = snapshot.to_json_dict()
+    assert d["equity_complete"] is False
+    assert d["unpriced_symbols"] == ["1INCH/USDT"]
+
+
+@pytest.mark.asyncio
+async def test_equity_truth_complete_when_all_positions_priced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.2,
+                "fill_price": 50000.0,
+                "filled_at": "2026-03-21T10:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    async def fake_market_data_snapshot(**kwargs):  # noqa: ANN003
+        return _market_snapshot(
+            symbol="BTC/USDT", price=60000.0, is_stale=False, available=True, error=None
+        )
+
+    monkeypatch.setattr(
+        "app.execution.portfolio_read.get_market_data_snapshot",
+        fake_market_data_snapshot,
+    )
+
+    snapshot = await build_portfolio_snapshot(audit_path=audit_path)
+    assert snapshot.equity_complete is True
+    assert snapshot.unpriced_position_count == 0
+    assert snapshot.total_equity_incl_entry_fallback_usd == pytest.approx(snapshot.total_equity_usd)
