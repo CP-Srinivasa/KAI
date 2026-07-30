@@ -45,6 +45,7 @@ from app.risk.reason_codes import ExecutionBlockerCode
 from app.security.kyt.models import KytAssessment
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalCandidate, SignalDirection
+from app.storage.jsonl_io import iter_jsonl_since
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
 from app.trading.diversification import (
     DiversificationDecision,
@@ -2181,7 +2182,9 @@ def build_priority_gate_summary(
     threshold = get_settings().execution.paper_min_priority
     gate_active = threshold > 1
 
-    records = load_trading_loop_cycles(audit_path)
+    # Fenster-Read statt Full-Scan: nur 1,36 % der Zeilen lagen im 24-h-Fenster
+    # (2026-07-30). Rationale + Grenzen in ``jsonl_io.iter_jsonl_since``.
+    records = iter_jsonl_since(Path(audit_path), since=window_start_iso, key="started_at")
     total = 0
     priority_rejected = 0
     other_rejected = 0

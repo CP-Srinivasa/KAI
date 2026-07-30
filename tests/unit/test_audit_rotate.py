@@ -85,6 +85,30 @@ def test_engine_replay_ssot_is_hard_excluded() -> None:
     assert "blocked_outcomes.jsonl" not in names
 
 
+def test_api_request_audit_is_rotated() -> None:
+    """Der 127-MB-Brocken (Befund 2026-07-30) gehört auf die Allowlist.
+
+    Es ist der einzige Stream mit NULL programmatischen Lesern — geschrieben von
+    RequestGovernanceMiddleware, sonst nur Backup-Ziel. Ohne Regel wuchs er
+    unbegrenzt, weil jede Dashboard-Poll-Runde ~15 Requests loggt.
+    """
+    names = {rule.filename for rule in audit_rotate.ROTATION_RULES}
+    assert "api_request_audit.jsonl" in names
+
+
+def test_trading_loop_audit_stays_excluded_despite_its_size() -> None:
+    """54,8 MB, aber NICHT rotierbar — Grösse ist kein Freifahrtschein.
+
+    Geprüft 2026-07-30: ``load_trading_loop_cycles`` wird von daily_briefing,
+    health_check, loop_idle_signal und canonical_read über die VOLLE Historie
+    aufgerufen. Eine Rotation würde deren Eingaben still verändern. Der richtige
+    Hebel für die Lesekosten ist der Fenster-Read (``iter_jsonl_since``), nicht
+    das Kürzen des Streams.
+    """
+    names = {rule.filename for rule in audit_rotate.ROTATION_RULES}
+    assert "trading_loop_audit.jsonl" not in names
+
+
 def test_run_respects_allowlist_only(tmp_path: Path) -> None:
     # an oversized NON-allowlisted stream must stay untouched
     rogue = tmp_path / "paper_execution_audit.jsonl"
