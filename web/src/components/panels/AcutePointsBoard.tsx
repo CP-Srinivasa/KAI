@@ -31,12 +31,14 @@ import type {
 // Sprachregel (Lehre kai_news_direction_v2_immature): „fällig" heisst Eval
 // fahren, NIE „bestanden"; ohne Zähler wird nichts behauptet.
 const PREREG_LABEL: Record<OperatorPrereg["state"], string> = {
-  due: "fällig",
+  judgeable: "urteilsfähig",
+  eval_check: "Evaluator fällig",
   maturing: "reift",
   no_counter: "ungezählt",
 };
-const PREREG_TONE: Record<OperatorPrereg["state"], "warn" | "info" | "muted"> = {
-  due: "warn",
+const PREREG_TONE: Record<OperatorPrereg["state"], "neg" | "warn" | "info" | "muted"> = {
+  judgeable: "neg",
+  eval_check: "warn",
   maturing: "info",
   no_counter: "muted",
 };
@@ -72,7 +74,9 @@ export function AcutePointsBoard({
           ) : live && live.due_count > 0 ? (
             // Keine akuten Gates, aber ein fälliges Verdikt ist NICHT "ruhig".
             <Badge tone="warn" dot>
-              {live.due_count} Verdikt fällig
+              {live.judgeable_count > 0
+                ? `${live.judgeable_count} Verdikt fällig`
+                : `${live.eval_check_count} Evaluator fällig`}
             </Badge>
           ) : (
             <Badge tone="pos" dot>
@@ -94,8 +98,8 @@ export function AcutePointsBoard({
         live && live.due_count > 0 ? (
           <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
             <AlertTriangle size={14} className="shrink-0 text-warn" />
-            Keine blockierenden Gates — aber {live.due_count} pre-registriertes Verdikt ist
-            fällig (siehe unten).
+            Keine blockierenden Gates — aber {live.due_count} pre-registrierter Claim braucht
+            Handlung (siehe unten: urteilsfähig oder Evaluator-Lauf).
           </div>
         ) : (
           <div className="flex items-center gap-2 py-2 text-xs text-fg-muted">
@@ -136,9 +140,11 @@ export function AcutePointsBoard({
               Offene Prä-Regs
             </span>
             <Badge tone={live.due_count > 0 ? "warn" : "muted"} dot={live.due_count > 0}>
-              {live.due_count > 0
-                ? `${live.due_count} fällig / ${live.open_count} offen`
-                : `${live.open_count} offen`}
+              {live.judgeable_count > 0
+                ? `${live.judgeable_count} urteilsfähig / ${live.open_count} offen`
+                : live.eval_check_count > 0
+                  ? `${live.eval_check_count}× Evaluator fällig / ${live.open_count} offen`
+                  : `${live.open_count} offen`}
             </Badge>
             <span className="text-2xs text-pos">live berechnet</span>
           </div>
