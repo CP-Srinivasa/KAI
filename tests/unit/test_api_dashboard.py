@@ -92,8 +92,23 @@ def _patch_artifacts(
             "_SOURCE_RELIABILITY_REPORT",
             d / "source_reliability.json",
         ),
+        patch.object(
+            dashboard_mod,
+            "_PREREG_LEDGER",
+            d / "research" / "prereg_ledger.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_PREREG_VERDICTS",
+            d / "research" / "prereg_verdicts.jsonl",
+        ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
         patch.dict(dashboard_mod._quality_cache, {"payload": None, "at": 0.0}),
+        # Wie _quality_cache: die TTL-Caches müssen mit den gepatchten Pfaden
+        # leer starten, sonst antwortet ein Test mit den Artefakten eines anderen.
+        patch.dict(dashboard_mod._priority_gate_cache, {"payload": None, "at": 0.0}),
+        patch.dict(dashboard_mod._n_overview_cache, {"payload": None, "at": 0.0}),
+        patch.dict(dashboard_mod._operator_board_cache, {"live": None, "at": 0.0}),
     ):
         yield
 
@@ -1136,6 +1151,65 @@ def test_operator_board_api_returns_curated_lists() -> None:
     assert isinstance(data["todos"], list)
     assert isinstance(data["phases"], list)
     assert isinstance(data["improvements"], list)
+
+
+def _reset_board_cache() -> None:
+    import app.api.routers.dashboard as dash
+
+    dash._operator_board_cache["at"] = 0.0
+    dash._operator_board_cache["live"] = None
+
+
+def test_operator_board_api_carries_live_section() -> None:
+    """Das Board trägt eine LIVE-Sektion (offene Prä-Regs), nicht nur Kuratiertes.
+
+    Operator-Befund 2026-07-30: ohne Live-Hälfte war das Panel nur so aktuell wie
+    die letzte Handpflege. Die Sektion degradiert ehrlich (leer/ungezählt), darf
+    aber nie fehlen oder 500en.
+    """
+    _reset_board_cache()
+
+    data = TestClient(_make_app()).get("/dashboard/api/operator-board").json()
+
+    live = data["live"]
+    for key in ("open_preregs", "open_count", "due_count", "has_content", "generated_at"):
+        assert key in live
+    assert isinstance(live["open_preregs"], list)
+    assert live["open_count"] == len(live["open_preregs"])
+    # Live heisst live: die Sektion trägt ihren eigenen Zeitstempel, nicht "stand".
+    assert live["generated_at"]
+
+
+def test_operator_board_chronicle_of_done_phases_is_not_flagged_stale() -> None:
+    """DER Befund: erledigte Phasen + 0 Todos → kein „veraltet, bitte pflegen".
+
+    Der Alarm gilt nur für OFFENE kuratierte Punkte; eine Chronik abgeschlossener
+    Phasen kann nicht veralten.
+    """
+    _reset_board_cache()
+
+    data = TestClient(_make_app()).get("/dashboard/api/operator-board").json()
+
+    assert data["content_type"] == "curated_chronicle"
+    if data["curated_has_open_items"]:
+        return  # Datei trägt aktuell einen offenen Punkt → Alarm wäre korrekt
+    assert data["is_stale"] is False
+
+
+def test_operator_board_live_section_is_ttl_cached() -> None:
+    """Repeat-Polls dürfen compute_maturity nicht erneut fahren (Seitenaufbau)."""
+    import app.api.routers.dashboard as dash
+
+    _reset_board_cache()
+    client = TestClient(_make_app())
+    client.get("/dashboard/api/operator-board")
+    stamped_at = dash._operator_board_cache["at"]
+    cached_obj = dash._operator_board_cache["live"]
+    client.get("/dashboard/api/operator-board")
+
+    # Zweiter Aufruf hat den Cache NICHT neu gestempelt → aus dem Cache serviert.
+    assert dash._operator_board_cache["at"] == stamped_at
+    assert dash._operator_board_cache["live"] is cached_obj
 
 
 def test_markets_momentum_endpoint(monkeypatch) -> None:

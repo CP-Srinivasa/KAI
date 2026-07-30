@@ -368,11 +368,43 @@ export function fetchIntegrity(signal?: AbortSignal): Promise<IntegrityStatus> {
   return apiGet<IntegrityStatus>("/dashboard/api/integrity", { signal });
 }
 
-// Kuratiertes Operator-Board (#315): Todos/Phasen/Verbesserungen aus der gepflegten
-// SSOT docs/operator_board.json (deklarativ, nicht live). Gates/Probleme sind separat.
+// Operator-Board (#315, Live-Sektion 2026-07-30). ZWEI Hälften, klar getrennt:
+//  - `live`: live-berechnet aus prereg_ledger − prereg_verdicts (ADR 0012) —
+//    welcher pre-registrierte Claim ist offen, welcher fällig. Pflegefrei.
+//  - todos/phases/improvements: kuratierte Chronik aus docs/operator_board.json.
+// Gates/akute Probleme kommen weiterhin separat live aus den Truth-Chips.
 export type OperatorTodo = { text: string; priority?: string };
 export type OperatorPhase = { label: string; status: string };
 export type OperatorImprovement = { text: string };
+
+/** Ein offener pre-registrierter Claim mit Reife-Zustand. */
+export type OperatorPrereg = {
+  prereg_id: string;
+  name: string;
+  /** due = Ziel-n erreicht, Eval fahren · maturing = reift · no_counter = ungezählt. */
+  state: "due" | "maturing" | "no_counter";
+  n_proxy: number | null;
+  n_target: number | null;
+  progress_pct: number | null;
+  per_source: Record<string, number>;
+  action: string;
+  sample_size_target: number;
+  created_at_utc: string;
+  /** Letztes nicht-terminales Verdikt (z. B. INSUFFICIENT_N), sonst null. */
+  last_verdict?: string | null;
+};
+
+export type OperatorBoardLive = {
+  open_preregs: OperatorPrereg[];
+  open_count: number;
+  due_count: number;
+  has_content: boolean;
+  /** "ok" | "unavailable" — ob die Reife-Zahlen geladen werden konnten. */
+  maturity_state?: string;
+  note: string;
+  generated_at: string;
+};
+
 export type OperatorBoard = {
   stand: string;
   note: string;
@@ -380,11 +412,18 @@ export type OperatorBoard = {
   phases: OperatorPhase[];
   improvements: OperatorImprovement[];
   generated_at: string;
-  /** Alter des kuratierten Snapshots in Tagen (null wenn stand fehlt/unparsebar). */
+  /** Live-berechnete Hälfte — braucht keine Pflege, trägt eigenen Zeitstempel. */
+  live?: OperatorBoardLive;
+  /** Alter der kuratierten Chronik in Tagen (null wenn stand fehlt/unparsebar). */
   age_days?: number | null;
-  /** true wenn der Snapshot älter als die Frische-Schwelle ist (Backend: >7d). */
+  /**
+   * true NUR wenn die Chronik einen OFFENEN Punkt trägt UND älter als die
+   * Schwelle ist. Ein Log erledigter Phasen veraltet nicht (Fix 2026-07-30).
+   */
   is_stale?: boolean;
-  /** Markiert die Quelle als manuell gepflegt, nicht live-berechnet. */
+  /** true wenn die kuratierte Datei überhaupt einen offenen Punkt enthält. */
+  curated_has_open_items?: boolean;
+  /** Markiert die kuratierte Hälfte als Chronik, nicht als Live-Stand. */
   content_type?: string;
 };
 export function fetchOperatorBoard(signal?: AbortSignal): Promise<OperatorBoard> {

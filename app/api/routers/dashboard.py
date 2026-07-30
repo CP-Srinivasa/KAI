@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
@@ -51,6 +51,9 @@ _ENTRY_WATCHER_AUDIT = _ARTIFACTS / "entry_watcher_audit.jsonl"
 _TV_PENDING = _ARTIFACTS / "tradingview_pending_signals.jsonl"
 _AUDIT_V1_DISQUALIFIED_FLAG = _ARTIFACTS / "paper_execution_audit_v1_disqualified.flag"
 _SOURCE_RELIABILITY_REPORT = Path("monitor/source_reliability.json")
+# Falsifikations-Ledger (ADR 0012) — Quelle der LIVE-Sektion des Operator-Boards.
+_PREREG_LEDGER = _ARTIFACTS / "research" / "prereg_ledger.jsonl"
+_PREREG_VERDICTS = _ARTIFACTS / "research" / "prereg_verdicts.jsonl"
 
 # Frankfurter: ECB reference rates, no API key, daily refresh (~16:00 CET).
 # 1-hour TTL is generous — the underlying rate updates once per business day.
@@ -121,6 +124,26 @@ _churn_cache: dict[str, dict[str, Any]] = {}
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
 _SOURCE_MAP_TTL_S = 300.0
 _source_map_cache: dict[str, Any] = {"at": 0.0, "map": None}
+
+# Operator-Board LIVE-Sektion: compute_maturity scannt canonical_documents und
+# clustert Stories (~1–2 s auf dem Pi). TTL == Board-Poll des Frontends (300 s),
+# damit höchstens EINE Berechnung pro Poll-Fenster anfällt.
+_OPERATOR_BOARD_CACHE_TTL_S = 300.0
+_operator_board_cache: dict[str, Any] = {"at": 0.0, "live": None}
+
+# NEO-P-201/202-Nachzug (Operator-Befund 2026-07-30): dieselbe Ursache wie beim
+# Quality-Endpoint, aber priority-gate und n-overview wurden damals übersehen.
+# Gemessen auf dem Pi VOR dem Fix, bei JEDEM Request (kein Cache):
+#   priority-gate  1,34–3,98 s  (build_priority_gate_summary full-scannt
+#                                trading_loop_audit.jsonl — inzwischen 57 MB)
+#   n-overview     2,69–3,33 s  (paper_execution_audit + generator-edge-Report
+#                                + resolved-Ledger, ~20 MB)
+# Beide Panels blockieren den sichtbaren Seitenaufbau. TTL wie beim Quality-
+# Cache, dessen innere Reports sie teilen.
+_PRIORITY_GATE_CACHE_TTL_S = 20.0
+_priority_gate_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+_N_OVERVIEW_CACHE_TTL_S = 60.0
+_n_overview_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 _REENTRY_TARGET_DATE = "2026-05-16"
 _ARTIFACT_STALE_WARNING_HOURS = 3.0
@@ -1328,6 +1351,16 @@ async def dashboard_n_overview_api() -> JSONResponse:
     from app.observability.generator_edge_collector import collect_edge_inputs_from_resolved
     from app.observability.n_overview import build_n_overview
 
+    # Fünf Quellen à ~20 MB pro Request — ohne Cache 2,7–3,3 s auf dem Pi und
+    # damit ein sichtbarer Block im Seitenaufbau. Siehe _N_OVERVIEW_CACHE_TTL_S.
+    cache_now = time.monotonic()
+    cached_n = _n_overview_cache.get("payload")
+    if cached_n is not None and (cache_now - _n_overview_cache["at"]) < _N_OVERVIEW_CACHE_TTL_S:
+        return JSONResponse(
+            content=cast(dict[str, Any], cached_n),
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     # 1) Gate-n (#167): resolved_real + Gesamt-Zeilen des resolved-Ledgers.
     resolved_real: int | None = None
     resolved_ledger_lines: int | None = None
@@ -1428,6 +1461,8 @@ async def dashboard_n_overview_api() -> JSONResponse:
         generator_verdict=generator_verdict,
         generator_ev_bps=generator_ev_bps,
     )
+    _n_overview_cache["payload"] = payload
+    _n_overview_cache["at"] = cache_now
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
@@ -1524,6 +1559,19 @@ async def dashboard_priority_gate_api() -> JSONResponse:
     """
     from app.orchestrator.trading_loop import build_priority_gate_summary
 
+    # Repeat-Polls (mehrere Panels + 60 s-Tick) dürfen die 57-MB-Audit nicht
+    # erneut full-scannen — siehe _PRIORITY_GATE_CACHE_TTL_S.
+    cache_now = time.monotonic()
+    cached_gate = _priority_gate_cache.get("payload")
+    if (
+        cached_gate is not None
+        and (cache_now - _priority_gate_cache["at"]) < _PRIORITY_GATE_CACHE_TTL_S
+    ):
+        return JSONResponse(
+            content=cast(dict[str, Any], cached_gate),
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
     try:
         summary = build_priority_gate_summary(audit_path=_TRADING_LOOP_AUDIT, window_hours=24)
     except Exception as exc:  # noqa: BLE001
@@ -1606,6 +1654,8 @@ async def dashboard_priority_gate_api() -> JSONResponse:
             "current_quality_verdict": "unverified",
             "warning": "Priority quality evidence could not be loaded.",
         }
+    _priority_gate_cache["payload"] = payload
+    _priority_gate_cache["at"] = cache_now
     return JSONResponse(
         content=payload,
         headers={"Cache-Control": "no-store, max-age=0"},
@@ -2784,16 +2834,74 @@ async def dashboard_source_discovery_api(
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+async def _live_operator_board(session_factory: Any | None) -> dict[str, Any]:
+    """LIVE-Sektion des Boards: offene Prä-Regs + Reife (TTL-gecacht).
+
+    Quellen sind die Ledger, die die Falsifikations-Doktrin (ADR 0012) ohnehin
+    schreibt — kein neuer Pflege-Aufwand. ``compute_maturity`` kostet auf dem Pi
+    ~1–2 s (DB-Scan + Story-Clustering), darum hinter dem gleichen TTL wie der
+    Board-Poll des Frontends. Fällt eine Quelle aus, degradiert die Sektion
+    ehrlich (leer / ungezählt) statt zu 500en.
+
+    ``session_factory`` kommt aus ``app.state`` und wird bewusst NICHT selbst
+    gebaut: ``build_session_factory`` legt über ``build_engine`` jedes Mal eine
+    neue AsyncEngine mit eigenem Pool an, die niemand disposed — in einem
+    langlebigen Dienst wäre das ein Leck pro Cache-Miss. Ohne Factory (minimale
+    App / degradierter Boot) bleibt die Reife ehrlich ungezählt.
+    """
+    now = time.monotonic()
+    cached = _operator_board_cache.get("live")
+    if cached is not None and (now - _operator_board_cache["at"]) < _OPERATOR_BOARD_CACHE_TTL_S:
+        return cast(dict[str, Any], cached)
+
+    from app.observability.operator_board_live import build_live_board
+
+    ledger = _load_jsonl(_PREREG_LEDGER)
+    verdicts = _load_jsonl(_PREREG_VERDICTS)
+
+    maturity_rows: list[dict[str, Any]] = []
+    maturity_state = "ok"
+    if session_factory is None:
+        maturity_state = "unavailable"
+    else:
+        try:
+            from app.research.prereg_maturity import compute_maturity
+
+            async with session_factory() as session:
+                maturity_rows = await compute_maturity(session)
+        except Exception as exc:  # noqa: BLE001 — Reife fehlt ist "ungezählt", kein 500
+            logger.warning("operator_board_maturity_failed: %s", exc)
+            maturity_state = "unavailable"
+
+    live = build_live_board(ledger=ledger, verdicts=verdicts, maturity_rows=maturity_rows)
+    live["maturity_state"] = maturity_state
+    live["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _operator_board_cache["live"] = live
+    _operator_board_cache["at"] = now
+    return live
+
+
 @router.get("/dashboard/api/operator-board", tags=["dashboard"])
-async def dashboard_operator_board_api() -> JSONResponse:
-    """Kuratiertes Operator-Board (#315): Todos / Phasen / Verbesserungen aus der
-    gepflegten SSOT ``docs/operator_board.json`` (read-only, deklarativ — NICHT
-    live-berechnet). Fehlt/kaputt → ehrlich leer (kein erfundener Inhalt). Die
-    blockierenden Gates + akuten Probleme kommen separat LIVE aus den Truth-Chips
-    (AcutePointsBoard); diese Datei liefert nur die kuratierten Listen.
+async def dashboard_operator_board_api(request: Request) -> JSONResponse:
+    """Operator-Board (#315, live-Sektion 2026-07-30): zwei klar getrennte Hälften.
+
+    ``live`` — **live-berechnet** aus ``prereg_ledger`` minus ``prereg_verdicts``
+    plus Reife-Zahlen: welcher pre-registrierte Claim ist offen, welcher fällig.
+    Das ist der fortlaufende Prozess und muss von niemandem gepflegt werden.
+
+    ``todos``/``phases``/``improvements`` — die kuratierte Chronik aus
+    ``docs/operator_board.json`` (read-only, deklarativ). Fehlt/kaputt → ehrlich
+    leer, kein erfundener Inhalt.
+
+    Der Frische-Alarm gilt nur für OFFENE kuratierte Punkte: eine Chronik
+    abgeschlossener Phasen kann nicht veralten (Operator-Befund 2026-07-30 —
+    „18 Tage alt" feuerte auf 10× ``status: done``). Blockierende Gates + akute
+    Probleme kommen weiterhin separat live aus den Truth-Chips.
     """
     import json
     from pathlib import Path
+
+    from app.observability.operator_board_live import curated_is_stale, has_open_curated_items
 
     payload: dict[str, Any] = {
         "stand": "",
@@ -2815,8 +2923,8 @@ async def dashboard_operator_board_api() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("operator_board_read_failed: %s", exc)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # Honesty: this board is hand-curated (not live-computed), so expose how old
-    # the snapshot is instead of letting a 5-day-old "stand" read as current.
+    # Honesty: the curated half is hand-maintained, so expose its age — but only
+    # flag it as unmaintained when it actually carries an OPEN item.
     age_days: int | None = None
     stand_raw = payload["stand"]
     if isinstance(stand_raw, str) and stand_raw.strip():
@@ -2826,6 +2934,10 @@ async def dashboard_operator_board_api() -> JSONResponse:
         except ValueError:
             age_days = None
     payload["age_days"] = age_days
-    payload["is_stale"] = bool(age_days is not None and age_days > 7)
-    payload["content_type"] = "curated_static"
+    payload["is_stale"] = curated_is_stale(payload, age_days=age_days)
+    payload["curated_has_open_items"] = has_open_curated_items(payload)
+    payload["content_type"] = "curated_chronicle"
+    payload["live"] = await _live_operator_board(
+        getattr(request.app.state, "session_factory", None)
+    )
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

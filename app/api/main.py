@@ -25,6 +25,7 @@ except Exception as exc:  # pragma: no cover
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -257,6 +258,26 @@ def create_app() -> FastAPI:
         redoc_url=None if is_production else "/redoc",
         openapi_url=None if is_production else "/openapi.json",
     )
+
+    # Übertragungsgröße (Operator-Befund 2026-07-30): der SPA-Build ging
+    # UNKOMPRIMIERT über die Leitung — index.js 312 kB + vendor-react 134 kB +
+    # css 76 kB ≈ 520 kB kritischer Pfad, plus /dashboard/api/quality ~37 kB bei
+    # jedem 20-s-Poll (alle Endpoints senden no-store, es gibt also keinen
+    # Browser-Cache, der das abfedert). Text komprimiert auf ~25–30 %.
+    #
+    # ZUERST eingehängt = INNERSTE Schicht, direkt am Router/StaticFiles-Mount.
+    # Das ist Absicht: RequestGovernance und SecurityHeaders sind BaseHTTPMiddleware
+    # und streamen die Antwort, wodurch ein weiter außen sitzendes GZip die
+    # Content-Length nicht mehr sieht und ``minimum_size`` wirkungslos wird —
+    # dann würde selbst eine 33-Byte-/health-Antwort komprimiert. Innen kennt es
+    # die echte Größe und lässt kleine Antworten unberührt.
+    #
+    # BREACH-Abwägung: der Angriff braucht ein Geheimnis UND reflektierten
+    # Angreifer-Input in derselben Antwort. Die komprimierten Flächen hier sind
+    # statische Build-Artefakte und read-only-Metriken ohne reflektierte Eingaben;
+    # Tokens stehen in Headern, nie im Body. Zugang ist ohnehin CF-Access-/
+    # Bearer-gated (Single-Operator).
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
     # CORS — origins controlled via APP_CORS_ALLOWED_ORIGINS (comma-separated env var)
     app.add_middleware(
