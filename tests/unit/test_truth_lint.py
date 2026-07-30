@@ -33,11 +33,14 @@ def _artifacts(tmp_path: Path) -> Path:
 # ── Registry-Vertrag ─────────────────────────────────────────────────────────
 
 
-def test_registry_has_all_eleven_operator_invariants() -> None:
-    assert len(REGISTRY) == 11
+def test_registry_keeps_operator_eleven_in_order_plus_additions() -> None:
     ids = [i.invariant_id for i in REGISTRY]
-    assert len(set(ids)) == 11
-    assert ids == sorted(ids)  # TL-001..TL-011 stabil geordnet
+    # Die Operator-Liste 07-11 (TL-001..TL-011) bleibt vollständig und in
+    # Original-Reihenfolge; Nachregistrierungen sind NUR am Ende erlaubt.
+    assert ids[:11] == [f"TL-{n:03d}" for n in range(1, 12)]
+    assert len(set(ids)) == len(ids)
+    assert ids == sorted(ids)
+    assert "TL-012" in ids  # Quoten-Sprint 07-30: Resolutions-Batch-Konzentration
 
 
 def test_registry_planned_invariants_stay_visible(tmp_path: Path) -> None:
@@ -46,7 +49,7 @@ def test_registry_planned_invariants_stay_visible(tmp_path: Path) -> None:
     result = run_lint(_artifacts(tmp_path))
     planned = [i for i in result["invariants"] if i["status"] == "planned"]
     assert len(planned) == result["registry_planned"] > 0
-    assert result["registry_active"] + result["registry_planned"] == 11
+    assert result["registry_active"] + result["registry_planned"] == len(REGISTRY)
 
 
 def test_active_invariants_have_checks_planned_have_none() -> None:
@@ -369,3 +372,66 @@ def test_tl004_growth_none_without_previous_run(tmp_path, monkeypatch) -> None:
     )
     violations = _check_cross_path_episode_inflation(LintContext(artifacts_dir=art))
     assert violations[0].evidence["growth_since_last_run"] is None
+
+
+# ── TL-012 Resolutions-Batch-Konzentration ───────────────────────────────────
+
+
+def _resolved_row(doc: str, ts: str, *, outcome: str = "miss", asset: str = "ETH/USDT") -> dict:
+    return {
+        "document_id": doc,
+        "outcome": outcome,
+        "annotated_at": ts,
+        "resolved_at": ts,
+        "asset": asset,
+        "provenance": {"signal_path_id": "tvpath_webhook_v1"},
+    }
+
+
+def _tl012(result: dict) -> list[dict]:
+    return [v for v in result["violations"] if v["invariant_id"] == "TL-012"]
+
+
+def test_tl012_flags_dominant_resolution_batch(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(art / "alert_audit.jsonl", [])
+    rows = [
+        # 25 Resolutionen im selben Lauf (Sekunden-Abstand) — der Praxisfall
+        # vom 2026-07-30 (33 ETH-misses in einem Annotate-Batch).
+        _resolved_row(f"batch{i}", f"2026-07-27T07:07:{i:02d}+00:00")
+        for i in range(25)
+    ] + [
+        # 5 verstreute Einzel-Resolutionen an anderen Tagen.
+        _resolved_row(f"solo{i}", f"2026-07-2{2 + i}T01:00:00+00:00", outcome="hit")
+        for i in range(5)
+    ]
+    _write_jsonl(art / "alert_outcomes.jsonl", rows)
+    found = _tl012(run_lint(art))
+    assert len(found) == 1
+    ev = found[0]["evidence"]
+    assert ev["top_batch_size"] == 25 and ev["n_window"] == 30
+    assert ev["top_batch_share"] > 0.5
+    assert ev["top_batch_assets"] == {"ETH/USDT": 25}
+    assert found[0]["severity"] == "WARNING"
+
+
+def test_tl012_silent_when_batches_are_spread(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(art / "alert_audit.jsonl", [])
+    rows = [
+        _resolved_row(f"d{day}_{i}", f"2026-07-{20 + day:02d}T0{i}:00:00+00:00")
+        for day in range(6)
+        for i in range(4)  # 24 Resolutionen, kein Batch > 4/24
+    ]
+    _write_jsonl(art / "alert_outcomes.jsonl", rows)
+    assert _tl012(run_lint(art)) == []
+
+
+def test_tl012_silent_below_min_n_and_dedups_documents(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(art / "alert_audit.jsonl", [])
+    # 30 Zeilen, aber nur 10 Dokumente (Re-Evals) — dokument-dedupliziert
+    # bleiben 10 < MIN_N, die Konzentration darf NICHT feuern.
+    rows = [_resolved_row(f"doc{i % 10}", f"2026-07-27T07:07:{i:02d}+00:00") for i in range(30)]
+    _write_jsonl(art / "alert_outcomes.jsonl", rows)
+    assert _tl012(run_lint(art)) == []

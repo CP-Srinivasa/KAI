@@ -159,6 +159,12 @@ class AlertOutcomeAnnotation:
     # (``_MAX_INCONCLUSIVE_REEVAL_ATTEMPTS``), seit write-on-change genau die
     # Wiederholungszeilen einspart, die vorher als dessen Zählbasis dienten.
     reeval_attempt: int | None = None
+    # ── Quoten-Sprint 2026-07-30 ─────────────────────────────────────────
+    # Welche Preisquelle die Fenster-Daten dieser Annotation lieferte:
+    # "binance" | "coingecko" | "mixed". Additiv; macht den H1-berichts-
+    # pflichtigen CoinGecko-Fallback-Anteil pro Zeile auswertbar statt nur
+    # als Journal-Log (auto_annotate.price_source galt je Lauf, nicht je Zeile).
+    price_source: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -182,6 +188,8 @@ class AlertOutcomeAnnotation:
             d["priority"] = self.priority
         if self.reeval_attempt is not None:
             d["reeval_attempt"] = self.reeval_attempt
+        if self.price_source is not None:
+            d["price_source"] = self.price_source
         return d
 
 
@@ -234,6 +242,7 @@ def load_outcome_annotations(
                     directional_confidence=data.get("directional_confidence"),
                     priority=data.get("priority"),
                     reeval_attempt=data.get("reeval_attempt"),
+                    price_source=data.get("price_source"),
                 )
             )
         except KeyError:

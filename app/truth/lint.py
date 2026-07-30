@@ -53,6 +53,17 @@ BASELINE_PROVENANCE_UTC = "2026-07-01T00:00:00+00:00"
 
 _EVIDENCE_CAP = 10  # pro Invariante; total_count trägt die volle Zahl
 
+# TL-012 Resolution-Batch-Konzentration (Quoten-Sprint 2026-07-30): seit W1
+# tragen hit/miss-Zeilen ``resolved_at``. Ein 6h-Annotate-Lauf löst oft viele
+# gleichlaufende Fenster mit EINEM Markt-Move auf (Praxisfall 07-30: 33 ETH-
+# misses in einem Lauf) — die jüngste Quoten-Änderung ist dann batch-getrieben,
+# nicht n unabhängige Beobachtungen. Fenster/Schwellen datenrelativ + bewusst
+# konservativ: gewarnt wird erst, wenn EIN Batch die Mehrheit des Fensters stellt.
+_TL012_WINDOW_S = 7 * 86_400.0  # Betrachtungsfenster rückwärts ab jüngster Resolution
+_TL012_BATCH_GAP_S = 900.0  # Zeilen ≤15 min nach Batch-Anker = derselbe Lauf
+_TL012_MIN_N = 20  # unterhalb ist "Konzentration" statistisch bedeutungslos
+_TL012_TOP_SHARE = 0.5  # Verletzung: größter Batch > 50 % der Fenster-Resolutionen
+
 
 class Severity(IntEnum):
     INFO = 10
@@ -419,6 +430,73 @@ def _check_report_integrity(ctx: LintContext) -> list[Violation]:
     return out
 
 
+def _check_resolution_batch_concentration(ctx: LintContext) -> list[Violation]:
+    """TL-012: Resolutions-Batch-Konzentration — dominiert EIN Annotate-Lauf
+    die jüngsten Quoten-Resolutionen, sind deren Deltas korreliert (ein
+    Markt-Move, viele gleichzeitig reife Fenster) und dürfen nicht als
+    unabhängige Evidenz zitiert werden."""
+    # Dokument-dedupliziert (letzte Zeile gewinnt) — Zeilen-Semantik würde
+    # die Konzentration selbst wieder inflationieren (#579-Klasse).
+    latest: dict[str, dict[str, Any]] = {}
+    for rec in iter_jsonl_tolerant(ctx.alert_outcomes):
+        doc = rec.get("document_id")
+        if isinstance(doc, str) and doc:
+            latest[doc] = rec
+    resolved: list[tuple[datetime, dict[str, Any]]] = []
+    for rec in latest.values():
+        if rec.get("outcome") not in ("hit", "miss"):
+            continue
+        ts = _parse_ts(rec.get("resolved_at"))
+        if ts is not None:  # Altzeilen ohne resolved_at: Kadenz unbestimmbar
+            resolved.append((ts, rec))
+    if not resolved:
+        return []
+    resolved.sort(key=lambda p: p[0])
+    window_end = resolved[-1][0]
+    windowed = [p for p in resolved if (window_end - p[0]).total_seconds() <= _TL012_WINDOW_S]
+    if len(windowed) < _TL012_MIN_N:
+        return []
+    # Anker-Fenster wie cluster_stories: erste Zeile öffnet den Batch, kein
+    # unbegrenztes Chaining über den Anker hinaus.
+    batches: list[list[tuple[datetime, dict[str, Any]]]] = []
+    for ts, rec in windowed:
+        if batches and (ts - batches[-1][0][0]).total_seconds() <= _TL012_BATCH_GAP_S:
+            batches[-1].append((ts, rec))
+        else:
+            batches.append([(ts, rec)])
+    top = max(batches, key=len)
+    share = len(top) / len(windowed)
+    if share <= _TL012_TOP_SHARE:
+        return []
+    assets: dict[str, int] = {}
+    outcome_mix: dict[str, int] = {}
+    for _, rec in top:
+        assets[str(rec.get("asset"))] = assets.get(str(rec.get("asset")), 0) + 1
+        outcome_mix[str(rec.get("outcome"))] = outcome_mix.get(str(rec.get("outcome")), 0) + 1
+    return [
+        Violation(
+            invariant_id="TL-012",
+            severity=Severity.WARNING,
+            dataset="alert_outcomes.jsonl",
+            message=(
+                f"ein einzelner Annotate-Batch stellt {len(top)} von {len(windowed)} "
+                f"Resolutionen ({share:.0%}) der letzten {int(_TL012_WINDOW_S / 86400)} Tage — "
+                "Quoten-Delta ist batch-getrieben (ein Markt-Move, viele reife Fenster); "
+                "nicht als unabhängige Beobachtungen zitieren"
+            ),
+            evidence={
+                "n_window": len(windowed),
+                "n_batches": len(batches),
+                "top_batch_size": len(top),
+                "top_batch_share": round(share, 4),
+                "top_batch_start": top[0][0].isoformat(),
+                "top_batch_assets": dict(sorted(assets.items(), key=lambda kv: -kv[1])[:5]),
+                "top_batch_outcomes": outcome_mix,
+            },
+        )
+    ]
+
+
 # ── Registry (Operator-Liste 07-11, Reihenfolge beibehalten) ─────────────────
 
 REGISTRY: tuple[Invariant, ...] = (
@@ -514,6 +592,17 @@ REGISTRY: tuple[Invariant, ...] = (
         "truth",
         "active",
         _check_report_integrity,
+    ),
+    # Nachregistrierung Quoten-Sprint 2026-07-30 (additiv am Listen-Ende — die
+    # Operator-Reihenfolge 07-11 der ersten elf bleibt unangetastet).
+    Invariant(
+        "TL-012",
+        "Resolutions-Batch-Konzentration (ein Annotate-Lauf dominiert die Quoten-Deltas)",
+        ("alert_outcomes.jsonl",),
+        Severity.WARNING,
+        "truth",
+        "active",
+        _check_resolution_batch_concentration,
     ),
 )
 

@@ -231,6 +231,9 @@ async def test_binance_primary_no_coingecko_no_delay(
 
     assert len(results) == 1
     assert results[0].outcome == "hit"
+    # Quoten-Sprint 07-30: Preisquelle wird je Annotation persistiert
+    # (H1-Berichtspflicht CoinGecko-Fallback-Anteil).
+    assert results[0].price_source == "binance"
     cg.get_price_change_between.assert_not_called()
     assert sleep_mock.await_count == 0
 
@@ -259,5 +262,6 @@ async def test_binance_none_falls_back_to_coingecko(
 
     assert len(results) == 1
     assert results[0].outcome == "hit"
+    assert results[0].price_source == "coingecko"
     assert cg.get_price_change_between.await_count >= 1
     assert sleep_mock.await_count >= 1

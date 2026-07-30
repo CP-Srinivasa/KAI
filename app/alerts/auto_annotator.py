@@ -529,6 +529,9 @@ async def auto_annotate_pending(
         any_data_seen = False
         any_opposite_cross = False
         api_calls_this_alert = 0
+        # Quoten-Sprint 07-30: welche Quelle(n) die tatsächlich genutzten
+        # Fenster-Daten lieferten — wandert als price_source in die Annotation.
+        sources_used: set[str] = set()
 
         for window_h in _MULTI_WINDOW_HOURS:
             eval_end = dispatch_time + timedelta(hours=window_h)
@@ -562,6 +565,7 @@ async def auto_annotate_pending(
                 continue
 
             any_data_seen = True
+            sources_used.add("coingecko" if used_coingecko else "binance")
             start_price, end_price, pct_change = price_data
             threshold = _scaled_threshold(
                 window_h,
@@ -685,6 +689,7 @@ async def auto_annotate_pending(
             directional_confidence=rec.directional_confidence,
             priority=rec.priority,
             reeval_attempt=next_attempt,
+            price_source=("mixed" if len(sources_used) > 1 else next(iter(sources_used), None)),
         )
 
         log.info(
