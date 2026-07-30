@@ -149,8 +149,10 @@ def trading_prereg_maturity(
     for r in rows:
         state = renders.get(str(r.get("state")), str(r.get("state")))
         pid = r.get("prereg_id") or "ohne-prereg-id"
+        # Runde Klammern: eckige wuerde rich als Markup-Tag schlucken —
+        # die versiegelte ID verschwand dann aus der Konsole (Smoke 07-30).
         console.print(
-            f"{r['name']} [{pid}]: n≈{r['n_proxy']}/{r['n_target']} (seit {r['since_utc']}) "
+            f"{r['name']} ({pid}): n≈{r['n_proxy']}/{r['n_target']} (seit {r['since_utc']}) "
             f"{r['per_source']} → {state}"
         )
 
