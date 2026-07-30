@@ -293,6 +293,33 @@ describe("shadowAttributionChip (S6 Canary-Attribution)", () => {
     expect(chip.value).toBe("7 real · 393 probe");
     expect(chip.tone).toBe("info");
   });
+
+  it("macht unbekannte Quellen sichtbar und warnt (Fix 2026-07-30)", () => {
+    const q = quality({
+      shadow_attribution: {
+        real_candidates_24h: 5,
+        probe_candidates_24h: 2,
+        unknown_candidates_24h: 3,
+        by_source_24h: { technical_screener: 5, canary_probe: 2, neuer_gen: 3 },
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "shadow-attribution")!;
+    expect(chip.value).toBe("5 real · 2 probe · 3 unbekannt");
+    expect(chip.tone).toBe("warn");
+  });
+
+  it("warnt bei 0 real auch, wenn nur Unbekannte fliessen", () => {
+    const q = quality({
+      shadow_attribution: {
+        real_candidates_24h: 0,
+        probe_candidates_24h: 0,
+        unknown_candidates_24h: 4,
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "shadow-attribution")!;
+    expect(chip.value).toBe("0 real · 0 probe · 4 unbekannt");
+    expect(chip.tone).toBe("warn");
+  });
 });
 
 describe("sourceReliabilityChip (Frühphasen-Evidenz, kein Integritätsbruch)", () => {

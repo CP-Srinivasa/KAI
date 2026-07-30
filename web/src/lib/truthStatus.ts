@@ -395,13 +395,21 @@ function shadowAttributionChip(quality: DashboardQuality | null): TruthChip {
     };
   }
   const { real_candidates_24h: real, probe_candidates_24h: probe } = att;
-  if (real === 0 && probe > 0) {
+  // Fix 2026-07-30: real = bekannte echte Streams (technical_screener +
+  // autonomous_generator; letzterer seit Seed-Freeze 22.06. GEWOLLT still).
+  // Unbekannte Quellen erscheinen separat statt still als "probe".
+  const unknown = att.unknown_candidates_24h ?? 0;
+  const unknownSuffix = unknown > 0 ? ` · ${unknown} unbekannt` : "";
+  if (real === 0 && probe + unknown > 0) {
     return {
       key: "shadow-attribution",
       label: "Shadow 24h",
-      value: `0 real · ${probe} probe`,
+      value: `0 real · ${probe} probe${unknownSuffix}`,
       tone: "warn",
-      hint: "Alle Shadow-Kandidaten der letzten 24h sind Canary/Loop-Proben — der echte Generator-Strom liefert gerade nichts (Feed/Flag pruefen).",
+      hint:
+        "Keine Kandidaten aus den bekannten REAL-Quellen (technical_screener; " +
+        "autonomous_generator ist seit Seed-Freeze 22.06. gewollt still) in 24h — " +
+        "by_source_24h pruefen; nur 'real' zaehlt fuers Edge-Gate.",
     };
   }
   if (real === 0 && probe === 0) {
@@ -416,9 +424,12 @@ function shadowAttributionChip(quality: DashboardQuality | null): TruthChip {
   return {
     key: "shadow-attribution",
     label: "Shadow 24h",
-    value: `${real} real · ${probe} probe`,
-    tone: "info",
-    hint: "Echte Generator-Kandidaten (source=autonomous_generator) vs Canary-/Loop-Proben der letzten 24h — nur 'real' zaehlt fuer den Edge-Beweis.",
+    value: `${real} real · ${probe} probe${unknownSuffix}`,
+    tone: unknown > 0 ? "warn" : "info",
+    hint:
+      "Echte Kandidaten (technical_screener + autonomous_generator) vs Canary-/Loop-Proben " +
+      "der letzten 24h — nur 'real' zaehlt fuer den Edge-Beweis." +
+      (unknown > 0 ? " Unbekannte Quellen in by_source_24h pruefen (Set erweitern)." : ""),
   };
 }
 

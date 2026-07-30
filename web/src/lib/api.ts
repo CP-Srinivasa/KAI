@@ -480,6 +480,9 @@ export type EntryRuntime = {
 export type ShadowAttribution = {
   real_candidates_24h: number;
   probe_candidates_24h: number;
+  /** Fix 2026-07-30: unbekannte Quellen sichtbar statt still im Probe-Topf. */
+  unknown_candidates_24h?: number;
+  by_source_24h?: Record<string, number>;
 };
 
 export type DashboardQuality = {

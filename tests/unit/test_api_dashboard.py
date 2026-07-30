@@ -1976,3 +1976,46 @@ def test_unlock_calendar_old_artifact_flagged_stale(
     assert body["available"] is True
     assert body["stale"] is True
     assert body["age_days"] is not None and body["age_days"] > 14.0
+
+
+def test_shadow_attribution_three_way_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix 2026-07-30: technical_screener ist REAL (nicht probe), unbekannte
+    Quellen erscheinen sichtbar als unknown statt still im Probe-Topf."""
+    monkeypatch.chdir(tmp_path)
+    ledger = tmp_path / "artifacts" / "shadow_candidate_ledger.jsonl"
+    ledger.parent.mkdir(parents=True)
+    now = datetime.now(UTC)
+    rows = [
+        {"ts_utc": now.isoformat(), "source": "technical_screener"},
+        {"ts_utc": now.isoformat(), "source": "technical_screener"},
+        {"ts_utc": now.isoformat(), "source": "canary_probe"},
+        {"ts_utc": now.isoformat(), "source": "brand_new_generator"},
+        # autonomous_generator ausserhalb des 24h-Fensters -> zaehlt nicht.
+        {"ts_utc": (now - timedelta(hours=48)).isoformat(), "source": "autonomous_generator"},
+    ]
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    att = dashboard_mod._shadow_attribution_24h()
+    assert att["real_candidates_24h"] == 2  # Screener-Strom ist der reale Strom
+    assert att["probe_candidates_24h"] == 1
+    assert att["unknown_candidates_24h"] == 1  # neue Quelle sichtbar, nicht "probe"
+    assert att["by_source_24h"] == {
+        "technical_screener": 2,
+        "canary_probe": 1,
+        "brand_new_generator": 1,
+    }
+
+
+def test_shadow_attribution_empty_ledger_returns_zeros(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    att = dashboard_mod._shadow_attribution_24h()
+    assert att == {
+        "real_candidates_24h": 0,
+        "probe_candidates_24h": 0,
+        "unknown_candidates_24h": 0,
+        "by_source_24h": {},
+    }
