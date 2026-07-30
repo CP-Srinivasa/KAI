@@ -1,6 +1,6 @@
 {
-  "stand": "2026-07-12",
-  "note": "Phasenmodell KAI-Live 1-5 ist seit ADR-0012 (29.06) abgeloest; kanonischer Rahmen = ADR-0014 Meilensteine + Freeze-Pakete. \"Phase 5\"-Label im Frontend war statisch und ist ersetzt.",
+  "stand": "2026-07-30",
+  "note": "CHRONIK + Narrativ, bewusst NICHT die offenen Punkte: welche Prae-Reg offen bzw. faellig ist, berechnet das Board seit 2026-07-30 live aus prereg_ledger minus prereg_verdicts (Sektion \"live\" in /dashboard/api/operator-board) — das muss hier niemand pflegen. Hier stehen nur abgeschlossene Phasen plus die wenigen Punkte, die keine maschinenlesbare Quelle haben. Der Frische-Hinweis im Panel gilt ausschliesslich fuer NICHT-done-Eintraege dieser Datei; eine reine Chronik veraltet nicht. Phasenmodell KAI-Live 1-5 ist seit ADR-0012 (29.06) abgeloest; kanonischer Rahmen = ADR-0014 Meilensteine + Freeze-Pakete.",
   "todos": [],
   "phases": [
     {
@@ -36,11 +36,19 @@
       "status": "done"
     },
     {
-      "label": "Demand-Messungen LAUFEN: C1-Fenster bis ~03.08 · Analyst-Probe 10/10 gesendet (Fenster bis 10.08)",
+      "label": "Dashboard-Aktualitaet + Uebertragung (#613/#615, Pi-deployed+verifiziert 2026-07-30): offene Punkte kommen live aus dem Prae-Reg-Ledger statt aus Handpflege; Frische-Alarm zaehlt jetzt Inhalt statt Alter; gzip aktiv (Bundle 314.376->91.120 B = 29%, quality 37.757->5.892 B); TTL-Caches + Fenster-Read (build_priority_gate_summary 0,74->0,030 s, 88.321 Zeilen geparst fuer 1.198 = 1,36%). Reife-Specs joinen jetzt ueber prereg_id statt Namen (haette b20ef148 dem v1-Claim zugeschrieben).",
+      "status": "done"
+    },
+    {
+      "label": "C1-Demand-Fenster laeuft bis ~03.08 (Prae-Reg 9cab81fae4823482, versiegelt: >=5 settled L402-Zahlungen in 30 Tagen ab Listing, Fensterstart 2026-07-02T12:10:21Z). Stand 30.07. geprueft: 0 qualifizierende Zahlungen IM Fenster — die 2 settled kai-oracle-Eintraege im ln_earnings_ledger stammen von 2026-07-02 06:01:47Z und 06:14:28Z, also ~6h VOR Fensterstart, und zaehlen nicht. Verdikt bleibt operator-gated; erwartet wird NO-PASS. Nicht kontaminieren: /oracle/*, L402-Preis/-Verhalten, Public-Pages, neue Listings.",
       "status": "active"
     },
     {
-      "label": "Naechster Baustein: Verifier-Bundle v0.1 (frische Session, Baseline 1d2e565, Nachtrag 4)",
+      "label": "Analyst-Prediction-Probe (f0e1a3a8073fd4c0): 10/10 gesendet, Fenster bis ~10.08. ACHTUNG Confounder — der Mail-Rueckkanal war waehrend der Probe tot (Fix contact@kai-trader.org erst 28.07.), ein Null-Ergebnis ist daher NICHT als Nachfrage-Beweis verwertbar.",
+      "status": "active"
+    },
+    {
+      "label": "Verifier-Bundle v0.1: tools/verifier/kai_verify.py + tests/verifier/ existieren (seit 13.07.). Beide versiegelten Prae-Regs sind laut Verdikt-Ledger UNAUFGELOEST — 836b1c7e28eed49a (schema_seal) und 8b21040ad7935a4a (cleanroom_pass) haben kein Verdikt. Naechster Schritt ist die Attestierung dieser zwei, nicht weiterer Bundle-Code.",
       "status": "next"
     }
   ],
