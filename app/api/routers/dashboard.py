@@ -670,16 +670,31 @@ def _entry_runtime_block() -> dict[str, Any]:
         return {"entry_mode": None, "entry_mode_label": "unbekannt", "error": str(exc)}
 
 
-def _shadow_attribution_24h() -> dict[str, Any]:
-    """Real-vs-canary attribution of shadow candidates in the last 24h (S6).
+# Fix 2026-07-30 (Operator-Fund "0 real / 480 probe"): die alte Binaer-Logik
+# zaehlte NUR autonomous_generator als real — der ist aber seit dem
+# North-Star-/Seed-Freeze GEWOLLT still (letzter Kandidat 2026-06-22), waehrend
+# der lebende technical_screener-Strom faelschlich als "probe" lief. Die Kachel
+# meldete damit dauerhaft einen Feed-Ausfall, den es nicht gab, und haette
+# einen ECHTEN Screener-Ausfall nie angezeigt. Explizite Mengen + sichtbare
+# "unknown"-Kategorie (neue/umbenannte Quellen fallen nie still in den
+# Probe-Topf — fail-closed Richtung Sichtbarkeit).
+_SHADOW_REAL_SOURCES = frozenset({"autonomous_generator", "technical_screener"})
+_SHADOW_PROBE_SOURCES = frozenset({"canary_probe", "autonomous_loop"})
 
-    REAL == ``source=autonomous_generator`` (the fail-closed REAL_SOURCES set);
-    every other source (autonomous_loop, canary_probe, …) counts as probe. A
-    missing/empty ledger returns zeros — honest absence, no fabrication.
+
+def _shadow_attribution_24h() -> dict[str, Any]:
+    """Real-vs-probe-vs-unknown attribution of shadow candidates, last 24h (S6).
+
+    REAL == known real candidate streams (``_SHADOW_REAL_SOURCES``); probes are
+    the known canary/loop sources; anything else surfaces as ``unknown``. The
+    per-source breakdown ships alongside so the UI/forensics can show WHAT is
+    flowing. A missing/empty ledger returns zeros — honest absence.
     """
     cutoff = datetime.now(UTC) - timedelta(hours=24)
     real = 0
     probe = 0
+    unknown = 0
+    by_source: dict[str, int] = {}
     for record in _load_jsonl(_SHADOW_LEDGER, tail=8000):
         ts_raw = record.get("ts_utc")
         if not isinstance(ts_raw, str):
@@ -692,11 +707,20 @@ def _shadow_attribution_24h() -> dict[str, Any]:
             ts = ts.replace(tzinfo=UTC)
         if ts < cutoff:
             continue
-        if record.get("source") == "autonomous_generator":
+        source = str(record.get("source") or "unbekannt")
+        by_source[source] = by_source.get(source, 0) + 1
+        if source in _SHADOW_REAL_SOURCES:
             real += 1
-        else:
+        elif source in _SHADOW_PROBE_SOURCES:
             probe += 1
-    return {"real_candidates_24h": real, "probe_candidates_24h": probe}
+        else:
+            unknown += 1
+    return {
+        "real_candidates_24h": real,
+        "probe_candidates_24h": probe,
+        "unknown_candidates_24h": unknown,
+        "by_source_24h": dict(sorted(by_source.items(), key=lambda kv: -kv[1])),
+    }
 
 
 @router.get("/dashboard/api/quality", tags=["dashboard"])
