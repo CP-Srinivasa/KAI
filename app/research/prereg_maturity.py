@@ -15,6 +15,20 @@ die Event-Level-Zählung meldete FÄLLIG bei n≈1165, obwohl die Story-Kohorte
 erst 247/300 hatte. Specs mit ``"level": "stories"`` zählen darum
 story-dedupliziert (``cluster_stories``, identische Fenster-Semantik wie der
 Evaluator); der rohe Event-Count bleibt als Kontext sichtbar.
+
+P0-01 (Review 07-30): drei explizite Reife-Zustände statt eines ``due``-Bits —
+selbst der Story-Proxy bleibt eine OBERGRENZE (der exakte Evaluator verliert
+zusätzlich Events an OHLCV-Lücken/Symbol-Caps, gemessen ~30 %):
+
+* ``NOT_DUE``          — auch der Proxy liegt unter dem Ziel.
+* ``EVAL_CHECK_DUE``   — Proxy erreicht das Ziel; der EXAKTE Evaluator muss
+                         laufen. NIEMALS ein Verdikt aus diesem Zustand.
+* ``JUDGEABLE``        — nur wenn die Zählung selbst der exakte Evaluator ist
+                         (kind ``tech_precision``/``exec_translation``) und
+                         deren n das Ziel erreicht.
+
+``due`` bleibt als Kompat-Feld erhalten (True == Zustand != NOT_DUE); jede
+Zeile trägt die versiegelte ``prereg_id``.
 """
 
 from __future__ import annotations
@@ -25,6 +39,10 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+STATE_NOT_DUE = "NOT_DUE"
+STATE_EVAL_CHECK_DUE = "EVAL_CHECK_DUE"
+STATE_JUDGEABLE = "JUDGEABLE"
 
 # Registered out-of-sample windows start at the claim's registration time — these
 # constants ARE part of the doctrine (auditable against the prereg ledger).
@@ -138,7 +156,7 @@ async def _count_stories(session: AsyncSession, spec: dict[str, Any]) -> int:
 
 async def _maturity_documents(
     session: AsyncSession, spec: dict[str, Any]
-) -> tuple[int, dict[str, int], bool]:
+) -> tuple[int, dict[str, int], str]:
     rows = (
         await session.execute(
             text(_COUNT_SQL),
@@ -151,20 +169,23 @@ async def _maturity_documents(
         n_events = sum(by_source.values())
         if spec.get("level") == "stories":
             n_stories = await _count_stories(session, spec)
+            reached = n_stories >= int(spec["n_target"])
             return (
                 n_stories,
                 {"stories": n_stories, "events": n_events},
-                (n_stories >= int(spec["n_target"])),
+                STATE_EVAL_CHECK_DUE if reached else STATE_NOT_DUE,
             )
-        return n_events, {"all": n_events}, n_events >= int(spec["n_target"])
+        reached = n_events >= int(spec["n_target"])
+        return n_events, {"all": n_events}, STATE_EVAL_CHECK_DUE if reached else STATE_NOT_DUE
     detail = {s: by_source.get(s, 0) for s in sources}
     n = sum(detail.values())
-    return n, detail, all(v >= int(spec["n_target"]) for v in detail.values())
+    reached = all(v >= int(spec["n_target"]) for v in detail.values())
+    return n, detail, STATE_EVAL_CHECK_DUE if reached else STATE_NOT_DUE
 
 
 def _maturity_tech_precision(
     spec: dict[str, Any], artifacts_dir: Path
-) -> tuple[int, dict[str, int], bool]:
+) -> tuple[int, dict[str, int], str]:
     from app.research.quote_evals import evaluate_technical_paper_precision
 
     ev = evaluate_technical_paper_precision(
@@ -179,12 +200,12 @@ def _maturity_tech_precision(
         "inconclusive": int(pop["docs_inconclusive"]),
         "pending": int(pop["docs_pending_no_outcome"]),
     }
-    return n, detail, n >= int(spec["n_target"])
+    return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
 
 
 def _maturity_exec_translation(
     spec: dict[str, Any], artifacts_dir: Path
-) -> tuple[int, dict[str, int], bool]:
+) -> tuple[int, dict[str, int], str]:
     from app.research.quote_evals import evaluate_execution_translation
 
     ev = evaluate_execution_translation(
@@ -198,7 +219,7 @@ def _maturity_exec_translation(
         "joined": n,
         "closed_docs": int(pop["closed_docs_since_reg"]),
     }
-    return n, detail, n >= int(spec["n_target"])
+    return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
 
 
 async def compute_maturity(
@@ -212,11 +233,11 @@ async def compute_maturity(
     for spec in specs:
         kind = str(spec.get("kind", "documents"))
         if kind == "tech_precision":
-            n, detail, due = _maturity_tech_precision(spec, artifacts_dir)
+            n, detail, state = _maturity_tech_precision(spec, artifacts_dir)
         elif kind == "exec_translation":
-            n, detail, due = _maturity_exec_translation(spec, artifacts_dir)
+            n, detail, state = _maturity_exec_translation(spec, artifacts_dir)
         else:
-            n, detail, due = await _maturity_documents(session, spec)
+            n, detail, state = await _maturity_documents(session, spec)
         out.append(
             {
                 "name": spec["name"],
@@ -227,10 +248,19 @@ async def compute_maturity(
                 "n_target": spec["n_target"],
                 "n_proxy": n,
                 "per_source": detail,
-                "due": due,
+                "state": state,
+                # Kompat-Bit: True == Zustand != NOT_DUE. Bedeutet NIE "urteilbar" —
+                # ein Verdikt braucht STATE_JUDGEABLE bzw. den exakten Evaluator (P0-01).
+                "due": state != STATE_NOT_DUE,
             }
         )
     return out
 
 
-__all__ = ["MATURITY_SPECS", "compute_maturity"]
+__all__ = [
+    "MATURITY_SPECS",
+    "STATE_EVAL_CHECK_DUE",
+    "STATE_JUDGEABLE",
+    "STATE_NOT_DUE",
+    "compute_maturity",
+]

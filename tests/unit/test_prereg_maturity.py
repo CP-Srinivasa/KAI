@@ -187,3 +187,83 @@ async def test_file_kind_specs_count_via_evaluators(session_factory, tmp_path) -
 
     ex = next(r for r in rows if r["name"] == "exec_like")
     assert ex["n_proxy"] == 1 and ex["due"] is True
+
+
+@pytest.mark.asyncio
+async def test_states_proxy_caps_at_eval_check_due(session_factory, tmp_path) -> None:
+    """P0-01: Der Dokumenten-Proxy ist eine Obergrenze — er darf hoechstens
+    EVAL_CHECK_DUE melden, niemals JUDGEABLE. Nur die Datei-Kinds (exakter
+    Evaluator) duerfen JUDGEABLE erreichen."""
+    import json as _json
+
+    from app.research.prereg_maturity import (
+        STATE_EVAL_CHECK_DUE,
+        STATE_JUDGEABLE,
+        STATE_NOT_DUE,
+    )
+
+    async with session_factory.begin() as session:
+        session.add_all(
+            [
+                _doc(1, source="coindesk", tickers=["ETH/USDT"], when="2026-07-03T00:00:00"),
+                _doc(2, source="coindesk", tickers=["SOL/USDT"], when="2026-07-04T00:00:00"),
+            ]
+        )
+
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    reg = "2026-07-29T09:14:47+00:00"
+    (art / "paper_execution_audit.jsonl").write_text(
+        _json.dumps(
+            {
+                "event_type": "order_filled",
+                "document_id": "technical_paper_A",
+                "filled_at": "2026-07-29T12:00:00+00:00",
+                "timestamp_utc": "2026-07-29T12:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (art / "alert_outcomes.jsonl").write_text(
+        _json.dumps({"document_id": "technical_paper_A", "outcome": "hit", "annotated_at": reg})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    specs = (
+        {
+            "name": "proxy_reached",
+            "prereg_id": "aaaa000011112222",
+            "kind": "documents",
+            "since_utc": "2026-07-02",
+            "sources": None,
+            "exclude_first_ticker": "BTC/USDT",
+            "n_target": 2,
+        },
+        {
+            "name": "proxy_not_reached",
+            "kind": "documents",
+            "since_utc": "2026-07-02",
+            "sources": None,
+            "exclude_first_ticker": "BTC/USDT",
+            "n_target": 99,
+        },
+        {
+            "name": "exact_reached",
+            "prereg_id": "bbbb000011112222",
+            "kind": "tech_precision",
+            "since_utc": reg,
+            "n_target": 1,
+        },
+    )
+    async with session_factory() as session:
+        rows = await compute_maturity(session, specs=specs, artifacts_dir=art)
+    by = {r["name"]: r for r in rows}
+
+    assert by["proxy_reached"]["state"] == STATE_EVAL_CHECK_DUE
+    assert by["proxy_reached"]["due"] is True  # Kompat-Bit
+    assert by["proxy_reached"]["prereg_id"] == "aaaa000011112222"
+    assert by["proxy_not_reached"]["state"] == STATE_NOT_DUE
+    assert by["proxy_not_reached"]["due"] is False
+    assert by["exact_reached"]["state"] == STATE_JUDGEABLE

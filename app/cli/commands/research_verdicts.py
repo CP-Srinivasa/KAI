@@ -137,10 +137,20 @@ def trading_prereg_maturity(
     if as_json:
         print(json.dumps(rows, indent=2))
         return
+    # P0-01: drei Zustände statt eines FÄLLIG-Bits — der Proxy ist eine
+    # Obergrenze, ein Verdikt gibt es nur aus dem exakten Evaluator.
+    renders = {
+        "NOT_DUE": "reift",
+        "EVAL_CHECK_DUE": (
+            "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
+        ),
+        "JUDGEABLE": "[green]URTEILBAR — Verdikt-Kette fahren (prereg-check --report)[/green]",
+    }
     for r in rows:
-        state = "[green]FÄLLIG — Eval jetzt fahren[/green]" if r["due"] else "reift"
+        state = renders.get(str(r.get("state")), str(r.get("state")))
+        pid = r.get("prereg_id") or "ohne-prereg-id"
         console.print(
-            f"{r['name']}: n≈{r['n_proxy']}/{r['n_target']} (seit {r['since_utc']}) "
+            f"{r['name']} [{pid}]: n≈{r['n_proxy']}/{r['n_target']} (seit {r['since_utc']}) "
             f"{r['per_source']} → {state}"
         )
 
