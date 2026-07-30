@@ -381,8 +381,14 @@ export type OperatorImprovement = { text: string };
 export type OperatorPrereg = {
   prereg_id: string;
   name: string;
-  /** due = Ziel-n erreicht, Eval fahren · maturing = reift · no_counter = ungezählt. */
-  state: "due" | "maturing" | "no_counter";
+  /**
+   * judgeable = die Zaehlung IST der exakte Evaluator, Verdikt moeglich ·
+   * eval_check = Ziel-n nur im Upper-Bound-Proxy erreicht, exakten Evaluator
+   * fahren (KEIN Urteil!) · maturing = reift · no_counter = ungezaehlt.
+   * Die Trennung judgeable/eval_check ist P0-01-Doktrin — sie darf nicht wieder
+   * auf ein "faellig" kollabieren.
+   */
+  state: "judgeable" | "eval_check" | "maturing" | "no_counter";
   n_proxy: number | null;
   n_target: number | null;
   progress_pct: number | null;
@@ -397,6 +403,11 @@ export type OperatorPrereg = {
 export type OperatorBoardLive = {
   open_preregs: OperatorPrereg[];
   open_count: number;
+  /** Nur wo die Zaehlung selbst der exakte Evaluator ist. */
+  judgeable_count: number;
+  /** Proxy-Ziel erreicht, exakter Evaluator ausstehend. */
+  eval_check_count: number;
+  /** Kompat: judgeable + eval_check. Bedeutet NICHT "urteilbar". */
   due_count: number;
   has_content: boolean;
   /** "ok" | "unavailable" — ob die Reife-Zahlen geladen werden konnten. */

@@ -86,7 +86,11 @@ def test_open_preregs_dedupes_repeat_registration() -> None:
 
 
 def test_live_board_marks_due_claim_as_due() -> None:
-    """Reife-Ziel erreicht → FÄLLIG, mit n/Ziel sichtbar."""
+    """Reife-Ziel erreicht → handlungsbeduerftig, mit n/Ziel sichtbar.
+
+    Ohne ``state`` im Rohsatz ist das der konservative Zustand ``eval_check``:
+    Ziel-n nur im Proxy erreicht, der exakte Evaluator muss laufen.
+    """
     board = build_live_board(
         ledger=[_reg("aaa", "directional_news_hedged_1d_drift", 300)],
         verdicts=[],
@@ -102,9 +106,10 @@ def test_live_board_marks_due_claim_as_due() -> None:
     )
 
     (row,) = board["open_preregs"]
-    assert row["state"] == "due"
+    assert row["state"] == "eval_check"
     assert row["n_proxy"] == 300 and row["n_target"] == 300
     assert board["due_count"] == 1
+    assert board["judgeable_count"] == 0
 
 
 def test_live_board_maturing_claim_reports_progress() -> None:
@@ -186,9 +191,82 @@ def test_live_board_maturity_never_marks_a_claim_passed() -> None:
     )
 
     (row,) = board["open_preregs"]
-    assert row["state"] == "due"
+    assert row["state"] == "eval_check"
     assert "verdict" not in row or row.get("last_verdict") is None
-    assert "Eval" in row["action"] and "kein PASS" in row["action"]
+    assert "Evaluator" in row["action"] and "kein PASS" in row["action"]
+    assert board["judgeable_count"] == 0
+
+
+def test_eval_check_due_is_not_reported_as_judgeable() -> None:
+    """P0-01-Doktrin: ``EVAL_CHECK_DUE`` heisst „exakten Evaluator fahren", NIE „urteilbar".
+
+    ``compute_maturity`` unterscheidet seit dem 07-30-Review drei Zustände und
+    warnt im Code ausdrücklich: das Kompat-Bit ``due`` bedeutet NIE urteilbar.
+    Das Board darf beide Zustände darum nicht auf ein „fällig" kollabieren —
+    sonst liest der Operator einen Proxy-Treffer als Urteilsreife.
+    """
+    board = build_live_board(
+        ledger=[_reg("aaa", "proxy_claim", 300)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "proxy_claim",
+                "n_proxy": 351,
+                "n_target": 300,
+                "state": "EVAL_CHECK_DUE",
+                "due": True,
+                "per_source": {"stories": 351, "events": 1167},
+            }
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "eval_check"
+    assert "Evaluator" in row["action"]
+    assert board["judgeable_count"] == 0
+    assert board["eval_check_count"] == 1
+
+
+def test_judgeable_state_is_distinguished() -> None:
+    """Nur wenn die Zählung SELBST der exakte Evaluator ist, ist der Claim urteilbar."""
+    board = build_live_board(
+        ledger=[_reg("aaa", "exact_claim", 200)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "exact_claim",
+                "n_proxy": 200,
+                "n_target": 200,
+                "state": "JUDGEABLE",
+                "due": True,
+                "per_source": {"resolved": 200},
+            }
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "judgeable"
+    assert board["judgeable_count"] == 1
+    assert board["eval_check_count"] == 0
+
+
+def test_legacy_rows_without_state_still_work() -> None:
+    """Reihen ohne ``state`` (Alt-Format) fallen auf das ``due``-Bit zurück.
+
+    Konservativ: ohne Zustandsangabe wird der schwächere Zustand angenommen
+    (Evaluator fahren), nie der stärkere.
+    """
+    board = build_live_board(
+        ledger=[_reg("aaa", "legacy", 100)],
+        verdicts=[],
+        maturity_rows=[
+            {"name": "legacy", "n_proxy": 100, "n_target": 100, "due": True, "per_source": {}}
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "eval_check"
+    assert board["judgeable_count"] == 0
 
 
 def test_live_board_joins_maturity_by_prereg_id_not_name() -> None:
@@ -237,7 +315,7 @@ def test_live_board_name_join_still_works_without_prereg_id() -> None:
     )
 
     (row,) = board["open_preregs"]
-    assert row["state"] == "due" and row["n_proxy"] == 100
+    assert row["state"] == "eval_check" and row["n_proxy"] == 100
 
 
 # --------------------------------------------------------------------------- #

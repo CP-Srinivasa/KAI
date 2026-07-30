@@ -42,16 +42,51 @@ TERMINAL_VERDICTS = frozenset({"MET", "NOT_MET"})
 CURATED_STALE_DAYS = 7
 
 
+# Board-Zustände, abgeleitet aus ``compute_maturity``. Die Trennung von
+# ``judgeable`` und ``eval_check`` ist die P0-01-Doktrin (Review 2026-07-30):
+# ``compute_maturity`` warnt im Code ausdrücklich, dass das Kompat-Bit ``due``
+# NIE „urteilbar" bedeutet — der Story-/Dokument-Proxy ist eine OBERGRENZE, der
+# exakte Evaluator verliert zusätzlich ~30 % an OHLCV-Lücken/Symbol-Caps. Beide
+# Zustände auf ein „fällig" zu kollabieren würde einen Proxy-Treffer als
+# Urteilsreife lesbar machen.
+STATE_JUDGEABLE = "judgeable"
+STATE_EVAL_CHECK = "eval_check"
+STATE_MATURING = "maturing"
+STATE_NO_COUNTER = "no_counter"
+
+_STATE_RANK = {
+    STATE_JUDGEABLE: 0,
+    STATE_EVAL_CHECK: 1,
+    STATE_MATURING: 2,
+    STATE_NO_COUNTER: 3,
+}
+
+
 def _sort_key(row: dict[str, Any]) -> tuple[int, float, str]:
-    """Handlungsreihenfolge: fällig zuerst, dann am weitesten gereift.
+    """Handlungsreihenfolge: urteilbar zuerst, dann Evaluator-fällig, dann Reife.
 
     Claims ohne Zähler sortieren zuletzt — sie tragen keine Dringlichkeit, die
     man belegen könnte.
     """
-    state = row["state"]
-    rank = {"due": 0, "maturing": 1, "no_counter": 2}.get(state, 3)
+    rank = _STATE_RANK.get(row["state"], 4)
     progress = row["progress_pct"] if isinstance(row["progress_pct"], (int, float)) else -1.0
     return (rank, -float(progress), str(row["name"]))
+
+
+def _board_state(mat: dict[str, Any]) -> str:
+    """Reife-Zeile → Board-Zustand, konservativ.
+
+    Ohne ``state`` (Alt-Format) wird auf das ``due``-Bit zurückgefallen und der
+    SCHWÄCHERE Zustand angenommen — nie der stärkere.
+    """
+    raw = mat.get("state")
+    if raw == "JUDGEABLE":
+        return STATE_JUDGEABLE
+    if raw == "EVAL_CHECK_DUE":
+        return STATE_EVAL_CHECK
+    if raw == "NOT_DUE":
+        return STATE_MATURING
+    return STATE_EVAL_CHECK if bool(mat.get("due")) else STATE_MATURING
 
 
 def open_preregs(
@@ -143,7 +178,7 @@ def build_live_board(
         n_proxy: int | None = None
         n_target: int | None = None
         progress: float | None = None
-        state = "no_counter"
+        state = STATE_NO_COUNTER
 
         if mat is not None:
             try:
@@ -153,11 +188,16 @@ def build_live_board(
                 n_proxy = n_target = None
             if n_proxy is not None and n_target and n_target > 0:
                 progress = round(min(100.0, 100.0 * n_proxy / n_target), 1)
-            state = "due" if bool(mat.get("due")) else "maturing"
+            state = _board_state(mat)
 
-        if state == "due":
-            action = "Eval jetzt fahren — Reife ist Upper-Bound-Proxy, kein PASS."
-        elif state == "maturing":
+        if state == STATE_JUDGEABLE:
+            action = "urteilsfähig — die Zählung IST der exakte Evaluator, Verdikt möglich."
+        elif state == STATE_EVAL_CHECK:
+            action = (
+                "exakten Evaluator fahren — Ziel-n nur im Upper-Bound-Proxy erreicht, "
+                "das ist KEIN Urteil und kein PASS."
+            )
+        elif state == STATE_MATURING:
             action = f"reift ({n_proxy}/{n_target}) — kein Attest vor Ziel-n."
         else:
             action = "kein Reife-Zähler registriert — Fortschritt nicht gezählt."
@@ -175,16 +215,23 @@ def build_live_board(
         )
 
     rows.sort(key=_sort_key)
-    due_count = sum(1 for r in rows if r["state"] == "due")
+    judgeable = sum(1 for r in rows if r["state"] == STATE_JUDGEABLE)
+    eval_check = sum(1 for r in rows if r["state"] == STATE_EVAL_CHECK)
     return {
         "open_preregs": rows,
         "open_count": len(rows),
-        "due_count": due_count,
+        "judgeable_count": judgeable,
+        "eval_check_count": eval_check,
+        # Kompat für bestehende Konsumenten: alles, was Handlung braucht.
+        # Achtung — das ist NICHT „urteilbar" (s. _board_state).
+        "due_count": judgeable + eval_check,
         "has_content": bool(rows),
         # Sprachregel: die Sektion ist live-berechnet, die Reife ist ein Proxy.
         "note": (
             "Live aus prereg_ledger − prereg_verdicts (ADR 0012). Reife-n ist "
-            "Upper-Bound-Proxy: FÄLLIG = Eval fahren, nie „bestanden“."
+            "Upper-Bound-Proxy: Ziel-n im Proxy erreicht heisst „exakten Evaluator "
+            "fahren“, nie „bestanden“ — urteilsfähig ist nur, wo die Zählung selbst "
+            "der Evaluator ist."
         ),
     }
 
@@ -219,6 +266,10 @@ def curated_is_stale(curated: dict[str, Any], *, age_days: int | None = None) ->
 
 
 __all__ = [
+    "STATE_EVAL_CHECK",
+    "STATE_JUDGEABLE",
+    "STATE_MATURING",
+    "STATE_NO_COUNTER",
     "CURATED_STALE_DAYS",
     "TERMINAL_VERDICTS",
     "build_live_board",

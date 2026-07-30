@@ -46,6 +46,8 @@ const board = (over: Record<string, unknown> = {}) => ({
   live: {
     open_preregs: [prereg()],
     open_count: 1,
+    judgeable_count: 0,
+    eval_check_count: 0,
     due_count: 0,
     has_content: true,
     maturity_state: "ok",
@@ -85,7 +87,8 @@ describe("AcutePointsBoard — Live-Sektion", () => {
       board({
         live: {
           ...board().live,
-          open_preregs: [prereg({ state: "due", n_proxy: 300, progress_pct: 100 })],
+          open_preregs: [prereg({ state: "judgeable", n_proxy: 300, progress_pct: 100 })],
+          judgeable_count: 1,
           due_count: 1,
         },
       }),
