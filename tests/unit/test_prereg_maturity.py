@@ -82,7 +82,108 @@ async def test_compute_maturity_counts_and_due_flags(session_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_compute_maturity_empty_store(session_factory) -> None:
+async def test_compute_maturity_empty_store(session_factory, tmp_path) -> None:
+    # artifacts_dir explizit auf ein leeres Verzeichnis — die Datei-Kinds
+    # (tech_precision/exec_translation) duerfen nicht die Repo-Artefakte lesen.
     async with session_factory() as session:
-        rows = await compute_maturity(session)
+        rows = await compute_maturity(session, artifacts_dir=tmp_path / "empty")
     assert all(r["due"] is False and r["n_proxy"] == 0 for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_stories_level_counts_deduped_not_events(session_factory) -> None:
+    """Gate-Level-Zaehlung (Lehre 2026-07-30): b20ef148 gatet auf stories —
+    drei syndizierte Artikel derselben Story duerfen nur EINMAL reifen."""
+    specs = (
+        {
+            "name": "drift_stories",
+            "kind": "documents",
+            "since_utc": "2026-07-02",
+            "sources": None,
+            "exclude_first_ticker": "BTC/USDT",
+            "n_target": 2,
+            "level": "stories",
+        },
+    )
+    async with session_factory.begin() as session:
+        session.add_all(
+            [
+                # Eine Story: gleiches Symbol/Seite, drei Quellen binnen 24h.
+                _doc(1, source="coindesk", tickers=["ETH/USDT"], when="2026-07-03T00:00:00"),
+                _doc(2, source="theblock", tickers=["ETH/USDT"], when="2026-07-03T06:00:00"),
+                _doc(3, source="newsbtc", tickers=["ETH/USDT"], when="2026-07-03T12:00:00"),
+                # Zweite Story: anderes Symbol.
+                _doc(4, source="coindesk", tickers=["SOL/USDT"], when="2026-07-04T00:00:00"),
+            ]
+        )
+    async with session_factory() as session:
+        rows = await compute_maturity(session, specs=specs)
+    drift = rows[0]
+    assert drift["per_source"] == {"stories": 2, "events": 4}
+    assert drift["n_proxy"] == 2  # Story-Level, NICHT 4 Events
+    assert drift["due"] is True
+
+
+@pytest.mark.asyncio
+async def test_file_kind_specs_count_via_evaluators(session_factory, tmp_path) -> None:
+    import json as _json
+
+    art = tmp_path / "artifacts"
+    art.mkdir()
+    reg = "2026-07-29T09:14:47+00:00"
+
+    def _w(name: str, rows: list[dict]) -> None:
+        (art / name).write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    _w(
+        "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "document_id": f"technical_paper_{d}",
+                "filled_at": "2026-07-29T12:00:00+00:00",
+                "timestamp_utc": "2026-07-29T12:00:00+00:00",
+            }
+            for d in ("A", "B", "C", "D")
+        ]
+        + [
+            {
+                "event_type": "position_closed",
+                "document_id": "technical_paper_A",
+                "timestamp_utc": "2026-07-29T13:00:00+00:00",
+                "trade_pnl_usd": 4.0,
+            }
+        ],
+    )
+    _w(
+        "alert_outcomes.jsonl",
+        [
+            {"document_id": "technical_paper_A", "outcome": "hit", "annotated_at": reg},
+            {"document_id": "technical_paper_B", "outcome": "miss", "annotated_at": reg},
+            {"document_id": "technical_paper_C", "outcome": "inconclusive", "annotated_at": reg},
+        ],
+    )
+    specs = (
+        {
+            "name": "tech_like",
+            "kind": "tech_precision",
+            "since_utc": reg,
+            "n_target": 2,
+        },
+        {
+            "name": "exec_like",
+            "kind": "exec_translation",
+            "since_utc": reg,
+            "n_target": 1,
+        },
+    )
+    async with session_factory() as session:
+        rows = await compute_maturity(session, specs=specs, artifacts_dir=art)
+
+    tech = next(r for r in rows if r["name"] == "tech_like")
+    assert tech["n_proxy"] == 2  # A hit + B miss; C inconclusive; D pending
+    assert tech["per_source"] == {"resolved": 2, "inconclusive": 1, "pending": 1}
+    assert tech["due"] is True
+
+    ex = next(r for r in rows if r["name"] == "exec_like")
+    assert ex["n_proxy"] == 1 and ex["due"] is True
