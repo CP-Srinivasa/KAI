@@ -70,6 +70,21 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
         keep_lines=10_000,
         rationale="entry-range polling is forensic-recent; positions live in the engine",
     ),
+    RotationRule(
+        filename="api_request_audit.jsonl",
+        max_bytes=20 * _MB,
+        keep_lines=20_000,
+        rationale="HTTP request audit — the ONLY stream with zero programmatic "
+        "readers (verified 2026-07-30: written by "
+        "RequestGovernanceMiddleware._write_audit, otherwise referenced only in "
+        "scripts/pi_transfer_artifacts.sh as a backup target; no endpoint, report, "
+        "verdict or learning path parses it). Was the largest artifact on the Pi at "
+        "127MB and the fastest-growing, since it logs EVERY request while the "
+        "dashboard polls ~15 panels. Safe against the writer: it opens with "
+        "open('a') per record and closes again, so a rename is picked up on the next "
+        "append — no held handle, no restart needed. 20k lines keeps recent forensics "
+        "in the live file; older history stays in archive/",
+    ),
 )
 
 

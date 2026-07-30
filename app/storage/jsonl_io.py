@@ -160,3 +160,139 @@ def iter_jsonl_tolerant(
             if dict_only and not isinstance(obj, dict):
                 continue
             yield obj
+
+
+# Rückwärts-Leseblock. 256 KiB deckt bei den Audit-Streams deutlich mehr als ein
+# 24-h-Fenster ab (1.203 Zeilen ≈ 750 KiB bei trading_loop_audit), sodass in der
+# Praxis 1–4 Chunks genügen; der Reader erweitert bei Bedarf trotzdem weiter.
+_WINDOW_CHUNK_BYTES = 256 * 1024
+
+# Toleranz gegen LOKALE Unordnung. Die Streams sind append-only, aber NICHT streng
+# monoton: parallele Appends erzeugen kleine Rücksprünge. Auf dem Live-File
+# gemessen (2026-07-30, trading_loop_audit.jsonl, 88.321 Zeilen): 143
+# Sortierverletzungen (0,16 %), maximale Positions-Verschiebung **7 Zeilen**,
+# maximaler Zeit-Rücksprung **9,3 s**.
+#
+# Darum wird NICHT beim ersten älteren Datensatz abgebrochen — das könnte einen
+# in-Fenster-Datensatz übersehen, der im File hinter einem verirrten älteren
+# steht. Erst wenn ``_DISORDER_MARGIN_RECORDS`` Datensätze älter als der Cutoff
+# gesehen wurden, ist das Fenster nachweislich links geschlossen. 64 gibt gegen
+# die gemessenen 7 Zeilen ~9x Marge.
+#
+# Grenze ehrlich benannt: ein Stream, dessen Datensätze um MEHR als diese Marge
+# verschoben sind, bräuchte einen Full-Scan. Für die Audit-Streams hier ist das
+# messbar nicht der Fall.
+_DISORDER_MARGIN_RECORDS = 64
+
+
+def iter_jsonl_since(
+    path: Path,
+    *,
+    since: str,
+    key: str,
+    dict_only: bool = True,
+    _chunk_bytes: int = _WINDOW_CHUNK_BYTES,
+) -> Iterator[dict[str, Any]]:
+    """Stream nur die Datensätze ab ``since`` — I/O proportional zum FENSTER.
+
+    Für **zeitsortierte append-only** JSONL-Streams (jede Zeile trägt unter
+    ``key`` einen lexikografisch vergleichbaren ISO-Zeitstempel). Gelesen wird
+    vom Dateiende rückwärts in Blöcken, bis ein Eintrag VOR ``since`` auftaucht;
+    geliefert wird wieder in chronologischer Reihenfolge.
+
+    Motivation (2026-07-30): ``build_priority_gate_summary`` parste alle 88.314
+    Zeilen von ``trading_loop_audit.jsonl`` (54,8 MB), um die 1.203 Zeilen der
+    letzten 24 h zu zählen — 1,36 %. Das Verhältnis verschlechtert sich täglich,
+    weil das Fenster fix ist und die Datei ewig wächst. Rotation wäre hier der
+    falsche Hebel: der Stream speist Edge-/Verdikt-Rechnungen, seine Historie IST
+    Evidenz und darf nicht gelöscht werden — also nicht kürzen, sondern gezielter
+    lesen.
+
+    **Vollständigkeit vor Sparsamkeit:** es gibt bewusst KEIN Zeilenlimit. Ein
+    fixes ``tail=N`` würde bei einer Frequenz-Spitze still abschneiden und einen
+    truth-tragenden Zähler verfälschen — die Schleife erweitert stattdessen
+    solange nach hinten, bis das Fenster nachweislich links abgeschlossen ist
+    (oder der Dateianfang erreicht wurde).
+
+    Zeilen ohne ``key`` werden **behalten**, nicht verworfen: ein fehlendes Feld
+    beweist nicht, dass der Eintrag alt ist (Legacy-Zeilen ohne Zeitstempel gibt
+    es im Bestand). Der Aufrufer entscheidet. Korrupte Zeilen werden übersprungen
+    — gleiche Policy wie :func:`iter_jsonl_tolerant`, ohne Retry.
+    """
+    if not path.exists():
+        return
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return
+    if size <= 0:
+        return
+
+    # Rückwärts in Blöcken lesen, bis das Fenster links geschlossen ist.
+    with path.open("rb") as handle:
+        end = size
+        chunks: list[bytes] = []
+        window_closed = False
+        older_seen = 0
+        while end > 0 and not window_closed:
+            start = max(0, end - max(1, _chunk_bytes))
+            handle.seek(start)
+            chunk = handle.read(end - start)
+            chunks.insert(0, chunk)
+            end = start
+            if end == 0:
+                break
+            # Nur den NEUEN Block auszählen und den Zähler mitführen (O(Blöcke)
+            # statt O(Blöcke²) — den akkumulierten Puffer jedes Mal neu zu
+            # dekodieren kostete beim 72-h-Fenster den Grossteil der Laufzeit).
+            #
+            # Ab dem ersten Newline liegen ganze Zeilen vor; das angeschnittene
+            # Stück am Blockanfang gehört in den vorherigen Block. Die letzte
+            # Zeile des Blocks ist ihr eigener Anfang und dekodiert nicht — sie
+            # wird schlicht nicht gezählt, was gegen eine Marge von 64 belanglos
+            # ist (doppelt gezählt wird nichts).
+            nl = chunk.find(b"\n")
+            if nl < 0:
+                continue
+            for raw in chunk[nl + 1 :].split(b"\n"):
+                stamp = _stamp_of(raw, key=key)
+                if stamp is not None and stamp < since:
+                    older_seen += 1
+            if older_seen >= _DISORDER_MARGIN_RECORDS:
+                window_closed = True
+
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    lines = text.split("\n")
+    if end > 0:
+        # Angeschnittene erste Zeile aus dem letzten gelesenen Block verwerfen.
+        lines = lines[1:]
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if dict_only and not isinstance(obj, dict):
+            continue
+        stamp = obj.get(key)
+        if isinstance(stamp, str) and stamp < since:
+            continue
+        yield obj
+
+
+def _stamp_of(raw: bytes, *, key: str) -> str | None:
+    """Zeitstempel einer Rohzeile, oder ``None`` wenn unlesbar/nicht vorhanden."""
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        obj = json.loads(stripped.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    stamp = obj.get(key)
+    return stamp if isinstance(stamp, str) else None

@@ -26,13 +26,15 @@ Idle semantics:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from app.orchestrator.models import CycleStatus
-from app.orchestrator.trading_loop import _AUDIT_LOG, load_trading_loop_cycles
+from app.orchestrator.trading_loop import _AUDIT_LOG
+from app.storage.jsonl_io import iter_jsonl_since
 
 
 @dataclass(frozen=True)
@@ -109,7 +111,13 @@ def compute_loop_idle_signal(
     window_end_iso = window_end.isoformat()
 
     audit_path_resolved = Path(audit_path)
-    records = load_trading_loop_cycles(audit_path_resolved)
+    # Fenster-Read statt Full-Scan (2026-07-30) — gleiche Umstellung wie in
+    # ``build_priority_gate_summary``. Semantisch identisch, weil hier ohnehin
+    # LEXIKOGRAFISCH gegen ``window_start_iso`` verglichen wurde; der Reader
+    # wendet genau dieselbe Grenze an, liest aber nur den nötigen Tail.
+    records: Iterable[dict[str, Any]] = iter_jsonl_since(
+        audit_path_resolved, since=window_start_iso, key="started_at"
+    )
 
     total = 0
     completed = 0
