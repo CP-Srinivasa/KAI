@@ -28,9 +28,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Registered out-of-sample windows start at the claim's registration time — these
 # constants ARE part of the doctrine (auditable against the prereg ledger).
+# ``prereg_id`` bindet jeden Spec EXPLIZIT an die versiegelte Prä-Reg, die er
+# zählt. Vorher stand diese Zuordnung nur in Prosa — und der Spec-Name wich beim
+# hedged-drift-Claim vom Ledger-Namen ab (Spec ``…_drift`` vs. Prä-Reg
+# ``…_drift_v2``). Solange nichts beides jointe, war das harmlos; sobald ein
+# Konsument (Operator-Board) über den Namen joint, hängt die Reife am FALSCHEN
+# Claim. Die ids sind gegen das Ledger verifiziert (2026-07-30): bei den beiden
+# Quoten-Claims ist ``since_utc`` byte-identisch zu ``created_at_utc``, beim
+# hedged-drift-Claim liegt das Fenster ab 07-02 (v2, 05:43) und NICHT ab v1
+# (07-01, 22:09).
 MATURITY_SPECS: tuple[dict[str, Any], ...] = (
     {
         "name": "directional_news_hedged_1d_drift",
+        # Prä-Reg ist der v2-Claim; der Spec-Name blieb aus Kompatibilität stehen.
+        "prereg_id": "b20ef1487ccba99d",
         "kind": "documents",
         "since_utc": "2026-07-02",
         "sources": None,  # all sources
@@ -41,6 +52,7 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "directional_news_3d_theblock_newsbtc",
+        "prereg_id": "7e8d66314dd7c64e",
         "kind": "documents",
         "since_utc": "2026-07-01",
         "sources": ("theblock", "newsbtc"),
@@ -52,12 +64,14 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
     # identische Populations-Definition wie das spätere Verdikt).
     {
         "name": "technical_paper_precision_fwd_v1",
+        "prereg_id": "fd6f5f7842f49244",
         "kind": "tech_precision",
         "since_utc": "2026-07-29T09:14:47.210068+00:00",
         "n_target": 200,
     },
     {
         "name": "execution_translation_hit_to_win_v1",
+        "prereg_id": "0c7ead764621dd17",
         "kind": "exec_translation",
         "since_utc": "2026-07-29T09:15:10.626958+00:00",
         "n_target": 50,
@@ -206,6 +220,9 @@ async def compute_maturity(
         out.append(
             {
                 "name": spec["name"],
+                # Durchgereicht, damit Konsumenten über die versiegelte Identität
+                # joinen können statt über den (driftenden) Namen.
+                "prereg_id": spec.get("prereg_id"),
                 "since_utc": spec["since_utc"],
                 "n_target": spec["n_target"],
                 "n_proxy": n,
