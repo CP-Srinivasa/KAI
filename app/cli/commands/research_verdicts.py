@@ -149,11 +149,17 @@ def trading_prereg_maturity(
     for r in rows:
         state = renders.get(str(r.get("state")), str(r.get("state")))
         pid = r.get("prereg_id") or "ohne-prereg-id"
+        # Woher der Zustand stammt, gehört SICHTBAR in die Zeile: eine exakte
+        # Messung schlägt den Proxy, und nur sie darf ein Verdikt tragen.
+        n_exact = r.get("n_exact")
+        if n_exact is None:
+            n_render = f"n≈{r['n_proxy']}/{r['n_target']} (Proxy, Obergrenze)"
+        else:
+            n_render = f"n={n_exact}/{r['n_target']} (EXAKT; Proxy≈{r['n_proxy']})"
         # Runde Klammern: eckige wuerde rich als Markup-Tag schlucken —
         # die versiegelte ID verschwand dann aus der Konsole (Smoke 07-30).
         console.print(
-            f"{r['name']} ({pid}): n≈{r['n_proxy']}/{r['n_target']} (seit {r['since_utc']}) "
-            f"{r['per_source']} → {state}"
+            f"{r['name']} ({pid}): {n_render} (seit {r['since_utc']}) {r['per_source']} → {state}"
         )
 
 

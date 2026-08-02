@@ -29,11 +29,29 @@ zusätzlich Events an OHLCV-Lücken/Symbol-Caps, gemessen ~30 %):
 
 ``due`` bleibt als Kompat-Feld erhalten (True == Zustand != NOT_DUE); jede
 Zeile trägt die versiegelte ``prereg_id``.
+
+WICHTIG (Lehre 2026-08-02, zweiter Wiederholungsfall): der Story-Proxy meldete
+FÄLLIG bei 380, während der exakte Evaluator am Gate-Horizont 273/300 zählte.
+Drei getrennte Ursachen, alle hier adressiert:
+
+1. Der Spec-Anker stand auf Mitternacht statt auf dem versiegelten
+   ``created_at_utc`` — 19 Stories aus der Zeit VOR der Registrierung wurden
+   mitgezählt (381 → 362 gemessen).
+2. Stories, deren GATE-HORIZONT noch nicht verstrichen ist, können nicht
+   aufgelöst sein; der Proxy zählte sie mit (362 → 355 gemessen).
+3. Auch der bereinigte Proxy bleibt eine Obergrenze (355 vs. exakt 273). Eine
+   FRISCHE exakte Beobachtung (``artifacts/research/prereg_exact_observations.jsonl``,
+   geschrieben von ``trading prereg-observe --from-json``) dominiert deshalb den
+   Proxy vollständig — sie IST der exakte Evaluator, mit allen Konsequenzen:
+   unter Ziel ⇒ ``NOT_DUE``, am Ziel ⇒ ``JUDGEABLE``. Nach
+   ``EXACT_OBSERVATION_MAX_AGE_DAYS`` verfällt sie und der Proxy übernimmt
+   wieder — eine alte Messung darf den Alarm nicht dauerhaft stummschalten.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +61,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 STATE_NOT_DUE = "NOT_DUE"
 STATE_EVAL_CHECK_DUE = "EVAL_CHECK_DUE"
 STATE_JUDGEABLE = "JUDGEABLE"
+
+# Eine exakte Messung altert: die Kohorte wächst weiter (~9 Stories/Tag bei
+# b20ef1487ccba99d). Drei Tage decken diesen Drift ab und erzwingen danach eine
+# neue Messung, statt den Alarm unbefristet zu unterdrücken.
+EXACT_OBSERVATION_MAX_AGE_DAYS = 3
+EXACT_OBSERVATIONS_RELPATH = Path("research") / "prereg_exact_observations.jsonl"
 
 # Registered out-of-sample windows start at the claim's registration time — these
 # constants ARE part of the doctrine (auditable against the prereg ledger).
@@ -61,12 +85,18 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         # Prä-Reg ist der v2-Claim; der Spec-Name blieb aus Kompatibilität stehen.
         "prereg_id": "b20ef1487ccba99d",
         "kind": "documents",
-        "since_utc": "2026-07-02",
+        # Byte-identisch zu ``created_at_utc`` im Ledger. Vorher stand hier das
+        # blosse Datum (Mitternacht) — das zählte 5 h 43 min VOR der Versiegelung
+        # publizierte Stories in die OOS-Kohorte (gemessen 19 Stück, 2026-08-02).
+        "since_utc": "2026-07-02T05:43:32.211092+00:00",
         "sources": None,  # all sources
         "exclude_first_ticker": "BTC/USDT",  # hedged construction skips BTC events
         "n_target": 300,
         # Gate b20ef1487ccba99d urteilt auf Story-Level (cluster_stories, 24h).
         "level": "stories",
+        # gate.horizon_s aus dem Ledger: Stories jünger als das sind noch nicht
+        # auflösbar und gehören nicht in den Reife-Zähler.
+        "gate_horizon_s": 86400,
     },
     {
         "name": "directional_news_3d_theblock_newsbtc",
@@ -133,10 +163,17 @@ def _as_dt(raw: Any) -> datetime | None:
     return None
 
 
-async def _count_stories(session: AsyncSession, spec: dict[str, Any]) -> int:
+async def _count_stories(
+    session: AsyncSession, spec: dict[str, Any], now: datetime
+) -> tuple[int, int]:
     """Story-dedupliziertes n — Proxy auf published_at statt entry_ts (der
     Evaluator ankert auf dem ersten OHLCV-Open NACH publish; für die Reife-
-    Frage ist die Publish-Zeit dieselbe 24h-Fenster-Semantik)."""
+    Frage ist die Publish-Zeit dieselbe 24h-Fenster-Semantik).
+
+    Stories, deren Gate-Horizont noch nicht verstrichen ist, sind strukturell
+    nicht auflösbar und zählen nicht mit; sie werden als ``inside_horizon``
+    separat zurückgegeben, damit die Restlaufzeit sichtbar bleibt.
+    """
     from app.research.news_stories import cluster_stories
 
     rows = (
@@ -145,17 +182,23 @@ async def _count_stories(session: AsyncSession, spec: dict[str, Any]) -> int:
             {"since": spec["since_utc"], "exclude_ticker": spec["exclude_first_ticker"]},
         )
     ).all()
-    outcomes = []
+    horizon_s = int(spec.get("gate_horizon_s") or 0)
+    resolvable_before = now - timedelta(seconds=horizon_s)
+    mature: list[dict[str, Any]] = []
+    inside: list[dict[str, Any]] = []
     for r in rows:
         ts = _as_dt(r.pub)
         if ts is None or not r.sym:
             continue
-        outcomes.append({"symbol": str(r.sym), "side": str(r.side), "entry_ts": ts})
-    return len(cluster_stories(outcomes))
+        outcome = {"symbol": str(r.sym), "side": str(r.side), "entry_ts": ts}
+        (mature if ts <= resolvable_before else inside).append(outcome)
+    n_mature = len(cluster_stories(mature))
+    n_all = len(cluster_stories(mature + inside))
+    return n_mature, max(n_all - n_mature, 0)
 
 
 async def _maturity_documents(
-    session: AsyncSession, spec: dict[str, Any]
+    session: AsyncSession, spec: dict[str, Any], now: datetime
 ) -> tuple[int, dict[str, int], str]:
     rows = (
         await session.execute(
@@ -168,11 +211,15 @@ async def _maturity_documents(
     if sources is None:
         n_events = sum(by_source.values())
         if spec.get("level") == "stories":
-            n_stories = await _count_stories(session, spec)
+            n_stories, n_inside = await _count_stories(session, spec, now)
             reached = n_stories >= int(spec["n_target"])
             return (
                 n_stories,
-                {"stories": n_stories, "events": n_events},
+                {
+                    "stories": n_stories,
+                    "stories_inside_horizon": n_inside,
+                    "events": n_events,
+                },
                 STATE_EVAL_CHECK_DUE if reached else STATE_NOT_DUE,
             )
         reached = n_events >= int(spec["n_target"])
@@ -222,13 +269,116 @@ def _maturity_exec_translation(
     return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
 
 
+def load_exact_observations(artifacts_dir: Path) -> dict[str, dict[str, Any]]:
+    """Neueste exakte Evaluator-Beobachtung je ``prereg_id`` (fail-soft).
+
+    Read-only; eine fehlende oder kaputte Datei liefert schlicht nichts und
+    lässt den Proxy-Pfad unverändert.
+    """
+    path = artifacts_dir / EXACT_OBSERVATIONS_RELPATH
+    newest: dict[str, dict[str, Any]] = {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return newest
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        pid = rec.get("prereg_id")
+        observed = _as_dt(rec.get("observed_at_utc"))
+        if not isinstance(pid, str) or observed is None:
+            continue
+        if not isinstance(rec.get("n_exact"), int):
+            continue
+        prev = newest.get(pid)
+        if prev is None or observed > prev["_observed"]:
+            newest[pid] = {**rec, "_observed": observed}
+    return newest
+
+
+def record_exact_observation(
+    *,
+    prereg_id: str,
+    gate: dict[str, Any],
+    n_target: int,
+    eval_result: dict[str, Any],
+    artifacts_dir: Path,
+    observed_at: datetime,
+    source_json: str | None = None,
+) -> dict[str, Any]:
+    """Exaktes n aus einem Evaluator-Lauf gegen das VERSIEGELTE Gate festhalten.
+
+    Das n wird nicht neu berechnet, sondern aus ``check_gate`` gezogen — genau
+    die Zahl, die das Verdikt später gegen ``n_min`` prüft. Ist der geurteilte
+    Block im Ergebnis nicht vorhanden, ist nichts gemessen worden und es wird
+    NICHTS geschrieben (``ValueError``) — eine erfundene Null wäre schlimmer als
+    keine Beobachtung.
+    """
+    from app.research.prereg_gate import check_gate
+
+    result = check_gate(gate, eval_result)
+    n_check = next((c for c in result["checks"] if c["name"] == "n_min"), None)
+    if n_check is None:
+        raise ValueError(
+            f"gate row {gate.get('level')}@{gate.get('horizon_s')}s not present in evaluator "
+            "output — nothing was measured, so nothing is recorded"
+        )
+    record = {
+        "prereg_id": prereg_id,
+        "observed_at_utc": observed_at.astimezone(UTC).isoformat(),
+        "n_exact": int(n_check["actual"]),
+        "n_target": int(n_target),
+        "level": str(gate.get("level")),
+        "horizon_s": int(gate.get("horizon_s", 0)),
+        "gate_passed": bool(result["passed"]),
+        "source_json": source_json,
+    }
+    path = artifacts_dir / EXACT_OBSERVATIONS_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    return record
+
+
+def _state_from_exact(
+    observation: dict[str, Any] | None, *, n_target: int, now: datetime
+) -> tuple[int, str] | None:
+    """Zustand aus einer FRISCHEN exakten Messung — oder None (Proxy übernimmt)."""
+    if not observation:
+        return None
+    age = now - observation["_observed"]
+    if age > timedelta(days=EXACT_OBSERVATION_MAX_AGE_DAYS) or age < timedelta(0):
+        return None
+    # Gegen eine ANDERE Latte gemessen ist keine Aussage über DIESE Reife.
+    observed_target = observation.get("n_target")
+    if isinstance(observed_target, int) and observed_target != n_target:
+        return None
+    n_exact = int(observation["n_exact"])
+    return n_exact, (STATE_JUDGEABLE if n_exact >= n_target else STATE_NOT_DUE)
+
+
 async def compute_maturity(
     session: AsyncSession,
     *,
     specs: tuple[dict[str, Any], ...] = MATURITY_SPECS,
     artifacts_dir: Path = Path("artifacts"),
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Count each spec's out-of-sample cohort; ``due`` when target is reached."""
+    """Count each spec's out-of-sample cohort; ``due`` when target is reached.
+
+    Eine frische exakte Beobachtung schlägt den Proxy — der Proxy ist per
+    Konstruktion eine Obergrenze und darf keine Fälligkeit gegen eine
+    vorliegende Messung behaupten.
+    """
+    now_utc = now or datetime.now(UTC)
+    observations = load_exact_observations(artifacts_dir)
     out: list[dict[str, Any]] = []
     for spec in specs:
         kind = str(spec.get("kind", "documents"))
@@ -237,7 +387,16 @@ async def compute_maturity(
         elif kind == "exec_translation":
             n, detail, state = _maturity_exec_translation(spec, artifacts_dir)
         else:
-            n, detail, state = await _maturity_documents(session, spec)
+            n, detail, state = await _maturity_documents(session, spec, now_utc)
+        n_target = int(spec["n_target"])
+        exact = _state_from_exact(
+            observations.get(str(spec.get("prereg_id") or "")), n_target=n_target, now=now_utc
+        )
+        n_exact: int | None = None
+        state_source = "proxy"
+        if exact is not None:
+            n_exact, state = exact
+            state_source = "exact_observation"
         out.append(
             {
                 "name": spec["name"],
@@ -247,6 +406,11 @@ async def compute_maturity(
                 "since_utc": spec["since_utc"],
                 "n_target": spec["n_target"],
                 "n_proxy": n,
+                # n der letzten EXAKTEN Messung (None = keine frische vorhanden).
+                "n_exact": n_exact,
+                # Woher der Zustand stammt — ein Verdikt darf sich nie auf "proxy"
+                # stützen, auch nicht implizit über ``due``.
+                "state_source": state_source,
                 "per_source": detail,
                 "state": state,
                 # Kompat-Bit: True == Zustand != NOT_DUE. Bedeutet NIE "urteilbar" —
@@ -258,9 +422,13 @@ async def compute_maturity(
 
 
 __all__ = [
+    "EXACT_OBSERVATIONS_RELPATH",
+    "EXACT_OBSERVATION_MAX_AGE_DAYS",
     "MATURITY_SPECS",
     "STATE_EVAL_CHECK_DUE",
     "STATE_JUDGEABLE",
     "STATE_NOT_DUE",
     "compute_maturity",
+    "load_exact_observations",
+    "record_exact_observation",
 ]
