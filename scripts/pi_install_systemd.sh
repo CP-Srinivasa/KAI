@@ -83,6 +83,8 @@ UNITS=(
     "kai-audit-rotate.timer"
     "kai-operator-digest.service"
     "kai-operator-digest.timer"
+    "kai-ln-scb-monitor.service"
+    "kai-ln-scb-monitor.timer"
 )
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
@@ -127,6 +129,7 @@ ENABLE_ON_INSTALL=(
     "kai-auto-annotate.timer"
     "kai-auto-annotate-blocked.timer"
     "kai-recalc-cycle.timer"
+    "kai-ln-scb-monitor.timer"
 )
 
 # 2026-05-14: Reactivate-Hook — kritische Premium-Signal-Pipeline-Units.

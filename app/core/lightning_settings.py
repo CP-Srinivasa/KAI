@@ -80,6 +80,14 @@ class LightningSettings(BaseSettings):
     # ``APP_LN_REPUTATION_INTERVAL_SECONDS``. 900s (15min) — node health moves
     # slowly, so this is ample.
     reputation_interval_seconds: int = Field(default=900, gt=0)
+    # Static Channel Backup monitor (read-only): the RaspiBlitz-side sync copies
+    # channel.backup to ``scb_path``; KAI hashes that local copy and records the
+    # last observed hash in ``scb_baseline_path``. A copy older than two hours is
+    # operationally stale even when its hash is unchanged. Env:
+    # ``APP_LN_SCB_PATH`` / ``..._BASELINE_PATH`` / ``..._MAX_AGE_SECONDS``.
+    scb_path: str = Field(default="")
+    scb_baseline_path: str = Field(default="artifacts/scb_baseline.json")
+    scb_max_age_seconds: int = Field(default=7200, ge=60)
     # RaspiBlitz info mirror (dashboard "Node & Chain"): read-only system snapshot
     # (CPU/temp/mem/SSD + bitcoind/lnd) pulled over a FORCED-COMMAND ssh key that
     # can only run the info script on the node (no shell, no pty, no sudo surface).

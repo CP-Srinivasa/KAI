@@ -1,0 +1,15 @@
+[Unit]
+Description=Run KAI Lightning SCB monitor hourly
+
+[Timer]
+# No Requires= dependency: a failed one-shot must not strand the timer.
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=5min
+Unit=kai-ln-scb-monitor.service
+
+[Install]
+WantedBy=timers.target
+

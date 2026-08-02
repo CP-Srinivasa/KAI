@@ -2135,13 +2135,22 @@ async def dashboard_ln_channels_api() -> JSONResponse:
     from dataclasses import asdict
 
     from app.lightning.adapter import get_channels
+    from app.lightning.treasury import get_pending_channels_snapshot
 
     status = await get_channels()
+    pending = await get_pending_channels_snapshot()
     payload = asdict(status)
     payload["num_channels"] = len(status.channels)
     payload["num_pending"] = len(status.pending)
     payload["total_local_sat"] = sum(c.local_sat for c in status.channels)
     payload["total_remote_sat"] = sum(c.remote_sat for c in status.channels)
+    payload["pending_channels_state"] = pending.state
+    payload["total_limbo_sat"] = pending.total_limbo_sat
+    payload["pending_force_closing_count"] = pending.pending_force_closing_count
+    payload["pending_closing_count"] = pending.pending_closing_count
+    payload["waiting_close_count"] = pending.waiting_close_count
+    payload["force_closes"] = [asdict(item) for item in pending.force_closes]
+    payload["pending_channels_reason"] = pending.reason
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
@@ -2233,13 +2242,16 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
     (souveräne Reserve). KEINE Allokation/Spend (gegated bei G2), kein USD
     (separate Dimension, nicht co-mingled).
     """
+    from dataclasses import asdict
+
     from app.lightning.cache import get_cached_node_status
     from app.lightning.earnings_ledger import read_recent_ln_earnings
     from app.lightning.policy import PolicyStore
-    from app.lightning.treasury import compute_treasury_snapshot
+    from app.lightning.treasury import compute_treasury_snapshot, get_pending_channels_snapshot
 
     earnings = read_recent_ln_earnings()
     status, _ = await get_cached_node_status()
+    pending = await get_pending_channels_snapshot()
     onchain = int(getattr(status, "wallet_total_sat", 0) or 0)
     channel = int(getattr(status, "channel_local_sat", 0) or 0)
     reserve = PolicyStore().load().reserve_floor_sat
@@ -2248,7 +2260,12 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
         onchain_sat=onchain,
         channel_local_sat=channel,
         operating_reserve_sat=reserve,
+        total_limbo_sat=pending.total_limbo_sat,
     )
+    snap["limbo_state"] = pending.state
+    snap["pending_force_closing_count"] = pending.pending_force_closing_count
+    snap["force_closes"] = [asdict(item) for item in pending.force_closes]
+    snap["limbo_reason"] = pending.reason
     snap["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=snap, headers={"Cache-Control": "no-store, max-age=0"})
 
