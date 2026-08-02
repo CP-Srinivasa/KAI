@@ -119,9 +119,10 @@ async def test_stories_level_counts_deduped_not_events(session_factory) -> None:
     async with session_factory() as session:
         rows = await compute_maturity(session, specs=specs)
     drift = rows[0]
-    assert drift["per_source"] == {"stories": 2, "events": 4}
+    assert drift["per_source"] == {"stories": 2, "stories_inside_horizon": 0, "events": 4}
     assert drift["n_proxy"] == 2  # Story-Level, NICHT 4 Events
     assert drift["due"] is True
+    assert drift["state_source"] == "proxy"
 
 
 @pytest.mark.asyncio

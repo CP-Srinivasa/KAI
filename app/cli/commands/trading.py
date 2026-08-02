@@ -1065,6 +1065,84 @@ def trading_prereg_list(
     console.print(table)
 
 
+@trading_app.command("prereg-observe")
+def trading_prereg_observe(
+    prereg_id: str = typer.Option(..., "--prereg-id", help="Sealed pre-registration id"),
+    from_json: str = typer.Option(
+        ..., "--from-json", help="Evaluator JSON output file (news-eval --json > f.json)"
+    ),
+    ledger_path: str = typer.Option(
+        str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
+    ),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts root"),
+) -> None:
+    """Das EXAKTE n eines Evaluator-Laufs gegen das versiegelte Gate festhalten.
+
+    ``prereg-maturity`` zählt sonst nur einen Story-PROXY, und der ist per
+    Konstruktion eine Obergrenze: am 2026-08-02 meldete er 380 FÄLLIG, während
+    der exakte Evaluator am Gate-Horizont 273/300 zählte — der dritte
+    Fehlalarm derselben Bauart. Eine hier festgehaltene Messung schlägt den
+    Proxy für die nächsten Tage; danach verfällt sie und der Proxy übernimmt
+    wieder (eine alte Messung darf den Alarm nicht dauerhaft stummschalten).
+
+    Das n wird NICHT neu berechnet, sondern aus ``check_gate`` gezogen — genau
+    die Zahl, gegen die das Verdikt später ``n_min`` prüft. Read-only gegenüber
+    dem Ledger; schreibt nur die Beobachtungs-Zeile.
+    """
+    import json as _json
+    from datetime import UTC, datetime
+
+    from app.research.prereg_ledger import PreRegistrationLedger
+    from app.research.prereg_maturity import record_exact_observation
+
+    entry = next(
+        (e for e in PreRegistrationLedger(Path(ledger_path)).entries() if e.prereg_id == prereg_id),
+        None,
+    )
+    if entry is None:
+        console.print(f"[red]prereg-observe:[/red] unknown prereg_id: {prereg_id}")
+        raise typer.Exit(2)
+    if not entry.gate:
+        console.print(
+            f"[red]prereg-observe:[/red] {prereg_id} carries no machine gate — "
+            "there is no sealed n to measure against."
+        )
+        raise typer.Exit(2)
+
+    src = Path(from_json)
+    if not src.is_file():
+        console.print(f"[red]prereg-observe:[/red] no such file: {from_json}")
+        raise typer.Exit(2)
+    try:
+        eval_result = _json.loads(src.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        console.print(f"[red]prereg-observe:[/red] invalid JSON input: {exc}")
+        raise typer.Exit(2) from exc
+
+    try:
+        rec = record_exact_observation(
+            prereg_id=prereg_id,
+            gate=entry.gate,
+            n_target=entry.sample_size_target,
+            eval_result=eval_result,
+            artifacts_dir=Path(artifacts_dir),
+            observed_at=datetime.now(UTC),
+            source_json=str(src),
+        )
+    except ValueError as exc:
+        console.print(f"[red]prereg-observe:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+    console.print(
+        f"[green]exact observation recorded[/green] {prereg_id}: "
+        f"n={rec['n_exact']}/{rec['n_target']} at {rec['level']}@{rec['horizon_s']}s"
+    )
+    console.print(
+        "prereg-maturity honours this over its proxy; it expires after "
+        "3 days so the eval gets re-run instead of the alarm going quiet."
+    )
+
+
 @trading_app.command("family-status")
 def trading_family_status(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
