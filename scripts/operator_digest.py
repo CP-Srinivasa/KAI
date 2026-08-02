@@ -204,8 +204,39 @@ def collect_runtime() -> dict[str, Any]:
         return {"entry_mode": "unbekannt", "error": str(exc)}
 
 
+def _attribute_paper_row(
+    row: dict[str, Any],
+    event_type: Any,
+    labels: dict[str, str],
+    by_document: dict[str, str],
+) -> str:
+    """Route einer Audit-Zeile. Fail-open auf ``unknown`` statt auf eine Route."""
+    if event_type == "order_filled":
+        oid = row.get("order_id")
+        src = labels.get(oid) if isinstance(oid, str) else None
+        if src:
+            return src
+        own = row.get("source")
+        return own if isinstance(own, str) and own else "unknown"
+    doc = row.get("document_id")
+    src = by_document.get(doc) if isinstance(doc, str) else None
+    if src:
+        return src
+    signal = row.get("signal_source")
+    return signal if isinstance(signal, str) and signal else "unknown"
+
+
 def collect_paper_fills_24h(now: datetime | None = None) -> dict[str, dict[str, Any]]:
-    """Fills/Closes der letzten 24h nach Quelle (Label-Join wie S1b-Report)."""
+    """Fills/Closes der letzten 24h nach Quelle (Label-Join wie S1b-Report).
+
+    Ein ``position_closed`` traegt eine ANDERE ``order_id`` als der Entry-Fill
+    (Befund 2026-08-02: 0/468 Label-Treffer im Live-Audit), weshalb der reine
+    order_id-Join saemtliche Closes samt PnL in einen Sammel-Eimer warf. Closes
+    werden deshalb ueber die Kette ``label.order_id -> order_filled.document_id
+    -> position_closed.document_id`` attribuiert, mit ``signal_source`` der
+    Close-Zeile als Fallback. Bleibt beides leer, zaehlt die Zeile sichtbar als
+    ``unknown`` — geraten wird nicht.
+    """
     now_utc = now or datetime.now(UTC)
     cutoff = now_utc - timedelta(hours=24)
     labels: dict[str, str] = {}
@@ -216,6 +247,16 @@ def collect_paper_fills_24h(now: datetime | None = None) -> dict[str, dict[str, 
             oid, src = r.get("order_id"), r.get("source_name") or r.get("feed_source")
             if isinstance(oid, str) and isinstance(src, str):
                 labels[oid] = src
+    # Label auf die document_id heben — sie ueberlebt den Wechsel der order_id
+    # beim Ausstieg und traegt auch ueber die 24h-Fenstergrenze hinweg.
+    by_document: dict[str, str] = {}
+    for r in rows:
+        if r.get("event_type") != "order_filled":
+            continue
+        doc, oid = r.get("document_id"), r.get("order_id")
+        src = labels.get(oid) if isinstance(oid, str) else None
+        if isinstance(doc, str) and isinstance(src, str):
+            by_document.setdefault(doc, src)
     for r in rows:
         et = r.get("event_type")
         if et not in ("order_filled", "position_closed"):
@@ -223,10 +264,8 @@ def collect_paper_fills_24h(now: datetime | None = None) -> dict[str, dict[str, 
         ts = _parse_ts(r.get("timestamp_utc"))
         if ts is None or ts < cutoff:
             continue
-        oid = r.get("order_id")
-        src = labels.get(oid) if isinstance(oid, str) else None
-        src = src or (r.get("source") if isinstance(r.get("source"), str) else "unlabeled")
-        b = by_source.setdefault(str(src), {"fills": 0, "closes": 0, "pnl_usd": 0.0})
+        src = _attribute_paper_row(r, et, labels, by_document)
+        b = by_source.setdefault(src, {"fills": 0, "closes": 0, "pnl_usd": 0.0})
         if et == "order_filled":
             side = str(r.get("side") or "").lower()
             pos = str(r.get("position_side") or "long").lower()
