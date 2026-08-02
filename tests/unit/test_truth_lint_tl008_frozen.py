@@ -58,7 +58,11 @@ def test_only_legacy_rows_report_as_frozen_info_not_warning(tmp_path: Path) -> N
     assert v.severity is Severity.INFO
     assert v.evidence["legacy_count"] == 2
     assert v.evidence["post_fix_count"] == 0
-    assert "eingefroren" in v.message
+    # Sprachregel 2026-07-12 (bindend): NICHT "kann nicht mehr wachsen", sondern
+    # erwarteter Neuzuwachs 0 bei weiterhin AKTIVER Regel.
+    assert "erwarteter Neuzuwachs 0" in v.message
+    assert "Regel bleibt aktiv" in v.message
+    assert "kann nicht mehr wachsen" not in v.message
 
 
 def test_a_row_after_the_fix_is_a_real_violation(tmp_path: Path) -> None:

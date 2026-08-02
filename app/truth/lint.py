@@ -214,7 +214,11 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     # WARNING; die Warnung darf nie stiller werden als der Roh-Band-Check.
     #
     # SICHTPRUEFUNG 2026-08-02 — die vom Message-Text geforderte, hier als Beleg
-    # festgehalten, damit sie niemand wiederholen muss. Die 4 offenen Fills sind
+    # festgehalten, damit sie niemand wiederholen muss. Fortsetzung des Praezedenz-
+    # falls vom 12.07. (EXPLAINED_FALSE_POSITIVE, AAVE 98,769 vs. Binance 98,70,
+    # `KAI-mirror/reports/KAI_TL002_sightcheck_2026-07-12.md`); jener Fill
+    # (ord_5f6b3d967b89) ist inzwischen ueber market_data_source:bybit ausgenommen,
+    # die vier hier sind neue Faelle derselben Klasse. Die 4 offenen Fills sind
     # alle AAVE/USDT aus der technical_paper-Route. Gegen echte Binance-1h-Kerzen
     # zum jeweiligen Fill-Zeitpunkt geprueft — 4/4 INNERHALB der Kerze:
     #   ord_638307306e85  26.07. 22:22   99,890 in [97,59 · 101,00]
@@ -431,11 +435,16 @@ def _check_missing_provenance(ctx: LintContext) -> list[Violation]:
             f"verliert Anker ({legacy} Alt-Rows davor bleiben eingefroren)"
         )
     else:
+        # Sprachregel 2026-07-12 (bindend): NICHT "kann nicht mehr wachsen",
+        # sondern "korrigierter Writer erzeugt keine neuen Verstoesse, erwarteter
+        # Neuzuwachs 0". Andere Writer/Regressionen bleiben moeglich — die Regel
+        # bleibt aktiv und schlaegt bei der ersten neuen Row wieder als WARNING an.
         severity = Severity.INFO
         message = (
-            f"{legacy} resolved Rows ohne provenance.signal_path_id — vollstaendig VOR dem "
-            f"Root-Cause-Fix {RSS_SIGNAL_PATH_FIX_UTC[:10]} (#592), bewusst nicht backfilled: "
-            f"eingefrorener Alt-Bestand, keine offene Verletzung"
+            f"{legacy} resolved Rows ohne provenance.signal_path_id, alle VOR dem "
+            f"Root-Cause-Fix {RSS_SIGNAL_PATH_FIX_UTC[:10]} (#592) und bewusst nicht "
+            f"backfilled — historische Baseline, erwarteter Neuzuwachs 0. Die Regel "
+            f"bleibt aktiv: eine einzige neue Row hebt sie sofort wieder auf WARNING"
         )
     return [
         Violation(
