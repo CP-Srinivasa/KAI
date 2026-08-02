@@ -50,6 +50,13 @@ BASELINE_MOCK_GATE_UTC = "2026-07-11T00:00:00+00:00"
 # Provenance-Felder flächig erst seit Anfang Juli — ältere Rows ohne
 # signal_path_id sind Schema-Historie, keine Verletzung.
 BASELINE_PROVENANCE_UTC = "2026-07-01T00:00:00+00:00"
+# TL-008-Root-Cause-Fix: ab hier setzt der RSS-Pfad RSS_SIGNAL_PATH_ID
+# (#592 `90d540da`, gemerged 2026-07-11T11:48:19Z). Bewusst die MERGE-Zeit und
+# nicht die spaetere Deploy-Zeit: das ist die fail-closed Richtung — Rows aus dem
+# Fenster zwischen Merge und Deploy zaehlen als echte Verletzung, nicht als
+# stillgelegter Alt-Bestand. Live-Beleg 2026-08-02: juengste betroffene Zeile
+# 2026-07-11T06:27:09, also VOR diesem Schnitt; seither keine neue.
+RSS_SIGNAL_PATH_FIX_UTC = "2026-07-11T11:48:19+00:00"
 
 _EVIDENCE_CAP = 10  # pro Invariante; total_count trägt die volle Zahl
 
@@ -205,6 +212,25 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     # sind kein Mock-Verdacht — sie wandern in die Evidence (band_real_source)
     # statt in die Verletzung. FAIL-CLOSED: mock oder fehlender Join bleibt
     # WARNING; die Warnung darf nie stiller werden als der Roh-Band-Check.
+    #
+    # SICHTPRUEFUNG 2026-08-02 — die vom Message-Text geforderte, hier als Beleg
+    # festgehalten, damit sie niemand wiederholen muss. Die 4 offenen Fills sind
+    # alle AAVE/USDT aus der technical_paper-Route. Gegen echte Binance-1h-Kerzen
+    # zum jeweiligen Fill-Zeitpunkt geprueft — 4/4 INNERHALB der Kerze:
+    #   ord_638307306e85  26.07. 22:22   99,890 in [97,59 · 101,00]
+    #   ord_de87455e0488  27.07. 15:26   98,431 in [98,43 · 100,06]
+    #   ord_08ae3d42bce8  27.07. 23:00   97,021 in [96,94 ·  98,27]
+    #   ord_f4bc64c6fd2a  29.07. 04:18   97,621 in [97,51 ·  98,63]
+    # Es sind also REALE Preise; AAVE handelt schlicht im Mock-Band [95,105].
+    # Geflaggt bleiben sie nur, weil der technical_paper-Pfad keinen
+    # market_data_source-Beleg im Loop-Audit hinterlaesst (9 der 13 Band-Fills
+    # sind ueber market_data_source:bybit ausgenommen, diese 4 haben gar keinen
+    # Zyklus). Der Screener KENNT seinen Beleg (``binance_1m_decision``),
+    # persistiert ihn aber in keinem Artefakt. Der Fix gehoert dorthin, nicht
+    # hierher — und bewusst erst NACH dem C1-Verdikt, weil er den
+    # Screener-Schreibpfad beruehrt. Bis dahin bleibt es fail-closed bei WARNING:
+    # die Regel wird nicht auf Zuruf leiser gestellt, nur weil einmal
+    # nachgesehen wurde.
     source_by_order: dict[str, str] = {}
     for cyc in iter_jsonl_tolerant(ctx.loop_audit):
         oid = cyc.get("order_id")
@@ -358,32 +384,72 @@ def _check_cross_path_episode_inflation(ctx: LintContext) -> list[Violation]:
 
 
 def _check_missing_provenance(ctx: LintContext) -> list[Violation]:
-    """TL-008: resolved Outcome-Rows ohne provenance.signal_path_id (post-Baseline)."""
-    total = 0
+    """TL-008: resolved Outcome-Rows ohne provenance.signal_path_id (post-Baseline).
+
+    Zweistufig seit 2026-08-02. Die Wurzel ist mit #592 (``90d540da``) geschlossen —
+    der RSS-Pfad setzt seitdem eine stabile ``signal_path_id``. Die Bestands-Rows
+    davor werden bewusst NICHT backfilled (``app/alerts/service.py``: „kein
+    erfundener Beweis"), sind also ein EINGEFRORENER historischer Rest, der sich
+    nie mehr verkleinern kann.
+
+    Beide Fälle als WARNING zu führen hieße: TL-008 bleibt auf Dauer rot und der
+    Truth-Lint dauerhaft DEGRADED, ohne dass irgendjemand etwas tun könnte. Ein
+    Alarm, der nichts mehr auslösen kann, erzieht dazu, den Lint zu ignorieren.
+    Darum: Rows NACH dem Fix bleiben WARNING (echte, behebbare Verletzung), Rows
+    davor werden als INFO ausgewiesen — sichtbar im Digest, aber nicht mehr
+    statusfärbend. Die Gesamtzahl bleibt in beiden Fällen in der Evidence.
+    """
+    legacy = 0
+    post_fix = 0
     samples: list[dict[str, Any]] = []
     for rec in iter_jsonl_tolerant(ctx.alert_outcomes):
         if rec.get("outcome") not in ("hit", "miss"):
             continue
-        if not _after_baseline(rec.get("annotated_at"), BASELINE_PROVENANCE_UTC):
+        annotated_at = rec.get("annotated_at")
+        if not _after_baseline(annotated_at, BASELINE_PROVENANCE_UTC):
             continue
         prov = rec.get("provenance")
         if isinstance(prov, dict) and prov.get("signal_path_id"):
             continue
-        total += 1
+        # ``_after_baseline`` ist fail-closed: unparsebare Zeit gilt als "neu" und
+        # landet damit in post_fix — sie darf sich nicht in den stillgelegten
+        # Alt-Bestand retten.
+        if _after_baseline(annotated_at, RSS_SIGNAL_PATH_FIX_UTC):
+            post_fix += 1
+        else:
+            legacy += 1
         if len(samples) < _EVIDENCE_CAP:
-            samples.append({"asset": rec.get("asset"), "annotated_at": rec.get("annotated_at")})
+            samples.append({"asset": rec.get("asset"), "annotated_at": annotated_at})
+    total = legacy + post_fix
     if not total:
         return []
+    if post_fix:
+        severity = Severity.WARNING
+        message = (
+            f"{post_fix} resolved Rows ohne provenance.signal_path_id NACH dem "
+            f"Root-Cause-Fix {RSS_SIGNAL_PATH_FIX_UTC[:10]} — Episoden-/Pfad-Forensik "
+            f"verliert Anker ({legacy} Alt-Rows davor bleiben eingefroren)"
+        )
+    else:
+        severity = Severity.INFO
+        message = (
+            f"{legacy} resolved Rows ohne provenance.signal_path_id — vollstaendig VOR dem "
+            f"Root-Cause-Fix {RSS_SIGNAL_PATH_FIX_UTC[:10]} (#592), bewusst nicht backfilled: "
+            f"eingefrorener Alt-Bestand, keine offene Verletzung"
+        )
     return [
         Violation(
             invariant_id="TL-008",
-            severity=Severity.WARNING,
+            severity=severity,
             dataset="alert_outcomes.jsonl",
-            message=(
-                f"{total} resolved Rows ohne provenance.signal_path_id seit "
-                f"{BASELINE_PROVENANCE_UTC[:10]} — Episoden-/Pfad-Forensik verliert Anker"
-            ),
-            evidence={"count": total, "samples": samples},
+            message=message,
+            evidence={
+                "count": total,
+                "legacy_count": legacy,
+                "post_fix_count": post_fix,
+                "fix_utc": RSS_SIGNAL_PATH_FIX_UTC,
+                "samples": samples,
+            },
         )
     ]
 
