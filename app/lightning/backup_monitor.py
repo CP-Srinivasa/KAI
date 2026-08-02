@@ -5,10 +5,18 @@ The lnd static channel backup (SCB) must be re-archived whenever channels change
 compares it to a recorded baseline, surfacing an operator re-backup reminder on
 drift. Pure file I/O, fail-soft, NO capital path.
 
-States: ``missing`` (SCB gone), ``no_baseline`` (first run → records it),
-``stable`` (matches and fresh), ``stale`` (copy too old), ``changed`` (differs →
-reminder; baseline advanced). The one-shot module entry point sends reminders via
-the existing operator-notification channel and is safe to run from systemd.
+States: ``not_configured`` (no ``APP_LN_SCB_PATH`` — idle, never alerts),
+``missing`` (configured path has no SCB), ``no_baseline`` (first run → records
+it), ``stable`` (matches and fresh), ``stale`` (copy too old), ``changed``
+(differs → reminder; baseline advanced). The one-shot module entry point sends
+reminders via the existing operator-notification channel and is safe to run from
+systemd.
+
+⚠ Der Monitor prüft eine LOKALE Kopie. Er kann nur so frisch sein wie das, was
+sie befüllt — auf dieser Maschine muss also tatsächlich etwas den SCB
+auffrischen, sonst misst ``stale`` nur die eigene Untätigkeit. Der Off-node-Pull
+läuft per Operator-Entscheid "Weg A" (2026-07-14) auf der Workstation, NICHT auf
+dem Pi.
 """
 
 from __future__ import annotations
@@ -190,12 +198,19 @@ async def monitor_scb_once(
 
     scb_path = cfg.scb_path.strip()
     if not scb_path:
+        # Nicht konfiguriert ist NICHT dasselbe wie "Backup fehlt". Ein Monitor
+        # kann nicht ueberwachen, was ihm niemand zugewiesen hat — das gehoert in
+        # eine Journal-Zeile, nicht in einen stuendlichen Telegram-Alert. Vorher
+        # war dieser Zweig ``missing``/``reminder=True``: auf dem Pi (Pfad
+        # ungesetzt, keine channel.backup vorhanden) haette der Stundentimer
+        # daraus 24 Alerts pro Tag und eine dauerhaft ``failed`` Unit gemacht.
+        # Ein KONFIGURIERTER, aber fehlender SCB bleibt unveraendert ``missing``.
         report: dict[str, Any] = {
-            "state": "missing",
-            "reminder": True,
+            "state": "not_configured",
+            "reminder": False,
             "sha256": "",
             "age_seconds": None,
-            "detail": "APP_LN_SCB_PATH is not configured",
+            "detail": "APP_LN_SCB_PATH is not configured — monitor idle",
         }
     else:
         report = check_scb_drift(

@@ -129,8 +129,18 @@ ENABLE_ON_INSTALL=(
     "kai-auto-annotate.timer"
     "kai-auto-annotate-blocked.timer"
     "kai-recalc-cycle.timer"
-    "kai-ln-scb-monitor.timer"
 )
+
+# NOTE 2026-08-02: kai-ln-scb-monitor.timer ist ABSICHTLICH nicht in
+# ENABLE_ON_INSTALL — installiert, aber erst nach Konfiguration zu aktivieren.
+# Auf dem Pi ist APP_LN_SCB_PATH ungesetzt und es existiert dort GAR KEINE
+# channel.backup: der Off-node-Pull laeuft per Operator-Entscheid "Weg A"
+# (2026-07-14) auf der WORKSTATION nach KAI-mirror/lightning-scb/, ausdruecklich
+# um keinen weiteren SSH-Trust zum LN-Node (.51) aufzumachen. Ein hier
+# automatisch scharf geschalteter Stundentimer waere gegen einen Pfad gelaufen,
+# den niemand befuellt. Aktivieren erst, wenn APP_LN_SCB_PATH auf eine Kopie
+# zeigt, die auch tatsaechlich aufgefrischt wird:
+#   systemctl enable --now kai-ln-scb-monitor.timer
 
 # 2026-05-14: Reactivate-Hook — kritische Premium-Signal-Pipeline-Units.
 # Hintergrund: Beim 2026-05-12-Deploy blieben kai-paper-trading.timer und

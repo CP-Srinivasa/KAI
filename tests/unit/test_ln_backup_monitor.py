@@ -150,3 +150,63 @@ def test_systemd_timer_is_installable_and_runs_hourly() -> None:
     assert "OnUnitActiveSec=1h" in timer
     assert '"kai-ln-scb-monitor.service"' in installer
     assert '"kai-ln-scb-monitor.timer"' in installer
+
+
+def _enable_on_install_block(installer: str) -> str:
+    start = installer.index("ENABLE_ON_INSTALL=(")
+    return installer[start : installer.index("\n)\n", start)]
+
+
+def test_scb_monitor_timer_is_installed_but_not_auto_enabled() -> None:
+    """Der Timer darf NICHT beim Installer-Lauf scharf geschaltet werden.
+
+    Befund 2026-08-02 auf dem Pi: ``APP_LN_SCB_PATH`` ist ungesetzt und es
+    existiert dort ueberhaupt keine ``channel.backup`` — der Off-node-Pull laeuft
+    per Operator-Entscheid "Weg A" (14.07.) auf der WORKSTATION, nicht auf dem Pi,
+    ausdruecklich um keinen weiteren SSH-Trust zum LN-Node aufzumachen.
+
+    Mit leerem ``scb_path`` lieferte ``monitor_scb_once`` ``reminder=True`` und
+    ``main()`` beendete sich mit 1. Bei ``OnUnitActiveSec=1h`` waeren das 24
+    Telegram-Alerts pro Tag plus eine dauerhaft ``failed`` Unit — dieselbe
+    Fehlerklasse wie die 347 False-FAIL-Alerts vom 12.07.
+
+    Der Timer wird deshalb installiert, aber bewusst erst nach Konfiguration
+    aktiviert — gleiche Behandlung wie ``kai-funding-refresh.timer``.
+    """
+    root = Path(__file__).resolve().parents[2]
+    installer = (root / "scripts/pi_install_systemd.sh").read_text(encoding="utf-8")
+    enable_block = _enable_on_install_block(installer)
+
+    assert '"kai-ln-scb-monitor.timer"' not in enable_block
+    # Gegenprobe: der Block wurde tatsaechlich gefunden und ist nicht leer.
+    assert '"kai-recalc-cycle.timer"' in enable_block
+
+
+def test_unconfigured_scb_path_does_not_alert() -> None:
+    """Ein unkonfigurierter Monitor ist kein Alarmgrund, sondern eine Journal-Zeile."""
+    cfg = LightningSettings(enabled=True, tls_cert_path="test-tls.pem", scb_path="")
+
+    report = asyncio.run(monitor_scb_once(cfg, notify=None))
+
+    assert report["state"] == "not_configured"
+    assert report["reminder"] is False
+    assert report["alert_sent"] is False
+
+
+def test_configured_but_absent_scb_still_alerts() -> None:
+    """Gegenprobe: ein KONFIGURIERTER, aber fehlender SCB bleibt ein echter Alarm."""
+    sent: list[str] = []
+
+    async def _notify(text: str) -> bool:
+        sent.append(text)
+        return True
+
+    cfg = LightningSettings(
+        enabled=True, tls_cert_path="test-tls.pem", scb_path="/nonexistent/channel.backup"
+    )
+
+    report = asyncio.run(monitor_scb_once(cfg, notify=_notify))
+
+    assert report["state"] == "missing"
+    assert report["reminder"] is True
+    assert len(sent) == 1
