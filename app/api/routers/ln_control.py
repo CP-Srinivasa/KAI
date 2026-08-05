@@ -7,9 +7,14 @@ ONE chokepoint for every capital-effective action. Two modes per request:
     operator must echo back to execute. No node touch.
   * **execute** (``confirm`` present) → ``denied`` is refused; ``needs_confirm``
     requires a hardened B-005 confirm (matching plan_hash + fresh idempotency key +
-    valid HOTP); ``auto_execute`` runs straight through (within the operator's
-    envelope). The actual node write stays behind the value-layer send-gate (B-002)
-    + ``pay_enabled`` — so this whole surface is INERT until G1.
+    valid HOTP); ``auto_execute`` needs NO HOTP but still binds to the previewed
+    plan_hash and burns a fresh idempotency key (W0-P4 — the auto path used to
+    skip both, leaving replay + plan substitution open). The actual node write
+    stays behind the value-layer send-gate (B-002) + ``pay_enabled``.
+
+Capital actions (every ``irreversible`` spec) additionally require a FRESH,
+balance-bearing node snapshot (W0-P1): stale/unavailable state ⇒ hard deny —
+never evaluated against a cached balance.
 
 Auth: served under ``/dashboard/*`` → the app-level email-allowlist middleware
 applies (no service-token). The S-001 local-bypass hardening is a separate PR.
@@ -27,7 +32,11 @@ from pydantic import BaseModel, Field
 
 from app.core.settings import get_settings
 from app.lightning import value_layer as vl
-from app.lightning.control_gate import plan_hash, verify_capital_confirm
+from app.lightning.control_gate import (
+    plan_hash,
+    verify_auto_execute_confirm,
+    verify_capital_confirm,
+)
 from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.idempotency_store import PersistentSeenKeys
 from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat
@@ -82,9 +91,9 @@ class ActionBody(BaseModel):
 
 
 async def _available_balance_sat() -> int:
-    """Best-effort on-chain+channel balance for the reserve-floor check (0 if
+    """Best-effort on-chain+channel balance for NON-capital actions (0 if
     unavailable → policy errs conservative: a spend with unknown balance is denied
-    if a reserve floor is set)."""
+    if a reserve floor is set). Capital actions use the freshness-gated variant."""
     try:
         from app.lightning.cache import get_cached_node_status
 
@@ -94,6 +103,26 @@ async def _available_balance_sat() -> int:
         )
     except Exception:  # noqa: BLE001 — balance is best-effort, never block the endpoint
         return 0
+
+
+async def _fresh_capital_balance_sat() -> int | None:
+    """W0-P1: on-chain+channel balance from a FRESH node snapshot, or ``None``.
+
+    ``None`` means no balance-bearing snapshot within ``CAPITAL_MAX_AGE_SECONDS``
+    could be obtained (node degraded/unreachable/stale) — the caller must fail
+    CLOSED and deny the capital action, never fall back to a cached value.
+    """
+    try:
+        from app.lightning.cache import get_capital_grade_status
+
+        status, _age = await get_capital_grade_status()
+    except Exception:  # noqa: BLE001 — any failure counts as "no fresh state"
+        return None
+    if status is None:
+        return None
+    return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
+        getattr(status, "channel_local_sat", 0) or 0
+    )
 
 
 def _effective_amount_sat(
@@ -135,7 +164,14 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     amount, amount_known = _effective_amount_sat(body.action, body.params, spec)
     recipient = body.params.get(spec.recipient_key) if spec.recipient_key else None
     envelope = PolicyStore().load()
-    available = await _available_balance_sat()
+    # W0-P1: capital actions (irreversible specs) are evaluated ONLY against a
+    # fresh node snapshot; the dashboard cache may serve stale, money may not.
+    fresh_capital_sat: int | None = None
+    if spec.irreversible:
+        fresh_capital_sat = await _fresh_capital_balance_sat()
+        available = fresh_capital_sat if fresh_capital_sat is not None else 0
+    else:
+        available = await _available_balance_sat()
     decision = evaluate_policy(
         body.action,
         amount_sat=amount,
@@ -151,6 +187,12 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # must never auto-execute — force operator confirm (HOTP) instead of silent pass.
     if not amount_known and decision.decision == "auto_execute":
         decision = PolicyDecision("needs_confirm", "amount unknown (amountless invoice)")
+    # W0-P1 fail-closed: without a fresh balance-bearing snapshot a capital action
+    # is hard-denied (the "action not allowed" deny above stays visible as-is).
+    if spec.irreversible and fresh_capital_sat is None and body.action in envelope.allowed_actions:
+        decision = PolicyDecision(
+            "denied", "node state stale/unavailable — capital action fails closed"
+        )
     ph = plan_hash(body.action, body.params)
 
     async def _call(**extra: Any) -> Any:
@@ -179,6 +221,18 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         verdict = verify_capital_confirm(
             hotp_verifier=_build_hotp_verifier(),
             hotp_code=body.confirm.hotp,
+            submitted_plan_hash=body.confirm.plan_hash,
+            expected_plan_hash=ph,
+            idempotency_key=body.confirm.idempotency_key,
+            seen_keys=_seen_idempotency,
+        )
+        if not verdict.ok:
+            raise HTTPException(status_code=403, detail=f"confirm rejected: {verdict.reason}")
+    else:
+        # W0-P4: auto_execute keeps max automation (no HOTP) but is no longer a
+        # free pass — the request must echo the previewed plan_hash (no param
+        # substitution) and burn a fresh idempotency key (no replay).
+        verdict = verify_auto_execute_confirm(
             submitted_plan_hash=body.confirm.plan_hash,
             expected_plan_hash=ph,
             idempotency_key=body.confirm.idempotency_key,

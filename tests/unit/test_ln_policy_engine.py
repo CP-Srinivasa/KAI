@@ -74,6 +74,41 @@ def test_reserve_floor_breach_denied() -> None:
     assert _eval(env, amount=20_000, avail=100_000).decision == "denied"  # 80k < 90k floor
 
 
+# --- W0-P4: Risikoklassen pro Aktion (statt reiner Betragsschwelle) ---------------
+
+
+def test_unclassified_action_denied_even_if_allowlisted() -> None:
+    """Deny-by-default: eine der Policy unbekannte Aktionsklasse wird abgelehnt,
+    selbst wenn die Allowlist sie (versehentlich) nennt."""
+    env = _env(allowed_actions=frozenset({"transmogrify"}))
+    d = _eval(env, action="transmogrify", amount=0)
+    assert d.decision == "denied" and "unclassified" in d.reason
+
+
+def test_close_channel_blocked_by_class_not_only_by_allowlist() -> None:
+    """W0-P4-Gate: hypothetisch allowlistetes close_channel (amount=0) darf NIE
+    auto-executen — die Klasse erzwingt Operator-Confirm, nicht nur die Allowlist."""
+    env = _env(allowed_actions=frozenset({"close_channel"}))
+    d = _eval(env, action="close_channel", amount=0)
+    assert d.decision == "needs_confirm" and "irreversible" in d.reason
+
+
+def test_zero_amount_capital_actions_never_auto_execute() -> None:
+    """amount<=0 lief bisher an per-action-Cap, Daily-Cap UND Confirm-Threshold
+    (>0-Guard) vorbei — Kapitalklassen fallen jetzt auf needs_confirm zurück."""
+    for action in ("pay_invoice", "keysend", "send_coins", "open_channel"):
+        env = _env(allowed_actions=frozenset({action}))
+        d = _eval(env, action=action, amount=0)
+        assert d.decision == "needs_confirm", action
+        assert "zero/unknown amount" in d.reason
+
+
+def test_receive_class_zero_amount_still_auto_executes() -> None:
+    """create_invoice (receive-Klasse, kein Kapitalabfluss) bleibt max-automation."""
+    env = _env(allowed_actions=frozenset({"create_invoice"}))
+    assert _eval(env, action="create_invoice", amount=0).decision == "auto_execute"
+
+
 # --- store ----------------------------------------------------------------------
 
 

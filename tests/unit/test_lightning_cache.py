@@ -171,6 +171,76 @@ async def test_genuine_unavailable_overwrites(monkeypatch) -> None:
     assert status.state == "unavailable" and status.reachable is False
 
 
+# --- W0-P1: capital-grade freshness gate (fail-closed) ---------------------------
+
+
+async def test_capital_grade_disabled_returns_none(monkeypatch) -> None:
+    _enable(monkeypatch, enabled=False)
+    status, age = await ln_cache.get_capital_grade_status()
+    assert status is None and age is None
+
+
+async def test_capital_grade_cold_cache_awaits_refresh_instead_of_failing_open(
+    monkeypatch,
+) -> None:
+    """Unlike the dashboard accessor, capital reads BLOCK for one refresh when cold."""
+    _enable(monkeypatch)
+
+    async def _fetch() -> LightningNodeStatus:
+        return _full()
+
+    monkeypatch.setattr(ln_cache, "get_node_status", _fetch)
+    status, age = await ln_cache.get_capital_grade_status()
+    assert status is not None and status.balances_available is True
+    assert age is not None and age < ln_cache.CAPITAL_MAX_AGE_SECONDS
+
+
+async def test_capital_grade_stale_beyond_max_age_fails_closed(monkeypatch) -> None:
+    """W0-P1-Gate: degradierte Polls über der Max-Age blocken Kapitalaktionen.
+
+    Der Anti-Flicker-Merge behält den alten reichen Snapshot und lässt sein Alter
+    ehrlich wachsen — der Kapital-Accessor muss dieses Alter ERZWINGEN (None),
+    statt den stale Balance-Stand an Reserve-Floor/Caps durchzureichen.
+    """
+    _enable(monkeypatch)
+    seq = [_full(), _reachable_no_info(), _reachable_no_info()]
+
+    async def _fetch() -> LightningNodeStatus:
+        return seq.pop(0)
+
+    monkeypatch.setattr(ln_cache, "get_node_status", _fetch)
+    await ln_cache.get_cached_node_status()
+    await ln_cache._refresh_task
+
+    status, age = await ln_cache.get_capital_grade_status(max_age_seconds=0.0)
+    assert status is None  # fail-closed: no fresh-enough snapshot exists
+    assert age is not None and age > 0.0  # the honest age was evaluated, not discarded
+
+
+async def test_capital_grade_node_outage_fails_closed(monkeypatch) -> None:
+    """W0-P1-Chaos-Test: Node-Ausfall ⇒ kein Kapital-State, kein Fallback."""
+    _enable(monkeypatch)
+
+    async def _down() -> LightningNodeStatus:
+        return LightningNodeStatus.unavailable("node down")
+
+    monkeypatch.setattr(ln_cache, "get_node_status", _down)
+    status, _age = await ln_cache.get_capital_grade_status()
+    assert status is None
+
+
+async def test_capital_grade_missing_balances_fails_closed(monkeypatch) -> None:
+    """A fresh snapshot WITHOUT balance fields must not authorise capital actions."""
+    _enable(monkeypatch)
+
+    async def _fetch() -> LightningNodeStatus:
+        return _info_no_balances()
+
+    monkeypatch.setattr(ln_cache, "get_node_status", _fetch)
+    status, _age = await ln_cache.get_capital_grade_status()
+    assert status is None
+
+
 async def test_anti_flicker_keeps_balances_on_balance_flake(monkeypatch) -> None:
     """getinfo ok but balances flaked must NOT blank the cached wallet/channel sats."""
     _enable(monkeypatch)

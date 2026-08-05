@@ -41,6 +41,22 @@ class _HotpLike(Protocol):
     def verify(self, code: str) -> Any: ...
 
 
+def _reject_plan_or_key(
+    submitted_plan_hash: str,
+    expected_plan_hash: str,
+    idempotency_key: str,
+    seen_keys: set[str],
+) -> ConfirmVerdict | None:
+    """Shared cheap checks (no side effects): plan binding + replay guard."""
+    if not expected_plan_hash or submitted_plan_hash != expected_plan_hash:
+        return ConfirmVerdict(False, "plan hash mismatch (plan changed since preview)")
+    if not idempotency_key:
+        return ConfirmVerdict(False, "idempotency key required")
+    if idempotency_key in seen_keys:
+        return ConfirmVerdict(False, "idempotency key replay")
+    return None
+
+
 def verify_capital_confirm(
     *,
     hotp_verifier: _HotpLike,
@@ -57,12 +73,11 @@ def verify_capital_confirm(
     must be treated as a brute-force-sensitive resource) is verified LAST, and only
     a fully valid confirm consumes the idempotency key.
     """
-    if not expected_plan_hash or submitted_plan_hash != expected_plan_hash:
-        return ConfirmVerdict(False, "plan hash mismatch (plan changed since preview)")
-    if not idempotency_key:
-        return ConfirmVerdict(False, "idempotency key required")
-    if idempotency_key in seen_keys:
-        return ConfirmVerdict(False, "idempotency key replay")
+    rejected = _reject_plan_or_key(
+        submitted_plan_hash, expected_plan_hash, idempotency_key, seen_keys
+    )
+    if rejected is not None:
+        return rejected
     try:
         hotp_verifier.verify(hotp_code)
     except Exception as exc:  # noqa: BLE001 — any HOTP failure → reject (honest reason)
@@ -71,4 +86,32 @@ def verify_capital_confirm(
     return ConfirmVerdict(True, "confirmed")
 
 
-__all__ = ["ConfirmVerdict", "plan_hash", "verify_capital_confirm"]
+def verify_auto_execute_confirm(
+    *,
+    submitted_plan_hash: str,
+    expected_plan_hash: str,
+    idempotency_key: str,
+    seen_keys: set[str],
+) -> ConfirmVerdict:
+    """Authorise an ``auto_execute`` (W0-P4) — plan binding + replay guard, no HOTP.
+
+    Max automation keeps the 2nd factor out of in-envelope actions, but the auto
+    path previously skipped EVERYTHING: a replayed request re-executed (unbounded
+    ``create_invoice`` minting) and the executed params were never bound to the
+    previewed plan. On success the idempotency key is consumed.
+    """
+    rejected = _reject_plan_or_key(
+        submitted_plan_hash, expected_plan_hash, idempotency_key, seen_keys
+    )
+    if rejected is not None:
+        return rejected
+    seen_keys.add(idempotency_key)
+    return ConfirmVerdict(True, "confirmed")
+
+
+__all__ = [
+    "ConfirmVerdict",
+    "plan_hash",
+    "verify_auto_execute_confirm",
+    "verify_capital_confirm",
+]
