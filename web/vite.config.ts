@@ -32,9 +32,25 @@ export default defineConfig(({ mode }) => {
           // recharts entfernt (PR Dashboard-Truth/Resilience): war app-weit nur für
           // eine KPI-Sparkline genutzt und zog ~510 kB in den eager First-Paint —
           // ersetzt durch dependency-freies Inline-SVG (components/kpi/Sparkline).
-          manualChunks: {
-            "vendor-react": ["react", "react-dom"],
-            "vendor-icons": ["lucide-react"],
+          //
+          // Funktions- statt Objekt-Form: Vite 8 bundelt mit rolldown, und dessen
+          // `manualChunks` nimmt ausschliesslich eine Funktion ("manualChunks is not
+          // a function"). Die Objekt-Form ordnete Paketnamen Chunks zu; hier wird
+          // stattdessen der Modulpfad geprueft.
+          //
+          // Reihenfolge ist bedeutungstragend: `lucide-react` enthaelt "react" als
+          // Teilstring und muss VOR der React-Regel greifen, sonst landen die Icons
+          // im vendor-react-Chunk und vendor-icons bleibt leer.
+          manualChunks(id: string) {
+            const path = id.replace(/\\/g, "/");
+            if (!path.includes("/node_modules/")) return;
+            if (/\/node_modules\/lucide-react\//.test(path)) return "vendor-icons";
+            // scheduler ist eine Laufzeit-Abhaengigkeit von react-dom — ohne sie
+            // wandert sie in den Haupt-Chunk und der Split waere unvollstaendig.
+            if (/\/node_modules\/(react|react-dom|scheduler)\//.test(path)) {
+              return "vendor-react";
+            }
+            return;
           },
         },
       },
