@@ -65,7 +65,9 @@ def test_disabled_without_cert_is_ok() -> None:
 
 def test_default_construction_is_ok() -> None:
     # Default is enabled=False → the guardrail never fires for the inert default.
-    assert LightningSettings().enabled is False
+    # _env_file=None: "Default" heisst Code-Default — auf dem Pi liegt eine echte
+    # .env mit scharfen APP_LN_*-Werten, die hier nicht mitgelesen werden darf.
+    assert LightningSettings(_env_file=None).enabled is False
 
 
 # --- boot-time cert validator (exists / readable / PEM / not-expired) ---------------
