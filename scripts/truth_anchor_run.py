@@ -7,7 +7,11 @@ cryptographic guarantee:
   1. attest every new pre-registration into the tamper-evident truth ledger;
   2. attest every new attested verdict report ("we tested H and it passed/failed")
      into the SAME hash chain;
-  3. ensure the ledger TIP is OTS-anchored on-chain — because the chain is
+  3. bind the verified Lightning money-journal tip into the SAME hash chain — BEST
+     EFFORT: a legacy/unmigrated/corrupt LN ledger is a WARNING line in the report,
+     never a reason to skip step 4. The money journal is one subject among many; it
+     must not be able to take the OTS anchoring of the WHOLE truth chain down (BL-1);
+  4. ensure the ledger TIP is OTS-anchored on-chain — because the chain is
      forward-linked, anchoring the tip commits the existence + order of EVERY record
      before it, so one proof per run covers the whole history. The tip proof lands in
      the shared ``proofs_dir`` and is upgraded to a Bitcoin proof by the existing
@@ -32,6 +36,26 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
+
+
+def _attest_ln_ops_tip_best_effort() -> dict[str, Any]:
+    """Attest the LN money-journal tip; never raise (BL-1).
+
+    ``attest_ln_ops_tip`` refuses an invalid ledger on purpose — attesting a broken
+    money journal would launder it into the truth chain. On the shared anchor path
+    that refusal must degrade to a warning: an unmigrated v1 ledger on the box would
+    otherwise abort the run before ``chain_tip()`` and leave the ENTIRE truth chain
+    unanchored on-chain (first timer run after deploy, silently, forever).
+    """
+    from app.lightning.ops_ledger import attest_ln_ops_tip
+
+    try:
+        return attest_ln_ops_tip()
+    except Exception as exc:  # noqa: BLE001 — one subject must not kill the anchor run
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"truth-anchor: WARNING ln-ops-tip attestation skipped — {reason}")
+        return {"total": 0, "attested": 0, "skipped": 0, "error": reason}
 
 
 def main() -> int:
@@ -41,10 +65,13 @@ def main() -> int:
 
     pre = attest_prereg_ledger()
     ver = attest_verdict_reports()
-    new = int(pre["attested"]) + int(ver["attested"])
+    ln_ops = _attest_ln_ops_tip_best_effort()
+    new = int(pre["attested"]) + int(ver["attested"]) + int(ln_ops["attested"])
+    ln_ops_note = f" error={ln_ops['error']}" if ln_ops.get("error") else ""
     print(
         f"truth-anchor: prereg attested={pre['attested']}/{pre['total']} | "
-        f"verdict attested={ver['attested']}/{ver['total']}"
+        f"verdict attested={ver['attested']}/{ver['total']} | "
+        f"ln-ops-tip attested={ln_ops['attested']}/{ln_ops['total']}{ln_ops_note}"
     )
 
     settings = IntegritySettings()

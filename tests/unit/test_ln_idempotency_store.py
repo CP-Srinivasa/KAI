@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.lightning.control_gate import verify_capital_confirm
-from app.lightning.idempotency_store import PersistentSeenKeys
+from app.lightning.idempotency_store import IdempotencyPersistenceError, PersistentSeenKeys
 
 
 class _FakeHotp:
@@ -80,14 +82,43 @@ def test_clear_truncates_memory_and_disk(tmp_path: Path) -> None:
     assert "k1" not in PersistentSeenKeys(p)  # gone on disk too
 
 
-def test_persist_failure_is_fail_soft(tmp_path: Path) -> None:
-    # A persist error must never crash the control surface: the key is still marked
-    # seen in memory (replay guard holds for the process), the error is swallowed.
+def test_persist_failure_is_fail_closed(tmp_path: Path) -> None:
+    # A persist error must NOT be swallowed. Swallowing it left the caller believing
+    # it holds a restart-safe replay guard while the disk knew nothing: confirmed
+    # spend + restart + replayed request = a second spend. Raising here means the
+    # value action is denied — the money never moves without a durable guard.
     blocker = tmp_path / "blocker"
     blocker.write_text("i am a file, not a directory", encoding="utf-8")
     store = PersistentSeenKeys(blocker / "seen.jsonl")  # parent is a file → persist fails
-    store.add("k1")  # must not raise
-    assert "k1" in store
+    with pytest.raises(IdempotencyPersistenceError):
+        store.add("k1")
+    # And the in-memory view must NOT pretend the key was consumed.
+    assert "k1" not in store
+
+
+def test_consume_is_atomic_check_and_set(tmp_path: Path) -> None:
+    # ``consume`` is the honest primitive behind ``add``: True exactly once per key,
+    # so a caller cannot pass the membership check twice for the same key.
+    store = PersistentSeenKeys(tmp_path / "seen.jsonl")
+    assert store.consume("k1") is True
+    assert store.consume("k1") is False
+    assert "k1" in PersistentSeenKeys(tmp_path / "seen.jsonl")
+
+
+def test_key_becomes_visible_only_after_a_successful_persist(tmp_path: Path, monkeypatch) -> None:
+    p = tmp_path / "seen.jsonl"
+    store = PersistentSeenKeys(p)
+    store.add("first")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("os.replace", _boom)
+    with pytest.raises(IdempotencyPersistenceError):
+        store.add("second")
+    assert "first" in store and "second" not in store
+    monkeypatch.undo()
+    assert set(PersistentSeenKeys(p)) == {"first"}
 
 
 def test_drops_into_confirm_gate_seam(tmp_path: Path) -> None:

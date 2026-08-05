@@ -16,10 +16,15 @@ Only ``add`` / ``__contains__`` / ``clear`` are persistence-aware — the other 
 mutators (``discard``, ``pop``, ``update``, ...) are intentionally NOT supported by
 this ledger and would desync the on-disk view; the confirm gate never uses them.
 
-Fail-soft: a missing or corrupt ledger loads as empty; a persist error is logged and
-swallowed (the audit/replay guard must never crash the control surface). Writes are
-atomic via a temp-file + ``os.replace`` full rewrite — cheap because confirms are
-rare (operator HOTP per irreversible spend) and the file is bounded.
+Reads stay fail-soft (a missing or corrupt ledger loads as empty), but CONSUMING a
+key is fail-CLOSED: the key becomes visible in memory only after the bounded file was
+atomically replaced, and a persist error raises :class:`IdempotencyPersistenceError`.
+Swallowing that error was the dangerous half of the old behaviour — the caller would
+believe it holds a restart-safe replay guard while the disk knows nothing, so a
+confirmed spend + a restart + a replayed request could pay twice. A raised error at
+the gate is a denial of the value action; the money never moves without a durable
+guard. Writes are atomic via temp-file + fsync + ``os.replace`` full rewrite — cheap
+because confirms are rare (operator HOTP per irreversible spend) and bounded.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +45,10 @@ _DEFAULT_PATH = Path("artifacts/ln_idempotency_seen.jsonl")
 _DEFAULT_MAX_KEYS = 1000
 
 
+class IdempotencyPersistenceError(RuntimeError):
+    """A key could not be durably consumed; the value action must not execute."""
+
+
 class PersistentSeenKeys(set[str]):
     """A ``set[str]`` of consumed idempotency keys, persisted + bounded on disk."""
 
@@ -46,6 +56,9 @@ class PersistentSeenKeys(set[str]):
         super().__init__()
         self._path = path or _DEFAULT_PATH
         self._max_keys = max(1, max_keys)
+        # One consumer at a time: check-and-consume must be atomic, otherwise two
+        # concurrent requests with the same key both pass the membership check.
+        self._lock = threading.Lock()
         # Insertion-ordered key -> ISO-8601 ts. Source of truth for both the recency
         # bound (evict oldest) and persistence; the set itself is the membership index.
         self._records: OrderedDict[str, str] = OrderedDict()
@@ -65,39 +78,57 @@ class PersistentSeenKeys(set[str]):
         super().update(self._records.keys())
 
     def add(self, key: str) -> None:
-        """Consume ``key``: mark it seen in memory and persist the bounded ledger.
+        """Consume ``key`` (``set``-compatible seam used by the B-005 confirm gate).
 
-        A key already present refreshes its recency (never double-persisted). Adding a
-        new key past ``max_keys`` evicts the oldest so both the in-memory set and the
-        file stay bounded.
+        Raises :class:`IdempotencyPersistenceError` when the key cannot be durably
+        recorded — the caller must then deny the value action.
         """
-        if key in self._records:
-            self._records.move_to_end(key)
-            return
-        self._records[key] = datetime.now(UTC).isoformat()
-        super().add(key)
-        while len(self._records) > self._max_keys:
-            evicted, _ = self._records.popitem(last=False)
-            super().discard(evicted)
-        self._persist()
+        self.consume(key)
+
+    def consume(self, key: str) -> bool:
+        """Atomically check-and-durably-consume ``key``; ``False`` if already seen.
+
+        The in-memory view is advanced only AFTER the on-disk replacement succeeded,
+        so a failed persist can never create a false sense of restart-safe
+        idempotency. Adding a new key past ``max_keys`` evicts the oldest so both the
+        set and the file stay bounded.
+        """
+        with self._lock:
+            if key in self._records:
+                return False
+            records = OrderedDict(self._records)
+            records[key] = datetime.now(UTC).isoformat()
+            while len(records) > self._max_keys:
+                records.popitem(last=False)
+            self._persist(records)
+            self._records = records
+            super().clear()
+            super().update(records.keys())
+            return True
 
     def clear(self) -> None:
         """Forget every key in memory AND on disk (test seam / operator reset)."""
-        self._records.clear()
-        super().clear()
-        self._persist()
+        with self._lock:
+            self._persist(OrderedDict())
+            self._records.clear()
+            super().clear()
 
-    def _persist(self) -> None:
-        """Atomically rewrite the bounded ledger (temp file + ``os.replace``)."""
+    def _persist(self, records: OrderedDict[str, str]) -> None:
+        """Atomically rewrite the bounded ledger (temp file + fsync + ``os.replace``)."""
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_name(f"{self._path.name}.tmp.{os.getpid()}")
             with tmp.open("w", encoding="utf-8") as handle:
-                for key, ts in self._records.items():
+                for key, ts in records.items():
                     handle.write(json.dumps({"key": key, "ts": ts}, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, self._path)
-        except OSError as exc:  # persistence is best-effort — never kill the control surface
+        except OSError as exc:  # fail-closed: no durable guard → no value action
             logger.warning("[ln-idempotency] persist failed: %s", exc)
+            raise IdempotencyPersistenceError(
+                f"idempotency ledger unavailable: {type(exc).__name__}"
+            ) from exc
 
 
-__all__ = ["PersistentSeenKeys"]
+__all__ = ["IdempotencyPersistenceError", "PersistentSeenKeys"]
