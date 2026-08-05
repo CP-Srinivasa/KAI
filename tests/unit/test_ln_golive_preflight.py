@@ -8,7 +8,12 @@ stay off for the probe.
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from app.core.lightning_settings import LightningSettings
+from app.lightning.client import LightningUnavailableError
 from app.lightning.golive_preflight import golive_preflight
 
 
@@ -20,6 +25,8 @@ def _ready_cfg() -> LightningSettings:
         pay_enabled=False,
         l402_secret="a" * 32,
         macaroon_hex="deadbeef",
+        invoice_macaroon_hex="invoice",
+        payment_macaroon_hex="payment",
         tls_cert_path="test-tls.pem",
     )
 
@@ -92,6 +99,25 @@ def test_no_go_when_node_unprobed_fail_closed() -> None:
     assert out["verdict"] == "NO-GO" and "node_reachable" in out["blocking"]
 
 
+def test_no_go_when_only_one_macaroon_is_configured() -> None:
+    """W0/PR-A bake gate: the Bestands-Pi config (ONE macaroon in APP_LN_MACAROON_*)
+    must NOT report GO any more — the separate invoice credential is the whole point
+    of the split and is checked independently of the read credential."""
+    cfg = _ready_cfg().model_copy(update={"invoice_macaroon_hex": ""})
+    out = golive_preflight(cfg, **_all_node_ok())
+    assert out["verdict"] == "NO-GO"
+    assert "invoice_macaroon_configured" in out["blocking"]
+    assert "read_macaroon_configured" not in out["blocking"]
+
+
+def test_armed_mode_no_go_without_a_dedicated_payment_credential() -> None:
+    """Armed + a send-capable probe is NOT enough: without APP_LN_PAYMENT_MACAROON_*
+    the send scope could only come from promoting read/invoice → hard NO-GO."""
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True, "payment_macaroon_hex": ""})
+    out = golive_preflight(cfg, **{**_all_node_ok(), "macaroon_scope_minimal": False})
+    assert out["verdict"] == "NO-GO" and "macaroon_send_capable" in out["blocking"]
+
+
 def test_no_go_when_secret_missing() -> None:
     cfg = _ready_cfg().model_copy(update={"l402_secret": ""})
     out = golive_preflight(cfg, **_all_node_ok())
@@ -108,7 +134,8 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
         "l402_enabled",
         "receive_enabled",
         "l402_secret_set",
-        "macaroon_configured",
+        "read_macaroon_configured",
+        "invoice_macaroon_configured",
         "node_reachable",
         "macaroon_scope_minimal",
         "macaroon_can_mint",
@@ -119,3 +146,125 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
         assert name in out["blocking"]
     # pay_enabled defaults false → the negative check PASSES even on a blank config
     assert "pay_enabled_off" not in out["blocking"]
+
+
+# --- CLI probe: every fact is measured with the credential that would carry it ----
+
+
+class _FakeClient:
+    """lnd stand-in for one credential scope. ``spends`` decides whether a raw
+    pay_invoice attempt gets past the node's permission layer."""
+
+    def __init__(self, scope: str, *, spends: bool, mints: bool = True) -> None:
+        self.scope = scope
+        self._spends = spends
+        self._mints = mints
+        self.calls: list[str] = []
+
+    async def get_info(self) -> dict[str, Any]:
+        self.calls.append("get_info")
+        return {}
+
+    async def pay_invoice(self, **_: Any) -> dict[str, Any]:
+        self.calls.append("pay_invoice")
+        if self._spends:
+            # got past permissions; the garbage payment request then fails on parsing
+            raise LightningUnavailableError("lnd returned 400: invalid payment request")
+        raise LightningUnavailableError("lnd returned 403: permission denied")
+
+    async def add_invoice(self, **_: Any) -> dict[str, Any]:
+        self.calls.append("add_invoice")
+        if not self._mints:
+            raise LightningUnavailableError("lnd returned 403: permission denied")
+        return {"payment_request": "lnbc1"}
+
+    async def channel_balance(self) -> dict[str, Any]:
+        self.calls.append("channel_balance")
+        return {"remote_balance": {"sat": "5000"}}
+
+
+def _patch_clients(
+    monkeypatch: pytest.MonkeyPatch, clients: dict[str, _FakeClient]
+) -> dict[str, _FakeClient]:
+    """Wire ``_build_client`` in the CLI to the per-scope fakes; a scope that is not
+    in the mapping models an UNPROVISIONED credential (the client fails closed)."""
+    import scripts.ln_golive_preflight as cli
+
+    def _build(cfg: LightningSettings, *, credential_scope: str = "read") -> _FakeClient:
+        client = clients.get(credential_scope)
+        if client is None:
+            raise LightningUnavailableError("no macaroon configured (hex or path)")
+        return client
+
+    monkeypatch.setattr(cli, "_build_client", _build)
+    return clients
+
+
+async def test_probe_measures_read_and_invoice_credentials_separately(monkeypatch) -> None:
+    """Receive-only: BOTH receive-side credentials must be spend-free, the mint probe
+    runs on the invoice credential and liquidity on the read credential."""
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "invoice": _FakeClient("invoice", spends=False),
+        },
+    )
+    reachable, scope_minimal, can_mint, inbound = await cli._probe_node(_ready_cfg())
+    assert (reachable, scope_minimal, can_mint, inbound) == (True, True, True, 5000)
+    assert "pay_invoice" in clients["read"].calls  # invariant not silently retired
+    assert clients["invoice"].calls.count("pay_invoice") == 1
+    assert "add_invoice" in clients["invoice"].calls
+    assert "add_invoice" not in clients["read"].calls
+
+
+async def test_probe_flags_a_spend_capable_read_credential(monkeypatch) -> None:
+    """The credential every live path still uses (PR-A/PR-B) must keep proving that it
+    cannot spend — a fat read macaroon is NOT covered by a clean invoice macaroon."""
+    import scripts.ln_golive_preflight as cli
+
+    _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=True),
+            "invoice": _FakeClient("invoice", spends=False),
+        },
+    )
+    _, scope_minimal, _, _ = await cli._probe_node(_ready_cfg())
+    assert scope_minimal is False
+
+
+async def test_probe_reports_a_missing_invoice_credential_not_an_unreachable_node(
+    monkeypatch,
+) -> None:
+    """Bestands-Pi after this PR: only APP_LN_MACAROON_* is set. The report must blame
+    the missing capability (can_mint False), not fake a dead node."""
+    import scripts.ln_golive_preflight as cli
+
+    _patch_clients(monkeypatch, {"read": _FakeClient("read", spends=False)})
+    reachable, scope_minimal, can_mint, inbound = await cli._probe_node(_ready_cfg())
+    assert reachable is True and inbound == 5000
+    assert can_mint is False
+    assert scope_minimal is False  # un-probed invoice credential never passes
+
+
+async def test_armed_probe_targets_the_payment_credential(monkeypatch) -> None:
+    """Armed: the spend probe belongs on the dedicated payment credential; a denial
+    there means the armed cockpit cannot actually pay."""
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "invoice": _FakeClient("invoice", spends=False),
+            "payment": _FakeClient("payment", spends=True),
+        },
+    )
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+    _, scope_minimal, _, _ = await cli._probe_node(cfg)
+    assert scope_minimal is False  # payment credential CAN spend → macaroon_send_capable
+    assert "pay_invoice" in clients["payment"].calls
+    assert "pay_invoice" not in clients["read"].calls

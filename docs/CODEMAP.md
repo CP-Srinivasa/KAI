@@ -48,6 +48,12 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/audit/kai_audit_service.py` → `KaiAuditService` (Tamper-evident Hash-Chain)
 - `app/regime/classifier.py` → `classify_raw` · `app/regime/models.py` → `RegimeClass` (TREND_UP/DOWN/BREAKOUT/CHOP/UNKNOWN)
 
+### Lightning-Credentials (Capability-Split, W0/PR-A)
+- `app/core/lightning_settings.py` → `LightningSettings.macaroon_credentials(scope)` mit `read|invoice|payment|onchain|channel`; **kein Write-Fallback** aufs Read-Credential (fehlender Scope → `LightningUnavailableError`)
+- `app/lightning/adapter.py::_build_client(cfg, credential_scope="read")` → Default = `APP_LN_MACAROON_*` = heutiges Verhalten. ⚠ Stand PR-A fordert **kein** Konsument einen Write-Scope an; Umverdrahtung von `value_layer`/`ln_control`/`earnings`/`oracle` ist **PR-C** (Test-Guard: `test_lightning.py::test_no_app_module_requests_a_write_scope_yet_pr_a_is_additive`)
+- `app/lightning/golive_preflight.py` + `scripts/ln_golive_preflight.py` → Bake-Gate: prüft Read- und Invoice-Credential getrennt, probt `pay_invoice` gegen **beide** Empfangs-Credentials; armed zusätzlich gegen `APP_LN_PAYMENT_MACAROON_*`. Matrix: `docs/lightning_macaroon_matrix.md`
+- `app/security/auth.py::_LN_LOCAL_BYPASS_READS` → `/dashboard/api/ln/ops` ist bewusst NICHT drin (Geldpfad-Audit ≠ lokale Dashboard-Bequemlichkeit); einziger Konsument = Browser-Panel via CF-Access
+
 ## Kern-Env-Flags (Definition; LIVE-Werte = Pi-`.env`, NICHT hier)
 - `EXECUTION_ENTRY_MODE` → `settings.execution.entry_mode` (`EntryMode`) — Master-Entry-Kill-Switch
 - `EXECUTION_PAPER_MIN_PRIORITY` — Paper-Fill-Prioritätsschwelle

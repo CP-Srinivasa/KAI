@@ -14,7 +14,7 @@ Phase 1 is observation only. Invoice/pay surfaces are intentionally absent here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from app.core.settings import LightningSettings, get_settings
 from app.lightning.client import LightningUnavailableError, LndRestClient
@@ -147,11 +147,28 @@ def _amt_sat(value: Any) -> int:
         return 0
 
 
-def _build_client(cfg: LightningSettings) -> LndRestClient:
+CredentialScope = Literal["read", "invoice", "payment", "onchain", "channel"]
+
+
+def _build_client(
+    cfg: LightningSettings, *, credential_scope: CredentialScope = "read"
+) -> LndRestClient:
+    """Build an lnd REST client carrying exactly ONE capability credential.
+
+    The default ``"read"`` scope resolves to the legacy ``APP_LN_MACAROON_*``
+    pair, so every existing caller — which passes ``cfg`` positionally and no
+    scope — behaves exactly as before (W0/PR-A is additive: no consumer is
+    switched here; that is PR-C after the macaroons are baked).
+
+    A write scope resolves to its own macaroon and fails closed with
+    ``LightningUnavailableError`` when that credential is not provisioned; it is
+    never promoted to the read credential.
+    """
+    macaroon_hex, macaroon_path = cfg.macaroon_credentials(credential_scope)
     return LndRestClient(
         base_url=cfg.base_url,
-        macaroon_hex=cfg.macaroon_hex,
-        macaroon_path=cfg.macaroon_path,
+        macaroon_hex=macaroon_hex,
+        macaroon_path=macaroon_path,
         tls_cert_path=cfg.tls_cert_path,
         timeout=cfg.timeout_seconds,
     )

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,9 +29,14 @@ class LightningSettings(BaseSettings):
       - ``enabled=True`` (Phase 1): read-only access via ``readonly.macaroon`` over
         the lnd REST API (getinfo/channelbalance/feereport). Pure observation.
 
-    Phases 3+ (invoice/pay) live behind their OWN flags + the capital gate — this
-    settings object stays read-only on purpose. ``pay_enabled`` is a placeholder
-    kill-switch that defaults False and is NOT wired to any send path yet.
+    Invoice/pay capabilities live behind their own flags + the capital gate;
+    ``pay_enabled`` is the wired master kill-switch for every value-layer send
+    (``value_layer._assert_send_allowed``) and defaults to False.
+
+    Credentials are declared per CAPABILITY (``macaroon_credentials``): read,
+    invoice, payment, onchain, channel. W0/PR-A only DECLARES them so the operator
+    can bake and preflight the split — no caller requests a write scope yet, every
+    path still runs on the read credential (consumer switch = PR-C).
     """
 
     model_config = SettingsConfigDict(
@@ -43,13 +49,30 @@ class LightningSettings(BaseSettings):
     # lnd REST endpoint on the RaspiBlitz node (LAN, later WireGuard overlay IP).
     host: str = Field(default="192.168.178.51")
     rest_port: int = Field(default=8080, ge=1, le=65535)
-    # Hex-encoded macaroon OR a path to the macaroon file. Phase 1 = readonly.
+    # Read credential: hex-encoded macaroon OR a path to the macaroon file.
+    # These legacy env names (``APP_LN_MACAROON_PATH`` / ``..._HEX``) stay stable
+    # and keep their current meaning — as of W0/PR-A EVERY caller still resolves to
+    # this credential, so an existing deployment is unaffected by the fields below.
     macaroon_path: str = Field(default="", repr=False)
     macaroon_hex: str = Field(default="", repr=False)
+    # Invoice create/list. Recommended permissions: invoices:read + invoices:write.
+    invoice_macaroon_path: str = Field(default="", repr=False)
+    invoice_macaroon_hex: str = Field(default="", repr=False)
+    # BOLT11 pay + keysend (+ payment-status reads). Recommended permissions:
+    # offchain:read + offchain:write (no invoice/onchain/channel rights).
+    payment_macaroon_path: str = Field(default="", repr=False)
+    payment_macaroon_hex: str = Field(default="", repr=False)
+    # On-chain withdraw. Recommended permission: onchain:write only.
+    onchain_macaroon_path: str = Field(default="", repr=False)
+    onchain_macaroon_hex: str = Field(default="", repr=False)
+    # Channel open/close. Kept separate because it can lock capital and incur
+    # on-chain fees even when no payment leaves the operator's custody.
+    channel_macaroon_path: str = Field(default="", repr=False)
+    channel_macaroon_hex: str = Field(default="", repr=False)
     # Path to lnd tls.cert (used to verify the node's self-signed TLS).
     tls_cert_path: str = Field(default="")
     timeout_seconds: float = Field(default=10.0, gt=0)
-    # Placeholder kill-switch for the future send path (Phase 4). Not wired yet.
+    # Wired master kill-switch for every value-layer send; default-off.
     pay_enabled: bool = Field(default=False)
     # Receive-side capability (capital-free): mint inbound BOLT11 invoices. Decoupled
     # from ``pay_enabled`` so "Empfangen vor Senden" can be enabled WITHOUT un-gating
@@ -119,6 +142,31 @@ class LightningSettings(BaseSettings):
     @property
     def base_url(self) -> str:
         return f"https://{self.host}:{self.rest_port}"
+
+    def macaroon_credentials(
+        self, scope: Literal["read", "invoice", "payment", "onchain", "channel"]
+    ) -> tuple[str, str]:
+        """Return ``(hex, path)`` for ONE least-privilege capability.
+
+        ``"read"`` resolves to the legacy ``APP_LN_MACAROON_*`` pair, so the
+        default scope reproduces today's configuration byte-for-byte.
+
+        There is deliberately NO fallback from a write scope to the read
+        credential: an unprovisioned capability must fail closed in the client
+        (``LightningUnavailableError: no macaroon configured``) instead of
+        silently recreating the single-all-powerful-macaroon setup this split
+        exists to remove. The failure is loud at the call site, not a permission
+        error deep inside lnd.
+        """
+        if scope == "read":
+            return self.macaroon_hex, self.macaroon_path
+        if scope == "invoice":
+            return self.invoice_macaroon_hex, self.invoice_macaroon_path
+        if scope == "payment":
+            return self.payment_macaroon_hex, self.payment_macaroon_path
+        if scope == "onchain":
+            return self.onchain_macaroon_hex, self.onchain_macaroon_path
+        return self.channel_macaroon_hex, self.channel_macaroon_path
 
 
 class LightningBootError(RuntimeError):
