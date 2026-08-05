@@ -392,6 +392,37 @@ jobs:
       - run: npm run build   # tsc -b && vite build (build gate)
       - run: npm run test    # vitest run (dashboard component/unit tests, happy-dom)
 
+      # Das gebaute Bundle als Artefakt behalten, damit ein Web-Deploy nicht mehr
+      # vom Netz der Workstation abhaengt.
+      #
+      # Anlass 2026-08-05: `pi_deploy_web.sh` baut per Default lokal ("Build auf
+      # dem Laptop ist schneller als auf dem Pi", D-208 — stimmt weiterhin, aber
+      # nur im Heimnetz). Sitzt der Operator remote, laeuft der gesamte Verkehr
+      # durch den WireGuard-Tunnel: npm-Registry gemessen 20-42 kB/s bei komplett
+      # totem IPv6, waehrend der Pi dieselbe URL mit 14,9 MB/s zieht. Ein
+      # `npm ci` (~300 MB) ist damit nicht durchfuehrbar, und der Deploy stand
+      # aus einem Grund still, der mit dem Code nichts zu tun hat.
+      #
+      # Mit dem Artefakt braucht der Deploy nur noch den ~2-MB-Download:
+      #   gh run download <run-id> -n web-dist -D web/dist
+      #   bash scripts/pi_deploy_web.sh ubuntu@192.168.178.23 --skip-build
+      # `--skip-build` existiert bereits und nimmt ein vorhandenes web/dist — der
+      # getestete Transfer-/sha256-Verify-Pfad bleibt unveraendert.
+      #
+      # Nebeneffekt, der wichtiger ist als die Bequemlichkeit: Das ausgelieferte
+      # Bundle stammt dann aus einer sauberen, protokollierten Umgebung und ist
+      # dem Commit eindeutig zuzuordnen, statt aus dem Zustand, den die
+      # Workstation gerade zufaellig hat.
+      - name: Upload web/dist (Deploy-Artefakt)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          # Reicht fuer den Deploy-Zyklus; das Bundle ist aus dem Commit jederzeit
+          # reproduzierbar und muss nicht aufbewahrt werden.
+          retention-days: 7
+          if-no-files-found: error
+
   pr-claims-verify:
     # Härtet gegen Codex-CI-Drift-Pattern (siehe feedback_codex_ci_drift Memory):
     # PR-Body claimt "ruff passed" / "tests passed" obwohl CI rot. Dieser Job
