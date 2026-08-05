@@ -6,14 +6,24 @@ Semantik: Es zählen nur EXECUTED, wert-abfließende Aktionen (pay_invoice,
 keysend, send_coins) des heutigen UTC-Tages. ``open_channel`` bewegt Wert nur
 innerhalb der Self-Custody und zählt nicht. Betrag: response-first (tatsächlich
 gezahlte Route inkl. Fees), BOLT11-HRP-Fallback, sonst 0 mit Warnung.
+
+Teil 2 deckt ``spent_today_sat_v2`` ab — dieselbe Semantik auf dem redigierten,
+verketteten v2-Journal, ZUSÄTZLICH mit Reservierung offener Intents. Kein
+Produktions-Aufrufer nutzt v2 (PR-C); ``spent_today_sat`` bleibt unverändert.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat
+from app.lightning.ops_ledger import (
+    append_ln_outcome,
+    bolt11_amount_sat,
+    prepare_ln_intent,
+    spent_today_sat,
+    spent_today_sat_v2,
+)
 
 NOW = datetime(2026, 7, 2, 12, 0, 0, tzinfo=UTC)
 
@@ -98,3 +108,79 @@ def test_ignores_non_spends_other_days_and_planned(tmp_path) -> None:
 
 def test_missing_ledger_is_zero(tmp_path) -> None:
     assert spent_today_sat(tmp_path / "fehlt.jsonl", now=NOW) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Teil 2 — v2-Cap-Quelle (parallel, noch kein Aufrufer).
+# --------------------------------------------------------------------------- #
+
+
+def test_v2_counts_settled_route_including_fees(tmp_path) -> None:
+    p = tmp_path / "ops_v2.jsonl"
+    plan = {"payment_request": "lnbc250u1pxyz", "payment_hash": "aa" * 32}
+    prepare_ln_intent("pay_invoice", plan=plan, intent_id="i1", path=p, now=NOW)
+    append_ln_outcome(
+        "pay_invoice",
+        "executed",
+        plan=plan,
+        intent_id="i1",
+        response={"payment_route": {"total_amt": "25012", "total_fees": "12"}},
+        path=p,
+        now=NOW,
+    )
+    # Intent + Outcome zusammen genau EINMAL, Betrag response-first inkl. Fees.
+    assert spent_today_sat_v2(p, now=NOW) == 25012
+
+
+def test_v2_reserves_open_intent_until_reconciled(tmp_path) -> None:
+    # Prozess stirbt nach dem LND-Aufruf, vor dem Outcome-fsync: das Cap darf das
+    # Budget nicht erneut freigeben. Fail-closed = der Intent zählt.
+    p = tmp_path / "ops_v2.jsonl"
+    prepare_ln_intent(
+        "pay_invoice",
+        plan={"payment_request": "lnbc250u1pxyz", "payment_hash": "bb" * 32},
+        intent_id="crashed",
+        path=p,
+        now=NOW,
+    )
+    assert spent_today_sat_v2(p, now=NOW) == 25000
+
+
+def test_v2_ignores_non_spend_actions_and_other_days(tmp_path) -> None:
+    p = tmp_path / "ops_v2.jsonl"
+    prepare_ln_intent(
+        "open_channel", plan={"local_funding_sat": 400_000}, intent_id="oc", path=p, now=NOW
+    )
+    append_ln_outcome(
+        "open_channel",
+        "executed",
+        plan={"local_funding_sat": 400_000},
+        intent_id="oc",
+        path=p,
+        now=NOW,
+    )
+    prepare_ln_intent("create_invoice", plan={"value_sat": 1000}, intent_id="ci", path=p, now=NOW)
+    prepare_ln_intent(
+        "send_coins",
+        plan={"amount_sat": 5000, "addr": "bc1-x"},
+        intent_id="yesterday",
+        path=p,
+        now=NOW - timedelta(days=1),
+    )
+    assert spent_today_sat_v2(p, now=NOW) == 0
+
+
+def test_v2_error_outcome_still_counts(tmp_path) -> None:
+    # Live belegt (25k-Spend 07-02): Client-Timeout loggt "error", die Zahlung
+    # settled trotzdem. Unbekannt zählt gegen das Cap.
+    p = tmp_path / "ops_v2.jsonl"
+    plan = {"payment_request": "lnbc250u1pxyz", "payment_hash": "cc" * 32}
+    prepare_ln_intent("pay_invoice", plan=plan, intent_id="i1", path=p, now=NOW)
+    append_ln_outcome(
+        "pay_invoice", "error", plan=plan, intent_id="i1", response={}, path=p, now=NOW
+    )
+    assert spent_today_sat_v2(p, now=NOW) == 25000
+
+
+def test_v2_missing_ledger_is_zero(tmp_path) -> None:
+    assert spent_today_sat_v2(tmp_path / "fehlt.jsonl", now=NOW) == 0
