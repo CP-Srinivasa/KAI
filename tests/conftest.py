@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -25,6 +27,42 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _host = _socket.gethostname() or "test-host"
     monkeypatch.setenv("KAI_PI_HOSTNAME_MARKER", _host.lower())
+
+
+@pytest.fixture(autouse=True)
+def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Live-Fire-Sperre für die Wert-Schicht (Befund 05.08., W0-Nachtrag).
+
+    Die Unit-Suite lief auf dem Pi gegen die SCHARFE Wert-Schicht: ein
+    Endpoint-Test erreichte den echten Node (``send_coins`` — von lnd nur
+    wegen ungültiger Adresse abgelehnt), Test-Rows landeten im
+    Prod-Ops-Ledger, und ``reset_control_state()`` leerte den persistenten
+    Idempotenz-Store. Drei Garantien machen das strukturell unmöglich,
+    egal auf welcher Box die Suite läuft:
+
+    1. **Kill-Switch:** die Geld-Gates als OS-Env (schlägt die ``.env``-Datei
+       in der pydantic-settings-Präzedenz; Tests mit explizitem
+       ``LightningSettings(...)``-Objekt gewinnen weiterhin).
+    2. **Ops-Ledger-Redirect:** Writer und ``spent_today_sat`` arbeiten auf
+       einem tmp-File, nie auf ``artifacts/ln_ops_ledger.jsonl``.
+    3. **Idempotenz-Redirect:** der Cockpit-Singleton zeigt auf einen
+       frischen tmp-Store — ``reset_control_state()`` kann keinen
+       Prod-Zustand mehr löschen.
+    """
+    monkeypatch.setenv("APP_LN_ENABLED", "false")
+    monkeypatch.setenv("APP_LN_PAY_ENABLED", "false")
+    monkeypatch.setenv("APP_LN_RECEIVE_ENABLED", "false")
+
+    from app.lightning import ops_ledger
+
+    monkeypatch.setattr(ops_ledger, "_OPS_PATH", tmp_path / "ln_ops_ledger.jsonl")
+
+    from app.api.routers import ln_control
+    from app.lightning.idempotency_store import PersistentSeenKeys
+
+    monkeypatch.setattr(
+        ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
+    )
 
 
 @pytest.fixture(autouse=True)

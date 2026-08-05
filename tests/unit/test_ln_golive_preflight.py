@@ -99,7 +99,9 @@ def test_no_go_when_secret_missing() -> None:
 
 
 def test_blocking_lists_every_failure_on_a_blank_config() -> None:
-    out = golive_preflight(LightningSettings())  # all flags default/false, no node probes
+    # _env_file=None: "blank" muss Code-Default sein — die Pi-.env füllt sonst
+    # Secret-/Macaroon-Felder und lässt erwartete Failures verschwinden.
+    out = golive_preflight(LightningSettings(_env_file=None))  # no flags, no node probes
     assert out["verdict"] == "NO-GO"
     for name in (
         "ln_enabled",
