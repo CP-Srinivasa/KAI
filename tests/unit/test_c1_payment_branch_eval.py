@@ -14,7 +14,9 @@ falsch.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,6 +26,7 @@ from scripts.c1_payment_branch_eval import (
     _parse_ts,
     _payer_index,
     evaluate,
+    main,
 )
 
 WINDOW_START = datetime(2026, 7, 4, 9, 22, 7, tzinfo=UTC)
@@ -189,3 +192,107 @@ def test_zahlung_ohne_zurechenbaren_payer_zaehlt_nicht_als_distinkter_payer() ->
     assert result["settled_payments_in_window"] == 1
     assert result["distinct_payer_fps_in_window"] == 0
     assert result["verdict"] == "FAIL"
+
+
+# --- Divergenzschutz in main(): die Klammer zwischen Skript und versiegelter Regel ---
+#
+# Die Schwellen stehen als Konstanten im Skript, das Kriterium als Prosa in der
+# versiegelten Regeldatei. Fallen beide auseinander — weil jemand die Regel
+# nachtraeglich anfasst oder eine Konstante aendert — rechnet das Skript sonst
+# still gegen eine andere Schwelle als die versiegelte. Der Guard ist der einzige
+# Mechanismus, der die Versiegelung technisch durchsetzt; die Tests oben
+# importieren nur ``evaluate`` und erreichen ihn nie.
+
+
+SEALED_CRITERION = (
+    ">=5 settled L402-Payments mit Memo-Praefix 'kai-oracle:' von "
+    ">=3 distinkten Payer-Fingerprints innerhalb des Fensters"
+)
+
+
+def _rule_file(tmp_path: Path, criterion: str) -> Path:
+    """Vollstaendige Regeldatei schreiben; nur der ``criterion``-Text variiert."""
+    rule = {
+        "prereg_id": "9cab81fae4823482",
+        "hypothesis": "oracle_demand_probe_fee_truth_v1",
+        "sealed_at_utc": "2026-08-02",
+        "sealed_rule": {
+            "or_branch": {"status": "NOT_EVALUATED"},
+            "payment_branch": {
+                "criterion": criterion,
+                "scopes_counted": ["fee-series", "verdicts", "onchain-facts"],
+                "source_of_truth": [
+                    "artifacts/ln_earnings_ledger.jsonl",
+                    "artifacts/ln_demand_ledger.jsonl",
+                ],
+                "window": {
+                    "start_utc": WINDOW_START.isoformat(),
+                    "end_utc": WINDOW_END.isoformat(),
+                },
+            },
+        },
+    }
+    path = tmp_path / "rule.json"
+    path.write_text(json.dumps(rule), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    "criterion",
+    [
+        pytest.param(
+            ">=2 settled L402-Payments von >=3 distinkten Payer-Fingerprints",
+            id="zahlungs-schwelle-abgesenkt",
+        ),
+        pytest.param(
+            ">=5 settled L402-Payments von >=1 distinkten Payer-Fingerprints",
+            id="payer-schwelle-abgesenkt",
+        ),
+        pytest.param("mindestens fuenf Zahlungen von drei Payern", id="schwellen-ausgeschrieben"),
+    ],
+)
+def test_divergenz_zwischen_skript_und_regeltext_bricht_ab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, criterion: str
+) -> None:
+    """Nennt der Regeltext die Skript-Schwellen nicht, laeuft nichts — statt still falsch."""
+    rule_path = _rule_file(tmp_path, criterion)
+    monkeypatch.setattr("sys.argv", ["c1_payment_branch_eval.py", "--rule", str(rule_path)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert "divergiert" in str(excinfo.value)
+
+
+def test_versiegelter_regeltext_laeuft_durch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Gegenprobe: der echte Kriteriumstext passiert den Guard.
+
+    Ohne diesen Fall belegt der Abbruch oben nur, dass ``main`` ueberhaupt abbricht —
+    nicht, dass er es wegen der Divergenz tut.
+    """
+    rule_path = _rule_file(tmp_path, SEALED_CRITERION)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "c1_payment_branch_eval.py",
+            "--rule",
+            str(rule_path),
+            "--artifacts-dir",
+            str(tmp_path),  # leeres Verzeichnis: keine Ledger, also 0 Zahlungen
+            "--json",
+        ],
+    )
+
+    assert main() == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["verdict"] == "FAIL"
+    assert result["payment_branch"]["settled_payments_in_window"] == 0
+    assert result["thresholds"] == {
+        "min_settled_payments": MIN_PAYMENTS,
+        "min_distinct_payer_fps": MIN_DISTINCT_PAYERS,
+    }
+    # Der Guard hat die Regel passieren lassen, also steht ihr Hash im Ergebnis.
+    assert result["rule_sha256"]
