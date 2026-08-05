@@ -194,6 +194,31 @@ def test_zahlung_ohne_zurechenbaren_payer_zaehlt_nicht_als_distinkter_payer() ->
     assert result["verdict"] == "FAIL"
 
 
+def test_reale_ledger_form_reproduziert_null_null() -> None:
+    """Die real gemessene Lage als Fixture: 2 Oracle-Zahlungen VOR dem Fenster,
+    1 Nicht-Oracle-Zahlung (die 25k-sat lnurlp-Zeile). Ergebnis 0/0 = FAIL.
+
+    Die Tests darueber pruefen jeden Ausschlussgrund einzeln an synthetischen
+    Zeilen. Keiner davon haelt fest, dass die TATSAECHLICHE Ledger-Lage vom
+    2026-08-05 auf 0/0 rechnet — genau die Zahl, die attestiert wurde. Faellt
+    ein Ausschlussgrund kuenftig weg, faellt hier auch die Verdikt-Grundlage,
+    ohne dass man die Live-Ledger dafuer braucht.
+    """
+    earnings = [
+        _payment("3baf314f", settled="2026-07-02T06:01:47+00:00", memo="kai-oracle:onchain-facts"),
+        _payment("973358cf", settled="2026-07-02T06:14:28+00:00", memo="kai-oracle:onchain-facts"),
+        _payment("d88cfb62", settled="2026-07-04T08:52:39+00:00", memo="kai-pay: KAI receive"),
+    ]
+    demand = [_challenge("3baf314f", "beed052613f160c5")]
+
+    result = _run(earnings, demand)
+
+    assert result["verdict"] == "FAIL"
+    assert result["settled_payments_in_window"] == 0
+    assert result["distinct_payer_fps_in_window"] == 0
+    assert result["qualifying_payments"] == []
+
+
 # --- Divergenzschutz in main(): die Klammer zwischen Skript und versiegelter Regel ---
 #
 # Die Schwellen stehen als Konstanten im Skript, das Kriterium als Prosa in der
