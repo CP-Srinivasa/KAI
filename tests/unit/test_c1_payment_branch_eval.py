@@ -14,7 +14,9 @@ falsch.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,6 +26,7 @@ from scripts.c1_payment_branch_eval import (
     _parse_ts,
     _payer_index,
     evaluate,
+    main,
 )
 
 WINDOW_START = datetime(2026, 7, 4, 9, 22, 7, tzinfo=UTC)
@@ -189,3 +192,59 @@ def test_zahlung_ohne_zurechenbaren_payer_zaehlt_nicht_als_distinkter_payer() ->
     assert result["settled_payments_in_window"] == 1
     assert result["distinct_payer_fps_in_window"] == 0
     assert result["verdict"] == "FAIL"
+
+
+def test_divergence_guard_rejects_rule_without_the_sealed_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Weicht der Regeltext von den Skript-Schwellen ab, bricht der Lauf ab.
+
+    Der Divergenzschutz ist die einzige Sicherung dagegen, dass Skript und
+    versiegelte Regel unbemerkt auseinanderlaufen — er war in der ersten Fassung
+    implementiert, aber ungetestet (Luecke aus PR #630 uebernommen).
+    """
+    tampered = {
+        "sealed_rule": {
+            "payment_branch": {
+                "criterion": ">=2 settled L402-Payments von >=1 distinkten Payer-Fingerprints",
+                "scopes_counted": ["fee-series", "verdicts", "onchain-facts"],
+                "source_of_truth": ["artifacts/ln_earnings_ledger.jsonl"],
+                "window": {
+                    "start_utc": "2026-07-04T09:22:07+00:00",
+                    "end_utc": "2026-08-03T23:59:59+00:00",
+                },
+            }
+        }
+    }
+    rule_path = tmp_path / "rule.json"
+    rule_path.write_text(json.dumps(tampered), encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv", ["c1_payment_branch_eval.py", "--rule", str(rule_path), "--json"]
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert "divergiert" in str(excinfo.value)
+
+
+def test_real_ledger_shape_reproduces_zero_zero() -> None:
+    """Die real gemessene Lage als Fixture: 2 Oracle-Zahlungen VOR dem Fenster,
+    1 Nicht-Oracle-Zahlung (die 25k-sat lnurlp-Zeile). Ergebnis 0/0 = FAIL.
+
+    Haelt das Verdikt vom 2026-08-05 gegen eine Regression fest, ohne die
+    Live-Ledger zu brauchen (Luecke aus PR #630 uebernommen).
+    """
+    earnings = [
+        _payment("3baf314f", settled="2026-07-02T06:01:47+00:00", memo="kai-oracle:onchain-facts"),
+        _payment("973358cf", settled="2026-07-02T06:14:28+00:00", memo="kai-oracle:onchain-facts"),
+        _payment("d88cfb62", settled="2026-07-04T08:52:39+00:00", memo="kai-pay: KAI receive"),
+    ]
+    demand = [_challenge("3baf314f", "beed052613f160c5")]
+
+    result = _run(earnings, demand)
+
+    assert result["verdict"] == "FAIL"
+    assert result["settled_payments_in_window"] == 0
+    assert result["distinct_payer_fps_in_window"] == 0
+    assert result["qualifying_payments"] == []
