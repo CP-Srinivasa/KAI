@@ -416,3 +416,113 @@ async def test_written_observation_is_read_back_and_dominates(
     assert rows[0]["n_proxy"] == 3
     assert rows[0]["n_exact"] == 2
     assert rows[0]["state"] == STATE_NOT_DUE
+
+
+# ── Divergenzschutz: die Konstruktion des Laufs muss zur Prä-Reg passen ───────
+#
+# Befund 2026-08-05: ein news-eval-Lauf OHNE ``--hedge`` wurde als exakte
+# Messung akzeptiert und schrieb n=360/300 fest — die Prä-Reg b20ef1487ccba99d
+# versiegelt aber ausdrücklich "BTC-hedged (beta=1)". Die Spot-Konstruktion
+# verwirft die 1721 Events ohne Hedge-Symbol NICHT und zählt darum systematisch
+# mehr Stories (369 statt 303). Die Messung haette die 300er-Latte zu frueh
+# reissen lassen — und ND-v2 schliesst bei FAIL ``news_direction`` endgueltig.
+# Das maschinelle ``gate`` kennt die Hedge-Anforderung nicht; sie steht nur im
+# Freitext ``success_criteria``. Also wird genau dort dagegen geprueft.
+
+ND_V2_SUCCESS_CRITERIA = (
+    "SUPERSEDES 4a3b1b0c5a94b73c (estimator sharpened BEFORE out-of-sample data): "
+    "OUT-OF-SAMPLE only (events published after 2026-07-02), BTC-hedged (beta=1) "
+    "side-adjusted 1d forward return on the STORY-DEDUPED cohort (cluster_stories, "
+    "24h window, cross-source). Machine gate attached."
+)
+
+
+def _eval_result_with_construction(n: int, construction: str) -> dict:
+    result = _eval_result(n)
+    result["meta"] = {"construction": construction, "n_hedge_symbol_skipped": 0}
+    return result
+
+
+def test_record_refuses_a_spot_run_when_the_prereg_seals_btc_hedging(
+    tmp_path: Path,
+) -> None:
+    """Der belegte Fehlerfall vom 2026-08-05 — spot statt hedged, n zu hoch."""
+    with pytest.raises(ValueError, match="construction"):
+        record_exact_observation(
+            prereg_id="b20ef1487ccba99d",
+            gate=SEALED_GATE,
+            n_target=300,
+            eval_result=_eval_result_with_construction(360, "spot"),
+            artifacts_dir=tmp_path,
+            observed_at=NOW,
+            success_criteria=ND_V2_SUCCESS_CRITERIA,
+        )
+    assert not (tmp_path / "research" / "prereg_exact_observations.jsonl").exists()
+
+
+def test_record_accepts_the_hedged_run_the_prereg_actually_sealed(
+    tmp_path: Path,
+) -> None:
+    """POSITIVKONTROLLE: ohne sie ist der Guard nicht von 'kaputt' unterscheidbar."""
+    rec = record_exact_observation(
+        prereg_id="b20ef1487ccba99d",
+        gate=SEALED_GATE,
+        n_target=300,
+        eval_result=_eval_result_with_construction(296, "hedged_vs_BTC/USDT"),
+        artifacts_dir=tmp_path,
+        observed_at=NOW,
+        success_criteria=ND_V2_SUCCESS_CRITERIA,
+    )
+
+    assert rec["n_exact"] == 296
+    assert (tmp_path / "research" / "prereg_exact_observations.jsonl").exists()
+
+
+def test_record_stays_silent_when_the_prereg_says_nothing_about_hedging(
+    tmp_path: Path,
+) -> None:
+    """Prä-Regs ohne Hedge-Klausel duerfen nicht nachtraeglich verschaerft werden."""
+    rec = record_exact_observation(
+        prereg_id="some_other_prereg",
+        gate=SEALED_GATE,
+        n_target=300,
+        eval_result=_eval_result_with_construction(296, "spot"),
+        artifacts_dir=tmp_path,
+        observed_at=NOW,
+        success_criteria="spot 1d forward return, no hedging clause here",
+    )
+
+    assert rec["n_exact"] == 296
+
+
+def test_record_refuses_a_hedged_run_against_a_prereg_without_hedge_clause(
+    tmp_path: Path,
+) -> None:
+    """Auch die Gegenrichtung ist eine Divergenz: gemessen wurde eine andere Kohorte."""
+    with pytest.raises(ValueError, match="construction"):
+        record_exact_observation(
+            prereg_id="some_other_prereg",
+            gate=SEALED_GATE,
+            n_target=300,
+            eval_result=_eval_result_with_construction(296, "hedged_vs_BTC/USDT"),
+            artifacts_dir=tmp_path,
+            observed_at=NOW,
+            success_criteria="spot 1d forward return, no hedging clause here",
+        )
+
+
+def test_record_refuses_when_the_evaluator_output_hides_its_construction(
+    tmp_path: Path,
+) -> None:
+    """Fail-closed: keine Konstruktions-Angabe = nicht pruefbar = nicht schreiben."""
+    with pytest.raises(ValueError, match="construction"):
+        record_exact_observation(
+            prereg_id="b20ef1487ccba99d",
+            gate=SEALED_GATE,
+            n_target=300,
+            eval_result=_eval_result(296),  # ohne meta
+            artifacts_dir=tmp_path,
+            observed_at=NOW,
+            success_criteria=ND_V2_SUCCESS_CRITERIA,
+        )
+    assert not (tmp_path / "research" / "prereg_exact_observations.jsonl").exists()
