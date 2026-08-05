@@ -180,6 +180,121 @@ def test_tl002_excludes_band_fill_with_real_source(tmp_path: Path) -> None:
     assert "AAVE/USDT" not in v[0]["evidence"]["per_symbol"]
 
 
+def test_tl002_excludes_screener_fill_via_document_id_join(tmp_path: Path) -> None:
+    """V2 (2026-08-05): der technical_paper-Pfad laeuft ohne Loop-Zyklus, hat
+    also nie eine ``market_data_source``-Note — er trug den Beleg aber immer
+    schon, nur unter einem anderen Schluessel: ``document_id`` enthaelt den
+    ``candidate_id``, und der Shadow-Candidate haelt ``entry_price_basis``.
+
+    Derselbe Fehlertyp wie die Close-Attribution (#621): der Join wurde ueber
+    ``order_id`` versucht, wo ``document_id`` der tragende Schluessel ist.
+    """
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {  # Screener-Fill mit Binance-Beleg -> ausgenommen
+                "event_type": "order_filled",
+                "order_id": "ord_tech",
+                "symbol": "AAVE/USDT",
+                "fill_price": 98.43,
+                "timestamp_utc": "2026-07-27T15:26:00+00:00",
+                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+            },
+            {  # Screener-Fill, aber nur Fallback-Basis -> bleibt Verletzung
+                "event_type": "order_filled",
+                "order_id": "ord_fallback",
+                "symbol": "XYZ/USDT",
+                "fill_price": 99.10,
+                "timestamp_utc": "2026-07-27T15:26:00+00:00",
+                "document_id": "technical_paper_XYZUSDT_tech-XYZUSDT-2026-07-27T15:20:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(
+        art / "shadow_candidate_ledger.jsonl",
+        [
+            {
+                "candidate_id": "tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+                "entry_price_basis": "binance_1m_decision",
+            },
+            {
+                "candidate_id": "tech-XYZUSDT-2026-07-27T15:20:00+00:00",
+                "entry_price_basis": "fallback_1h_last",
+            },
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+    assert v[0]["evidence"]["per_symbol"] == {"XYZ/USDT": 1}
+    assert v[0]["evidence"]["band_real_source_excluded"] == 1
+
+
+def test_tl002_document_id_without_matching_candidate_stays_violation(tmp_path: Path) -> None:
+    """Fail-closed: ein document_id ohne auffindbaren Candidate ist KEIN Beleg."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_orphan",
+                "symbol": "AAVE/USDT",
+                "fill_price": 98.43,
+                "timestamp_utc": "2026-07-27T15:26:00+00:00",
+                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+            }
+        ],
+    )
+    _write_jsonl(
+        art / "shadow_candidate_ledger.jsonl",
+        [{"candidate_id": "tech-OTHER-2026-01-01T00:00:00+00:00", "entry_price_basis": "binance_1m_decision"}],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+
+
+def test_tl002_explicit_mock_source_wins_over_screener_basis(tmp_path: Path) -> None:
+    """Fail-closed bei Widerspruch: sagt der Loop-Audit ausdruecklich ``mock``,
+    darf ein positiver Screener-Beleg das NICHT ueberstimmen. Der neue Join ist
+    ein ZUSAETZLICHER Weg fuer Fills ohne Zyklus, kein Freibrief."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_conflict",
+                "symbol": "AAVE/USDT",
+                "fill_price": 98.43,
+                "timestamp_utc": "2026-07-27T15:26:00+00:00",
+                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+            }
+        ],
+    )
+    _write_jsonl(
+        art / "trading_loop_audit.jsonl",
+        [{"order_id": "ord_conflict", "notes": ["market_data_source:mock"]}],
+    )
+    _write_jsonl(
+        art / "shadow_candidate_ledger.jsonl",
+        [
+            {
+                "candidate_id": "tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+                "entry_price_basis": "binance_1m_decision",
+            }
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["per_symbol"] == {"AAVE/USDT": 1}
+
+
 def test_tl002_silent_when_all_band_fills_have_real_source(tmp_path: Path) -> None:
     art = _artifacts(tmp_path)
     _write_jsonl(

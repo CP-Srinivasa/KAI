@@ -60,6 +60,12 @@ RSS_SIGNAL_PATH_FIX_UTC = "2026-07-11T11:48:19+00:00"
 
 _EVIDENCE_CAP = 10  # pro Invariante; total_count trägt die volle Zahl
 
+# TL-002 V2: der einzige Screener-Basiswert, der eine REALE Preisquelle belegt
+# (Binance-1m-Bar der Entscheidungsminute, app.observability.technical_screener_feed).
+# ``fallback_1h_last`` ist ausdrücklich KEIN Beleg — es ist der Provider-offene
+# Notnagel, dessen Herkunft gerade nicht feststeht.
+_BASIS_REAL = "binance_1m_decision"
+
 # TL-012 Resolution-Batch-Konzentration (Quoten-Sprint 2026-07-30): seit W1
 # tragen hit/miss-Zeilen ``resolved_at``. Ein 6h-Annotate-Lauf löst oft viele
 # gleichlaufende Fenster mit EINEM Markt-Move auf (Praxisfall 07-30: 33 ETH-
@@ -118,6 +124,10 @@ class LintContext:
     @property
     def alert_outcomes(self) -> Path:
         return self.artifacts_dir / "alert_outcomes.jsonl"
+
+    @property
+    def shadow_candidates(self) -> Path:
+        return self.artifacts_dir / "shadow_candidate_ledger.jsonl"
 
     @property
     def verdicts_dir(self) -> Path:
@@ -200,6 +210,26 @@ def _check_mock_in_fills(ctx: LintContext) -> list[Violation]:
     ]
 
 
+def _screener_entry_basis(
+    rec: dict[str, Any], symbol: str, basis_by_candidate: dict[str, str]
+) -> str | None:
+    """Preisquellen-Beleg eines Screener-Fills über ``document_id → candidate_id``.
+
+    ``technical_paper_feeder`` baut ``document_id`` als
+    ``f"technical_paper_{symbol_ohne_slash}_{candidate_id}"``. Der Präfix wird
+    exakt so wieder abgezogen — kein Scan über alle Candidates, keine Heuristik.
+    Passt das Format nicht, gibt es keinen Beleg (``None``) und der Fill bleibt
+    eine Verletzung; das ist die fail-closed Richtung.
+    """
+    doc = str(rec.get("document_id") or "")
+    if not doc:
+        return None
+    prefix = f"technical_paper_{symbol.replace('/', '')}_"
+    if not doc.startswith(prefix):
+        return None
+    return basis_by_candidate.get(doc[len(prefix) :])
+
+
 def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     """TL-002: Fills im verdächtigen Mock-Preisband (~100 $) nach Gate-Baseline.
 
@@ -226,15 +256,27 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     #   ord_08ae3d42bce8  27.07. 23:00   97,021 in [96,94 ·  98,27]
     #   ord_f4bc64c6fd2a  29.07. 04:18   97,621 in [97,51 ·  98,63]
     # Es sind also REALE Preise; AAVE handelt schlicht im Mock-Band [95,105].
-    # Geflaggt bleiben sie nur, weil der technical_paper-Pfad keinen
-    # market_data_source-Beleg im Loop-Audit hinterlaesst (9 der 13 Band-Fills
-    # sind ueber market_data_source:bybit ausgenommen, diese 4 haben gar keinen
-    # Zyklus). Der Screener KENNT seinen Beleg (``binance_1m_decision``),
-    # persistiert ihn aber in keinem Artefakt. Der Fix gehoert dorthin, nicht
-    # hierher — und bewusst erst NACH dem C1-Verdikt, weil er den
-    # Screener-Schreibpfad beruehrt. Bis dahin bleibt es fail-closed bei WARNING:
-    # die Regel wird nicht auf Zuruf leiser gestellt, nur weil einmal
-    # nachgesehen wurde.
+    # Geflaggt blieben sie nur, weil der technical_paper-Pfad ohne Loop-Zyklus
+    # laeuft und damit nie eine ``market_data_source``-Note traegt (9 der 13
+    # Band-Fills sind ueber market_data_source:bybit ausgenommen, diese 4 haben
+    # gar keinen Zyklus).
+    #
+    # V2 (2026-08-05, nach dem C1-Verdikt): die frueher hier notierte Annahme,
+    # der Screener persistiere seinen Beleg "in keinem Artefakt", war FALSCH.
+    # ``technical_screener_feed`` schreibt ``entry_price_basis`` seit jeher in den
+    # Shadow-Candidate, und ``document_id = f"technical_paper_{symbol}_{cid}"``
+    # (technical_paper_feeder.py) traegt den ``candidate_id`` mit. Der Beleg war
+    # also da — er wurde nur ueber ``order_id`` gesucht, wo ``document_id`` der
+    # tragende Schluessel ist. Exakt derselbe Fehlertyp wie die Close-Attribution
+    # (#621). Live-Gegenprobe 2026-08-05: alle 4 offenen Fills loesen ueber diesen
+    # Join auf, 4/4 mit ``binance_1m_decision`` — der maschinelle Join reproduziert
+    # die Sichtpruefung oben, statt sie zu ersetzen.
+    #
+    # FAIL-CLOSED bleibt in drei Richtungen: ein ausdrueckliches ``mock`` im
+    # Loop-Audit wird NICHT von einem positiven Screener-Beleg ueberstimmt; ein
+    # ``fallback_1h_last`` ist kein Beleg; und ein ``document_id`` ohne
+    # auffindbaren Candidate bleibt Verletzung. Aendert sich das document_id-
+    # Format, greift der Join nicht mehr und die Warnung kehrt zurueck.
     source_by_order: dict[str, str] = {}
     for cyc in iter_jsonl_tolerant(ctx.loop_audit):
         oid = cyc.get("order_id")
@@ -244,6 +286,13 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             if isinstance(note, str) and note.startswith("market_data_source:"):
                 source_by_order[str(oid)] = note.split(":", 1)[1]
                 break
+    # Zweiter Belegweg fuer Fills ohne Loop-Zyklus (Screener-Route).
+    basis_by_candidate: dict[str, str] = {}
+    for cand in iter_jsonl_tolerant(ctx.shadow_candidates):
+        cid = cand.get("candidate_id")
+        basis = cand.get("entry_price_basis")
+        if cid and basis:
+            basis_by_candidate[str(cid)] = str(basis)
     per_symbol: dict[str, int] = {}
     real_source = 0
     total = 0
@@ -258,12 +307,18 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             continue
         if not (band_lo <= price <= band_hi):
             continue
+        sym = str(rec.get("symbol"))
         src = source_by_order.get(str(rec.get("order_id") or ""))
         if src and src != "mock":
             real_source += 1
             continue
+        # Kein Zyklus-Beleg: Screener-Route ueber document_id -> candidate_id.
+        # Ein ausdrueckliches ``mock`` (src == "mock") ueberspringt diesen Weg —
+        # der Zusatz-Join darf einen Negativ-Befund nie aufweichen.
+        if src is None and _screener_entry_basis(rec, sym, basis_by_candidate) == _BASIS_REAL:
+            real_source += 1
+            continue
         total += 1
-        sym = str(rec.get("symbol"))
         per_symbol[sym] = per_symbol.get(sym, 0) + 1
     if not total:
         return []
