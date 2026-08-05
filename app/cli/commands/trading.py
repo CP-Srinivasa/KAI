@@ -1128,6 +1128,7 @@ def trading_prereg_observe(
             artifacts_dir=Path(artifacts_dir),
             observed_at=datetime.now(UTC),
             source_json=str(src),
+            success_criteria=entry.success_criteria,
         )
     except ValueError as exc:
         console.print(f"[red]prereg-observe:[/red] {exc}")

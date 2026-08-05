@@ -51,6 +51,7 @@ Drei getrennte Ursachen, alle hier adressiert:
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -303,6 +304,45 @@ def load_exact_observations(artifacts_dir: Path) -> dict[str, dict[str, Any]]:
     return newest
 
 
+def _seals_hedged_construction(success_criteria: str) -> bool:
+    """Verlangt der versiegelte Freitext eine BTC-gehedgte Konstruktion?
+
+    Die Hedge-Klausel steht NUR im ``success_criteria`` — das maschinelle
+    ``gate`` (level/horizon/n_min/p_min/...) kennt sie nicht. Deshalb wird hier
+    gegen den Wortlaut geprüft und nicht gegen das Gate.
+    """
+    return re.search(r"\bhedged\b", success_criteria, re.IGNORECASE) is not None
+
+
+def _verify_construction_matches_prereg(success_criteria: str, eval_result: dict[str, Any]) -> None:
+    """Abbrechen, wenn der Lauf eine ANDERE Kohorte gemessen hat als versiegelt.
+
+    Befund 2026-08-05: ein ``news-eval``-Lauf ohne ``--hedge`` wurde als exakte
+    Messung akzeptiert und schrieb n=360/300 fest, obwohl ``b20ef1487ccba99d``
+    ausdrücklich "BTC-hedged (beta=1)" versiegelt. Die Spot-Konstruktion
+    verwirft Events ohne Hedge-Symbol nicht und zählt darum systematisch mehr
+    Stories (369 statt 303) — die 300er-Latte wäre zu früh gerissen. Bei ND-v2
+    ist ein FAIL terminal, ein verfrühtes Verdikt also nicht heilbar.
+    """
+    meta = eval_result.get("meta")
+    construction = meta.get("construction") if isinstance(meta, dict) else None
+    if not isinstance(construction, str) or not construction:
+        raise ValueError(
+            "evaluator output carries no meta.construction — the measured cohort "
+            "cannot be checked against the sealed criteria, so nothing is recorded"
+        )
+    expected_hedged = _seals_hedged_construction(success_criteria)
+    actual_hedged = "hedged" in construction.lower()
+    if expected_hedged != actual_hedged:
+        want = "BTC-hedged" if expected_hedged else "un-hedged (spot)"
+        raise ValueError(
+            f"construction mismatch: pre-registration seals a {want} cohort, but the "
+            f"evaluator ran {construction!r} — a different cohort was measured, so "
+            "nothing is recorded (re-run news-eval "
+            f"{'WITH' if expected_hedged else 'WITHOUT'} --hedge)"
+        )
+
+
 def record_exact_observation(
     *,
     prereg_id: str,
@@ -312,6 +352,7 @@ def record_exact_observation(
     artifacts_dir: Path,
     observed_at: datetime,
     source_json: str | None = None,
+    success_criteria: str | None = None,
 ) -> dict[str, Any]:
     """Exaktes n aus einem Evaluator-Lauf gegen das VERSIEGELTE Gate festhalten.
 
@@ -320,8 +361,15 @@ def record_exact_observation(
     Block im Ergebnis nicht vorhanden, ist nichts gemessen worden und es wird
     NICHTS geschrieben (``ValueError``) — eine erfundene Null wäre schlimmer als
     keine Beobachtung.
+
+    Wird ``success_criteria`` mitgegeben, muss ausserdem die KONSTRUKTION des
+    Laufs zum versiegelten Wortlaut passen (hedged vs. spot). Das richtige n
+    aus der falschen Kohorte ist keine gültige Messung.
     """
     from app.research.prereg_gate import check_gate
+
+    if success_criteria is not None:
+        _verify_construction_matches_prereg(success_criteria, eval_result)
 
     result = check_gate(gate, eval_result)
     n_check = next((c for c in result["checks"] if c["name"] == "n_min"), None)
