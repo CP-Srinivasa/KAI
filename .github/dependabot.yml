@@ -1,0 +1,52 @@
+# Dependabot — nur npm/`web`.
+#
+# Warum npm hier und Python NICHT: `requirements.lock` wird bereits wöchentlich
+# von `.github/workflows/lock-update.yml` neu kompiliert (uv + eigener
+# pip-audit-Lauf pro Bump-PR). Ein zweiter Mechanismus auf demselben Lock würde
+# nur konkurrierende PRs erzeugen. Fürs Frontend existiert kein Gegenstück — die
+# `web/package-lock.json` hatte bis hierher überhaupt keinen Auto-Refresh.
+#
+# Anlass (2026-08-05): Fünf offene Security-Alerts im Frontend — vitest
+# (CRITICAL), vite (HIGH + 2× MEDIUM), esbuild (MEDIUM) — und keine einzige
+# Dependabot-PR dazu. Zwei Gründe lagen übereinander:
+#
+#   1. Der Default-Branch zeigte auf das tote `master` (858 Commits hinter der
+#      Mainline, Squash-Sync). Alerts liefen gegen einen Stand, den niemand mehr
+#      baute; 5 der damals 9 Alerts waren Phantome. Das ist inzwischen behoben —
+#      Default-Branch ist die Mainline, die verbliebenen 5 Alerts sind echt.
+#   2. Es gab keine Dependabot-Konfiguration. Ohne sie laufen keine
+#      Version-Updates, und die Alerts bleiben Anzeige ohne Vorgang.
+#
+# Der Fix schließt zusätzlich eine praktische Lücke: Die Bumps sind Majors
+# (vite 5→6+, vitest 2→3+), und ihre Lock-Auflösung braucht das komplette
+# npm-Metadaten-Set — das Vite-Packument allein ist ~38 MB. Auf einer langsamen
+# Leitung ist das lokal nicht durchführbar. Dependabot löst auf GitHubs Netz auf.
+#
+# ⚠ Kein `target-branch` setzen: Das schaltet Security-Updates für dieses
+# Ökosystem AB und macht die Lage schlimmer als vorher.
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Berlin"
+    # Genug Luft für die aufgelaufenen Majors, wenig genug, dass ein Wochenlauf
+    # den Review-Kanal nicht flutet.
+    open-pull-requests-limit: 5
+    groups:
+      # Vite und Vitest teilen sich die esbuild-/rollup-Basis; getrennte PRs
+      # würden sich gegenseitig den Lock umschreiben und abwechselnd rot werden.
+      build-toolchain:
+        patterns:
+          - "vite"
+          - "vitest"
+          - "@vitejs/*"
+          - "esbuild"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
