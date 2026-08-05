@@ -16,10 +16,11 @@ Only ``add`` / ``__contains__`` / ``clear`` are persistence-aware — the other 
 mutators (``discard``, ``pop``, ``update``, ...) are intentionally NOT supported by
 this ledger and would desync the on-disk view; the confirm gate never uses them.
 
-Fail-soft: a missing or corrupt ledger loads as empty; a persist error is logged and
-swallowed (the audit/replay guard must never crash the control surface). Writes are
-atomic via a temp-file + ``os.replace`` full rewrite — cheap because confirms are
-rare (operator HOTP per irreversible spend) and the file is bounded.
+Fail-closed on writes: a missing/corrupt ledger still loads tolerantly, but consuming
+a new key is successful only after the bounded file was atomically replaced.  A
+persist error raises :class:`IdempotencyPersistenceError`; the control gate converts
+that into a denial, because executing without a durable replay guard can double-pay
+after a restart.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +41,10 @@ _DEFAULT_PATH = Path("artifacts/ln_idempotency_seen.jsonl")
 _DEFAULT_MAX_KEYS = 1000
 
 
+class IdempotencyPersistenceError(RuntimeError):
+    """A key could not be durably consumed; the value action must not execute."""
+
+
 class PersistentSeenKeys(set[str]):
     """A ``set[str]`` of consumed idempotency keys, persisted + bounded on disk."""
 
@@ -46,6 +52,7 @@ class PersistentSeenKeys(set[str]):
         super().__init__()
         self._path = path or _DEFAULT_PATH
         self._max_keys = max(1, max_keys)
+        self._lock = threading.Lock()
         # Insertion-ordered key -> ISO-8601 ts. Source of truth for both the recency
         # bound (evict oldest) and persistence; the set itself is the membership index.
         self._records: OrderedDict[str, str] = OrderedDict()
@@ -71,33 +78,51 @@ class PersistentSeenKeys(set[str]):
         new key past ``max_keys`` evicts the oldest so both the in-memory set and the
         file stay bounded.
         """
-        if key in self._records:
-            self._records.move_to_end(key)
-            return
-        self._records[key] = datetime.now(UTC).isoformat()
-        super().add(key)
-        while len(self._records) > self._max_keys:
-            evicted, _ = self._records.popitem(last=False)
-            super().discard(evicted)
-        self._persist()
+        self.consume(key)
+
+    def consume(self, key: str) -> bool:
+        """Atomically check and durably consume ``key``.
+
+        Returns ``False`` for an existing key.  New keys become visible in memory
+        only after the on-disk replacement succeeds, so a failed persist cannot
+        create a false sense of restart-safe idempotency.
+        """
+        with self._lock:
+            if key in self._records:
+                return False
+            records = OrderedDict(self._records)
+            records[key] = datetime.now(UTC).isoformat()
+            while len(records) > self._max_keys:
+                records.popitem(last=False)
+            self._persist(records)
+            self._records = records
+            super().clear()
+            super().update(records.keys())
+            return True
 
     def clear(self) -> None:
         """Forget every key in memory AND on disk (test seam / operator reset)."""
-        self._records.clear()
-        super().clear()
-        self._persist()
+        with self._lock:
+            self._persist(OrderedDict())
+            self._records.clear()
+            super().clear()
 
-    def _persist(self) -> None:
+    def _persist(self, records: OrderedDict[str, str]) -> None:
         """Atomically rewrite the bounded ledger (temp file + ``os.replace``)."""
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_name(f"{self._path.name}.tmp.{os.getpid()}")
             with tmp.open("w", encoding="utf-8") as handle:
-                for key, ts in self._records.items():
+                for key, ts in records.items():
                     handle.write(json.dumps({"key": key, "ts": ts}, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, self._path)
-        except OSError as exc:  # persistence is best-effort — never kill the control surface
+        except OSError as exc:
             logger.warning("[ln-idempotency] persist failed: %s", exc)
+            raise IdempotencyPersistenceError(
+                f"idempotency ledger unavailable: {type(exc).__name__}"
+            ) from exc
 
 
-__all__ = ["PersistentSeenKeys"]
+__all__ = ["IdempotencyPersistenceError", "PersistentSeenKeys"]

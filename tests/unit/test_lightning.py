@@ -6,7 +6,9 @@ resolution (hex + file), and a happy-path getinfo through a mocked transport.
 
 from __future__ import annotations
 
+import base64
 import binascii
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -20,6 +22,7 @@ from app.lightning import (
     get_node_status,
 )
 from app.lightning import adapter as adapter_mod
+from app.lightning.adapter import _build_client, get_fresh_available_balance
 
 
 def _transport(handler) -> httpx.MockTransport:
@@ -114,6 +117,38 @@ async def test_transport_error_raises_unavailable() -> None:
     )
     with pytest.raises(LightningUnavailableError):
         await client.get_info()
+
+
+async def test_track_payment_v2_uses_urlsafe_hash_and_last_stream_update() -> None:
+    raw_hash = bytes(range(32))
+    expected = base64.urlsafe_b64encode(raw_hash).decode("ascii")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/v2/router/track/{expected}"
+        assert request.url.params["no_inflight_updates"] == "true"
+        return httpx.Response(
+            200,
+            content=(
+                b'{"result":{"status":"IN_FLIGHT"}}\n'
+                b'{"result":{"status":"SUCCEEDED","fee_sat":"2"}}\n'
+            ),
+        )
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    result = await client.track_payment_v2(raw_hash.hex())
+    assert result == {"status": "SUCCEEDED", "fee_sat": "2"}
+
+
+async def test_track_payment_v2_empty_stream_is_unknown_not_failure() -> None:
+    client = LndRestClient(
+        base_url="https://x:8080",
+        macaroon_hex="ab",
+        transport=_transport(lambda request: httpx.Response(200, content=b"")),
+    )
+    with pytest.raises(LightningUnavailableError, match="empty stream"):
+        await client.track_payment_v2("11" * 32)
 
 
 # --- adapter: default-off + fail-closed ------------------------------------------
@@ -268,6 +303,51 @@ def test_status_constructors() -> None:
 def test_base_url_built_from_host_port() -> None:
     cfg = LightningSettings(host="10.0.0.9", rest_port=8081)
     assert cfg.base_url == "https://10.0.0.9:8081"
+
+
+def test_capability_clients_never_fallback_to_read_macaroon() -> None:
+    cfg = LightningSettings(
+        macaroon_hex="read",
+        invoice_macaroon_hex="invoice",
+        payment_macaroon_hex="payment",
+        onchain_macaroon_hex="onchain",
+        channel_macaroon_hex="channel",
+    )
+    assert _build_client(cfg)._headers["Grpc-Metadata-macaroon"] == "read"
+    for scope in ("invoice", "payment", "onchain", "channel"):
+        assert _build_client(cfg, credential_scope=scope)._headers[
+            "Grpc-Metadata-macaroon"
+        ] == scope
+
+
+def test_missing_write_credential_fails_closed_without_read_fallback() -> None:
+    cfg = LightningSettings(macaroon_hex="read-only")
+    with pytest.raises(LightningUnavailableError, match="no macaroon configured"):
+        _build_client(cfg, credential_scope="payment")
+
+
+async def test_fresh_balance_is_synchronous_and_requires_both_calls(monkeypatch) -> None:
+    client = MagicMock()
+    client.channel_balance = AsyncMock(return_value={"local_balance": {"sat": "300"}})
+    client.wallet_balance = AsyncMock(return_value={"total_balance": "700"})
+    monkeypatch.setattr(adapter_mod, "_build_client", lambda cfg: client)
+    snap = await get_fresh_available_balance(
+        LightningSettings(enabled=True, macaroon_hex="read", tls_cert_path="test-tls.pem")
+    )
+    assert snap.state == "ok" and snap.available_balance_sat == 1000
+    client.channel_balance.assert_awaited_once()
+    client.wallet_balance.assert_awaited_once()
+
+
+async def test_fresh_balance_fails_closed_on_partial_poll(monkeypatch) -> None:
+    client = MagicMock()
+    client.channel_balance = AsyncMock(return_value={"local_balance": "300"})
+    client.wallet_balance = AsyncMock(side_effect=LightningUnavailableError("timeout"))
+    monkeypatch.setattr(adapter_mod, "_build_client", lambda cfg: client)
+    snap = await get_fresh_available_balance(
+        LightningSettings(enabled=True, macaroon_hex="read", tls_cert_path="test-tls.pem")
+    )
+    assert snap.state == "unavailable" and snap.available_balance_sat == 0
 
 
 # --- channels: per-channel breakdown (read-only listchannels) --------------------

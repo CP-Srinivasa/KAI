@@ -98,3 +98,27 @@ def test_ignores_non_spends_other_days_and_planned(tmp_path) -> None:
 
 def test_missing_ledger_is_zero(tmp_path) -> None:
     assert spent_today_sat(tmp_path / "fehlt.jsonl", now=NOW) == 0
+
+
+def test_open_intent_reserves_cap_and_outcome_does_not_double_count(tmp_path) -> None:
+    path = tmp_path / "ops.jsonl"
+    intent = _rec("pay_invoice", "intent", plan={"amount_sat": 5000})
+    intent["intent_id"] = "p1"
+    _write(path, [intent])
+    assert spent_today_sat(path, now=NOW) == 5000
+
+    executed = _rec(
+        "pay_invoice",
+        "executed",
+        plan={"amount_sat": 5000},
+        response={"route_summary": {"total_amt_sat": 5002}},
+    )
+    executed["intent_id"] = "p1"
+    _write(path, [intent, executed])
+    assert spent_today_sat(path, now=NOW) == 5002
+
+
+def test_daily_cap_has_no_unsafe_two_thousand_row_tail_limit(tmp_path) -> None:
+    path = tmp_path / "ops.jsonl"
+    _write(path, [_rec("keysend", "executed", plan={"amt_sat": 1}) for _ in range(2101)])
+    assert spent_today_sat(path, now=NOW) == 2101

@@ -41,6 +41,22 @@ class _HotpLike(Protocol):
     def verify(self, code: str) -> Any: ...
 
 
+def _consume_idempotency_key(seen_keys: set[str], key: str) -> ConfirmVerdict:
+    """Consume a key atomically when the persistent store supports it."""
+    try:
+        consume = getattr(seen_keys, "consume", None)
+        if callable(consume):
+            if not consume(key):
+                return ConfirmVerdict(False, "idempotency key replay")
+        else:
+            if key in seen_keys:
+                return ConfirmVerdict(False, "idempotency key replay")
+            seen_keys.add(key)
+    except Exception as exc:  # noqa: BLE001 - persistence uncertainty denies execution
+        return ConfirmVerdict(False, f"idempotency persistence failed: {exc}")
+    return ConfirmVerdict(True, "execution intent verified")
+
+
 def _reject_plan_or_key(
     submitted_plan_hash: str,
     expected_plan_hash: str,
@@ -52,9 +68,31 @@ def _reject_plan_or_key(
         return ConfirmVerdict(False, "plan hash mismatch (plan changed since preview)")
     if not idempotency_key:
         return ConfirmVerdict(False, "idempotency key required")
-    if idempotency_key in seen_keys:
-        return ConfirmVerdict(False, "idempotency key replay")
+    try:
+        if idempotency_key in seen_keys:
+            return ConfirmVerdict(False, "idempotency key replay")
+    except Exception as exc:  # noqa: BLE001 - persistence uncertainty denies execution
+        return ConfirmVerdict(False, f"idempotency persistence failed: {exc}")
     return None
+
+
+def verify_execution_intent(
+    *,
+    submitted_plan_hash: str,
+    expected_plan_hash: str,
+    idempotency_key: str,
+    seen_keys: set[str],
+) -> ConfirmVerdict:
+    """Verify plan binding + durable replay protection for every execute path."""
+    rejected = _reject_plan_or_key(
+        submitted_plan_hash=submitted_plan_hash,
+        expected_plan_hash=expected_plan_hash,
+        idempotency_key=idempotency_key,
+        seen_keys=seen_keys,
+    )
+    if rejected is not None:
+        return rejected
+    return _consume_idempotency_key(seen_keys, idempotency_key)
 
 
 def verify_capital_confirm(
@@ -82,7 +120,9 @@ def verify_capital_confirm(
         hotp_verifier.verify(hotp_code)
     except Exception as exc:  # noqa: BLE001 — any HOTP failure → reject (honest reason)
         return ConfirmVerdict(False, f"hotp rejected: {exc}")
-    seen_keys.add(idempotency_key)
+    consumed = _consume_idempotency_key(seen_keys, idempotency_key)
+    if not consumed.ok:
+        return consumed
     return ConfirmVerdict(True, "confirmed")
 
 
@@ -100,13 +140,12 @@ def verify_auto_execute_confirm(
     ``create_invoice`` minting) and the executed params were never bound to the
     previewed plan. On success the idempotency key is consumed.
     """
-    rejected = _reject_plan_or_key(
-        submitted_plan_hash, expected_plan_hash, idempotency_key, seen_keys
+    return verify_execution_intent(
+        submitted_plan_hash=submitted_plan_hash,
+        expected_plan_hash=expected_plan_hash,
+        idempotency_key=idempotency_key,
+        seen_keys=seen_keys,
     )
-    if rejected is not None:
-        return rejected
-    seen_keys.add(idempotency_key)
-    return ConfirmVerdict(True, "confirmed")
 
 
 __all__ = [
@@ -114,4 +153,5 @@ __all__ = [
     "plan_hash",
     "verify_auto_execute_confirm",
     "verify_capital_confirm",
+    "verify_execution_intent",
 ]

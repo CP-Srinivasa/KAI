@@ -14,7 +14,8 @@ Phase 1 is observation only. Invoice/pay surfaces are intentionally absent here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from app.core.settings import LightningSettings, get_settings
 from app.lightning.client import LightningUnavailableError, LndRestClient
@@ -136,6 +137,23 @@ class LightningFeeReport:
         return cls(available=False)
 
 
+@dataclass(frozen=True)
+class LightningBalanceSnapshot:
+    """Synchronous balance truth for a capital policy decision.
+
+    Unlike the dashboard cache this snapshot is fetched in the request that is
+    about to authorise value.  ``state != "ok"`` is an explicit fail-closed gate;
+    callers must never reinterpret an unavailable balance as zero headroom.
+    """
+
+    state: str
+    available_balance_sat: int = 0
+    wallet_total_sat: int = 0
+    channel_local_sat: int = 0
+    observed_at_utc: str = ""
+    reason: str = ""
+
+
 def _amt_sat(value: Any) -> int:
     """Parse an lnd sat amount: a plain int/str, or an Amount object
     ``{"sat": "123", "msat": "..."}``. Returns 0 on anything unparseable."""
@@ -147,13 +165,51 @@ def _amt_sat(value: Any) -> int:
         return 0
 
 
-def _build_client(cfg: LightningSettings) -> LndRestClient:
+CredentialScope = Literal["read", "invoice", "payment", "onchain", "channel"]
+
+
+def _build_client(
+    cfg: LightningSettings, *, credential_scope: CredentialScope = "read"
+) -> LndRestClient:
+    macaroon_hex, macaroon_path = cfg.macaroon_credentials(credential_scope)
     return LndRestClient(
         base_url=cfg.base_url,
-        macaroon_hex=cfg.macaroon_hex,
-        macaroon_path=cfg.macaroon_path,
+        macaroon_hex=macaroon_hex,
+        macaroon_path=macaroon_path,
         tls_cert_path=cfg.tls_cert_path,
         timeout=cfg.timeout_seconds,
+    )
+
+
+async def get_fresh_available_balance(
+    cfg: LightningSettings | None = None,
+) -> LightningBalanceSnapshot:
+    """Fetch wallet + outbound-channel balance synchronously for policy use.
+
+    This path intentionally bypasses :mod:`app.lightning.cache`: an anti-flicker
+    UI snapshot may be useful for display, but its age can never authorise a money
+    movement.  Both balance calls must succeed in the same observation; partial or
+    timed-out state is unavailable and therefore blocks the capital action.
+    """
+    cfg = cfg or get_settings().lightning
+    if not cfg.enabled:
+        return LightningBalanceSnapshot(state="disabled", reason="lightning disabled")
+    try:
+        client = _build_client(cfg)
+        channel = await client.channel_balance()
+        wallet = await client.wallet_balance()
+    except LightningUnavailableError as exc:
+        return LightningBalanceSnapshot(state="unavailable", reason=str(exc))
+    except Exception as exc:  # noqa: BLE001 - capital gate converts uncertainty to deny
+        return LightningBalanceSnapshot(state="unavailable", reason=f"unexpected: {exc}")
+    channel_local = _amt_sat(channel.get("local_balance"))
+    wallet_total = _amt_sat(wallet.get("total_balance"))
+    return LightningBalanceSnapshot(
+        state="ok",
+        available_balance_sat=channel_local + wallet_total,
+        wallet_total_sat=wallet_total,
+        channel_local_sat=channel_local,
+        observed_at_utc=datetime.now(UTC).isoformat(),
     )
 
 

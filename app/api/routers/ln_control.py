@@ -25,13 +25,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.core.settings import get_settings
 from app.lightning import value_layer as vl
+from app.lightning.adapter import LightningBalanceSnapshot, get_fresh_available_balance
 from app.lightning.control_gate import (
     plan_hash,
     verify_auto_execute_confirm,
@@ -40,6 +41,7 @@ from app.lightning.control_gate import (
 from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.idempotency_store import PersistentSeenKeys
 from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat
+from app.lightning.payment_reconciliation import reconcile_spent_today
 from app.lightning.policy import PolicyDecision, PolicyStore, evaluate_policy
 
 logger = logging.getLogger(__name__)
@@ -63,18 +65,43 @@ class _ActionSpec:
     amount_key: str | None
     recipient_key: str | None
     irreversible: bool
+    risk_class: Literal[
+        "receive", "offchain_spend", "onchain_spend", "channel_open", "channel_close"
+    ]
 
 
 # action → value-layer fn + how to read its (amount, recipient) for the policy.
 _ACTIONS: dict[str, _ActionSpec] = {
-    "create_invoice": _ActionSpec(vl.create_invoice, None, None, irreversible=False),
-    "pay_invoice": _ActionSpec(vl.pay_invoice, None, None, irreversible=True),
-    "keysend": _ActionSpec(vl.keysend, "amt_sat", "dest_pubkey_hex", irreversible=True),
-    "send_coins": _ActionSpec(vl.send_coins, "amount_sat", "addr", irreversible=True),
-    "open_channel": _ActionSpec(
-        vl.open_channel, "local_funding_sat", "node_pubkey_hex", irreversible=True
+    "create_invoice": _ActionSpec(
+        vl.create_invoice, None, None, irreversible=False, risk_class="receive"
     ),
-    "close_channel": _ActionSpec(vl.close_channel, None, None, irreversible=True),
+    "pay_invoice": _ActionSpec(
+        vl.pay_invoice, None, None, irreversible=True, risk_class="offchain_spend"
+    ),
+    "keysend": _ActionSpec(
+        vl.keysend,
+        "amt_sat",
+        "dest_pubkey_hex",
+        irreversible=True,
+        risk_class="offchain_spend",
+    ),
+    "send_coins": _ActionSpec(
+        vl.send_coins,
+        "amount_sat",
+        "addr",
+        irreversible=True,
+        risk_class="onchain_spend",
+    ),
+    "open_channel": _ActionSpec(
+        vl.open_channel,
+        "local_funding_sat",
+        "node_pubkey_hex",
+        irreversible=True,
+        risk_class="channel_open",
+    ),
+    "close_channel": _ActionSpec(
+        vl.close_channel, None, None, irreversible=True, risk_class="channel_close"
+    ),
 }
 
 
@@ -90,39 +117,32 @@ class ActionBody(BaseModel):
     confirm: ConfirmBody | None = None
 
 
-async def _available_balance_sat() -> int:
-    """Best-effort on-chain+channel balance for NON-capital actions (0 if
-    unavailable → policy errs conservative: a spend with unknown balance is denied
-    if a reserve floor is set). Capital actions use the freshness-gated variant."""
-    try:
-        from app.lightning.cache import get_cached_node_status
+def _classify_action_risk(
+    decision: PolicyDecision,
+    *,
+    action: str,
+    spec: _ActionSpec,
+    params: dict[str, Any],
+    fresh_balance: LightningBalanceSnapshot | None,
+) -> PolicyDecision:
+    """Apply non-amount risk rules after the operator envelope.
 
-        status, _ = await get_cached_node_status()
-        return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
-            getattr(status, "channel_local_sat", 0) or 0
-        )
-    except Exception:  # noqa: BLE001 — balance is best-effort, never block the endpoint
-        return 0
-
-
-async def _fresh_capital_balance_sat() -> int | None:
-    """W0-P1: on-chain+channel balance from a FRESH node snapshot, or ``None``.
-
-    ``None`` means no balance-bearing snapshot within ``CAPITAL_MAX_AGE_SECONDS``
-    could be obtained (node degraded/unreachable/stale) — the caller must fail
-    CLOSED and deny the capital action, never fall back to a cached value.
+    The envelope remains the configurable budget layer.  This function supplies
+    invariant action semantics that an amount of zero cannot bypass: capital
+    actions require a synchronous balance observation; on-chain/channel actions
+    are never automatic; and force-close is not executable through this API.
     """
-    try:
-        from app.lightning.cache import get_capital_grade_status
-
-        status, _age = await get_capital_grade_status()
-    except Exception:  # noqa: BLE001 — any failure counts as "no fresh state"
-        return None
-    if status is None:
-        return None
-    return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
-        getattr(status, "channel_local_sat", 0) or 0
-    )
+    if spec.risk_class != "receive":
+        if fresh_balance is None or fresh_balance.state != "ok":
+            reason = fresh_balance.reason if fresh_balance is not None else "not observed"
+            return PolicyDecision("denied", f"fresh node balance unavailable: {reason}")
+    if decision.decision == "denied":
+        return decision
+    if action == "close_channel" and bool(params.get("force", False)):
+        return PolicyDecision("denied", "force close is prohibited on the API control surface")
+    if spec.risk_class in {"onchain_spend", "channel_open", "channel_close"}:
+        return PolicyDecision("needs_confirm", f"{spec.risk_class} is manual-only")
+    return decision
 
 
 def _effective_amount_sat(
@@ -160,18 +180,37 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     spec = _ACTIONS.get(body.action)
     if spec is None:
         raise HTTPException(status_code=422, detail=f"unknown action: {body.action}")
+    reserved = {"cfg", "dry_run", "confirm", "intent_id", "authorization"}.intersection(
+        body.params
+    )
+    if reserved:
+        raise HTTPException(
+            status_code=422,
+            detail=f"reserved params are controlled by the value gate: {sorted(reserved)}",
+        )
 
     amount, amount_known = _effective_amount_sat(body.action, body.params, spec)
     recipient = body.params.get(spec.recipient_key) if spec.recipient_key else None
     envelope = PolicyStore().load()
-    # W0-P1: capital actions (irreversible specs) are evaluated ONLY against a
-    # fresh node snapshot; the dashboard cache may serve stale, money may not.
-    fresh_capital_sat: int | None = None
-    if spec.irreversible:
-        fresh_capital_sat = await _fresh_capital_balance_sat()
-        available = fresh_capital_sat if fresh_capital_sat is not None else 0
-    else:
-        available = await _available_balance_sat()
+    fresh_balance = (
+        None if spec.risk_class == "receive" else await get_fresh_available_balance()
+    )
+    available = fresh_balance.available_balance_sat if fresh_balance is not None else 0
+    ledger_spent = spent_today_sat()
+    spend_reconciliation: dict[str, Any] = (
+        {
+            "effective_spent_sat": ledger_spent,
+            "gap_sat": None,
+            "available": False,
+        }
+        if spec.risk_class == "receive"
+        else await reconcile_spent_today(
+            cfg=get_settings().lightning,
+            ledger_spent_sat=ledger_spent,
+        )
+    )
+    if spend_reconciliation.get("gap_sat") not in (None, 0):
+        logger.warning("LN daily-spend ledger/LND drift: %s", spend_reconciliation)
     decision = evaluate_policy(
         body.action,
         amount_sat=amount,
@@ -179,7 +218,7 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         # Gesamtaudit-P0 geschlossen: Tages-Cap zählt jetzt die real executed,
         # wert-abfließenden Sends des UTC-Tages aus dem Ops-Ledger. Für pay_invoice
         # stammt ``amount`` aus dem BOLT11 (nicht aus params) → Caps/Floor greifen jetzt.
-        spent_today_sat=spent_today_sat(),
+        spent_today_sat=int(spend_reconciliation["effective_spent_sat"]),
         available_balance_sat=available,
         envelope=envelope,
     )
@@ -187,11 +226,16 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # must never auto-execute — force operator confirm (HOTP) instead of silent pass.
     if not amount_known and decision.decision == "auto_execute":
         decision = PolicyDecision("needs_confirm", "amount unknown (amountless invoice)")
-    # W0-P1 fail-closed: without a fresh balance-bearing snapshot a capital action
-    # is hard-denied (the "action not allowed" deny above stays visible as-is).
-    if spec.irreversible and fresh_capital_sat is None and body.action in envelope.allowed_actions:
+    decision = _classify_action_risk(
+        decision,
+        action=body.action,
+        spec=spec,
+        params=body.params,
+        fresh_balance=fresh_balance,
+    )
+    if spec.risk_class == "offchain_spend" and not spend_reconciliation.get("available"):
         decision = PolicyDecision(
-            "denied", "node state stale/unavailable — capital action fails closed"
+            "denied", "LND ListPayments daily-spend reconciliation unavailable"
         )
     ph = plan_hash(body.action, body.params)
 
@@ -247,9 +291,26 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # middleware), so it is not an anonymous mint-flood vector. The public mint path
     # (truth_oracle) carries the rate-limit + the trusted-client-IP key.
     result = (
-        await _call(dry_run=False, confirm=True)
+        await _call(
+            dry_run=False,
+            confirm=True,
+            intent_id=body.confirm.idempotency_key,
+            authorization={
+                "policy_decision": decision.decision,
+                "confirmation": "hotp" if decision.decision == "needs_confirm" else "auto",
+                "plan_hash": ph,
+            },
+        )
         if spec.irreversible
-        else await _call(dry_run=False)
+        else await _call(
+            dry_run=False,
+            intent_id=body.confirm.idempotency_key,
+            authorization={
+                "policy_decision": decision.decision,
+                "confirmation": "auto",
+                "plan_hash": ph,
+            },
+        )
     )
     return {"mode": "execute", "action": body.action, "result": result.to_dict()}
 

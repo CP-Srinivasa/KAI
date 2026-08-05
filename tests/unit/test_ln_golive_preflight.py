@@ -20,6 +20,8 @@ def _ready_cfg() -> LightningSettings:
         pay_enabled=False,
         l402_secret="a" * 32,
         macaroon_hex="deadbeef",
+        invoice_macaroon_hex="invoice",
+        payment_macaroon_hex="payment",
         tls_cert_path="test-tls.pem",
     )
 
@@ -108,7 +110,8 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
         "l402_enabled",
         "receive_enabled",
         "l402_secret_set",
-        "macaroon_configured",
+        "read_macaroon_configured",
+        "invoice_macaroon_configured",
         "node_reachable",
         "macaroon_scope_minimal",
         "macaroon_can_mint",

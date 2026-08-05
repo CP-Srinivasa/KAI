@@ -29,6 +29,10 @@ def _patches(*, enabled: bool, proofs_dir: str, anchor_result: AnchorResult, cal
     return (
         patch("app.truth.ledger.attest_prereg_ledger", return_value={"attested": 0, "total": 8}),
         patch("app.truth.ledger.attest_verdict_reports", return_value={"attested": 0, "total": 5}),
+        patch(
+            "app.lightning.ops_ledger.attest_ln_ops_tip",
+            return_value={"attested": 0, "total": 0},
+        ),
         patch("app.truth.ledger.chain_tip", return_value={"record_hash": _TIP_HASH, "seq": 20}),
         patch(
             "app.core.integrity_settings.IntegritySettings",
@@ -43,7 +47,7 @@ def _patches(*, enabled: bool, proofs_dir: str, anchor_result: AnchorResult, cal
 def _run(**kw):  # noqa: ANN003
     calls: list = []
     ctxs = _patches(calls=calls, **kw)
-    with ctxs[0], ctxs[1], ctxs[2], ctxs[3], ctxs[4]:
+    with ctxs[0], ctxs[1], ctxs[2], ctxs[3], ctxs[4], ctxs[5]:
         rc = main()
     return rc, calls
 

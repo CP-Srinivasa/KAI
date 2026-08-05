@@ -180,7 +180,6 @@ _LN_LOCAL_BYPASS_READS: frozenset[str] = frozenset(
         "/dashboard/api/ln/demand",
         "/dashboard/api/ln/channels",
         "/dashboard/api/ln/reputation",
-        "/dashboard/api/ln/ops",
         "/dashboard/api/ln/earnings",
         "/dashboard/api/ln/treasury",
     }

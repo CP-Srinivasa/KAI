@@ -31,26 +31,35 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool, int]:
       readonly macaroon passes the no-spend check but cannot mint, which would 503 the
       paid path — this catches that trap. The probe invoice is 1 sat, 60s expiry,
       capital-free, and expires unpaid."""
-    client = _build_client(cfg)
     try:
-        await client.get_info()
+        read_client = _build_client(cfg)
+        invoice_client = _build_client(cfg, credential_scope="invoice")
+        scope_client = (
+            _build_client(cfg, credential_scope="payment") if cfg.pay_enabled else invoice_client
+        )
     except LightningUnavailableError:
         return False, False, False, 0
     try:
-        await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
+        await read_client.get_info()
+    except LightningUnavailableError:
+        return False, False, False, 0
+    try:
+        await scope_client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
         scope_minimal = False  # node ACCEPTED a spend attempt → macaroon too broad
     except LightningUnavailableError as exc:
         text = str(exc).lower()
         scope_minimal = "permission" in text or "403" in text
     try:
-        await client.add_invoice(value_sat=1, memo="kai-preflight-mint-probe", expiry_seconds=60)
+        await invoice_client.add_invoice(
+            value_sat=1, memo="kai-preflight-mint-probe", expiry_seconds=60
+        )
         can_mint = True
     except LightningUnavailableError:
         can_mint = False  # no invoices:write (e.g. a readonly macaroon) → cannot receive
     # inbound liquidity (read-only): remote_balance = what others can send us. lnd returns
     # it flat (older) or nested {sat,msat} (newer) — handle both. 0 inbound = nobody can pay.
     try:
-        rb = (await client.channel_balance()).get("remote_balance", 0)
+        rb = (await read_client.channel_balance()).get("remote_balance", 0)
         inbound_sat = int(rb.get("sat", 0) if isinstance(rb, dict) else rb)
     except (LightningUnavailableError, TypeError, ValueError):
         inbound_sat = 0

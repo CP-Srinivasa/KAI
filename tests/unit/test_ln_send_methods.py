@@ -16,7 +16,7 @@ import pytest
 
 from app.core.lightning_settings import LightningSettings
 from app.lightning import value_layer as vl
-from app.lightning.client import LndRestClient
+from app.lightning.client import LightningUnavailableError, LndRestClient
 from app.lightning.value_layer import (
     close_channel,
     keysend,
@@ -65,16 +65,105 @@ async def test_send_dry_run_default_plans_without_node(monkeypatch) -> None:
 
 async def test_pay_invoice_executes_with_all_gates_and_audits(monkeypatch) -> None:
     client = MagicMock()
+    client.decode_pay_req = AsyncMock(
+        return_value={"payment_hash": "11" * 32, "num_satoshis": "1000"}
+    )
     client.pay_invoice = AsyncMock(return_value={"payment_preimage": "ab", "payment_error": ""})
+    client.track_payment_v2 = AsyncMock(return_value={"status": "SUCCEEDED"})
     audited: list[tuple] = []
     monkeypatch.setattr(
         vl, "append_ln_op", lambda action, state, **k: audited.append((action, state))
     )
+    monkeypatch.setattr(vl, "prepare_ln_intent", lambda *args, **kwargs: {"intent_id": "p1"})
     with patch("app.lightning.value_layer._build_client", return_value=client):
         r = await pay_invoice(payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True))
     assert r.state == "executed"
     client.pay_invoice.assert_awaited_once()
     assert ("pay_invoice", "executed") in audited  # node-touching outcome audited
+
+
+async def test_pay_shadow_mismatch_stays_open(monkeypatch) -> None:
+    client = MagicMock()
+    client.decode_pay_req = AsyncMock(return_value={"payment_hash": "33" * 32})
+    client.pay_invoice = AsyncMock(return_value={"payment_preimage": "ab", "payment_error": ""})
+    client.track_payment_v2 = AsyncMock(return_value={"status": "FAILED"})
+    audited: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vl, "append_ln_op", lambda action, state, **kwargs: audited.append((action, state))
+    )
+    monkeypatch.setattr(vl, "prepare_ln_intent", lambda *args, **kwargs: {"intent_id": "p4"})
+    with patch("app.lightning.value_layer._build_client", return_value=client):
+        result = await pay_invoice(
+            payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True)
+        )
+    assert result.state == "unknown"
+    assert "mismatch" in result.detail
+    assert audited[-1] == ("pay_invoice", "unknown")
+
+
+async def test_expired_invoice_is_rejected_before_intent_or_send(monkeypatch) -> None:
+    client = MagicMock()
+    client.decode_pay_req = AsyncMock(
+        return_value={
+            "payment_hash": "44" * 32,
+            "num_satoshis": "1000",
+            "timestamp": "1",
+            "expiry": "1",
+        }
+    )
+    client.pay_invoice = AsyncMock()
+    with (
+        patch("app.lightning.value_layer._build_client", return_value=client),
+        patch("app.lightning.value_layer.prepare_ln_intent") as prepare,
+    ):
+        result = await pay_invoice(
+            payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True)
+        )
+    assert result.state == "error" and "expired" in result.detail
+    prepare.assert_not_called()
+    client.pay_invoice.assert_not_awaited()
+
+
+async def test_25k_timeout_precedent_is_reconciled_by_track_payment_v2(monkeypatch) -> None:
+    client = MagicMock()
+    client.decode_pay_req = AsyncMock(
+        return_value={"payment_hash": "11" * 32, "num_satoshis": "25000"}
+    )
+    client.pay_invoice = AsyncMock(side_effect=LightningUnavailableError("ReadTimeout"))
+    client.track_payment_v2 = AsyncMock(
+        return_value={"status": "SUCCEEDED", "payment_hash": "11" * 32}
+    )
+    audited: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vl, "append_ln_op", lambda action, state, **kwargs: audited.append((action, state))
+    )
+    monkeypatch.setattr(vl, "prepare_ln_intent", lambda *args, **kwargs: {"intent_id": "p2"})
+    with patch("app.lightning.value_layer._build_client", return_value=client):
+        result = await pay_invoice(
+            payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True)
+        )
+    assert result.state == "executed"
+    assert result.plan["amount_sat"] == 25_000
+    assert "TrackPaymentV2" in result.detail
+    assert audited[-1] == ("pay_invoice", "executed")
+
+
+async def test_pay_timeout_and_track_outage_leave_intent_open(monkeypatch) -> None:
+    client = MagicMock()
+    client.decode_pay_req = AsyncMock(return_value={"payment_hash": "22" * 32})
+    client.pay_invoice = AsyncMock(side_effect=LightningUnavailableError("ReadTimeout"))
+    client.track_payment_v2 = AsyncMock(side_effect=LightningUnavailableError("router down"))
+    audited: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vl, "append_ln_op", lambda action, state, **kwargs: audited.append((action, state))
+    )
+    monkeypatch.setattr(vl, "prepare_ln_intent", lambda *args, **kwargs: {"intent_id": "p3"})
+    with patch("app.lightning.value_layer._build_client", return_value=client):
+        result = await pay_invoice(
+            payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True)
+        )
+    assert result.state == "unknown"
+    assert audited[-1] == ("pay_invoice", "unknown")
 
 
 async def test_executed_error_is_audited_not_disabled(monkeypatch) -> None:

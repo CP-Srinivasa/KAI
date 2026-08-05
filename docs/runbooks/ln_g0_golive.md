@@ -14,8 +14,10 @@ On the lnd / RaspiBlitz node:
 
 NO `admin`, NO `onchain:write`, NO `offchain:write`, NO `peers:write`. This is the only
 defense that survives an app bug: even a mis-gated spend is rejected by the **node**.
-Install it as the KAI macaroon (`APP_LN_MACAROON_PATH` / `APP_LN_MACAROON_HEX`) + the
-`tls.cert` (`APP_LN_TLS_CERT_PATH`). See `docs/lightning_macaroon_matrix.md`.
+Install it only as the invoice capability (`APP_LN_INVOICE_MACAROON_PATH` /
+`APP_LN_INVOICE_MACAROON_HEX`). `APP_LN_MACAROON_*` remains the independent
+read-only credential used for node state and balances. Install `tls.cert` via
+`APP_LN_TLS_CERT_PATH`. See `docs/lightning_macaroon_matrix.md`.
 
 ## 2. Run the preflight (must be GO)
 
@@ -33,6 +35,8 @@ and `pay_enabled` OFF. Exit 0 / `"verdict": "GO"` is required before step 3.
 In the Pi `.env` — **NEVER** `pay_enabled`:
 
     APP_LN_ENABLED=true
+    APP_LN_MACAROON_PATH=/home/ubuntu/kai-secrets/lnd/kai-readonly.macaroon
+    APP_LN_INVOICE_MACAROON_PATH=/home/ubuntu/kai-secrets/lnd/kai-invoice.macaroon
     APP_LN_L402_ENABLED=true
     APP_LN_RECEIVE_ENABLED=true
     APP_LN_L402_SECRET=<32-byte hex>

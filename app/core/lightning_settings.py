@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,9 +29,9 @@ class LightningSettings(BaseSettings):
       - ``enabled=True`` (Phase 1): read-only access via ``readonly.macaroon`` over
         the lnd REST API (getinfo/channelbalance/feereport). Pure observation.
 
-    Phases 3+ (invoice/pay) live behind their OWN flags + the capital gate — this
-    settings object stays read-only on purpose. ``pay_enabled`` is a placeholder
-    kill-switch that defaults False and is NOT wired to any send path yet.
+    Invoice/pay capabilities live behind their own flags, least-privilege
+    credentials and the capital gate. ``pay_enabled`` is the wired master
+    kill-switch for every send path and defaults to False.
     """
 
     model_config = SettingsConfigDict(
@@ -43,13 +44,29 @@ class LightningSettings(BaseSettings):
     # lnd REST endpoint on the RaspiBlitz node (LAN, later WireGuard overlay IP).
     host: str = Field(default="192.168.178.51")
     rest_port: int = Field(default=8080, ge=1, le=65535)
-    # Hex-encoded macaroon OR a path to the macaroon file. Phase 1 = readonly.
+    # Read-only credential (Phase 1).  This legacy env name intentionally stays
+    # stable, but it is no longer reused by ANY write path.  Value capabilities
+    # below each get their own independently revocable macaroon (W0-P6).
     macaroon_path: str = Field(default="", repr=False)
     macaroon_hex: str = Field(default="", repr=False)
+    # Invoice create/list. Recommended permissions: invoices:read + invoices:write.
+    invoice_macaroon_path: str = Field(default="", repr=False)
+    invoice_macaroon_hex: str = Field(default="", repr=False)
+    # BOLT11 pay + keysend + TrackPaymentV2 crash reconciliation. Recommended
+    # permissions: offchain:read + offchain:write (no invoice/onchain/channel).
+    payment_macaroon_path: str = Field(default="", repr=False)
+    payment_macaroon_hex: str = Field(default="", repr=False)
+    # On-chain withdraw. Recommended permission: onchain:write only.
+    onchain_macaroon_path: str = Field(default="", repr=False)
+    onchain_macaroon_hex: str = Field(default="", repr=False)
+    # Channel open/close. Kept separate because it can lock capital and incur
+    # on-chain fees even when no payment leaves the operator's custody.
+    channel_macaroon_path: str = Field(default="", repr=False)
+    channel_macaroon_hex: str = Field(default="", repr=False)
     # Path to lnd tls.cert (used to verify the node's self-signed TLS).
     tls_cert_path: str = Field(default="")
     timeout_seconds: float = Field(default=10.0, gt=0)
-    # Placeholder kill-switch for the future send path (Phase 4). Not wired yet.
+    # Wired master kill-switch for every value-layer send; default-off.
     pay_enabled: bool = Field(default=False)
     # Receive-side capability (capital-free): mint inbound BOLT11 invoices. Decoupled
     # from ``pay_enabled`` so "Empfangen vor Senden" can be enabled WITHOUT un-gating
@@ -119,6 +136,25 @@ class LightningSettings(BaseSettings):
     @property
     def base_url(self) -> str:
         return f"https://{self.host}:{self.rest_port}"
+
+    def macaroon_credentials(
+        self, scope: Literal["read", "invoice", "payment", "onchain", "channel"]
+    ) -> tuple[str, str]:
+        """Return ``(hex, path)`` for one least-privilege capability.
+
+        There is deliberately no fallback from a write scope to the read
+        credential.  A missing capability must fail closed instead of silently
+        recreating the single-all-powerful-macaroon configuration W0-P6 removes.
+        """
+        if scope == "read":
+            return self.macaroon_hex, self.macaroon_path
+        if scope == "invoice":
+            return self.invoice_macaroon_hex, self.invoice_macaroon_path
+        if scope == "payment":
+            return self.payment_macaroon_hex, self.payment_macaroon_path
+        if scope == "onchain":
+            return self.onchain_macaroon_hex, self.onchain_macaroon_path
+        return self.channel_macaroon_hex, self.channel_macaroon_path
 
 
 class LightningBootError(RuntimeError):

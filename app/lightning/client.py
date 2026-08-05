@@ -14,10 +14,13 @@ fail-closed status so the trading loop is never blocked by Lightning.
 
 from __future__ import annotations
 
+import base64
 import binascii
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -130,6 +133,58 @@ class LndRestClient:
         if not isinstance(data, dict):
             raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
         return data
+
+    async def _stream_get_last(self, path: str) -> dict[str, Any]:
+        """Consume one lnd server-streaming REST response and return its last item.
+
+        grpc-gateway renders streaming messages as newline-delimited JSON objects,
+        normally wrapped as ``{"result": ...}``.  A transport failure or a stream
+        that ends without any valid object is UNKNOWN, never proof of failure.
+        """
+        url = f"{self._base_url}{path}"
+        try:
+            if self._transport is not None:
+                client_kwargs: dict[str, Any] = {
+                    "transport": self._transport,
+                    "timeout": self._timeout,
+                }
+            else:
+                client_kwargs = {"verify": self._verify, "timeout": self._timeout}
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                async with client.stream("GET", url, headers=self._headers) as resp:
+                    if resp.status_code != 200:
+                        raw = (await resp.aread()).decode("utf-8", errors="replace")
+                        raise LightningUnavailableError(
+                            f"lnd returned {resp.status_code} for {path}: {raw[:200]}"
+                        )
+                    latest: dict[str, Any] | None = None
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            message = json.loads(line)
+                        except ValueError as exc:
+                            raise LightningUnavailableError(
+                                f"lnd returned malformed stream JSON for {path}"
+                            ) from exc
+                        if not isinstance(message, dict):
+                            continue
+                        if "error" in message:
+                            raise LightningUnavailableError(
+                                f"lnd stream error for {path}: {str(message['error'])[:200]}"
+                            )
+                        result = message.get("result", message)
+                        if isinstance(result, dict):
+                            latest = result
+        except LightningUnavailableError:
+            raise
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(
+                f"lnd stream failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if latest is None:
+            raise LightningUnavailableError(f"lnd returned an empty stream for {path}")
+        return latest
 
     async def get_state(self) -> str:
         """GET /v1/state — cheap readiness probe (no wallet/chain work).
@@ -295,6 +350,43 @@ class LndRestClient:
         if fee_limit_sat > 0:
             body["fee_limit"] = {"fixed": str(int(fee_limit_sat))}
         return await self._post("/v1/channels/transactions", body)
+
+    async def decode_pay_req(self, payment_request: str) -> dict[str, Any]:
+        """Decode BOLT11 before sending so its stable payment hash is journalled."""
+        return await self._get(f"/v1/payreq/{quote(payment_request, safe='')}")
+
+    async def track_payment_v2(self, payment_hash: str) -> dict[str, Any]:
+        """Track an outgoing payment to a terminal or latest known state.
+
+        LND's REST path represents the protobuf ``bytes`` hash as URL-safe base64.
+        DecodePayReq returns the same hash as hex, while legacy SendPaymentSync may
+        return ordinary base64; both forms are accepted here.
+        """
+        value = payment_hash.strip()
+        if not value:
+            raise LightningUnavailableError("payment_hash required for TrackPaymentV2")
+        try:
+            raw = bytes.fromhex(value) if len(value) == 64 else base64.urlsafe_b64decode(value)
+        except (ValueError, binascii.Error) as exc:
+            raise LightningUnavailableError("payment_hash is neither hex nor base64") from exc
+        if len(raw) != 32:
+            raise LightningUnavailableError("payment_hash must decode to 32 bytes")
+        encoded = base64.urlsafe_b64encode(raw).decode("ascii")
+        return await self._stream_get_last(
+            f"/v2/router/track/{encoded}?no_inflight_updates=true"
+        )
+
+    async def list_payments(
+        self, *, creation_date_start: int, creation_date_end: int
+    ) -> list[dict[str, Any]]:
+        """List today's outgoing payments without route hops (read-only)."""
+        data = await self._get(
+            "/v1/payments?include_incomplete=true&omit_hops=true"
+            f"&creation_date_start={int(creation_date_start)}"
+            f"&creation_date_end={int(creation_date_end)}"
+        )
+        payments = data.get("payments", [])
+        return payments if isinstance(payments, list) else []
 
     async def keysend(
         self, *, dest_pubkey_hex: str, amt_sat: int, fee_limit_sat: int = 0

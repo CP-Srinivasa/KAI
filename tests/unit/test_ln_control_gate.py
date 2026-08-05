@@ -12,6 +12,7 @@ from app.lightning.control_gate import (
     plan_hash,
     verify_auto_execute_confirm,
     verify_capital_confirm,
+    verify_execution_intent,
 )
 
 
@@ -138,3 +139,21 @@ def test_bad_hotp_rejected_and_key_not_consumed() -> None:
     )
     assert not v.ok and "hotp" in v.reason
     assert "k1" not in seen  # failed confirm does not burn the idempotency key
+
+
+def test_auto_execution_intent_binds_plan_and_consumes_key_without_hotp() -> None:
+    seen: set[str] = set()
+    ok = verify_execution_intent(
+        submitted_plan_hash="h",
+        expected_plan_hash="h",
+        idempotency_key="auto-1",
+        seen_keys=seen,
+    )
+    replay = verify_execution_intent(
+        submitted_plan_hash="h",
+        expected_plan_hash="h",
+        idempotency_key="auto-1",
+        seen_keys=seen,
+    )
+    assert ok.ok and "auto-1" in seen
+    assert not replay.ok and "replay" in replay.reason

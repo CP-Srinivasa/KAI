@@ -79,6 +79,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
     app.state.session_factory = build_session_factory(settings.db)
 
+    # Money-path crash recovery: this is a read-only TrackPaymentV2 pass. It
+    # cannot send value; terminal LND states merely close durable write-ahead
+    # intents. Unreachable/in-flight payments stay open and reserve the daily cap.
+    if settings.lightning.enabled:
+        from app.lightning.payment_reconciliation import reconcile_open_payments
+
+        try:
+            reconciliation = await reconcile_open_payments(cfg=settings.lightning)
+            if reconciliation.get("checked") or reconciliation.get("errors"):
+                _logger.info("ln_payment_startup_reconciliation", **reconciliation)
+        except Exception as exc:  # noqa: BLE001 — startup stays available; cap stays reserved
+            _logger.warning(
+                "ln_payment_startup_reconciliation_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
     # Build analysis components for full-pipeline mode
     keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
     provider = None

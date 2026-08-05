@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.lightning.control_gate import verify_capital_confirm
-from app.lightning.idempotency_store import PersistentSeenKeys
+from app.lightning.idempotency_store import IdempotencyPersistenceError, PersistentSeenKeys
 
 
 class _FakeHotp:
@@ -80,14 +82,15 @@ def test_clear_truncates_memory_and_disk(tmp_path: Path) -> None:
     assert "k1" not in PersistentSeenKeys(p)  # gone on disk too
 
 
-def test_persist_failure_is_fail_soft(tmp_path: Path) -> None:
-    # A persist error must never crash the control surface: the key is still marked
-    # seen in memory (replay guard holds for the process), the error is swallowed.
+def test_persist_failure_is_fail_closed_and_does_not_consume(tmp_path: Path) -> None:
+    # No durable record means no safe execution.  The key must remain unconsumed so
+    # the operator can retry after repairing storage.
     blocker = tmp_path / "blocker"
     blocker.write_text("i am a file, not a directory", encoding="utf-8")
     store = PersistentSeenKeys(blocker / "seen.jsonl")  # parent is a file → persist fails
-    store.add("k1")  # must not raise
-    assert "k1" in store
+    with pytest.raises(IdempotencyPersistenceError):
+        store.add("k1")
+    assert "k1" not in store
 
 
 def test_drops_into_confirm_gate_seam(tmp_path: Path) -> None:

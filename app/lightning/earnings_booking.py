@@ -47,7 +47,7 @@ async def book_oracle_earnings(
     if not cfg.enabled:
         return 0
     try:
-        invoices = await _build_client(cfg).list_invoices()
+        invoices = await _build_client(cfg, credential_scope="invoice").list_invoices()
     except LightningUnavailableError as exc:
         logger.warning("[ln-earnings-booking] node unavailable: %s", exc)
         return 0

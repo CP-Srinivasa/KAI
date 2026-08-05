@@ -48,6 +48,13 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/audit/kai_audit_service.py` → `KaiAuditService` (Tamper-evident Hash-Chain)
 - `app/regime/classifier.py` → `classify_raw` · `app/regime/models.py` → `RegimeClass` (TREND_UP/DOWN/BREAKOUT/CHOP/UNKNOWN)
 
+### Lightning Value-Kernel (Self-Use, ADR 0016 Welle 0)
+- `app/api/routers/ln_control.py` → einziger Operator-POST-Chokepoint; Policy, frischer synchroner Balance-State, Plan-Hash/HOTP/Idempotenz
+- `app/lightning/value_layer.py` → zentraler Send-/Receive-Gate vor jedem LND-Write · `policy.py` → deterministische Envelope-Entscheidung
+- `app/lightning/adapter.py::_build_client` → Credential-Scope `read|invoice|payment|onchain|channel`; **kein Write-Fallback** auf `APP_LN_MACAROON_*`
+- `app/lightning/ops_ledger.py` → fsync-Write-ahead-Intent + Hash-Kette + redigierter öffentlicher Audit-Export; niemals Preimage, BOLT11 oder Route-Hops persistieren · Migration `scripts/redact_ln_ops_ledger.py`
+- `app/lightning/payment_reconciliation.py` → read-only TrackPaymentV2-Startup-Recovery + konservativer Ops-Ledger↔LND-ListPayments-Tagesabgleich · P3-Shadow-Gate: `scripts/ln_payment_shadow_report.py` (20 Übereinstimmungen, 0 Drift)
+
 ## Kern-Env-Flags (Definition; LIVE-Werte = Pi-`.env`, NICHT hier)
 - `EXECUTION_ENTRY_MODE` → `settings.execution.entry_mode` (`EntryMode`) — Master-Entry-Kill-Switch
 - `EXECUTION_PAPER_MIN_PRIORITY` — Paper-Fill-Prioritätsschwelle

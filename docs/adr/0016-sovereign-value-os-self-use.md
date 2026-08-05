@@ -18,6 +18,22 @@ Der Operator hat eine Neupositionierung vorgelegt: Der wertvollste Teil von KAI 
 
 Hinzu kommt ein Befund, der die Ausgangslage verändert (siehe „Nachfragelage").
 
+### Implementierungsstand Welle 0 (Repo, 2026-08-05)
+
+Der Absatz oben beschreibt den geprüften Ausgangszustand vom 02.08. Im Repo ist die
+Geldpfad-Härtung inzwischen umgesetzt: direkter synchroner Balance-Poll; fsync-Write-ahead-
+Intent mit Hashkette und KAI-Truth-Tip; atomare persistente Idempotenz; Writer-Redaktion
+plus Auth-Pflicht; getrennte Read-/Invoice-/Payment-/Onchain-/Channel-Macaroons; Startup-
+Reconciliation via TrackPaymentV2; konservativer Tagesabgleich Ops-Ledger↔ListPayments.
+SCB-/Limbo-Sichtbarkeit war bereits vorhanden.
+
+Der Send-Pfad bleibt bewusst auf SendPaymentSync, bis der read-only Shadow-Vergleich
+`scripts/ln_payment_shadow_report.py` mindestens 20 terminale Vergleiche mit null Drift
+nachweist. Der Stand ist **nicht deployt**, schaltet kein Kapital frei und ändert den
+DRAFT-Status dieses ADRs nicht. Vor Deploy ist die nicht-destruktive Ledger-v2-Migration
+aus `docs/runbooks/ln_ops_ledger_v2_migration.md` sowie die Provisionierung der getrennten
+Macaroons Pflicht.
+
 ## Entscheidung (vorgeschlagen)
 
 **KAI wird als souveränes Value-OS ausgebaut — ausschließlich in der Self-Use-Form.**
