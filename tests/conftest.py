@@ -52,6 +52,10 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setenv("APP_LN_ENABLED", "false")
     monkeypatch.setenv("APP_LN_PAY_ENABLED", "false")
     monkeypatch.setenv("APP_LN_RECEIVE_ENABLED", "false")
+    # Chain-Truth (read-only bitcoind-Probe, kein Geldpfad) ebenfalls auf
+    # Code-Default zwingen: die Pi-.env aktiviert sie, und ein Default-off-Test
+    # sähe sonst `pending` statt `disabled` (Rest-Fail vom 05.08.).
+    monkeypatch.setenv("APP_CHAIN_ENABLED", "false")
 
     from app.lightning import ops_ledger
 
