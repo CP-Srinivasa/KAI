@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.core.lightning_settings import LightningSettings
 from app.core.settings import get_settings
-from app.lightning.adapter import _build_client
+from app.lightning.adapter import CredentialScope, _build_client
 from app.lightning.client import LightningUnavailableError
 from app.lightning.golive_preflight import golive_preflight
 
@@ -22,35 +22,76 @@ _BOOKING_UNIT = Path("deploy/systemd/kai-oracle-earnings-booking.timer")
 _DEMAND_DIR = Path("artifacts")
 
 
-async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool, int]:
-    """Return (node_reachable, macaroon_scope_minimal, macaroon_can_mint).
+async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) -> bool | None:
+    """RAW ``pay_invoice`` probe on ONE capability credential (bypasses the value gate).
 
-    Two RAW probes (bypassing the value-layer gate):
-    - pay_invoice MUST be permission-denied → proves NO spend scope (satoshi auflage 4);
-    - add_invoice MUST succeed → proves the macaroon CAN receive (invoices:write). A
-      readonly macaroon passes the no-spend check but cannot mint, which would 503 the
-      paid path — this catches that trap. The probe invoice is 1 sat, 60s expiry,
-      capital-free, and expires unpaid."""
-    client = _build_client(cfg)
+    Returns True when the node PERMISSION-DENIED the attempt (credential carries no
+    spend scope), False when it got past the permission layer (credential CAN spend),
+    and ``None`` when the credential is not provisioned at all — an un-probed fact,
+    never silently folded into a pass. The payment request is deliberately garbage, so
+    even a spend-capable macaroon moves no capital.
+    """
     try:
-        await client.get_info()
+        client = _build_client(cfg, credential_scope=scope)
     except LightningUnavailableError:
-        return False, False, False, 0
+        return None  # capability not provisioned → nothing probed (fail-closed upstream)
     try:
         await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
-        scope_minimal = False  # node ACCEPTED a spend attempt → macaroon too broad
+        return False  # node ACCEPTED a spend attempt → macaroon too broad
     except LightningUnavailableError as exc:
         text = str(exc).lower()
-        scope_minimal = "permission" in text or "403" in text
+        return "permission" in text or "403" in text
+
+
+async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool | None, bool, int]:
+    """Return (node_reachable, macaroon_scope_minimal, macaroon_can_mint, inbound_sat).
+
+    Every probe runs with the credential that would carry it in production, so the
+    report proves the CAPABILITY SPLIT and not merely "some macaroon works":
+
+    - reachability + inbound liquidity: the READ credential (``APP_LN_MACAROON_*``);
+    - ``add_invoice`` MUST succeed on the INVOICE credential → proves it can receive.
+      A readonly macaroon passes the no-spend check but cannot mint, which would 503
+      the paid path — this catches that trap. The probe invoice is 1 sat, 60s expiry,
+      capital-free, and expires unpaid;
+    - ``pay_invoice`` MUST be permission-denied on BOTH receive-side credentials
+      (read + invoice) while the layer is unarmed (satoshi auflage 4) — the read
+      credential is still the one every live path uses until PR-C, so dropping it
+      from the probe would silently retire the invariant. Once armed, the probe
+      instead targets the dedicated PAYMENT credential, which MUST be accepted.
+
+    A missing capability credential is reported as an un-probed/failed capability —
+    never as "node unreachable", so the operator sees the real cause next to
+    ``invoice_macaroon_configured``.
+    """
     try:
-        await client.add_invoice(value_sat=1, memo="kai-preflight-mint-probe", expiry_seconds=60)
+        read_client = _build_client(cfg)
+        await read_client.get_info()
+    except LightningUnavailableError:
+        return False, None, False, 0
+
+    scope_minimal: bool | None
+    if cfg.pay_enabled:
+        scope_minimal = await _spend_probe_denied(cfg, "payment")
+    else:
+        read_denied = await _spend_probe_denied(cfg, "read")
+        invoice_denied = await _spend_probe_denied(cfg, "invoice")
+        # Fail-closed AND: an un-probed (None) or spend-capable (False) receive-side
+        # credential must never be reported as scope-minimal.
+        scope_minimal = read_denied is True and invoice_denied is True
+
+    try:
+        invoice_client = _build_client(cfg, credential_scope="invoice")
+        await invoice_client.add_invoice(
+            value_sat=1, memo="kai-preflight-mint-probe", expiry_seconds=60
+        )
         can_mint = True
     except LightningUnavailableError:
         can_mint = False  # no invoices:write (e.g. a readonly macaroon) → cannot receive
     # inbound liquidity (read-only): remote_balance = what others can send us. lnd returns
     # it flat (older) or nested {sat,msat} (newer) — handle both. 0 inbound = nobody can pay.
     try:
-        rb = (await client.channel_balance()).get("remote_balance", 0)
+        rb = (await read_client.channel_balance()).get("remote_balance", 0)
         inbound_sat = int(rb.get("sat", 0) if isinstance(rb, dict) else rb)
     except (LightningUnavailableError, TypeError, ValueError):
         inbound_sat = 0

@@ -44,6 +44,10 @@ def _app(*, cf_allowed: list[str] | None = None) -> FastAPI:
     async def _demand() -> dict[str, str]:
         return {"verdict": "NO-PASS"}
 
+    @app.get("/dashboard/api/ln/ops")
+    async def _ops() -> dict[str, list[object]]:
+        return {"ops": []}
+
     @app.get("/dashboard/api/ping")
     async def _ping() -> dict[str, str]:
         return {"ok": "true"}
@@ -95,6 +99,36 @@ def test_readonly_dashboard_local_bypass_preserved() -> None:
     with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
         assert client.get("/dashboard/api/ping").status_code == 200
         assert client.get("/dashboard/api/ln/demand").status_code == 200
+
+
+def test_ops_ledger_read_requires_auth_even_locally() -> None:
+    """W0/PR-A — INVERTED against the previous allowlist entry: the money-path audit
+    trail (payment metadata/amounts) is not local dashboard convenience. A local reader
+    without credentials is rejected; a Bearer token still gets through."""
+    with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
+        assert client.get("/dashboard/api/ln/ops").status_code == 401
+        assert (
+            client.get(
+                "/dashboard/api/ln/ops", headers={"Authorization": "Bearer secret"}
+            ).status_code
+            == 200
+        )
+
+
+def test_ops_ledger_read_unchanged_for_the_cf_access_browser() -> None:
+    """Deploy-safety for the only real consumer: the dashboard panel reaches
+    /dashboard/api/ln/ops through Cloudflare Access, which passes the CF-Access branch.
+    Removing the local bypass must not change ANYTHING for that path."""
+    with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
+        assert (
+            client.get(
+                "/dashboard/api/ln/ops",
+                headers={**_TUNNEL, "Cf-Access-Authenticated-User-Email": "ops@example.com"},
+            ).status_code
+            == 200
+        )
+        # …and an unauthenticated tunnel request stays rejected.
+        assert client.get("/dashboard/api/ln/ops", headers=_TUNNEL).status_code == 401
 
 
 def test_unknown_ln_endpoint_requires_auth_fail_closed() -> None:

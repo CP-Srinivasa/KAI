@@ -7,6 +7,7 @@ resolution (hex + file), and a happy-path getinfo through a mocked transport.
 from __future__ import annotations
 
 import binascii
+from pathlib import Path
 
 import httpx
 import pytest
@@ -20,6 +21,7 @@ from app.lightning import (
     get_node_status,
 )
 from app.lightning import adapter as adapter_mod
+from app.lightning.adapter import _build_client
 
 
 def _transport(handler) -> httpx.MockTransport:
@@ -268,6 +270,67 @@ def test_status_constructors() -> None:
 def test_base_url_built_from_host_port() -> None:
     cfg = LightningSettings(host="10.0.0.9", rest_port=8081)
     assert cfg.base_url == "https://10.0.0.9:8081"
+
+
+# --- W0/PR-A: least-privilege credential scopes (declared, not yet consumed) -----
+
+
+def _scoped_cfg() -> LightningSettings:
+    # _env_file=None: the operator/Pi .env must not seed any macaroon field, or a
+    # "credential missing" assertion below would silently stop testing anything.
+    return LightningSettings(
+        _env_file=None,
+        macaroon_hex="read",
+        invoice_macaroon_hex="invoice",
+        payment_macaroon_hex="payment",
+        onchain_macaroon_hex="onchain",
+        channel_macaroon_hex="channel",
+    )
+
+
+def test_read_scope_is_the_legacy_macaroon_pair_backwards_compatible() -> None:
+    """Rückwärtskompatibilität: APP_LN_MACAROON_* stays the read credential, and the
+    DEFAULT client (every caller today) resolves to exactly it — byte-identical."""
+    cfg = _scoped_cfg()
+    assert cfg.macaroon_credentials("read") == (cfg.macaroon_hex, cfg.macaroon_path)
+    assert _build_client(cfg)._headers["Grpc-Metadata-macaroon"] == "read"
+
+
+def test_capability_clients_never_fall_back_to_the_read_macaroon() -> None:
+    cfg = _scoped_cfg()
+    for scope in ("invoice", "payment", "onchain", "channel"):
+        client = _build_client(cfg, credential_scope=scope)  # type: ignore[arg-type]
+        assert client._headers["Grpc-Metadata-macaroon"] == scope
+
+
+@pytest.mark.parametrize("scope", ["invoice", "payment", "onchain", "channel"])
+def test_missing_write_credential_fails_closed_without_read_fallback(scope: str) -> None:
+    """An unprovisioned capability must raise at the call site, NOT quietly reuse the
+    read macaroon (which on the Bestands-Pi still carries invoices:write)."""
+    cfg = LightningSettings(_env_file=None, macaroon_hex="read-only")
+    assert cfg.macaroon_credentials(scope) == ("", "")  # type: ignore[arg-type]
+    with pytest.raises(LightningUnavailableError, match="no macaroon configured"):
+        _build_client(cfg, credential_scope=scope)  # type: ignore[arg-type]
+
+
+def test_no_app_module_requests_a_write_scope_yet_pr_a_is_additive() -> None:
+    """W0/PR-A deploy invariant: the scopes are DECLARED, no consumer is switched, so
+    a deploy of this PR alone cannot change which credential any live path uses.
+
+    Delete this guard in PR-C — that is the PR that deliberately switches consumers
+    (value_layer / ln_control / earnings / oracle) onto the capability credentials.
+    """
+    adapter_path = Path(adapter_mod.__file__).resolve()
+    app_dir = adapter_path.parents[1]
+    offenders = [
+        path.relative_to(app_dir).as_posix()
+        for path in app_dir.rglob("*.py")
+        if path.resolve() != adapter_path and "credential_scope" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], (
+        "credential_scope= is used outside app/lightning/adapter.py — that is a PR-C "
+        f"consumer switch, not PR-A: {offenders}"
+    )
 
 
 # --- channels: per-channel breakdown (read-only listchannels) --------------------

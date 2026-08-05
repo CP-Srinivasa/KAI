@@ -9,13 +9,17 @@ Fail-closed: an un-probed node fact (``None``) counts as NOT ok → NO-GO.
 
 Two regimes (auto-detected from ``cfg.pay_enabled``):
   * **receive-only** (``pay_enabled=false``, the original G0 probe): ``pay_enabled_off``
-    is a NEGATIVE invariant — the spend kill-switch must stay off — and the macaroon
-    must be scope-minimal (a ``pay_invoice`` probe MUST be permission-denied).
+    is a NEGATIVE invariant — the spend kill-switch must stay off — and the receive-side
+    credentials must be scope-minimal (a ``pay_invoice`` probe MUST be permission-denied).
   * **armed** (``pay_enabled=true``, operator has deliberately armed the value layer):
     those two receive-only invariants no longer apply — arming spend and using a
-    send-capable cockpit macaroon is the INTENDED state, so the preflight checks the
-    armed-appropriate facts instead (value layer armed + macaroon carries send scope)
-    rather than emitting misleading blocking failures.
+    send-capable PAYMENT macaroon is the INTENDED state, so the preflight checks the
+    armed-appropriate facts instead (value layer armed + a dedicated payment credential
+    that carries send scope) rather than emitting misleading blocking failures.
+
+This is also the operator's **bake gate** for the capability split (W0/PR-A): the
+read and invoice credentials are checked SEPARATELY, so "one macaroon does
+everything" can no longer report GO.
 
 Pure + side-effect-free → fully testable; the CLI supplies the live node facts.
 """
@@ -53,6 +57,8 @@ def golive_preflight(
     reported as a stack of blocking failures.
     """
     armed = cfg.pay_enabled
+    invoice_credential_configured = bool(cfg.invoice_macaroon_hex or cfg.invoice_macaroon_path)
+    payment_credential_configured = bool(cfg.payment_macaroon_hex or cfg.payment_macaroon_path)
     spend_scope_checks: list[PreflightCheck]
     if armed:
         spend_scope_checks = [
@@ -64,14 +70,15 @@ def golive_preflight(
                 "(caps + reserve floor + HOTP), not on the kill-switch.",
             ),
             PreflightCheck(
-                # In armed mode the cockpit macaroon SHOULD carry spend scope, so the
+                # In armed mode the PAYMENT macaroon SHOULD carry spend scope, so the
                 # pay_invoice probe must NOT be permission-denied (scope_minimal=False).
                 # A True here would mean the macaroon cannot spend — a broken armed setup.
                 "macaroon_send_capable",
-                macaroon_scope_minimal is False,
-                "armed mode: the cockpit macaroon MUST carry send scope (a pay_invoice probe "
-                "must NOT be permission-denied). Permission-denied here = macaroon too narrow "
-                "for the armed value layer.",
+                payment_credential_configured and macaroon_scope_minimal is False,
+                "armed mode: the dedicated APP_LN_PAYMENT_MACAROON_* credential MUST be "
+                "configured and carry offchain:write (a pay_invoice probe must NOT be "
+                "permission-denied). The read/invoice credential is never promoted to "
+                "send scope.",
             ),
         ]
     else:
@@ -103,9 +110,15 @@ def golive_preflight(
         *spend_scope_checks,
         PreflightCheck("l402_secret_set", bool(cfg.l402_secret), "APP_LN_L402_SECRET must be set"),
         PreflightCheck(
-            "macaroon_configured",
+            "read_macaroon_configured",
             bool(cfg.macaroon_hex or cfg.macaroon_path),
-            "a scope-minimal invoice macaroon (invoices:write/read only) must be configured",
+            "APP_LN_MACAROON_* must contain the node read credential",
+        ),
+        PreflightCheck(
+            "invoice_macaroon_configured",
+            invoice_credential_configured,
+            "APP_LN_INVOICE_MACAROON_* must contain a SEPARATE invoices:read/write "
+            "credential — this is the bake gate for the capability split (W0/PR-A)",
         ),
         PreflightCheck(
             "node_reachable", node_reachable is True, "lnd getinfo must succeed (node reachable)"
