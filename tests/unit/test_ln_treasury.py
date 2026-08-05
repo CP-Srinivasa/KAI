@@ -137,8 +137,19 @@ async def test_pending_snapshot_fetches_pendingchannels(monkeypatch) -> None:
 async def test_pending_snapshot_missing_read_credential_is_unavailable() -> None:
     from app.core.lightning_settings import LightningSettings
 
+    # macaroon_hex/macaroon_path MUESSEN explizit leer gesetzt werden: unbelegte
+    # Felder zieht pydantic-settings aus der realen .env des Hosts. Auf dem Pi ist
+    # APP_LN_MACAROON_PATH gesetzt -> das Credential gilt als vorhanden, der Code
+    # laeuft am Macaroon-Check vorbei bis zum TLS-Boot-Validator und scheitert dort
+    # an der nicht existierenden test-tls.pem ("unexpected: [Errno 2] ..."). In CI
+    # (leere Umgebung) faellt das nicht auf. Gleiches Muster wie test_lightning.py.
     result = await get_pending_channels_snapshot(
-        LightningSettings(enabled=True, tls_cert_path="test-tls.pem")
+        LightningSettings(
+            enabled=True,
+            macaroon_hex="",
+            macaroon_path="",
+            tls_cert_path="test-tls.pem",
+        )
     )
     assert result.state == "unavailable"
     assert result.total_limbo_sat == 0
