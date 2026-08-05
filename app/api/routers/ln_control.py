@@ -81,19 +81,40 @@ class ActionBody(BaseModel):
     confirm: ConfirmBody | None = None
 
 
-async def _available_balance_sat() -> int:
-    """Best-effort on-chain+channel balance for the reserve-floor check (0 if
-    unavailable → policy errs conservative: a spend with unknown balance is denied
-    if a reserve floor is set)."""
+# Freshness-Gate (ADR 0016, Welle 0): Höchstalter des Kontostands, gegen den der
+# Reserve-Floor entscheiden darf. Grosszügig gegen die 30-s-Cache-TTL bemessen —
+# gedeckelt werden soll das unbegrenzte Einfrieren, nicht der normale Poll-Jitter.
+_BALANCE_MAX_AGE_S = 120.0
+
+
+async def _available_balance_sat() -> tuple[int, bool]:
+    """On-chain+channel balance für die Floor-Prüfung, als ``(sat, known)``.
+
+    ``known=False`` heisst „kein prüfbarer Kontostand", NICHT „Kontostand ist 0" —
+    der Unterschied trägt die Begründung im Verdikt.
+
+    Der Node-Cache hält bei degradierten Polls bewusst den älteren, reicheren
+    Snapshot fest (Anti-Flicker in ``app.lightning.cache._merge``) und rückt seinen
+    Zeitstempel dabei nicht vor. lnd über Tor produziert genau diesen Fall
+    regelmässig. Wer das Alter verwirft, lässt den Floor — laut Policy ein harter,
+    nicht überschreibbarer Backstop — gegen einen beliebig alten Stand rechnen,
+    während der Node weiter ausgibt. Deshalb: Alter prüfen, und ein Snapshot ohne
+    frische Balance-Felder zählt nicht, auch wenn er jung ist.
+    """
     try:
         from app.lightning.cache import get_cached_node_status
 
-        status, _ = await get_cached_node_status()
-        return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
+        status, age = await get_cached_node_status()
+        if age is None or age > _BALANCE_MAX_AGE_S:
+            return 0, False
+        if not getattr(status, "balances_available", False):
+            return 0, False
+        total = int(getattr(status, "wallet_total_sat", 0) or 0) + int(
             getattr(status, "channel_local_sat", 0) or 0
         )
+        return total, True
     except Exception:  # noqa: BLE001 — balance is best-effort, never block the endpoint
-        return 0
+        return 0, False
 
 
 def _effective_amount_sat(
@@ -135,7 +156,7 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     amount, amount_known = _effective_amount_sat(body.action, body.params, spec)
     recipient = body.params.get(spec.recipient_key) if spec.recipient_key else None
     envelope = PolicyStore().load()
-    available = await _available_balance_sat()
+    available, balance_known = await _available_balance_sat()
     decision = evaluate_policy(
         body.action,
         amount_sat=amount,
@@ -151,6 +172,17 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # must never auto-execute — force operator confirm (HOTP) instead of silent pass.
     if not amount_known and decision.decision == "auto_execute":
         decision = PolicyDecision("needs_confirm", "amount unknown (amountless invoice)")
+    # Freshness-Gate (ADR 0016, Welle 0): Der Reserve-Floor ist ein harter Backstop.
+    # Ohne prüfbaren Kontostand ist er nicht entscheidbar — und ein HOTP-Confirm macht
+    # den Stand nicht frisch, also `denied` statt `needs_confirm`.
+    #
+    # Die Policy verweigert einen solchen Spend zwar ohnehin (unbekannt kommt als 0
+    # an, und `0 - amount < floor` greift schon bei floor=0). Sie begründet das aber
+    # mit "would breach reserve floor" — einer Aussage über Kapital, das niemand
+    # gemessen hat. Der Unterschied ist nicht kosmetisch: Genau diese Verwechslung
+    # macht aus einem Messausfall im Audit einen Kapitalbefund.
+    if amount > 0 and not balance_known:
+        decision = PolicyDecision("denied", "balance stale or unavailable — spend unverifiable")
     ph = plan_hash(body.action, body.params)
 
     async def _call(**extra: Any) -> Any:

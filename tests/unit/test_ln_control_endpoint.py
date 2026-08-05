@@ -23,8 +23,10 @@ def _app() -> FastAPI:
     return a
 
 
-async def _bal_million() -> int:
-    return 1_000_000
+async def _bal_million() -> tuple[int, bool]:
+    """``(sat, known)`` — ``known=True``, sonst greift hier das Freshness-Gate
+    (ADR 0016 Welle 0) und jeder Spend endet in ``denied``."""
+    return 1_000_000, True
 
 
 def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
