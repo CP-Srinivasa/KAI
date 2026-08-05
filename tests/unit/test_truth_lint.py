@@ -250,7 +250,12 @@ def test_tl002_document_id_without_matching_candidate_stays_violation(tmp_path: 
     )
     _write_jsonl(
         art / "shadow_candidate_ledger.jsonl",
-        [{"candidate_id": "tech-OTHER-2026-01-01T00:00:00+00:00", "entry_price_basis": "binance_1m_decision"}],
+        [
+            {
+                "candidate_id": "tech-OTHER-2026-01-01T00:00:00+00:00",
+                "entry_price_basis": "binance_1m_decision",
+            }
+        ],
     )
     result = run_lint(art)
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
