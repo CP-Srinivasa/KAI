@@ -28,6 +28,15 @@ from app.lightning.adapter import LightningNodeStatus, get_node_status
 # refresh. Single-flight, so a slow node cannot pile up concurrent getinfo calls.
 _TTL_SECONDS = 30.0
 
+# W0-P1 (Money-Path-Hardening): hard freshness bound for CAPITAL decisions. A
+# balance snapshot older than this must never feed reserve-floor/cap checks —
+# the dashboard may serve stale (UX), capital actions may not (fail-closed).
+CAPITAL_MAX_AGE_SECONDS = 60.0
+
+# Upper bound on how long a capital read waits for the (adapter-side timeboxed)
+# refresh before it re-evaluates the age and, if still stale, fails closed.
+_SYNC_REFRESH_TIMEOUT_SECONDS = 30.0
+
 _cached: LightningNodeStatus | None = None
 _cached_at: float = 0.0
 _refresh_task: asyncio.Task[None] | None = None
@@ -110,6 +119,45 @@ async def get_cached_node_status() -> tuple[LightningNodeStatus, float | None]:
     if age > _TTL_SECONDS:
         _start_refresh_if_idle()
     return _cached, age
+
+
+async def get_capital_grade_status(
+    max_age_seconds: float = CAPITAL_MAX_AGE_SECONDS,
+) -> tuple[LightningNodeStatus | None, float | None]:
+    """Fresh-enough, balance-bearing snapshot for CAPITAL decisions — or ``(None, age)``.
+
+    The dashboard accessor above never blocks and happily serves an arbitrarily
+    old snapshot; that is correct for a panel and WRONG for money. This accessor
+    inverts the trade-off (W0-P1): when the snapshot is cold or older than
+    ``max_age_seconds`` it AWAITS one single-flight refresh, then re-evaluates.
+    It returns ``None`` — the caller must fail CLOSED — unless a snapshot exists
+    that is within the bound AND carries balance fields. A degraded poll keeps
+    the prior snapshot's honest age (anti-flicker merge), so a node that stops
+    answering ``getinfo``/balances blocks capital actions instead of letting
+    them ride the last known balance.
+    """
+    if not get_settings().lightning.enabled:
+        return None, None
+
+    age = None if _cached is None else time.monotonic() - _cached_at
+    if age is None or age > max_age_seconds:
+        _start_refresh_if_idle()
+        task = _refresh_task
+        if task is not None:
+            try:
+                # shield: a timeout here must not cancel the shared single-flight
+                # refresh other callers (dashboard) are riding on.
+                await asyncio.wait_for(asyncio.shield(task), _SYNC_REFRESH_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 — timeout/cancel → stale check below decides
+                pass
+
+    snapshot = _cached
+    age = None if snapshot is None else time.monotonic() - _cached_at
+    if snapshot is None or age is None or age > max_age_seconds:
+        return None, age
+    if not snapshot.balances_available:
+        return None, age
+    return snapshot, age
 
 
 def reset_cache_for_tests() -> None:

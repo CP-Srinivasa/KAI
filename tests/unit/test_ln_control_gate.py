@@ -8,7 +8,11 @@ NEVER advances the HOTP counter.
 
 from __future__ import annotations
 
-from app.lightning.control_gate import plan_hash, verify_capital_confirm
+from app.lightning.control_gate import (
+    plan_hash,
+    verify_auto_execute_confirm,
+    verify_capital_confirm,
+)
 
 
 class _FakeHotp:
@@ -80,6 +84,45 @@ def test_idempotency_replay_rejected() -> None:
     )
     assert not v.ok and "replay" in v.reason
     assert hotp.calls == 0
+
+
+# --- W0-P4: auto_execute confirm (plan binding + replay guard, no HOTP) -----------
+
+
+def test_auto_confirm_ok_consumes_key_without_hotp() -> None:
+    seen: set[str] = set()
+    h = plan_hash("create_invoice", {"memo": "x"})
+    v = verify_auto_execute_confirm(
+        submitted_plan_hash=h, expected_plan_hash=h, idempotency_key="k1", seen_keys=seen
+    )
+    assert v.ok and "k1" in seen
+
+
+def test_auto_confirm_rejects_plan_hash_mismatch() -> None:
+    seen: set[str] = set()
+    v = verify_auto_execute_confirm(
+        submitted_plan_hash="deadbeef",
+        expected_plan_hash="abc123",
+        idempotency_key="k1",
+        seen_keys=seen,
+    )
+    assert not v.ok and "plan hash" in v.reason and "k1" not in seen
+
+
+def test_auto_confirm_rejects_missing_key() -> None:
+    v = verify_auto_execute_confirm(
+        submitted_plan_hash="h", expected_plan_hash="h", idempotency_key="", seen_keys=set()
+    )
+    assert not v.ok and "idempotency key required" in v.reason
+
+
+def test_auto_confirm_rejects_replay() -> None:
+    """W0-P4-Gate: ein Replay derselben (auto-executebaren) Anfrage schlägt fehl."""
+    seen = {"used"}
+    v = verify_auto_execute_confirm(
+        submitted_plan_hash="h", expected_plan_hash="h", idempotency_key="used", seen_keys=seen
+    )
+    assert not v.ok and "replay" in v.reason
 
 
 def test_bad_hotp_rejected_and_key_not_consumed() -> None:

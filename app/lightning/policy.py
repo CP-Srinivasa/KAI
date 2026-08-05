@@ -30,6 +30,23 @@ logger = logging.getLogger(__name__)
 _POLICY_PATH = Path("artifacts/ln_policy.json")
 _SCHEMA = 1
 
+# W0-P4 — Risikoklasse pro Aktion. Die rein betragsbasierten Regeln liessen jede
+# amount<=0-Aktion an per-action-Cap, Daily-Cap UND Confirm-Threshold (">0"-Guard)
+# vorbei — close_channel wäre, sobald allowlisted, ohne HOTP auto-executet worden.
+# Deny-by-default: eine hier nicht klassifizierte Aktion wird abgelehnt, selbst
+# wenn die Allowlist sie nennt (Allowlist sagt "erlaubt", Klasse sagt "wie").
+ACTION_RISK_CLASSES: dict[str, str] = {
+    "create_invoice": "receive",
+    "pay_invoice": "spend",
+    "keysend": "spend",
+    "send_coins": "onchain_spend",
+    "open_channel": "channel_open",
+    "close_channel": "channel_irreversible",
+}
+
+# Klassen mit Kapitalwirkung: Betrag 0/unbekannt ist hier nie ein Freifahrtschein.
+_CAPITAL_CLASSES = frozenset({"spend", "onchain_spend", "channel_open", "channel_irreversible"})
+
 
 @dataclass(frozen=True)
 class PolicyEnvelope:
@@ -71,9 +88,22 @@ def evaluate_policy(
     """
     if action not in envelope.allowed_actions:
         return PolicyDecision("denied", f"action not allowed: {action}")
+    risk_class = ACTION_RISK_CLASSES.get(action)
+    if risk_class is None:
+        return PolicyDecision("denied", f"unclassified action class: {action} (deny by default)")
     # Hard backstop: a spend may never dip the balance below the sovereign reserve.
     if amount_sat > 0 and available_balance_sat - amount_sat < envelope.reserve_floor_sat:
         return PolicyDecision("denied", "would breach reserve floor")
+    # Irreversible channel actions (force-close risk, capital binding) are NEVER
+    # auto-executed — the class forces operator confirm, not just the allowlist.
+    if risk_class == "channel_irreversible":
+        return PolicyDecision(
+            "needs_confirm", "irreversible channel action — operator confirm required"
+        )
+    # A capital-class action whose amount is 0/unknown slipped past every cap and
+    # the ">0" confirm-threshold guard — fail closed to operator confirm instead.
+    if risk_class in _CAPITAL_CLASSES and amount_sat <= 0:
+        return PolicyDecision("needs_confirm", "zero/unknown amount on a capital action")
     # New counterparty (allowlist set + recipient not on it) → confirm.
     if envelope.recipient_allowlist and recipient and recipient not in envelope.recipient_allowlist:
         return PolicyDecision("needs_confirm", "new counterparty (not in allowlist)")
@@ -126,4 +156,10 @@ class PolicyStore:
         self._path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
-__all__ = ["PolicyDecision", "PolicyEnvelope", "PolicyStore", "evaluate_policy"]
+__all__ = [
+    "ACTION_RISK_CLASSES",
+    "PolicyDecision",
+    "PolicyEnvelope",
+    "PolicyStore",
+    "evaluate_policy",
+]
