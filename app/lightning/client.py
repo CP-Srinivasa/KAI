@@ -18,7 +18,7 @@ import binascii
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -45,6 +45,34 @@ class LndInfo:
     num_active_channels: int
     num_pending_channels: int
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LndPayment:
+    """Redacted ListPayments row; no preimage, BOLT11, route or hop data."""
+
+    payment_hash: str
+    status: str
+    failure_reason: str
+    value_sat: int
+    fee_sat: int
+    payment_index: int
+
+
+@dataclass(frozen=True)
+class LndPaymentPage:
+    """Validated page from lnd ListPayments, ready for deterministic pagination."""
+
+    payments: tuple[LndPayment, ...]
+    first_index_offset: int
+    last_index_offset: int
+    reversed: bool
+    total_num_payments: int | None = None
+
+    @property
+    def next_index_offset(self) -> int:
+        # lnd: backwards pages resume from the first item; forwards from the last.
+        return self.first_index_offset if self.reversed else self.last_index_offset
 
 
 def _load_macaroon_hex(*, macaroon_hex: str, macaroon_path: str) -> str:
@@ -181,6 +209,108 @@ class LndRestClient:
         confs) plus force-close/waiting-close limbo — without this an open that
         was JUST funded is invisible to every channel view."""
         return await self._get("/v1/channels/pending")
+
+    async def list_payments(
+        self,
+        *,
+        include_incomplete: bool = True,
+        index_offset: int = 0,
+        max_payments: int = 1000,
+        reversed: bool = False,
+        omit_hops: bool = True,
+    ) -> LndPaymentPage:
+        """GET /v1/payments — outgoing payment history (read-only).
+
+        The response shape and pagination offsets are validated instead of being
+        passed through. Reconciliation must never interpret a malformed/missing
+        page token as an empty, fully-scanned payment history.
+        """
+        offset = int(index_offset)
+        limit = int(max_payments)
+        if offset < 0:
+            raise ValueError("index_offset must be >= 0")
+        if limit <= 0:
+            raise ValueError("max_payments must be > 0")
+        query = urlencode(
+            {
+                "include_incomplete": str(bool(include_incomplete)).lower(),
+                "index_offset": offset,
+                "max_payments": limit,
+                "omit_hops": str(bool(omit_hops)).lower(),
+                "reversed": str(bool(reversed)).lower(),
+            }
+        )
+        data = await self._get(f"/v1/payments?{query}")
+        raw_payments = data.get("payments")
+        if not isinstance(raw_payments, list) or any(
+            not isinstance(payment, dict) for payment in raw_payments
+        ):
+            raise LightningUnavailableError("listpayments returned an invalid payments array")
+
+        def _payment(raw: dict[str, Any]) -> LndPayment:
+            payment_hash = str(raw.get("payment_hash") or "").strip().lower()
+            try:
+                decoded_hash = bytes.fromhex(payment_hash)
+            except ValueError as exc:
+                raise LightningUnavailableError(
+                    "listpayments returned an invalid payment_hash"
+                ) from exc
+            if len(decoded_hash) != 32:
+                raise LightningUnavailableError("listpayments returned an invalid payment_hash")
+            status = str(raw.get("status") or "").strip().upper()
+            if status not in {"UNKNOWN", "IN_FLIGHT", "SUCCEEDED", "FAILED", "INITIATED"}:
+                raise LightningUnavailableError("listpayments returned an invalid payment status")
+
+            def _nonnegative_int(field_name: str) -> int:
+                try:
+                    value = int(raw.get(field_name) or 0)
+                except (TypeError, ValueError) as exc:
+                    raise LightningUnavailableError(
+                        f"listpayments returned an invalid payment {field_name}"
+                    ) from exc
+                if value < 0:
+                    raise LightningUnavailableError(
+                        f"listpayments returned an invalid payment {field_name}"
+                    )
+                return value
+
+            return LndPayment(
+                payment_hash=payment_hash,
+                status=status,
+                failure_reason=str(raw.get("failure_reason") or "").strip().upper(),
+                value_sat=_nonnegative_int("value_sat"),
+                fee_sat=_nonnegative_int("fee_sat"),
+                payment_index=_nonnegative_int("payment_index"),
+            )
+
+        def _offset(field_name: str, *, optional: bool = False) -> int | None:
+            raw = data.get(field_name)
+            if optional and raw is None:
+                return None
+            if raw is None:
+                raise LightningUnavailableError(f"listpayments returned an invalid {field_name}")
+            try:
+                value = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise LightningUnavailableError(
+                    f"listpayments returned an invalid {field_name}"
+                ) from exc
+            if value < 0:
+                raise LightningUnavailableError(f"listpayments returned an invalid {field_name}")
+            return value
+
+        first = _offset("first_index_offset")
+        last = _offset("last_index_offset")
+        total = _offset("total_num_payments", optional=True)
+        if first is None or last is None:  # defensive: required offsets may never be absent
+            raise LightningUnavailableError("listpayments returned incomplete pagination")
+        return LndPaymentPage(
+            payments=tuple(_payment(payment) for payment in raw_payments),
+            first_index_offset=first,
+            last_index_offset=last,
+            reversed=bool(reversed),
+            total_num_payments=total,
+        )
 
     # ── write surface (value layer; gated) ────────────────────────────────────
     # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.
