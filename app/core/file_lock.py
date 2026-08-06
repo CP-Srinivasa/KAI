@@ -8,8 +8,13 @@ werden (silent data loss).
 
 Lösung: portabler exclusive-lock auf einem ``.lock``-Sidecar während
 des Append.  Linux nutzt ``fcntl.flock``, Windows nutzt ``msvcrt.locking``.
-Best-effort: bei Lock-Failure wird der Append trotzdem ausgeführt + ein
-Warning geloggt — Audit-Trail darf den Trade-Pfad nicht blocken.
+Best-effort (Default): bei Lock-Failure wird der Append trotzdem ausgeführt +
+ein Warning geloggt — Audit-Trail darf den Trade-Pfad nicht blocken.
+
+``strict=True`` (Audit 2026-08-06, WP3): Wahrheits-Ledger (Truth-Attestation,
+Prä-Reg) dürfen NIE unserialisiert appenden — ein Fork der Hash-Kette ist
+append-only nicht reparierbar. Dort ist ein abgelehnter Append (Retry durch
+Timer/CLI) billiger als ein still gegabelter; Lock-Fehler ⇒ ``FileLockError``.
 """
 
 from __future__ import annotations
@@ -23,18 +28,25 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+class FileLockError(OSError):
+    """Strict-Modus: exklusiver Lock war nicht beschaffbar — Append verweigert."""
+
+
 @contextlib.contextmanager
-def append_lock(target: Path) -> Iterator[None]:
+def append_lock(target: Path, *, strict: bool = False) -> Iterator[None]:
     """Hold an exclusive lock on ``target`` for the duration of an append.
 
     Lock-Sidecar lebt unter ``<target>.lock``.  Bei IO-/Lock-Fehler wird
     der Lock-Versuch geloggt + verschluckt; das ``with``-Block läuft
-    trotzdem (fail-graceful).
+    trotzdem (fail-graceful).  Mit ``strict=True`` wird stattdessen
+    :class:`FileLockError` geworfen und der Block NICHT betreten.
     """
     lock_path = target.with_suffix(target.suffix + ".lock")
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
+        if strict:
+            raise FileLockError(f"cannot prepare lockfile dir {lock_path}: {exc}") from exc
         logger.warning("[file-lock] cannot prepare %s: %s", lock_path, exc)
         yield
         return
@@ -43,6 +55,8 @@ def append_lock(target: Path) -> Iterator[None]:
     try:
         fh = lock_path.open("a+", encoding="utf-8")
     except OSError as exc:
+        if strict:
+            raise FileLockError(f"cannot open lockfile {lock_path}: {exc}") from exc
         logger.warning("[file-lock] cannot open lockfile %s: %s", lock_path, exc)
         yield
         return
@@ -56,6 +70,8 @@ def append_lock(target: Path) -> Iterator[None]:
                 msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
                 locked = True
             except (OSError, ImportError) as exc:
+                if strict:
+                    raise FileLockError(f"win32 lock failed for {lock_path}: {exc}") from exc
                 logger.warning("[file-lock] win32 lock failed for %s: %s", lock_path, exc)
         else:
             try:
@@ -64,6 +80,8 @@ def append_lock(target: Path) -> Iterator[None]:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 locked = True
             except (OSError, ImportError) as exc:
+                if strict:
+                    raise FileLockError(f"posix lock failed for {lock_path}: {exc}") from exc
                 logger.warning("[file-lock] posix lock failed for %s: %s", lock_path, exc)
         yield
     finally:
@@ -87,4 +105,4 @@ def append_lock(target: Path) -> Iterator[None]:
             pass
 
 
-__all__ = ["append_lock"]
+__all__ = ["FileLockError", "append_lock"]

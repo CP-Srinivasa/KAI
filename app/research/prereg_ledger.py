@@ -172,10 +172,20 @@ class PreRegistrationLedger:
         self._path = Path(path)
 
     def record(self, entry: PreRegistration) -> None:
-        """Append one pre-registration (creates parent dirs on first write)."""
+        """Append one pre-registration (creates parent dirs on first write).
+
+        Unter exklusivem Lock (strict): versiegelte Einträge sind Wahrheits-
+        daten — zwei parallele Writer könnten oberhalb PIPE_BUF interleaved
+        Bytes erzeugen, die der tolerante Reader still als "malformed"
+        verwirft (Audit 2026-08-06, WP3). Lock nicht beschaffbar ⇒ Exception,
+        Registrierung laut wiederholen statt still riskieren.
+        """
+        from app.core.file_lock import append_lock
+
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(entry.to_json() + "\n")
+        with append_lock(self._path, strict=True):
+            with self._path.open("a", encoding="utf-8") as fh:
+                fh.write(entry.to_json() + "\n")
 
     def entries(self) -> list[PreRegistration]:
         """All recorded pre-registrations (corrupt lines skipped, never raises)."""
