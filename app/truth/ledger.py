@@ -123,21 +123,13 @@ def append_attestation(
     return record
 
 
-def verify_ledger(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
-    """Recompute every attestation and chain link (pure, read-only).
-
-    Checks per record: payload reproducibility (payload -> payload_hash), record
-    integrity (record -> record_hash) and forward-only linkage (prev_hash/seq).
-    Returns ``{"ok", "records", "errors": [{"seq", "reason"}]}`` — an empty or
-    missing ledger verifies ok with 0 records.
-    """
+def _verify_ledger_snapshot(raw: str) -> dict[str, Any]:
+    """Verify and return records from exactly one in-memory ledger snapshot."""
     errors: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     checked = 0
     prev_hash, prev_seq = GENESIS_HASH, 0
-    if not path.exists():
-        return {"ok": True, "records": 0, "errors": []}
-
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, line in enumerate(raw.splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             continue
@@ -161,8 +153,60 @@ def verify_ledger(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
         # Linkage follows the STORED hash so one tampered record does not
         # cascade phantom chain errors over every later record.
         prev_hash, prev_seq = str(record.get("record_hash")), seq
+        records.append(record)
 
-    return {"ok": not errors, "records": checked, "errors": errors}
+    ok = not errors
+    return {
+        "ok": ok,
+        "checked": checked,
+        # No readable prefix is evidence once the complete snapshot failed.
+        "records": records if ok else [],
+        "errors": errors,
+    }
+
+
+def read_verified_ledger(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
+    """Read once, then verify and return records from that exact snapshot.
+
+    This is the safe consumer API when record contents are needed. Calling
+    :func:`verify_ledger` and reopening the append-only file afterwards creates
+    a time-of-check/time-of-use gap: a concurrent append could otherwise enter
+    the consumer read without having been part of the verified bytes.
+
+    Returns ``{"ok", "checked", "records", "errors"}``. On any read or chain
+    failure ``records`` is empty, so callers cannot accidentally trust a valid
+    looking prefix of an invalid snapshot.
+    """
+    if not path.exists():
+        return {"ok": True, "checked": 0, "records": [], "errors": []}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {
+            "ok": False,
+            "checked": 0,
+            "records": [],
+            "errors": [{"seq": 0, "reason": f"ledger unreadable ({path})"}],
+        }
+    return _verify_ledger_snapshot(raw)
+
+
+def verify_ledger(path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any]:
+    """Recompute every attestation and chain link (pure, read-only).
+
+    Checks per record: payload reproducibility (payload -> payload_hash), record
+    integrity (record -> record_hash) and forward-only linkage (prev_hash/seq).
+    Returns ``{"ok", "records", "errors": [{"seq", "reason"}]}`` — an empty or
+    missing ledger verifies ok with 0 records. Consumers needing the verified
+    contents should use :func:`read_verified_ledger` to avoid a second read.
+    """
+    snapshot = read_verified_ledger(path)
+
+    return {
+        "ok": snapshot["ok"],
+        "records": snapshot["checked"],
+        "errors": snapshot["errors"],
+    }
 
 
 def read_record(seq: int, *, path: Path = DEFAULT_TRUTH_LEDGER_PATH) -> dict[str, Any] | None:
@@ -321,5 +365,6 @@ __all__ = [
     "attested_subject_ids",
     "chain_tip",
     "read_record",
+    "read_verified_ledger",
     "verify_ledger",
 ]

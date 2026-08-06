@@ -250,6 +250,63 @@ def test_judgeable_state_is_distinguished() -> None:
     assert board["eval_check_count"] == 0
 
 
+def test_verified_truth_resolution_removes_claim_from_open_board() -> None:
+    """Truth-Kette schließt auch ohne redundante prereg_verdicts-Zeile.
+
+    Realfall ND-v2: seq 73 war terminal attestiert, aber im separaten
+    ``prereg_verdicts.jsonl`` fehlte der Eintrag. Das Board darf ihn deshalb
+    nicht weiter als offen ausweisen.
+    """
+    board = build_live_board(
+        ledger=[_reg("b20ef1487ccba99d", "directional_news_hedged_1d_drift_v2", 300)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "directional_news_hedged_1d_drift",
+                "prereg_id": "b20ef1487ccba99d",
+                "n_proxy": 302,
+                "n_target": 300,
+                "state": "RESOLVED",
+                "state_source": "truth_ledger",
+                "due": False,
+                "resolution": {"status": "resolved", "verdict_class": "NOT_MET", "seq": 73},
+                "per_source": {"stories": 302},
+            }
+        ],
+    )
+
+    assert board["open_preregs"] == []
+    assert board["open_count"] == 0
+    assert board["has_content"] is False
+
+
+def test_resolution_evidence_hold_is_visible_but_never_due() -> None:
+    """Inkonsistente Truth-Evidenz wird nicht als neuer Eval-Auftrag verkauft."""
+    board = build_live_board(
+        ledger=[_reg("aaa", "claim", 300)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "claim",
+                "prereg_id": "aaa",
+                "n_proxy": 300,
+                "n_target": 300,
+                "state": "RESOLUTION_HOLD",
+                "state_source": "truth_ledger",
+                "due": False,
+                "resolution": {"status": "conflict"},
+                "per_source": {},
+            }
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "evidence_hold"
+    assert "HOLD" in row["action"]
+    assert board["evidence_hold_count"] == 1
+    assert board["due_count"] == 0
+
+
 def test_legacy_rows_without_state_still_work() -> None:
     """Reihen ohne ``state`` (Alt-Format) fallen auf das ``due``-Bit zurück.
 
