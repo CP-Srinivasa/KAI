@@ -211,21 +211,27 @@ export function NodePage() {
             }
             hint="GEBAUT + läuft: APP_L2_EVIDENCE_ENABLED=true, shadow-only/inert (direction_aligned=0 → LLR=0, null Sizing-Impact, mathematisch erzwungen), akkumuliert l2_evidence_shadow.jsonl. Evaluator (evaluate_l2_evidence.py, moving-block-bootstrap autokorrelations-robust) ready; Trust-Promote erst nach Edge-Beweis (operator-gated)."
           />
+          {/* Wahrheits-Regel (Audit 2026-08-06): diese statische Karte behauptet
+              KEINE Env-Zustände mehr (pay_enabled etc.) — der Spend-Pfad wurde
+              am 06.08. per Operator-GO disarmed, und Prosa, die Flags als
+              "=true" zitiert, veraltet still. Zustand kommt NUR aus der API
+              (LN-Steuerung unten); hier steht Architektur + Historie. */}
           <Pillar
             layer="L4/L5"
             title="Agentische Wert-Schicht"
             icon={<Lock size={18} />}
             tone="warn"
-            badge="LIVE · policy-gebremst"
+            badge="Zustand: siehe LN-Steuerung"
             badgeTone="warn"
             body={
               <>
-                L402 + Empfang + Channel-Open sind <span className="font-mono text-fg">live</span> —
-                jede kapital-wirksame Aktion läuft durch Policy-Envelope (Caps + Reserve-Floor) und
-                HOTP-Confirm. Den echten Kill-Switch-Zustand zeigt die LN-Steuerung unten.
+                Empfang/L402 und kapital-wirksame Aktionen laufen — wenn armiert — durch
+                Policy-Envelope (Caps + Reserve-Floor) und HOTP-Confirm. Ob der Spend-Pfad
+                gerade scharf oder disarmed ist, zeigt AUSSCHLIESSLICH die LN-Steuerung
+                unten (live aus der API) — diese Karte behauptet keinen Gate-Zustand.
               </>
             }
-            hint="Seit 2026-07-01 operator-armiert: pay/receive/l402_enabled=true, Cockpit-Macaroon + HOTP-Seed provisioniert, enge Policy (allowed_actions, per-action-/daily-Cap, reserve_floor, confirm_threshold=1 ⇒ HOTP auf JEDEM Spend). Erster Channel (400k, ACINQ) über genau diesen Pfad eröffnet. Rollback: APP_LN_PAY_ENABLED=false."
+            hint="Historie: Wert-Schicht 2026-07-01 erstmals operator-armiert (Cockpit-Macaroon + HOTP-Seed, enge Policy: allowed_actions, per-action-/daily-Cap, reserve_floor, confirm_threshold=1 ⇒ HOTP auf jedem Spend); erster Channel (400k, ACINQ) lief über genau diesen Pfad. Arming/Disarming ist ein Operator-Gate (APP_LN_PAY_ENABLED)."
           />
         </div>
       </section>
