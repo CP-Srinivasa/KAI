@@ -1,13 +1,11 @@
-"""Write side of the LN value-layer ops audit-ledger — v1 (live) and v2 (parallel).
+"""Write side of the LN value-layer ops audit-ledger — v1 (frozen) and v2 (live).
 
-Part 1 pins the LIVE v1 behaviour byte for byte: value_layer/ln_control/dashboard
-call ``append_ln_op``/``read_recent_ln_ops`` today and PR-B must not move a comma
-for them (append-only, fail-soft, legacy shape, no redaction).
+Part 1 pins the frozen v1 rollback behaviour byte for byte (append-only, fail-soft,
+legacy shape, no redaction); production callers write v2 since PR-C.
 
-Part 2 exercises the v2 machinery that nothing calls yet: write-ahead intent
-(fail-closed), redaction at the writer boundary, hash chaining, lifecycle
-verification, the M-4 retry window, tail/interior repair refusal (M-5) and the
-non-destructive migration with BL-3 provenance.
+Part 2 exercises the live v2 machinery: write-ahead intent (fail-closed), redaction
+at the writer boundary, hash chaining, lifecycle verification, the M-4 retry window,
+tail/interior repair refusal (M-5) and non-destructive migration with BL-3 provenance.
 """
 
 from __future__ import annotations
@@ -28,6 +26,7 @@ from app.lightning.ops_ledger import (
     normalize_payment_hash,
     prepare_ln_intent,
     read_recent_ln_ops,
+    spent_today_sat_v2,
     verify_ln_ops_ledger,
 )
 from app.truth.ledger import verify_ledger
@@ -96,7 +95,7 @@ def test_v1_and_v2_journals_do_not_touch_each_other(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Part 2 — v2 machinery (no production caller yet; wired in PR-C).
+# Part 2 — live v2 machinery (wired at the PR-C cutover).
 # --------------------------------------------------------------------------- #
 
 
@@ -445,6 +444,26 @@ def test_migration_reports_every_skipped_line_in_detail(tmp_path) -> None:
         {"line": 3, "reason": "not a json object", "state": ""},
         {"line": 4, "reason": "non-terminal legacy state", "state": "disabled"},
     ]
+
+
+def test_zero_row_migration_creates_a_known_empty_v2_journal(tmp_path) -> None:
+    """A successful empty migration must not be indistinguishable from data loss."""
+    source = tmp_path / "empty_legacy.jsonl"
+    destination = tmp_path / "empty_v2.jsonl"
+    source.write_text("", encoding="utf-8")
+
+    report = migrate_legacy_ln_ops(source, destination)
+
+    assert destination.is_file()
+    assert destination.read_bytes() == b""
+    assert report["written_records"] == 0
+    assert report["verification"] == {
+        "ok": True,
+        "records": 0,
+        "open_intents": [],
+        "errors": [],
+    }
+    assert spent_today_sat_v2(destination, now=_BASE) == 0
 
 
 def test_migration_tolerates_duplicate_payment_hashes(tmp_path) -> None:

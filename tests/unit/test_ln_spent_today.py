@@ -8,15 +8,19 @@ innerhalb der Self-Custody und zählt nicht. Betrag: response-first (tatsächlic
 gezahlte Route inkl. Fees), BOLT11-HRP-Fallback, sonst 0 mit Warnung.
 
 Teil 2 deckt ``spent_today_sat_v2`` ab — dieselbe Semantik auf dem redigierten,
-verketteten v2-Journal, ZUSÄTZLICH mit Reservierung offener Intents. Kein
-Produktions-Aufrufer nutzt v2 (PR-C); ``spent_today_sat`` bleibt unverändert.
+verketteten v2-Live-Journal, ZUSÄTZLICH mit Reservierung offener Intents.
+``spent_today_sat`` bleibt als eingefrorene v1-Rollback-Semantik unverändert.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import pytest
+
+from app.lightning import ops_ledger
 from app.lightning.ops_ledger import (
     append_ln_outcome,
     bolt11_amount_sat,
@@ -111,7 +115,7 @@ def test_missing_ledger_is_zero(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Teil 2 — v2-Cap-Quelle (parallel, noch kein Aufrufer).
+# Teil 2 — live v2-Cap-Quelle seit PR-C.
 # --------------------------------------------------------------------------- #
 
 
@@ -203,5 +207,48 @@ def test_v2_error_outcome_still_counts(tmp_path) -> None:
     assert spent_today_sat_v2(p, now=NOW) == 25000
 
 
-def test_v2_missing_ledger_is_zero(tmp_path) -> None:
-    assert spent_today_sat_v2(tmp_path / "fehlt.jsonl", now=NOW) == 0
+def test_v2_missing_ledger_is_unknown(tmp_path) -> None:
+    assert spent_today_sat_v2(tmp_path / "fehlt.jsonl", now=NOW) is None
+
+
+def test_v2_corrupt_ledger_is_unknown(tmp_path) -> None:
+    path = tmp_path / "ops_v2.jsonl"
+    path.write_text('{"seq":1', encoding="utf-8")
+    assert spent_today_sat_v2(path, now=NOW) is None
+
+
+def test_v2_hash_chain_corruption_is_unknown(tmp_path) -> None:
+    path = tmp_path / "ops_v2.jsonl"
+    prepare_ln_intent(
+        "send_coins",
+        plan={"amount_sat": 5000, "addr": "bc1-x"},
+        intent_id="tampered",
+        path=path,
+        now=NOW,
+    )
+    row = json.loads(path.read_text(encoding="utf-8"))
+    row["plan"]["amount_sat"] = 0
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    assert spent_today_sat_v2(path, now=NOW) is None
+
+
+def test_v2_read_oserror_is_unknown(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "ops_v2.jsonl"
+    path.write_text("", encoding="utf-8")
+
+    class _UnreadableLock:
+        def __enter__(self) -> object:
+            raise OSError("simulated read failure")
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(ops_ledger.portalocker, "Lock", lambda *args, **kwargs: _UnreadableLock())
+    assert spent_today_sat_v2(path, now=NOW) is None
+
+
+def test_v2_existing_empty_fresh_journal_is_known_zero(tmp_path: Path) -> None:
+    """A present, chain-valid zero-row migration is known-empty, not missing."""
+    path = tmp_path / "freshly_migrated_v2.jsonl"
+    path.write_text("", encoding="utf-8")
+    assert spent_today_sat_v2(path, now=NOW) == 0

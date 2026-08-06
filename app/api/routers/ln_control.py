@@ -208,6 +208,7 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         available = fresh_capital_sat if fresh_capital_sat is not None else 0
     else:
         available = await _available_balance_sat()
+    spent_today = spent_today_sat_v2()
     decision = evaluate_policy(
         body.action,
         amount_sat=amount,
@@ -216,7 +217,9 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         # wert-abfließenden Sends aus dem v2-Geldjournal (inkl. offener Intents und
         # des m-15-Rolling-Fensters). Für pay_invoice stammt ``amount`` aus dem
         # BOLT11 (nicht aus params) → Caps/Floor greifen jetzt.
-        spent_today_sat=spent_today_sat_v2(),
+        # UNKNOWN is converted to 0 only for the pure evaluator's type contract;
+        # the capital gate below replaces its provisional verdict with hard deny.
+        spent_today_sat=0 if spent_today is None else spent_today,
         available_balance_sat=available,
         envelope=envelope,
     )
@@ -233,6 +236,12 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         if fresh_capital_sat is None:
             decision = PolicyDecision(
                 "denied", "node state stale/unavailable — capital action fails closed"
+            )
+        # W0-B1: missing/unreadable/invalid v2 history is not "spent 0 today".
+        # Granting the full cap from an unknown baseline would reopen the budget.
+        if spent_today is None:
+            decision = PolicyDecision(
+                "denied", "daily spend cap unknown — money journal must be repaired"
             )
         # PR-C fail-closed: no write-ahead journal ⇒ no spend. Evaluated last so its
         # reason wins over the staleness reason: an unaccountable spend is the deeper
