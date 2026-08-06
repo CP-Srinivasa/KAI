@@ -5,7 +5,8 @@
 # documents become shadow candidates well before their resolution windows.
 [Unit]
 Description=KAI Shadow-Real Feed — fire every 30 min (flag-gated, off by default)
-Requires=kai-shadow-real-feed.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 OnBootSec=12min

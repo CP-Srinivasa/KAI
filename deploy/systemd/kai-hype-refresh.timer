@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Hype-Refresh — warm sentiment-overheat snapshot every 15 min
-Requires=kai-hype-refresh.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Hype moves on an hours scale (recent window default 6h); a 15-minute

@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Oracle Earnings-Booking — scan settled oracle invoices every 10 min
-Requires=kai-oracle-earnings-booking.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Read-only invoice scan; 10 min is ample for booking settled L402 payments into the
