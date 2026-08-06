@@ -729,6 +729,12 @@ def compose_digest_message(
             )
         else:
             head = {
+                # INFO = ausschließlich eingefrorene/deklarierte Alt-Befunde
+                # (TL-004/TL-008-Zweiteilung): Status ist NICHT degraded, die
+                # Befunde bleiben unten wörtlich sichtbar. Ohne diesen Eintrag
+                # fiele INFO auf den stummen Default und wäre weder OK noch
+                # DEGRADED — ein Zustand ohne Namen.
+                "INFO": "🧪 *Truth-Lint: OK — nur eingefrorene Alt-Befunde offengelegt*",
                 "WARNING": "⚠️ *Truth-Lint: Status DEGRADED*",
                 "ERROR": "⛔ *Truth-Lint: Quarantäne gesetzt*",
                 "CRITICAL": "🛑 *Truth-Lint CRITICAL — Evidence-Claim-Block fällig "
