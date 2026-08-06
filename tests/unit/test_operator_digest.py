@@ -645,6 +645,69 @@ def test_truth_lint_info_only_reads_ok_but_discloses_findings() -> None:
     assert "TL-008" in msg
 
 
+# ── Truth-Anchor-Zeile (Voll-Audit 2026-08-06, WP7 / Blindstelle #2) ─────────
+# Die Kette wuchs bisher ohne jede Digest-Sichtbarkeit — ein still nie mehr
+# verankerter Tip fiel niemandem auf.
+
+
+def test_truth_anchor_line_healthy() -> None:
+    msg = _compose(
+        truth_anchor={
+            "available": True,
+            "tip_seq": 76,
+            "records": 76,
+            "chain_ok": True,
+            "tip_anchored": True,
+        }
+    )
+    assert "Truth-Anchor:* seq 76" in msg
+    assert "Kette ok" in msg
+    assert "Tip OTS-verankert" in msg
+
+
+def test_truth_anchor_line_broken_chain_and_unanchored_are_loud() -> None:
+    msg = _compose(
+        truth_anchor={
+            "available": True,
+            "tip_seq": 76,
+            "records": 40,
+            "chain_ok": False,
+            "tip_anchored": False,
+        }
+    )
+    assert "KETTE GEBROCHEN" in msg
+    assert "NICHT verankert" in msg
+
+
+def test_truth_anchor_collector_failure_is_honest() -> None:
+    msg = _compose(truth_anchor=None)
+    assert "Truth-Anchor:* Status nicht lesbar" in msg
+
+
+def test_collect_truth_anchor_reads_real_ledger(tmp_path: Path) -> None:
+    from app.truth.ledger import append_attestation
+
+    ledger = tmp_path / "truth.jsonl"
+    append_attestation("verdict", "s-1", {"a": 1}, path=ledger, mirror_audit=False)
+    rec2 = append_attestation("verdict", "s-2", {"a": 2}, path=ledger, mirror_audit=False)
+    proofs = tmp_path / "proofs"
+    proofs.mkdir()
+
+    unanchored = od.collect_truth_anchor(ledger_path=ledger, proofs_dir=proofs)
+    assert unanchored is not None
+    assert unanchored["available"] is True
+    assert unanchored["tip_seq"] == 2
+    assert unanchored["chain_ok"] is True
+    assert unanchored["tip_anchored"] is False
+
+    (proofs / f"truthledger-{rec2['record_hash'][:16]}.ots").write_bytes(b"proof")
+    anchored = od.collect_truth_anchor(ledger_path=ledger, proofs_dir=proofs)
+    assert anchored is not None and anchored["tip_anchored"] is True
+
+    missing = od.collect_truth_anchor(ledger_path=tmp_path / "nope.jsonl", proofs_dir=proofs)
+    assert missing == {"available": False}
+
+
 def test_collect_truth_lint_reads_last_run(tmp_path: Path) -> None:
     p = tmp_path / "truth_lint_report.jsonl"
     p.write_text(

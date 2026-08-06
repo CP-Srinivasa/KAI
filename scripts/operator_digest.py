@@ -387,6 +387,37 @@ def collect_truth_lint(report_path: Path | None = None) -> dict[str, Any] | None
     return rows[-1] if rows else None
 
 
+def collect_truth_anchor(
+    ledger_path: Path | None = None, proofs_dir: Path | None = None
+) -> dict[str, Any] | None:
+    """Truth-Ketten-Zustand (read-only, fail-soft): Tip-Seq, Verify, OTS-Proof.
+
+    Blindstelle #2 (Voll-Audit 2026-08-06): kai-truth-anchor konnte dauerhaft
+    still scheitern — die Kette wuchs lokal weiter, wurde nie mehr verankert,
+    und KEIN Digest-/Probe-Konsument sah es. ``None`` nur bei unerwartetem
+    Fehler (der Digest darf nie am Collector sterben)."""
+    try:
+        from app.core.integrity_settings import IntegritySettings
+        from app.truth.ledger import DEFAULT_TRUTH_LEDGER_PATH, chain_tip, verify_ledger
+
+        path = ledger_path or DEFAULT_TRUTH_LEDGER_PATH
+        if not path.exists():
+            return {"available": False}
+        tip = chain_tip(path)
+        verify = verify_ledger(path)
+        proofs = proofs_dir if proofs_dir is not None else Path(IntegritySettings().proofs_dir)
+        proof = proofs / f"truthledger-{str(tip['record_hash'])[:16]}.ots"
+        return {
+            "available": True,
+            "tip_seq": int(tip["seq"]),
+            "records": int(verify["records"]),
+            "chain_ok": bool(verify["ok"]),
+            "tip_anchored": proof.exists(),
+        }
+    except Exception:  # noqa: BLE001 — Digest darf nie am Collector sterben
+        return None
+
+
 def collect_d227() -> dict[str, Any]:
     try:
         from app.alerts.blocked_outcome_report import build_blocked_outcome_report
@@ -603,6 +634,7 @@ def compose_digest_message(
     milestone_state: dict[str, Any] | None = None,
     v5_verdict: dict[str, Any] | None = None,
     truth_lint: dict[str, Any] | None = None,
+    truth_anchor: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Testbar.
 
@@ -745,6 +777,23 @@ def compose_digest_message(
                 lines.append(
                     f"  • [{v.get('severity')}] {v.get('invariant_id')}: {str(v.get('message'))[:110]}"
                 )
+
+    # Truth-Anchor (Voll-Audit 2026-08-06, Blindstelle #2): die Kette wuchs
+    # bisher ohne jede Digest-Sichtbarkeit — ein still nie mehr verankerter
+    # Tip fiel niemandem auf. None = Collector-Fehler, ehrlich ausweisen.
+    if truth_anchor is None:
+        lines.append("⚓ *Truth-Anchor:* Status nicht lesbar (Collector-Fehler)")
+    elif not truth_anchor.get("available"):
+        lines.append("⚓ *Truth-Anchor:* kein Ledger gefunden")
+    else:
+        ta_chain = "Kette ok" if truth_anchor.get("chain_ok") else "🛑 KETTE GEBROCHEN"
+        ta_anchor = (
+            "Tip OTS-verankert" if truth_anchor.get("tip_anchored") else "⚠️ Tip NICHT verankert"
+        )
+        lines.append(
+            f"⚓ *Truth-Anchor:* seq {truth_anchor.get('tip_seq')} "
+            f"({truth_anchor.get('records')} Records) · {ta_chain} · {ta_anchor}"
+        )
 
     # V5-Evidence-Frische.
     fund_age, oi_age = v5_freshness.get("funding"), v5_freshness.get("oi")
@@ -976,6 +1025,7 @@ def main(argv: list[str] | None = None) -> int:
             milestone_state=milestone_state,
             v5_verdict=collect_v5_verdict(),
             truth_lint=collect_truth_lint(),
+            truth_anchor=collect_truth_anchor(),
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")
