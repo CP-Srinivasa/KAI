@@ -895,11 +895,14 @@ def test_dashboard_routes_in_main_app(tmp_path: Path, monkeypatch: pytest.Monkey
     from app.api.main import create_app
 
     app = create_app()
-    # FastAPI 0.141: include_router erzeugt zusaetzliche _IncludedRouter-Eintraege
-    # ohne .path — tolerant filtern statt am Routen-Internum zu haengen (#673).
-    paths = {p for route in app.routes if (p := getattr(route, "path", None))}
-    assert "/dashboard" in paths
-    assert "/dashboard/api/quality" in paths
+    # FastAPI 0.141: Router-Interna (_IncludedRouter) sind opak — die
+    # oeffentliche OpenAPI-Sicht ist die versionsfeste Wahrheitsquelle fuer
+    # API-Routen; Mounts (SPA) erscheinen dort nicht und kommen aus der
+    # Top-Level-Routenliste (haben in allen Versionen .path) (#673).
+    api_paths = set(app.openapi()["paths"])
+    mount_paths = {p for route in app.routes if (p := getattr(route, "path", None))}
+    assert "/dashboard" in mount_paths
+    assert "/dashboard/api/quality" in api_paths
 
 
 def test_lightning_endpoint_disabled_by_default() -> None:
