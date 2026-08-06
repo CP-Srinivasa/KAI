@@ -895,7 +895,9 @@ def test_dashboard_routes_in_main_app(tmp_path: Path, monkeypatch: pytest.Monkey
     from app.api.main import create_app
 
     app = create_app()
-    paths = {route.path for route in app.routes}
+    # FastAPI 0.141: include_router erzeugt zusaetzliche _IncludedRouter-Eintraege
+    # ohne .path — tolerant filtern statt am Routen-Internum zu haengen (#673).
+    paths = {p for route in app.routes if (p := getattr(route, "path", None))}
     assert "/dashboard" in paths
     assert "/dashboard/api/quality" in paths
 

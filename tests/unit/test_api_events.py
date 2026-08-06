@@ -33,7 +33,8 @@ def _reset_default_hub() -> None:
 def test_router_registers_sse_path() -> None:
     app = FastAPI()
     app.include_router(events_mod.router)
-    paths = {route.path for route in app.router.routes}
+    # FastAPI 0.141: _IncludedRouter-Eintraege ohne .path tolerant filtern (#673).
+    paths = {p for route in app.router.routes if (p := getattr(route, "path", None))}
     assert "/dashboard/api/events" in paths
 
 
