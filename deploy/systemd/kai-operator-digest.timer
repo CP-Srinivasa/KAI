@@ -4,7 +4,8 @@
 # enabled by default — enabling is a deliberate operator step.
 [Unit]
 Description=KAI Operator-Digest — daily 07:30 (off by default)
-Requires=kai-operator-digest.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 OnCalendar=*-*-* 07:30:00

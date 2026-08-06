@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI kai-server Health Watchdog — fire every 2 minutes
-Requires=kai-server-health-watchdog.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Every 2 minutes → 3 consecutive failures ≈ 6 min before a restart fires.

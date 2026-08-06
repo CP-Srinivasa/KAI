@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI CoinGecko-Overview-Refresh — warm overview snapshot every 15 min
-Requires=kai-coingecko-overview-refresh.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # market_cap_rank/market_cap move slowly; 15 min is ample vs the 15-min TTL.

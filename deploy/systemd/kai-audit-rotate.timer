@@ -4,7 +4,8 @@
 # thresholds; under-threshold runs are no-ops.
 [Unit]
 Description=KAI Audit Rotation — daily (archiving, off by default)
-Requires=kai-audit-rotate.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 OnCalendar=*-*-* 04:40:00

@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Source-Discovery — fire weekly (Mon 05:00 Pi-local) + on boot if missed
-Requires=kai-source-discovery.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Weekly, Monday 05:00 local (Europe/Berlin) — after the nightly recalc-cycle

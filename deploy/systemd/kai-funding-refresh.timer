@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Funding-Refresh — warm funding snapshot every 5 min
-Requires=kai-funding-refresh.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Funding cadence is 8h on the exchanges; a 5-minute refresh is already far

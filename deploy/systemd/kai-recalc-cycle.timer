@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Recalc-Cycle — fire daily at 04:00 Pi-local time
-Requires=kai-recalc-cycle.service
+# Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
+# ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
 # Daily at 04:00 local time — after midnight alert-audit-stream is quiet,
