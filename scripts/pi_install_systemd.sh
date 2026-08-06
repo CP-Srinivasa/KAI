@@ -85,6 +85,8 @@ UNITS=(
     "kai-operator-digest.timer"
     "kai-ln-scb-monitor.service"
     "kai-ln-scb-monitor.timer"
+    "kai-ln-reconcile.service"
+    "kai-ln-reconcile.timer"
     "kai-forecaster-issue.service"
     "kai-forecaster-issue.timer"
     "kai-forecaster-resolve.service"
@@ -97,6 +99,11 @@ UNITS=(
 # ist ein bewusster Deploy-Schritt: `systemctl enable --now kai-forecaster-issue.timer
 # kai-forecaster-resolve.timer`. Beide sind read-only gegen den Node-losen
 # Binance-Daily-Pfad und schreiben nur artifacts/research/forecaster_panel/.
+
+# NOTE 2026-08-06: kai-ln-reconcile.timer ist ABSICHTLICH nicht in
+# ENABLE_ON_INSTALL. Der outcome-only Abgleich darf erst nach versiegelter
+# Shadow-Prae-Registrierung und explizitem Deploy-Smoke aktiviert werden. Er
+# benutzt nur das Read-Credential und sendet/erstellt niemals eine Zahlung.
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
 # ABSENT from ENABLE_ON_INSTALL below — installed (daemon-reload aware) but

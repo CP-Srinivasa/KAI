@@ -1,0 +1,14 @@
+[Unit]
+Description=Run KAI Lightning money-journal reconciliation every 15 minutes
+
+[Timer]
+# Decoupled: stopping/restarting kai-server must never strand this timer.
+# Calendar-only and non-persistent: no reconciliation is injected into boot and
+# missed runs are not replayed as a boot-time catch-up burst.
+OnCalendar=*-*-* *:00/15:00
+AccuracySec=1min
+RandomizedDelaySec=2min
+Unit=kai-ln-reconcile.service
+
+[Install]
+WantedBy=timers.target
