@@ -18,6 +18,7 @@ import binascii
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -288,6 +289,11 @@ class LndRestClient:
         if not isinstance(data, dict):
             raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
         return data
+
+    async def decode_pay_req(self, *, payment_request: str) -> dict[str, Any]:
+        """GET /v1/payreq/{pay_req} — decode and verify a BOLT11 before a send."""
+        encoded = quote(payment_request, safe="")
+        return await self._get(f"/v1/payreq/{encoded}")
 
     async def pay_invoice(self, *, payment_request: str, fee_limit_sat: int = 0) -> dict[str, Any]:
         """POST /v1/channels/transactions — pay a BOLT11 invoice (SPENDS; irreversible)."""

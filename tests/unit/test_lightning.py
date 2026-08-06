@@ -349,6 +349,7 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
     def _recorder(cfg, *, credential_scope: str = "read"):  # type: ignore[no-untyped-def]
         seen.append((label, credential_scope))
         client = MagicMock()
+        payment_hash = "11" * 32
         for method in (
             "add_invoice",
             "pay_invoice",
@@ -358,6 +359,14 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
             "close_channel",
         ):
             setattr(client, method, AsyncMock(return_value={}))
+        client.decode_pay_req = AsyncMock(
+            return_value={
+                "num_satoshis": "1000",
+                "num_msat": "1000000",
+                "payment_hash": payment_hash,
+            }
+        )
+        client.pay_invoice = AsyncMock(return_value={"payment_hash": payment_hash})
         client.list_invoices = AsyncMock(return_value=[])
         return client
 
