@@ -163,11 +163,32 @@ def test_v2_ignores_non_spend_actions_and_other_days(tmp_path) -> None:
     prepare_ln_intent(
         "send_coins",
         plan={"amount_sat": 5000, "addr": "bc1-x"},
-        intent_id="yesterday",
+        intent_id="long-past",
         path=p,
-        now=NOW - timedelta(days=1),
+        # Outside BOTH windows (calendar day and the m-15 rolling 24 h).
+        now=NOW - timedelta(days=2),
     )
     assert spent_today_sat_v2(p, now=NOW) == 0
+
+
+def test_v2_m15_rolling_window_closes_the_utc_midnight_hop(tmp_path) -> None:
+    """m-15: ein Spend kurz vor Mitternacht darf das Cap nicht kurz danach freigeben.
+
+    Kalendertag allein: 23:50 gestern zählt heute NICHT → volles Cap um 00:10
+    erneut verfügbar (2× Tagesexposure in 20 Minuten). Das rollende 24-h-Fenster
+    hält ihn, bis er wirklich 24 h alt ist; das Maximum aus beiden ist die Quelle.
+    """
+    p = tmp_path / "ops_v2.jsonl"
+    before_midnight = datetime(2026, 7, 1, 23, 50, tzinfo=UTC)
+    just_after = datetime(2026, 7, 2, 0, 10, tzinfo=UTC)
+    plan = {"amount_sat": 5000, "addr": "bc1-x"}
+    prepare_ln_intent("send_coins", plan=plan, intent_id="late", path=p, now=before_midnight)
+    append_ln_outcome(
+        "send_coins", "executed", plan=plan, intent_id="late", path=p, now=before_midnight
+    )
+    assert spent_today_sat_v2(p, now=just_after) == 5000  # rolling window still holds it
+    # ... und fällt erst heraus, wenn er die 24 h überschritten hat.
+    assert spent_today_sat_v2(p, now=before_midnight + timedelta(hours=24, minutes=1)) == 0
 
 
 def test_v2_error_outcome_still_counts(tmp_path) -> None:

@@ -7,7 +7,6 @@ resolution (hex + file), and a happy-path getinfo through a mocked transport.
 from __future__ import annotations
 
 import binascii
-from pathlib import Path
 
 import httpx
 import pytest
@@ -313,24 +312,80 @@ def test_missing_write_credential_fails_closed_without_read_fallback(scope: str)
         _build_client(cfg, credential_scope=scope)  # type: ignore[arg-type]
 
 
-def test_no_app_module_requests_a_write_scope_yet_pr_a_is_additive() -> None:
-    """W0/PR-A deploy invariant: the scopes are DECLARED, no consumer is switched, so
-    a deploy of this PR alone cannot change which credential any live path uses.
+async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -> None:
+    """W0/PR-C cutover invariant (replaces the PR-A additivity guard).
 
-    Delete this guard in PR-C — that is the PR that deliberately switches consumers
-    (value_layer / ln_control / earnings / oracle) onto the capability credentials.
+    PR-A declared five credentials while every caller still rode the read macaroon;
+    the guard test that pinned that additivity is deleted HERE, because this is the
+    PR that switches the consumers. What replaces it is stricter: each path is
+    executed for real and must have asked for exactly ONE, correct capability. A
+    future refactor that drops a ``credential_scope=`` silently falls back to
+    ``"read"`` — and lands in this assertion instead of in production.
     """
-    adapter_path = Path(adapter_mod.__file__).resolve()
-    app_dir = adapter_path.parents[1]
-    offenders = [
-        path.relative_to(app_dir).as_posix()
-        for path in app_dir.rglob("*.py")
-        if path.resolve() != adapter_path and "credential_scope" in path.read_text(encoding="utf-8")
-    ]
-    assert offenders == [], (
-        "credential_scope= is used outside app/lightning/adapter.py — that is a PR-C "
-        f"consumer switch, not PR-A: {offenders}"
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.lightning import earnings_booking as eb
+    from app.lightning import value_layer as vl
+
+    seen: list[tuple[str, str]] = []
+    label = ""
+
+    def _recorder(cfg, *, credential_scope: str = "read"):  # type: ignore[no-untyped-def]
+        seen.append((label, credential_scope))
+        client = MagicMock()
+        for method in (
+            "add_invoice",
+            "pay_invoice",
+            "keysend",
+            "send_coins",
+            "open_channel",
+            "close_channel",
+        ):
+            setattr(client, method, AsyncMock(return_value={}))
+        client.list_invoices = AsyncMock(return_value=[])
+        return client
+
+    monkeypatch.setattr(vl, "_build_client", _recorder)
+    monkeypatch.setattr(eb, "_build_client", _recorder)
+    cfg = LightningSettings(
+        _env_file=None,
+        enabled=True,
+        pay_enabled=True,
+        receive_enabled=True,
+        tls_cert_path="test-tls.pem",
+        macaroon_hex="read",
+        invoice_macaroon_hex="invoice",
+        payment_macaroon_hex="payment",
+        onchain_macaroon_hex="onchain",
+        channel_macaroon_hex="channel",
     )
+    gates = {"dry_run": False, "confirm": True, "cfg": cfg}
+
+    calls = [
+        ("create_invoice", lambda: vl.create_invoice(value_sat=10, dry_run=False, cfg=cfg)),
+        ("pay_invoice", lambda: vl.pay_invoice(payment_request="lnbc10u1x", **gates)),
+        ("keysend", lambda: vl.keysend(dest_pubkey_hex="02ab", amt_sat=10, **gates)),
+        ("send_coins", lambda: vl.send_coins(addr="bc1q", amount_sat=10, **gates)),
+        (
+            "open_channel",
+            lambda: vl.open_channel(node_pubkey_hex="02ab", local_funding_sat=10, **gates),
+        ),
+        ("close_channel", lambda: vl.close_channel(funding_txid="ab", output_index=0, **gates)),
+        ("earnings_booking", lambda: eb.book_oracle_earnings(cfg=cfg)),
+    ]
+    for name, call in calls:
+        label = name
+        await call()
+
+    assert seen == [
+        ("create_invoice", "invoice"),
+        ("pay_invoice", "payment"),
+        ("keysend", "payment"),
+        ("send_coins", "onchain"),
+        ("open_channel", "channel"),
+        ("close_channel", "channel"),
+        ("earnings_booking", "invoice"),
+    ]
 
 
 # --- channels: per-channel breakdown (read-only listchannels) --------------------

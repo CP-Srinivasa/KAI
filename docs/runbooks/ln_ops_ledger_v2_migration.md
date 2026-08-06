@@ -19,10 +19,18 @@ Operator-Aktion.
    Datei, während der Operator die neue einsetzt → stiller Verlust eines Geld-Events.
 3. **Keine unverifizierte Datei geht in Betrieb.** `verification.ok=true` im Report ist
    die Freigabebedingung, nicht die Abwesenheit von Fehlermeldungen.
-4. **Stand PR-B ist die v2-Maschinerie NICHT verdrahtet.** `append_ln_op`,
-   `spent_today_sat` und der Dashboard-Read arbeiten weiterhin auf v1. Die Migration
-   ist damit vorbereitend und jederzeit folgenlos wiederholbar — der Cutover kommt in
-   PR-C.
+4. **Seit PR-C ist v2 das Live-Journal.** Jeder Spend schreibt seinen Intent
+   write-ahead nach v2, das Tages-Cap kommt aus `spent_today_sat_v2`, und der
+   Dashboard-Read folgt automatisch (v2 wenn vorhanden, sonst v1). `append_ln_op` /
+   `spent_today_sat` haben keinen Aufrufer mehr und bleiben ausschliesslich als
+   Rollback-Fläche stehen. **Empfangen ist entkoppelt:** Invoice-Mints laufen in
+   `artifacts/ln_receive_ledger.jsonl` und sind von diesem Journal völlig
+   unabhängig — eine kaputte oder fehlende v2-Datei stoppt Spends, aber niemals den
+   `/oracle`-Einnahmepfad.
+5. **Ohne Migration keine Spends.** Fehlt `ln_ops_ledger_v2.jsonl`, während v1 noch
+   Zeilen hat, verweigert die Wert-Schicht jeden Spend („run the migration first")
+   statt eine zweite Geldhistorie mit Cap-Reset bei 0 zu beginnen. Ein Deploy VOR
+   der Migration ist damit ungefährlich, aber sende-unfähig.
 
 ## 0. Dry-Run gegen eine KOPIE (Pflicht, vor allem anderen)
 
@@ -105,10 +113,22 @@ muss geklärt werden, bevor PR-C irgendetwas auf v2 umstellt.
 
 ## Rollback
 
-Solange PR-C nicht verdrahtet ist, ist der Rollback trivial: `kai-truth-anchor.timer`
-stoppen, `artifacts/ln_ops_ledger_v2.jsonl` beiseiteschieben (nicht löschen — sie ist
-attestiert), Timer starten. v1 wurde nie angefasst, der laufende Betrieb merkt nichts.
-Im Zweifel: Writer gestoppt lassen und keine unverifizierte Datei einsetzen.
+**Vor PR-C** war der Rollback trivial: v2-Datei beiseiteschieben, fertig.
+
+**Seit PR-C** hängt der Sendepfad an v2 — die Datei beiseitezuschieben macht ihn
+sende-unfähig (Invariante 5), nicht rückgängig. Der Betrieb merkt trotzdem nur das:
+
+* **Empfangen läuft weiter.** `/oracle`, L402 und die Einnahmen-Buchung berühren v2
+  nicht. Ein v2-Problem kostet nie einen Sat Einnahmen.
+* **Spends werden abgelehnt**, mit der reparierbaren Ursache im Verdikt (Cockpit
+  zeigt `denied: money journal …`). Kein halb gebuchter Spend, keine stille Lücke.
+
+Echter Code-Rollback (nur wenn v2 grundsätzlich unbrauchbar ist): den PR-C-Commit
+zurücknehmen und deployen — `append_ln_op`/`spent_today_sat` sind genau dafür
+unverändert stehengeblieben und arbeiten sofort wieder auf dem nie angefassten v1.
+Die zwischenzeitlich in v2 geschriebenen Geld-Events müssen dann von Hand nach v1
+nachgetragen werden (Attestation-seq + Report als Beleg). Im Zweifel: Writer
+gestoppt lassen und keine unverifizierte Datei einsetzen.
 
 ## Tail-Recovery — abgerissene letzte Zeile (M-5)
 

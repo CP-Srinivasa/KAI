@@ -12,19 +12,48 @@ nothing moves real value unless the operator deliberately flips MULTIPLE gates:
 
 Invoice creation is receive-side (no spend) but still gated as L4. Enabling the
 write surface also requires a SCOPE-MINIMAL macaroon on the node (invoices /
-channel-open) — NEVER the readonly macaroon, NEVER admin. Default state is fully
-inert: read-only Phase-1 behaviour is unchanged.
+channel-open) — NEVER the readonly macaroon, NEVER admin. Since W0/PR-C every
+method requests its OWN capability credential (``credential_scope``); there is no
+promotion to the read macaroon. Default state is fully inert: read-only Phase-1
+behaviour is unchanged.
+
+**Journalling is deliberately ASYMMETRIC (W0/PR-C).** A spend and a receive have
+opposite failure economics, so they get opposite failure modes:
+
+  * **SPEND** (pay/keysend/send_coins/open/close): the v2 money journal
+    (``ops_ledger``) is a PRECONDITION. The intent is written ahead of the node
+    call; if it cannot be written — journal unverifiable, torn, unmigrated, locked —
+    the action is DENIED and the node is never touched. A spend we cannot account
+    for must not happen.
+  * **RECEIVE** (``create_invoice``, i.e. the public ``/oracle`` mint): the audit
+    trail (``receive_ledger``) is best-effort and lives in its OWN file. Minting is
+    the only real revenue path; it must never answer 503 because a SPEND journal is
+    broken (BL-2) and must never take the money journal's exclusive lock on an
+    anonymous hot path (M-9). See ``app.lightning.receive_ledger`` for the full
+    rationale.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.lightning_settings import LightningSettings
 from app.lightning.adapter import _build_client
 from app.lightning.client import LightningUnavailableError
-from app.lightning.ops_ledger import append_ln_op
+from app.lightning.jsonl_tail import read_recent_jsonl
+from app.lightning.ops_ledger import (
+    LightningOpsLedgerError,
+    append_ln_outcome,
+    legacy_ln_ops_path,
+    ln_ops_v2_path,
+    prepare_ln_intent,
+    verify_ln_ops_ledger,
+)
+from app.lightning.receive_ledger import append_receive_event
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,6 +65,9 @@ class ValueLayerResult:
     detail: str = ""
     plan: dict[str, Any] = field(default_factory=dict)
     response: dict[str, Any] = field(default_factory=dict)
+    # Money-journal correlation id. Non-empty exactly when a write-ahead intent was
+    # durably journalled for this action — i.e. when the node was actually reached.
+    intent_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +76,7 @@ class ValueLayerResult:
             "detail": self.detail,
             "plan": self.plan,
             "response": self.response,
+            "intent_id": self.intent_id,
         }
 
 
@@ -109,14 +142,77 @@ def _assert_send_allowed(
     return None
 
 
+def money_journal_status() -> tuple[bool, str]:
+    """May the v2 money journal be extended right now? — ``(ok, reason)``.
+
+    The SPEND precondition (W0/PR-C). Three ways to be not-ok, all fail-closed:
+
+      * the journal exists but does not verify (torn tail, forked chain, tampered
+        row) — appending would extend a history we can no longer prove;
+      * the journal is MISSING while the legacy v1 ledger still holds rows — the
+        cutover migration has not run. Starting a fresh genesis chain here would
+        fork the money history in two AND silently reset the daily cap to zero,
+        because ``spent_today_sat_v2`` would no longer see the v1 spends;
+      * verification itself blew up (unreadable file, permissions).
+
+    Cheap enough for the operator cockpit (O(n) over a journal that grows by two
+    lines per operator action) and deliberately NOT on the anonymous mint path.
+    """
+    v2 = ln_ops_v2_path()
+    try:
+        report = verify_ln_ops_ledger(v2)
+    except Exception as exc:  # noqa: BLE001 — any failure to verify is a denial
+        return False, f"money journal unverifiable ({type(exc).__name__}: {exc})"
+    if not report["ok"]:
+        return False, f"money journal fails verification: {report['errors'][:3]}"
+    if not v2.exists() and read_recent_jsonl(legacy_ln_ops_path(), limit=1):
+        return False, (
+            "money journal v2 is missing while the legacy v1 ledger still holds rows — "
+            "run the migration (docs/runbooks/ln_ops_ledger_v2_migration.md) before spending"
+        )
+    return True, ""
+
+
+def _prepare(
+    action: str,
+    plan: dict[str, Any],
+    intent_id: str | None,
+    authorization: dict[str, Any] | None,
+) -> tuple[str, ValueLayerResult | None]:
+    """Write-ahead intent for a SPEND. Failure = a terminal, no-node-touch result.
+
+    Fail-closed by construction: the caller must return the second element as-is if
+    it is not ``None``; the node has NOT been reached in that case.
+    """
+    ok, reason = money_journal_status()
+    if not ok:
+        return "", ValueLayerResult(action, "error", f"{reason}; node not touched", plan)
+    try:
+        record = prepare_ln_intent(
+            action, plan=plan, intent_id=intent_id, authorization=authorization
+        )
+    except LightningOpsLedgerError as exc:
+        return "", ValueLayerResult(
+            action, "error", f"money journal unavailable; node not touched: {exc}", plan
+        )
+    return str(record["intent_id"]), None
+
+
 async def create_invoice(
     *,
     value_sat: int,
     memo: str = "",
     dry_run: bool = True,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
-    """Create a BOLT11 invoice (receive-side, no spend) — gated + dry-run-default."""
+    """Create a BOLT11 invoice (receive-side, no spend) — gated + dry-run-default.
+
+    RECEIVE asymmetry: unlike every spend below, this method NEVER fails because of
+    its audit trail. The mint is the only real revenue path and is reached by
+    anonymous callers; a journal problem may cost a log line, never an invoice.
+    """
     cfg = _settings(cfg)
     plan = {"value_sat": int(value_sat), "memo": memo}
     blocked = _assert_send_allowed(
@@ -132,11 +228,20 @@ async def create_invoice(
         return blocked
     if value_sat <= 0:
         return ValueLayerResult("create_invoice", "error", "value_sat must be > 0", plan)
+    correlation = str(intent_id or "")
     try:
-        resp = await _build_client(cfg).add_invoice(value_sat=value_sat, memo=memo)
+        resp = await _build_client(cfg, credential_scope="invoice").add_invoice(
+            value_sat=value_sat, memo=memo
+        )
     except LightningUnavailableError as exc:
-        return ValueLayerResult("create_invoice", "error", str(exc), plan)
-    return ValueLayerResult("create_invoice", "executed", "", plan, resp)
+        return _audit_receive(
+            ValueLayerResult("create_invoice", "error", str(exc), plan, intent_id=correlation),
+            authorization=authorization,
+        )
+    return _audit_receive(
+        ValueLayerResult("create_invoice", "executed", "", plan, resp, intent_id=correlation),
+        authorization=authorization,
+    )
 
 
 async def open_channel(
@@ -146,6 +251,8 @@ async def open_channel(
     sat_per_vbyte: int = 0,
     confirm: bool = False,
     dry_run: bool = True,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
     """Open a channel — SPENDS on-chain, irreversible. Maximally gated.
@@ -175,23 +282,64 @@ async def open_channel(
         return ValueLayerResult(
             "open_channel", "error", "node_pubkey_hex + positive sats required", plan
         )
+    prepared, denied = _prepare("open_channel", plan, intent_id, authorization)
+    if denied is not None:
+        return denied
     try:
-        resp = await _build_client(cfg).open_channel(
+        resp = await _build_client(cfg, credential_scope="channel").open_channel(
             node_pubkey_hex=node_pubkey_hex,
             local_funding_sat=local_funding_sat,
             sat_per_vbyte=sat_per_vbyte,
         )
     except LightningUnavailableError as exc:
-        return _audit(ValueLayerResult("open_channel", "error", str(exc), plan))
-    return _audit(ValueLayerResult("open_channel", "executed", "", plan, resp))
+        return _audit(ValueLayerResult("open_channel", "error", str(exc), plan, intent_id=prepared))
+    return _audit(ValueLayerResult("open_channel", "executed", "", plan, resp, intent_id=prepared))
 
 
 def _audit(result: ValueLayerResult) -> ValueLayerResult:
-    """Append node-touching outcomes (executed/error) to the tamper-evident ops
-    ledger. ``disabled``/``planned`` are non-events (no node touch) → not logged, so
-    the inert default + dry-run previews don't spam the audit trail."""
-    if result.state in ("executed", "error"):
-        append_ln_op(result.action, result.state, plan=result.plan, response=result.response)
+    """Close the write-ahead intent of a SPEND with its terminal outcome (v2).
+
+    ``disabled``/``planned`` are non-events (no node touch, no intent) → not logged,
+    so the inert default and dry-run previews never spam the money journal.
+    Necessarily fail-soft: LND may already have moved value, so a journal error
+    cannot undo it — the intent row stays open and IS the reconciliation queue
+    (and keeps reserving its amount against the daily cap until then).
+    """
+    if result.state not in ("executed", "error"):
+        return result
+    if not result.intent_id:
+        # Structurally impossible: a node-touching outcome always follows _prepare.
+        logger.error(
+            "[ln-ops] node-touching %s/%s without a prepared intent — outcome NOT journalled",
+            result.action,
+            result.state,
+        )
+        return result
+    append_ln_outcome(
+        result.action,
+        result.state,
+        plan=result.plan,
+        response=result.response,
+        intent_id=result.intent_id,
+    )
+    return result
+
+
+def _audit_receive(
+    result: ValueLayerResult, *, authorization: dict[str, Any] | None
+) -> ValueLayerResult:
+    """Record a node-touching RECEIVE outcome in the separate receive journal.
+
+    Returns the result UNCHANGED in every case — this is an audit, not a gate.
+    """
+    append_receive_event(
+        result.action,
+        result.state,
+        plan=result.plan,
+        response=result.response,
+        intent_id=result.intent_id,
+        authorization=authorization,
+    )
     return result
 
 
@@ -201,9 +349,18 @@ async def pay_invoice(
     fee_limit_sat: int = 0,
     dry_run: bool = True,
     confirm: bool = False,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
-    """Pay a BOLT11 invoice — SPENDS, irreversible. Max-gated (confirm required)."""
+    """Pay a BOLT11 invoice — SPENDS, irreversible. Max-gated (confirm required).
+
+    NOTE (M-4 scope): the journal's payment-hash duplicate guard only bites when the
+    plan carries a ``payment_hash``. Deriving it needs an lnd ``decodepayreq`` call
+    in the send path, which lands with the reconciliation work (PR-D). Until then the
+    active duplicate defences are the intent-id replay refusal in the journal and the
+    cockpit's burned idempotency key.
+    """
     cfg = _settings(cfg)
     plan = {"payment_request": payment_request, "fee_limit_sat": int(fee_limit_sat)}
     blocked = _assert_send_allowed(
@@ -218,14 +375,17 @@ async def pay_invoice(
     if blocked is not None:
         return blocked
     if not payment_request:
-        return _audit(ValueLayerResult("pay_invoice", "error", "payment_request required", plan))
+        return ValueLayerResult("pay_invoice", "error", "payment_request required", plan)
+    prepared, denied = _prepare("pay_invoice", plan, intent_id, authorization)
+    if denied is not None:
+        return denied
     try:
-        resp = await _build_client(cfg).pay_invoice(
+        resp = await _build_client(cfg, credential_scope="payment").pay_invoice(
             payment_request=payment_request, fee_limit_sat=fee_limit_sat
         )
     except LightningUnavailableError as exc:
-        return _audit(ValueLayerResult("pay_invoice", "error", str(exc), plan))
-    return _audit(ValueLayerResult("pay_invoice", "executed", "", plan, resp))
+        return _audit(ValueLayerResult("pay_invoice", "error", str(exc), plan, intent_id=prepared))
+    return _audit(ValueLayerResult("pay_invoice", "executed", "", plan, resp, intent_id=prepared))
 
 
 async def keysend(
@@ -235,6 +395,8 @@ async def keysend(
     fee_limit_sat: int = 0,
     dry_run: bool = True,
     confirm: bool = False,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
     """Spontaneous keysend payment — SPENDS, irreversible. Max-gated."""
@@ -256,16 +418,17 @@ async def keysend(
     if blocked is not None:
         return blocked
     if not dest_pubkey_hex or amt_sat <= 0:
-        return _audit(
-            ValueLayerResult("keysend", "error", "dest_pubkey_hex + positive amt required", plan)
-        )
+        return ValueLayerResult("keysend", "error", "dest_pubkey_hex + positive amt required", plan)
+    prepared, denied = _prepare("keysend", plan, intent_id, authorization)
+    if denied is not None:
+        return denied
     try:
-        resp = await _build_client(cfg).keysend(
+        resp = await _build_client(cfg, credential_scope="payment").keysend(
             dest_pubkey_hex=dest_pubkey_hex, amt_sat=amt_sat, fee_limit_sat=fee_limit_sat
         )
     except LightningUnavailableError as exc:
-        return _audit(ValueLayerResult("keysend", "error", str(exc), plan))
-    return _audit(ValueLayerResult("keysend", "executed", "", plan, resp))
+        return _audit(ValueLayerResult("keysend", "error", str(exc), plan, intent_id=prepared))
+    return _audit(ValueLayerResult("keysend", "executed", "", plan, resp, intent_id=prepared))
 
 
 async def send_coins(
@@ -275,6 +438,8 @@ async def send_coins(
     sat_per_vbyte: int = 0,
     dry_run: bool = True,
     confirm: bool = False,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
     """On-chain withdraw — SPENDS on-chain, irreversible. Max-gated."""
@@ -292,16 +457,17 @@ async def send_coins(
     if blocked is not None:
         return blocked
     if not addr or amount_sat <= 0:
-        return _audit(
-            ValueLayerResult("send_coins", "error", "addr + positive amount required", plan)
-        )
+        return ValueLayerResult("send_coins", "error", "addr + positive amount required", plan)
+    prepared, denied = _prepare("send_coins", plan, intent_id, authorization)
+    if denied is not None:
+        return denied
     try:
-        resp = await _build_client(cfg).send_coins(
+        resp = await _build_client(cfg, credential_scope="onchain").send_coins(
             addr=addr, amount_sat=amount_sat, sat_per_vbyte=sat_per_vbyte
         )
     except LightningUnavailableError as exc:
-        return _audit(ValueLayerResult("send_coins", "error", str(exc), plan))
-    return _audit(ValueLayerResult("send_coins", "executed", "", plan, resp))
+        return _audit(ValueLayerResult("send_coins", "error", str(exc), plan, intent_id=prepared))
+    return _audit(ValueLayerResult("send_coins", "executed", "", plan, resp, intent_id=prepared))
 
 
 async def close_channel(
@@ -312,6 +478,8 @@ async def close_channel(
     sat_per_vbyte: int = 0,
     dry_run: bool = True,
     confirm: bool = False,
+    intent_id: str | None = None,
+    authorization: dict[str, Any] | None = None,
     cfg: LightningSettings | None = None,
 ) -> ValueLayerResult:
     """Close a channel — irreversible (on-chain settle). Max-gated."""
@@ -334,17 +502,22 @@ async def close_channel(
     if blocked is not None:
         return blocked
     if not funding_txid:
-        return _audit(ValueLayerResult("close_channel", "error", "funding_txid required", plan))
+        return ValueLayerResult("close_channel", "error", "funding_txid required", plan)
+    prepared, denied = _prepare("close_channel", plan, intent_id, authorization)
+    if denied is not None:
+        return denied
     try:
-        resp = await _build_client(cfg).close_channel(
+        resp = await _build_client(cfg, credential_scope="channel").close_channel(
             funding_txid=funding_txid,
             output_index=output_index,
             force=force,
             sat_per_vbyte=sat_per_vbyte,
         )
     except LightningUnavailableError as exc:
-        return _audit(ValueLayerResult("close_channel", "error", str(exc), plan))
-    return _audit(ValueLayerResult("close_channel", "executed", "", plan, resp))
+        return _audit(
+            ValueLayerResult("close_channel", "error", str(exc), plan, intent_id=prepared)
+        )
+    return _audit(ValueLayerResult("close_channel", "executed", "", plan, resp, intent_id=prepared))
 
 
 async def rebalance_plan(

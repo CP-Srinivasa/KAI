@@ -71,46 +71,50 @@ def test_default_construction_is_ok() -> None:
 
 
 # --- boot-time cert validator (exists / readable / PEM / not-expired) ---------------
+#
+# Alle Boot-Tests konstruieren mit ``_env_file=None``: auf dem Pi liegt eine scharfe
+# .env, aus der ``l402_enabled``/``receive_enabled``/``pay_enabled`` sonst geerbt
+# würden — dann prüfte hier die C-1-Credential-Stufe mit, statt der TLS-Stufe
+# (Befund 05.08.: „Pi-Tests lesen die echte .env").
+
+
+def _cfg(**kw: object) -> LightningSettings:
+    return LightningSettings(_env_file=None, enabled=True, **kw)  # type: ignore[arg-type]
 
 
 def test_boot_validator_missing_cert_aborts(tmp_path: Path) -> None:
-    cfg = LightningSettings(enabled=True, tls_cert_path=str(tmp_path / "nope.cert"))
     with pytest.raises(LightningBootError, match="does not exist"):
-        validate_lightning_boot(cfg)
+        validate_lightning_boot(_cfg(tls_cert_path=str(tmp_path / "nope.cert")))
 
 
 def test_boot_validator_expired_cert_aborts(tmp_path: Path) -> None:
     cert = tmp_path / "tls.cert"
     _write_self_signed(cert, not_after=datetime.now(UTC) - timedelta(days=1))
-    cfg = LightningSettings(enabled=True, tls_cert_path=str(cert))
     with pytest.raises(LightningBootError, match="expired"):
-        validate_lightning_boot(cfg)
+        validate_lightning_boot(_cfg(tls_cert_path=str(cert)))
 
 
 def test_boot_validator_garbage_cert_aborts(tmp_path: Path) -> None:
     cert = tmp_path / "tls.cert"
     cert.write_bytes(b"this is not a certificate\n")
-    cfg = LightningSettings(enabled=True, tls_cert_path=str(cert))
     with pytest.raises(LightningBootError, match="not a valid PEM"):
-        validate_lightning_boot(cfg)
+        validate_lightning_boot(_cfg(tls_cert_path=str(cert)))
 
 
 def test_boot_validator_empty_cert_file_aborts(tmp_path: Path) -> None:
     cert = tmp_path / "tls.cert"
     cert.write_bytes(b"   \n")
-    cfg = LightningSettings(enabled=True, tls_cert_path=str(cert))
     with pytest.raises(LightningBootError, match="empty file"):
-        validate_lightning_boot(cfg)
+        validate_lightning_boot(_cfg(tls_cert_path=str(cert)))
 
 
 def test_boot_validator_valid_cert_ok(tmp_path: Path) -> None:
     cert = tmp_path / "tls.cert"
     _write_self_signed(cert, not_after=datetime.now(UTC) + timedelta(days=365))
-    cfg = LightningSettings(enabled=True, tls_cert_path=str(cert))
-    validate_lightning_boot(cfg)  # must not raise
+    validate_lightning_boot(_cfg(tls_cert_path=str(cert)))  # must not raise
 
 
-def test_boot_validator_disabled_is_noop(tmp_path: Path) -> None:
+def test_boot_validator_disabled_is_noop() -> None:
     # A disabled client never touches the node → the missing cert is irrelevant.
-    cfg = LightningSettings(enabled=False, tls_cert_path="")
+    cfg = LightningSettings(_env_file=None, enabled=False, tls_cert_path="")
     validate_lightning_boot(cfg)  # must not raise

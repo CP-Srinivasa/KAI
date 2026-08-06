@@ -45,8 +45,10 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
        ``LightningSettings(...)``-Objekt gewinnen weiterhin).
     2. **Ops-Ledger-Redirect:** Writer und ``spent_today_sat`` arbeiten auf
        einem tmp-File, nie auf ``artifacts/ln_ops_ledger.jsonl``. Gilt für
-       BEIDE Journale — v1 (Pfadkonstante) und v2 (``APP_LN_OPS_LEDGER_V2_PATH``),
-       sonst schriebe die Suite in das echte, attestierte v2-Geldjournal.
+       ALLE DREI Journale — v1 (Pfadkonstante), v2
+       (``APP_LN_OPS_LEDGER_V2_PATH``) und seit dem PR-C-Cutover das getrennte
+       Receive-Journal (``APP_LN_RECEIVE_LEDGER_PATH``), sonst schriebe die
+       Suite in die echten Geld-/Empfangs-Journale.
     3. **Idempotenz-Redirect:** der Cockpit-Singleton zeigt auf einen
        frischen tmp-Store — ``reset_control_state()`` kann keinen
        Prod-Zustand mehr löschen.
@@ -63,6 +65,7 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(ops_ledger, "_OPS_PATH", tmp_path / "ln_ops_ledger.jsonl")
     monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(tmp_path / "ln_ops_ledger_v2.jsonl"))
+    monkeypatch.setenv("APP_LN_RECEIVE_LEDGER_PATH", str(tmp_path / "ln_receive_ledger.jsonl"))
 
     from app.api.routers import ln_control
     from app.lightning.idempotency_store import PersistentSeenKeys
