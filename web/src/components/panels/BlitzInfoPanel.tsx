@@ -21,6 +21,15 @@ function fmtUptime(s: number | null): string {
   return d > 0 ? `up ${d}d ${h}h` : `up ${h}h ${Math.floor((s % 3_600) / 60)}m`;
 }
 
+// Audit 2026-08-06: das Feld ist GB, wurde aber hart als "TB" gerendert
+// ("1903.8TB"); die alte Korrektur-Regex (^\d{4,}TB$) griff bei Dezimalwerten
+// nie. Ehrliche Einheit: >= 1000 GB als TB mit einer Nachkommastelle.
+export function fmtDiskGb(gb: number | null | undefined): string | null {
+  if (gb == null) return null;
+  if (gb >= 1000) return `${(gb / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })}TB`;
+  return `${gb.toLocaleString("de-DE", { maximumFractionDigits: 1 })}GB`;
+}
+
 function Row({ label, value, tone }: { label: string; value: string; tone?: "pos" | "warn" }) {
   const toneCls = tone === "pos" ? "text-pos" : tone === "warn" ? "text-warn" : "text-fg";
   return (
@@ -54,7 +63,7 @@ function BlitzBody({ d }: { d: NodeBlitzData }) {
         />
         <Row
           label="RAM / SSD"
-          value={`${memPct != null ? `${memPct}% von ${fmtNum(d.mem_total_mb)}M` : nv} · ${d.disk_total_gb != null ? `${d.disk_total_gb}TB`.replace(/^(\d{4,})TB$/, "$1GB") : nv}${d.disk_used_pct != null ? ` ${d.disk_used_pct}%` : ""}`}
+          value={`${memPct != null ? `${memPct}% von ${fmtNum(d.mem_total_mb)}M` : nv} · ${fmtDiskGb(d.disk_total_gb) ?? nv}${d.disk_used_pct != null ? ` ${d.disk_used_pct}%` : ""}`}
         />
       </div>
 
