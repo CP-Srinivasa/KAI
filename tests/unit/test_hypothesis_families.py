@@ -6,6 +6,7 @@ import pytest
 
 from app.research.hypothesis_families import (
     FAMILIES,
+    PROBATION,
     STOP_RULE_FAILS,
     TERMINAL_DEAD,
     HypothesisFamily,
@@ -53,3 +54,29 @@ def test_terminal_below_threshold_without_note_is_rejected() -> None:
 def test_invalid_status_is_rejected() -> None:
     with pytest.raises(ValueError, match="invalid status"):
         HypothesisFamily(name="bad", status="zombie", constructions_failed=0, evidence=("x",))
+
+
+def test_oracle_demand_family_registered_with_c1_fail() -> None:
+    """Audit 2026-08-06 (P1-1): der MEMORY-Stand „oracle_demand 1/3 Richtung
+    Stop-Rule" war reine Prosa — die Familie fehlte in der Registry. Das
+    attestierte C1-Verdikt (seq 71) muss hier maschinell zählbar sein."""
+    fam = get_family("oracle_demand")
+    assert fam is not None, "oracle_demand fehlt in FAMILIES"
+    assert fam.status == PROBATION
+    assert fam.constructions_failed == 1
+    assert any("9cab81fae4823482" in e for e in fam.evidence)
+    assert any("seq 71" in e for e in fam.evidence)
+    assert not is_terminal_dead("oracle_demand")
+
+
+def test_news_direction_reflects_nd_v2_terminal_verdict() -> None:
+    """ND-v2 (b20ef1487ccba99d) FAILED am versiegelten Gate, attestiert seq 73
+    (2026-08-06). Die Registry darf die Ausnahme nicht mehr als offen führen."""
+    fam = get_family("news_direction")
+    assert fam is not None
+    assert fam.status == TERMINAL_DEAD
+    assert fam.constructions_failed == 4
+    assert any("b20ef1487ccba99d" in e and "seq 73" in e for e in fam.evidence)
+    assert "GESCHLOSSEN" in fam.notes
+    # Die 3d-Ausnahme (seq 72 attestiert) bleibt als letzte offene benannt.
+    assert "7e8d66314dd7c64e" in fam.notes

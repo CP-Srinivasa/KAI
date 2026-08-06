@@ -117,7 +117,7 @@ FAMILIES: dict[str, HypothesisFamily] = {
         HypothesisFamily(
             name="news_direction",
             status=TERMINAL_DEAD,
-            constructions_failed=3,
+            constructions_failed=4,
             evidence=(
                 "prereg 5872f817a2d1632d 24h spot 2026-07-02 (full-corpus re-measure): "
                 "FAILED — 5 sources n>=200 at 1d, none passes P>=0.95+cost "
@@ -127,14 +127,36 @@ FAMILIES: dict[str, HypothesisFamily] = {
                 "prereg 6e23c6822669f7d5 micro-1m 2026-07-02: FAILED "
                 "(1-60min gross means ~1bps, best pooled P=0.949 < 0.9875 Bonferroni; "
                 "absence is NOT a latency artifact)",
+                "prereg b20ef1487ccba99d hedged-1d-drift v2 2026-08-06: FAILED at "
+                "registered gate (p_min, cost_clearing) — n=302/300 stories, exakte "
+                "Konstruktion hedged_vs_BTC/USDT (Guard #648); attestiert seq 73, "
+                "OTS newsverdict-d6b91b256cde729a",
             ),
             notes="stop rule hit 2026-07-02 (3 pre-registered constructions failed). "
-            "Sanctioned exceptions, registered as evidence-backed out-of-sample "
-            "follow-ups: prereg 4a3b1b0c5a94b73c hedged-1d-drift (in-sample pooled "
-            "z=2.85, I2=0.03, 17 sources — strongest homogeneous gross signal measured "
-            "to date, below retail cost) and prereg directional_news_3d_theblock_newsbtc. "
-            "Their failure closes the family for good; new constructions need "
+            "Sanctioned exception hedged-1d-drift GESCHLOSSEN 2026-08-06: v2-Nachfolger "
+            "b20ef1487ccba99d (ersetzt 4a3b1b0c5a94b73c) FAILED am versiegelten Gate — "
+            "terminal per Prä-Reg-Wortlaut. Remaining sanctioned exception: prereg "
+            "7e8d66314dd7c64e directional_news_3d_theblock_newsbtc (Verdikt-Report "
+            "attestiert seq 72, 2026-08-05: actionable=false in allen vier Zellen; "
+            "newsbtc-Arm unter sample_size_target, theblock-Arm reif und verfehlt). "
+            "Its closure ends the family for good; new constructions need "
             "--force-dead-family.",
+        ),
+        HypothesisFamily(
+            name="oracle_demand",
+            status=PROBATION,
+            constructions_failed=1,
+            evidence=(
+                "prereg 9cab81fae4823482 oracle_demand_probe_fee_truth_v1 2026-08-05: "
+                "FAIL = NO_DEMAND — Zahlungs-Zweig 0 Zahlungen / 0 distinkte Payer im "
+                "versiegelten C1-Fenster (Regel c1_evaluation_rule_20260802, Evaluator "
+                "scripts/c1_payment_branch_eval.py, Fensterstart-Invarianz gerechnet); "
+                "attestiert seq 71 + OTS",
+            ),
+            notes="Familie für zahlungsbasierte Nachfrage-Proben (L402/Oracle, Lightning). "
+            "1/3 Richtung Stop-Rule; ODER-Zweig der C1-Regel war nie operationalisiert "
+            "und wurde nicht gewertet. Nächste Konstruktionen brauchen stärkere Priors "
+            "und prove-by-doing-Kanäle; externe Einnahmen lifetime = 0 sat (Stand 08-06).",
         ),
         HypothesisFamily(
             name="l2_microstructure",
