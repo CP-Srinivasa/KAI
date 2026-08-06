@@ -272,6 +272,45 @@ async def test_armed_probe_targets_the_payment_credential(monkeypatch) -> None:
     assert "pay_invoice" not in clients["read"].calls
 
 
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        "lnd request failed: ReadTimeout connecting to 10.0.0.4:4000",
+        "lnd request failed: TLS certificate verify failed",
+        "lnd returned 500 for /v1/channels/transactions: unavailable",
+    ],
+)
+async def test_armed_probe_failure_is_unknown_and_blocks_go(monkeypatch, probe_error: str) -> None:
+    """B-6: transport failure proves neither permission-denied nor send-capable."""
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "invoice": _FakeClient("invoice", spends=False),
+            "payment": _FakeClient("payment", spends=True),
+        },
+    )
+    clients["payment"].pay_invoice = AsyncMock(side_effect=LightningUnavailableError(probe_error))
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+
+    reachable, send_probe, can_mint, inbound = await cli._probe_node(cfg)
+
+    assert (reachable, send_probe, can_mint, inbound) == (True, None, True, 5000)
+    report = golive_preflight(
+        cfg,
+        node_reachable=reachable,
+        macaroon_scope_minimal=send_probe,
+        macaroon_can_mint=can_mint,
+        inbound_liquidity_sat=inbound,
+        booking_unit_present=True,
+        telemetry_writable=True,
+    )
+    assert report["verdict"] == "NO-GO"
+    assert "macaroon_send_capable" in report["blocking"]
+
+
 async def test_disarmed_preflight_cannot_build_or_probe_the_payment_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
