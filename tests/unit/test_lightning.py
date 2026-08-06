@@ -295,18 +295,34 @@ def test_read_scope_is_the_legacy_macaroon_pair_backwards_compatible() -> None:
     assert _build_client(cfg)._headers["Grpc-Metadata-macaroon"] == "read"
 
 
-def test_capability_clients_never_fall_back_to_the_read_macaroon() -> None:
+def test_non_payment_capability_clients_never_fall_back_to_the_read_macaroon() -> None:
     cfg = _scoped_cfg()
-    for scope in ("invoice", "payment", "onchain", "channel"):
+    for scope in ("invoice", "onchain", "channel"):
         client = _build_client(cfg, credential_scope=scope)  # type: ignore[arg-type]
         assert client._headers["Grpc-Metadata-macaroon"] == scope
+
+
+def test_payment_client_requires_the_value_layer_kill_switch() -> None:
+    cfg = _scoped_cfg()
+    with pytest.raises(LightningUnavailableError, match="APP_LN_PAY_ENABLED=false"):
+        _build_client(cfg, credential_scope="payment")
+
+
+def test_payment_client_uses_only_the_payment_credential_when_armed() -> None:
+    cfg = _scoped_cfg().model_copy(update={"pay_enabled": True})
+    client = _build_client(cfg, credential_scope="payment")
+    assert client._headers["Grpc-Metadata-macaroon"] == "payment"
 
 
 @pytest.mark.parametrize("scope", ["invoice", "payment", "onchain", "channel"])
 def test_missing_write_credential_fails_closed_without_read_fallback(scope: str) -> None:
     """An unprovisioned capability must raise at the call site, NOT quietly reuse the
     read macaroon (which on the Bestands-Pi still carries invoices:write)."""
-    cfg = LightningSettings(_env_file=None, macaroon_hex="read-only")
+    cfg = LightningSettings(
+        _env_file=None,
+        macaroon_hex="read-only",
+        pay_enabled=scope == "payment",
+    )
     assert cfg.macaroon_credentials(scope) == ("", "")  # type: ignore[arg-type]
     with pytest.raises(LightningUnavailableError, match="no macaroon configured"):
         _build_client(cfg, credential_scope=scope)  # type: ignore[arg-type]

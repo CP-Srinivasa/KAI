@@ -9,11 +9,12 @@ stay off for the probe.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.lightning_settings import LightningSettings
-from app.lightning.client import LightningUnavailableError
+from app.lightning.client import LightningUnavailableError, LndRestClient
 from app.lightning.golive_preflight import golive_preflight
 
 
@@ -268,3 +269,20 @@ async def test_armed_probe_targets_the_payment_credential(monkeypatch) -> None:
     assert scope_minimal is False  # payment credential CAN spend → macaroon_send_capable
     assert "pay_invoice" in clients["payment"].calls
     assert "pay_invoice" not in clients["read"].calls
+
+
+async def test_disarmed_preflight_cannot_build_or_probe_the_payment_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The raw preflight helper must inherit the central payment-credential guard.
+
+    Even a deliberately invalid invoice is still a node call; while disarmed the
+    helper must fail before constructing a spend-capable client or touching lnd.
+    """
+    import scripts.ln_golive_preflight as cli
+
+    pay_invoice = AsyncMock(return_value={})
+    monkeypatch.setattr(LndRestClient, "pay_invoice", pay_invoice)
+
+    assert await cli._spend_probe_denied(_ready_cfg(), "payment") is None
+    pay_invoice.assert_not_awaited()
