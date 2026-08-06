@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app.audit.kai_audit_service import KaiAuditService, get_default_kai_audit_service
+from app.core.file_lock import FileLockError, append_lock
 from app.truth.attestation import compute_attestation
 
 DEFAULT_TRUTH_LEDGER_PATH = Path("artifacts/truth/attestation_ledger.jsonl")
@@ -71,24 +72,37 @@ def append_attestation(
     Returns the persisted record incl. ``record_hash``/``prev_hash``/``seq``.
     """
     attestation = compute_attestation(payload)
-    prev_hash, prev_seq = _chain_tip(path)
-    record: dict[str, Any] = {
-        "schema": SCHEMA,
-        "seq": prev_seq + 1,
-        "kind": kind,
-        "subject_id": subject_id or f"{kind}:{attestation['hash'][:16]}",
-        "attested_at_utc": attested_at_utc or datetime.now(UTC).isoformat(),
-        "algo": attestation["algo"],
-        "payload": payload,
-        "payload_hash": attestation["hash"],
-        "prev_hash": prev_hash,
-    }
-    record["record_hash"] = compute_attestation(record)["hash"]
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+    # Audit-Befund P0-1 (2026-08-06): Tip-Lesen und Append MÜSSEN unter EINEM
+    # exklusiven Lock liegen. Zwei parallele Writer (Persistent=true-Boot-Storm:
+    # truth-anchor + canonical-edge-attest; oder Timer + Operator-CLI) lasen
+    # sonst denselben Tip und schrieben beide seq=N+1 — die Kette forkt, ein
+    # gesetzter OTS-Anker beweist einen toten Tip, append-only ⇒ irreparabel.
+    # strict: kein Lock ⇒ kein Append (ein verschobener Append ist billiger als
+    # ein gegabelter; Anchor-Timer und CLI wiederholen).
+    try:
+        with append_lock(path, strict=True):
+            prev_hash, prev_seq = _chain_tip(path)
+            record: dict[str, Any] = {
+                "schema": SCHEMA,
+                "seq": prev_seq + 1,
+                "kind": kind,
+                "subject_id": subject_id or f"{kind}:{attestation['hash'][:16]}",
+                "attested_at_utc": attested_at_utc or datetime.now(UTC).isoformat(),
+                "algo": attestation["algo"],
+                "payload": payload,
+                "payload_hash": attestation["hash"],
+                "prev_hash": prev_hash,
+            }
+            record["record_hash"] = compute_attestation(record)["hash"]
+
+            line = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except FileLockError as exc:
+        raise TruthLedgerError(
+            f"truth ledger lock unavailable ({path}) — refusing an unserialized append"
+        ) from exc
 
     if mirror_audit:
         (audit or get_default_kai_audit_service()).append(
