@@ -790,6 +790,52 @@ async def dashboard_quality_api() -> JSONResponse:
         "updated_at",
     )
     fill_ts_keys = ("filled_at", "timestamp_utc", "created_at", "executed_at")
+
+    # Epochen-Schnitt (Voll-Audit 2026-08-06, P1-2): dieser Endpoint war der
+    # EINZIGE der vier Paper-Read-Pfade ohne Epochengrenze — das per
+    # portfolio_epoch_reset als INVALID_FOR_PERFORMANCE archivierte Alt-Buch
+    # floss in paper_realized_pnl_usd/expectancy/win_rate und hieß dabei
+    # "lifetime". Gleiche Grenze wie portfolio_read (_record_predates_epoch)
+    # und paper_quality_snapshot (closures.clear() beim Reset). Lifetime-Zahlen
+    # bleiben transparent in der Evidence — nichts verschwindet, es wird nur
+    # nicht mehr als Performance ausgewiesen.
+    from app.execution.audit_replay import last_epoch_reset_info
+
+    epoch_info = last_epoch_reset_info(_PAPER_EXECUTION_AUDIT)
+    epoch_id: str | None = None
+    epoch_started_at_utc: str | None = None
+    pre_epoch_closes_excluded = 0
+    pre_epoch_fills_excluded = 0
+    closes_without_timestamp = 0
+    closes_lifetime_total = len(closes)
+    fills_lifetime_total = len(fills)
+    epoch_start = None
+    if epoch_info is not None:
+        epoch_id, epoch_started_at_utc = epoch_info
+        epoch_start = _parse_iso_utc(epoch_started_at_utc)
+    if epoch_start is not None:
+        kept_closes: list[dict[str, Any]] = []
+        for r in closes:
+            ts = _first_present_ts(r, close_ts_keys)
+            if ts is None:
+                # Unter Epochen-Regime nicht datierbar => kein Performance-Claim
+                # daraus (fail-closed Richtung Ausschluss), aber sichtbar gezählt.
+                closes_without_timestamp += 1
+                continue
+            if ts < epoch_start:
+                pre_epoch_closes_excluded += 1
+                continue
+            kept_closes.append(r)
+        closes = kept_closes
+        kept_fills: list[dict[str, Any]] = []
+        for r in fills:
+            fts = _first_present_ts(r, fill_ts_keys)
+            if fts is not None and fts < epoch_start:
+                pre_epoch_fills_excluded += 1
+                continue
+            kept_fills.append(r)
+        fills = kept_fills
+
     recent_closes = [
         r
         for r in closes
@@ -1066,7 +1112,20 @@ async def dashboard_quality_api() -> JSONResponse:
         "paper_positions_closed": positions_closed,
         "paper_positions_partial_closed": positions_partial_closed,
         "paper_evidence": {
-            "scope": "cutoff_since" if audit_provenance else "lifetime",
+            # Epochenrein, wenn ein Reset-Event existiert; die Lifetime-Zählung
+            # steht als *_lifetime_total daneben (Transparenz statt Löschung).
+            "scope": (
+                f"epoch:{epoch_id}"
+                if epoch_id
+                else ("cutoff_since" if audit_provenance else "lifetime")
+            ),
+            "epoch_id": epoch_id,
+            "epoch_started_at_utc": epoch_started_at_utc,
+            "pre_epoch_closes_excluded": pre_epoch_closes_excluded,
+            "pre_epoch_fills_excluded": pre_epoch_fills_excluded,
+            "closes_without_timestamp": closes_without_timestamp,
+            "closes_lifetime_total": closes_lifetime_total,
+            "fills_lifetime_total": fills_lifetime_total,
             "since": metric_contract["paper_fills_with_pnl"]["since"],
             "until": generated_at,
             "window_hours": rolling_window_hours,

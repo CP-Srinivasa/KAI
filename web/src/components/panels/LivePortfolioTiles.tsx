@@ -79,6 +79,27 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
   );
 }
 
+// Audit 2026-08-06 (P1-1): equity_complete wurde berechnet und serialisiert,
+// aber nie gerendert — die Kachel zeigte eine Untergrenze als exakte Zahl.
+// Pure + exportiert für den .pure-Test.
+export function equityTruthNote(snap: {
+  equity_complete?: boolean | null;
+  unpriced_position_count?: number;
+  unpriced_symbols?: string[];
+}): string | null {
+  if (snap.equity_complete !== false) return null;
+  const n = snap.unpriced_position_count ?? snap.unpriced_symbols?.length ?? 0;
+  const syms = (snap.unpriced_symbols ?? []).slice(0, 3).join(", ");
+  return `Untergrenze: ${n} Position(en) ohne Live-Kurs${syms ? ` (${syms})` : ""}`;
+}
+
+// Audit 2026-08-06 (P1-3): Polarität gedreht — der GEFÄHRLICHE Zustand
+// (Alt-Buch/unbekannte Epoche) war der stille; beschriftet war nur v2.
+export function epochWarning(epochId: string | undefined | null): string | null {
+  if (epochId === "paper_v2_attested") return null;
+  return `Alt-Buch (Epoche ${epochId ?? "unbekannt"}) — accounting-kontaminiert, nicht als Performance verwendbar`;
+}
+
 function PortfolioTile() {
   const { fmt } = useCurrency();
   const q = useApi(fetchPortfolioSnapshot, 30_000);
@@ -105,8 +126,9 @@ function PortfolioTile() {
       ) : (
         <div>
           {/* Epoche v2 (Weg B+): Sprachregel — attestierter Track-Record beginnt
-              mit dem Epochenwechsel; die Legacy-Kurve ist keine Performance. */}
-          {q.data.epoch_id === "paper_v2_attested" && (
+              mit dem Epochenwechsel; die Legacy-Kurve ist keine Performance.
+              Polarität (Audit 2026-08-06): alles AUSSER v2 wird laut beschriftet. */}
+          {q.data.epoch_id === "paper_v2_attested" ? (
             <p className="text-2xs text-fg-subtle">
               Paper Portfolio v2 · Start 10.000 USD · Track-Record gültig ab{" "}
               {q.data.epoch_started_at_utc
@@ -117,11 +139,20 @@ function PortfolioTile() {
                   })
                 : "Epochenwechsel"}
             </p>
+          ) : (
+            <p className="text-2xs text-warn">⚠ {epochWarning(q.data.epoch_id)}</p>
           )}
           {/* Gesamt-Equity = was wirklich drin ist (Cash + Marktwert offener
               Positionen, short-aware), inkl. realisierter + unrealisierter G/V,
-              Fees sind bereits abgezogen. */}
+              Fees sind bereits abgezogen. equity_complete=false => Untergrenze. */}
           <Metric label="Gesamt-Equity" value={fmt(q.data.total_equity_usd)} />
+          {equityTruthNote(q.data) && (
+            <p className="text-2xs text-warn">
+              ⚠ {equityTruthNote(q.data)}
+              {q.data.total_equity_incl_entry_fallback_usd != null &&
+                ` · inkl. Einstands-Fallback ${fmt(q.data.total_equity_incl_entry_fallback_usd)}`}
+            </p>
+          )}
           <Metric label="In Position (Brutto-MW)" value={fmt(q.data.total_market_value_usd)} />
           {/* Short-aware Netto-Beitrag — Cash + Netto-Position = Equity. Short ist
               eine Rückkauf-Verbindlichkeit, kein Vermögenswert. */}

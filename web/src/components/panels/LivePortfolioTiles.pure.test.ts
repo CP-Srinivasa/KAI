@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeAllocation } from "./LivePortfolioTiles";
+import { computeAllocation, epochWarning, equityTruthNote } from "./LivePortfolioTiles";
 import type { PaperPosition } from "@/lib/api";
 
 // Money formatting moved to the canonical SSOT — covered by lib/money.test.ts.
@@ -56,5 +56,46 @@ describe("computeAllocation", () => {
   it("uses absolute value for shorts (negative market value)", () => {
     const { total } = computeAllocation([pos("S/USDT", -400), pos("L/USDT", 600)]);
     expect(total).toBe(1000);
+  });
+});
+
+// Audit 2026-08-06 (P1-1): equity_complete=false MUSS als Untergrenze sichtbar
+// werden — vorher wurde das Feld berechnet, serialisiert und nie gerendert.
+describe("equityTruthNote", () => {
+  it("complete or unknown -> no note (kein Fehlalarm auf altem Backend)", () => {
+    expect(equityTruthNote({ equity_complete: true })).toBeNull();
+    expect(equityTruthNote({})).toBeNull();
+    expect(equityTruthNote({ equity_complete: null })).toBeNull();
+  });
+  it("incomplete -> lower-bound note with count and symbols", () => {
+    const note = equityTruthNote({
+      equity_complete: false,
+      unpriced_position_count: 1,
+      unpriced_symbols: ["ZEREBRO/USDT"],
+    });
+    expect(note).toContain("Untergrenze");
+    expect(note).toContain("1 Position(en)");
+    expect(note).toContain("ZEREBRO/USDT");
+  });
+  it("incomplete without count falls back to symbol list length", () => {
+    const note = equityTruthNote({ equity_complete: false, unpriced_symbols: ["A", "B"] });
+    expect(note).toContain("2 Position(en)");
+  });
+});
+
+// Audit 2026-08-06 (P1-3): Polarität — NUR die attestierte v2-Epoche ist still;
+// legacy/unbekannt wird laut beschriftet (fail-closed Richtung Sichtbarkeit).
+describe("epochWarning", () => {
+  it("v2 epoch -> silent", () => {
+    expect(epochWarning("paper_v2_attested")).toBeNull();
+  });
+  it("legacy -> loud with epoch name", () => {
+    expect(epochWarning("legacy")).toContain("Alt-Buch");
+    expect(epochWarning("legacy")).toContain("legacy");
+    expect(epochWarning("legacy")).toContain("nicht als Performance verwendbar");
+  });
+  it("missing epoch_id -> loud with 'unbekannt' (altes Backend ist kein Freifahrtschein)", () => {
+    expect(epochWarning(undefined)).toContain("unbekannt");
+    expect(epochWarning(null)).toContain("unbekannt");
   });
 });

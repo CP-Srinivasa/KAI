@@ -1517,6 +1517,13 @@ export type PortfolioSnapshot = {
   // (accounting-kontaminiert, nicht als Performance verwendbar).
   epoch_id?: string;
   epoch_started_at_utc?: string | null;
+  // Audit 2026-08-06 (P1-1, P0-03-Nachzug): equity_complete=false heißt
+  // total_equity_usd ist eine UNTERGRENZE — unbepreiste offene Positionen
+  // tragen 0 bei. total_equity_incl_entry_fallback_usd = inkl. Einstandsbasis.
+  equity_complete?: boolean | null;
+  unpriced_position_count?: number;
+  unpriced_symbols?: string[];
+  total_equity_incl_entry_fallback_usd?: number | null;
   position_count: number;
   positions: PaperPosition[];
 };
@@ -1793,6 +1800,16 @@ export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<Port
     total_fees_phantom_usd: toNumOr(raw.total_fees_phantom_usd),
     total_fees_today_usd: toNumOr(raw.total_fees_today_usd),
     fills_today: toNumOr(raw.fills_today),
+    // Wahrheits-Qualifikation der Equity-Zahl (Audit 2026-08-06): boolean/Array
+    // unverändert durchreichen — fehlende Felder (altes Backend) bleiben
+    // null/leer statt fälschlich "complete".
+    equity_complete: raw.equity_complete ?? null,
+    unpriced_position_count: toNumOr(raw.unpriced_position_count),
+    unpriced_symbols: raw.unpriced_symbols ?? [],
+    total_equity_incl_entry_fallback_usd:
+      raw.total_equity_incl_entry_fallback_usd == null
+        ? null
+        : toNumOr(raw.total_equity_incl_entry_fallback_usd),
     position_count: toNumOr(raw.position_count),
     positions: (raw.positions ?? []).map(normalizePaperPosition),
   };
