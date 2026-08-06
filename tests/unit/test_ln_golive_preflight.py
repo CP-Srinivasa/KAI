@@ -20,6 +20,7 @@ from app.lightning.golive_preflight import golive_preflight
 
 def _ready_cfg() -> LightningSettings:
     return LightningSettings(
+        _env_file=None,
         enabled=True,
         l402_enabled=True,
         receive_enabled=True,
