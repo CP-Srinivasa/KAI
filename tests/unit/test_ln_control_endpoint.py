@@ -42,9 +42,10 @@ def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
     # Capital actions read the W0-P1 freshness-gated balance; default the tests to
     # "fresh and rich" so policy decisions stay deterministic.
     monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh_bal_million)
-    # Isolate the daily-cap input from the shared ops ledger (other tests append
-    # executed spends to the default path) so the policy decision is deterministic.
-    monkeypatch.setattr(lc, "spent_today_sat", lambda: 0)
+    # Isolate the daily-cap input from the shared money journal (other tests append
+    # spends to the default path) so the policy decision is deterministic. Source is
+    # the v2 journal since the PR-C cutover.
+    monkeypatch.setattr(lc, "spent_today_sat_v2", lambda: 0)
 
 
 def test_plan_mode_returns_plan_decision_and_hash(monkeypatch) -> None:

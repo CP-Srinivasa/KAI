@@ -12,9 +12,12 @@ ONE chokepoint for every capital-effective action. Two modes per request:
     skip both, leaving replay + plan substitution open). The actual node write
     stays behind the value-layer send-gate (B-002) + ``pay_enabled``.
 
-Capital actions (every ``irreversible`` spec) additionally require a FRESH,
-balance-bearing node snapshot (W0-P1): stale/unavailable state ⇒ hard deny —
-never evaluated against a cached balance.
+Capital actions additionally require TWO fail-closed preconditions (W0-P1 / PR-C):
+a FRESH, balance-bearing node snapshot — stale/unavailable state ⇒ hard deny, never
+evaluated against a cached balance — and a VERIFIABLE money journal, because a spend
+that cannot be journalled ahead of time must not happen. Whether an action is
+"capital" is not decided here: ``policy.ACTION_RISK_CLASSES`` is the single taxonomy
+(M-8) and this module derives from it via ``is_capital_action``.
 
 Auth: served under ``/dashboard/*`` → the app-level email-allowlist middleware
 applies (no service-token). The S-001 local-bypass hardening is a separate PR.
@@ -39,8 +42,8 @@ from app.lightning.control_gate import (
 )
 from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.idempotency_store import PersistentSeenKeys
-from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat
-from app.lightning.policy import PolicyDecision, PolicyStore, evaluate_policy
+from app.lightning.ops_ledger import bolt11_amount_sat, spent_today_sat_v2
+from app.lightning.policy import PolicyDecision, PolicyStore, evaluate_policy, is_capital_action
 
 logger = logging.getLogger(__name__)
 
@@ -59,23 +62,37 @@ def reset_control_state() -> None:
 
 @dataclass(frozen=True)
 class _ActionSpec:
+    """How to CALL an action — deliberately no risk/capital flag of its own.
+
+    M-8: this used to carry an ``irreversible`` boolean next to
+    ``policy.ACTION_RISK_CLASSES``. Two registers of the same fact drift silently,
+    and the one that guards money (freshness gate, journal gate, confirm) was the
+    copy nobody attested. The spec now describes only the call shape; every
+    capital question is answered by ``policy.is_capital_action``.
+    """
+
     fn: Callable[..., Any]
     amount_key: str | None
     recipient_key: str | None
-    irreversible: bool
 
 
 # action → value-layer fn + how to read its (amount, recipient) for the policy.
+# INVARIANT (reflection-tested): this register and ``ACTION_RISK_CLASSES`` name
+# exactly the same actions — an action reachable here but unclassified there is
+# denied by the policy, an action classified there but unreachable here is dead spec.
 _ACTIONS: dict[str, _ActionSpec] = {
-    "create_invoice": _ActionSpec(vl.create_invoice, None, None, irreversible=False),
-    "pay_invoice": _ActionSpec(vl.pay_invoice, None, None, irreversible=True),
-    "keysend": _ActionSpec(vl.keysend, "amt_sat", "dest_pubkey_hex", irreversible=True),
-    "send_coins": _ActionSpec(vl.send_coins, "amount_sat", "addr", irreversible=True),
-    "open_channel": _ActionSpec(
-        vl.open_channel, "local_funding_sat", "node_pubkey_hex", irreversible=True
-    ),
-    "close_channel": _ActionSpec(vl.close_channel, None, None, irreversible=True),
+    "create_invoice": _ActionSpec(vl.create_invoice, None, None),
+    "pay_invoice": _ActionSpec(vl.pay_invoice, None, None),
+    "keysend": _ActionSpec(vl.keysend, "amt_sat", "dest_pubkey_hex"),
+    "send_coins": _ActionSpec(vl.send_coins, "amount_sat", "addr"),
+    "open_channel": _ActionSpec(vl.open_channel, "local_funding_sat", "node_pubkey_hex"),
+    "close_channel": _ActionSpec(vl.close_channel, None, None),
 }
+
+# The value gate owns these kwargs; a caller must never be able to smuggle them in
+# via ``params`` (an injected ``authorization`` would write a LIE into the money
+# journal — "confirmed by HOTP" on an auto-executed action).
+_RESERVED_PARAMS = frozenset({"cfg", "dry_run", "confirm", "intent_id", "authorization"})
 
 
 class ConfirmBody(BaseModel):
@@ -125,6 +142,18 @@ async def _fresh_capital_balance_sat() -> int | None:
     )
 
 
+def _money_journal_blocker() -> str:
+    """``""`` when the money journal may be extended, else the deny reason.
+
+    Thin wrapper over the value layer's own precondition so the cockpit denies
+    EARLY — before an idempotency key is burned and a HOTP code is consumed — with
+    the same verdict the value layer would reach later. Receive actions never
+    consult it (see the value-layer asymmetry).
+    """
+    ok, reason = vl.money_journal_status()
+    return "" if ok else reason
+
+
 def _effective_amount_sat(
     action: str, params: dict[str, Any], spec: _ActionSpec
 ) -> tuple[int, bool]:
@@ -160,14 +189,21 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     spec = _ACTIONS.get(body.action)
     if spec is None:
         raise HTTPException(status_code=422, detail=f"unknown action: {body.action}")
+    reserved = _RESERVED_PARAMS.intersection(body.params)
+    if reserved:
+        raise HTTPException(
+            status_code=422,
+            detail=f"reserved params are controlled by the value gate: {sorted(reserved)}",
+        )
 
+    capital = is_capital_action(body.action)  # M-8: the single taxonomy decides
     amount, amount_known = _effective_amount_sat(body.action, body.params, spec)
     recipient = body.params.get(spec.recipient_key) if spec.recipient_key else None
     envelope = PolicyStore().load()
-    # W0-P1: capital actions (irreversible specs) are evaluated ONLY against a
-    # fresh node snapshot; the dashboard cache may serve stale, money may not.
+    # W0-P1: capital actions are evaluated ONLY against a fresh node snapshot; the
+    # dashboard cache may serve stale, money may not.
     fresh_capital_sat: int | None = None
-    if spec.irreversible:
+    if capital:
         fresh_capital_sat = await _fresh_capital_balance_sat()
         available = fresh_capital_sat if fresh_capital_sat is not None else 0
     else:
@@ -177,9 +213,10 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         amount_sat=amount,
         recipient=recipient,
         # Gesamtaudit-P0 geschlossen: Tages-Cap zählt jetzt die real executed,
-        # wert-abfließenden Sends des UTC-Tages aus dem Ops-Ledger. Für pay_invoice
-        # stammt ``amount`` aus dem BOLT11 (nicht aus params) → Caps/Floor greifen jetzt.
-        spent_today_sat=spent_today_sat(),
+        # wert-abfließenden Sends aus dem v2-Geldjournal (inkl. offener Intents und
+        # des m-15-Rolling-Fensters). Für pay_invoice stammt ``amount`` aus dem
+        # BOLT11 (nicht aus params) → Caps/Floor greifen jetzt.
+        spent_today_sat=spent_today_sat_v2(),
         available_balance_sat=available,
         envelope=envelope,
     )
@@ -187,12 +224,22 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # must never auto-execute — force operator confirm (HOTP) instead of silent pass.
     if not amount_known and decision.decision == "auto_execute":
         decision = PolicyDecision("needs_confirm", "amount unknown (amountless invoice)")
-    # W0-P1 fail-closed: without a fresh balance-bearing snapshot a capital action
-    # is hard-denied (the "action not allowed" deny above stays visible as-is).
-    if spec.irreversible and fresh_capital_sat is None and body.action in envelope.allowed_actions:
-        decision = PolicyDecision(
-            "denied", "node state stale/unavailable — capital action fails closed"
-        )
+    # m-13 (order preserved from #638): both hard denies below apply ONLY to an
+    # action the envelope actually allows. Otherwise a stale node or a broken
+    # journal would MASK the more fundamental verdict ("action not allowed") and the
+    # operator would chase node health while the envelope is what refuses.
+    if capital and body.action in envelope.allowed_actions:
+        # W0-P1 fail-closed: no fresh balance-bearing snapshot ⇒ no capital action.
+        if fresh_capital_sat is None:
+            decision = PolicyDecision(
+                "denied", "node state stale/unavailable — capital action fails closed"
+            )
+        # PR-C fail-closed: no write-ahead journal ⇒ no spend. Evaluated last so its
+        # reason wins over the staleness reason: an unaccountable spend is the deeper
+        # blocker, and it is the one the operator must repair first.
+        journal_blocker = _money_journal_blocker()
+        if journal_blocker:
+            decision = PolicyDecision("denied", journal_blocker)
     ph = plan_hash(body.action, body.params)
 
     async def _call(**extra: Any) -> Any:
@@ -246,11 +293,25 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     # deliberate: this cockpit surface is operator-only (the /dashboard/* email-allowlist
     # middleware), so it is not an anonymous mint-flood vector. The public mint path
     # (truth_oracle) carries the rate-limit + the trusted-client-IP key.
-    result = (
-        await _call(dry_run=False, confirm=True)
-        if spec.irreversible
-        else await _call(dry_run=False)
-    )
+    #
+    # The confirm ceremony is carried INTO the money journal: the burned idempotency
+    # key becomes the intent id (so a replayed request cannot open a second intent
+    # either) and the authorisation triple records under which verdict this spend was
+    # released. ``authorization`` is writable only from here — params carrying it were
+    # rejected above.
+    authorization = {
+        "policy_decision": decision.decision,
+        "confirmation": "hotp" if decision.decision == "needs_confirm" else "auto",
+        "plan_hash": ph,
+    }
+    extra: dict[str, Any] = {
+        "dry_run": False,
+        "intent_id": body.confirm.idempotency_key,
+        "authorization": authorization,
+    }
+    if capital:
+        extra["confirm"] = True
+    result = await _call(**extra)
     return {"mode": "execute", "action": body.action, "result": result.to_dict()}
 
 

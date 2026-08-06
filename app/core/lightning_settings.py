@@ -34,9 +34,11 @@ class LightningSettings(BaseSettings):
     (``value_layer._assert_send_allowed``) and defaults to False.
 
     Credentials are declared per CAPABILITY (``macaroon_credentials``): read,
-    invoice, payment, onchain, channel. W0/PR-A only DECLARES them so the operator
-    can bake and preflight the split — no caller requests a write scope yet, every
-    path still runs on the read credential (consumer switch = PR-C).
+    invoice, payment, onchain, channel. Since W0/PR-C every consumer requests its
+    OWN scope (invoice → minting, payment → pay/keysend, onchain → send_coins,
+    channel → open/close, read → observation); there is no fallback to the read
+    credential, and :func:`validate_lightning_boot` refuses to start a deployment
+    whose ENABLED capability has no credential (C-1).
     """
 
     model_config = SettingsConfigDict(
@@ -171,7 +173,36 @@ class LightningSettings(BaseSettings):
 
 class LightningBootError(RuntimeError):
     """An ENABLED Lightning client is misconfigured in a way that would fail OPEN
-    (missing/unreadable/expired TLS cert). Raised at startup to abort the boot."""
+    (missing/unreadable/expired TLS cert) or would fail SILENTLY at runtime (a
+    capability the deployment has switched on has no credential). Raised at startup
+    to abort the boot."""
+
+
+def _credential_boot_error(scope: str, hex_value: str, path_value: str, *, because: str) -> str:
+    """Return the boot-blocking reason for one capability credential, ``""`` if usable.
+
+    C-1: a credential is only "provisioned" if it can actually be LOADED. A typo'd
+    path is indistinguishable from a missing macaroon at runtime — both surface as
+    ``LightningUnavailableError`` deep inside a request, i.e. a 503 per anonymous
+    caller on the only revenue path. Here it is one loud line at startup instead.
+    """
+    env = f"APP_LN_{scope.upper()}_MACAROON_"
+    if hex_value.strip():
+        return ""
+    path = path_value.strip()
+    if not path:
+        return (
+            f"{because} requires the {scope} credential — set {env}HEX or {env}PATH. "
+            "There is deliberately NO fallback to the read macaroon (W0/PR-A), so "
+            "without it every call on this path would fail closed at runtime."
+        )
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        return f"{because} requires the {scope} credential, but {env}PATH is unreadable: {exc}"
+    if not raw:
+        return f"{because} requires the {scope} credential, but {env}PATH is an empty file: {path}"
+    return ""
 
 
 def validate_lightning_boot(cfg: LightningSettings) -> None:
@@ -188,7 +219,21 @@ def validate_lightning_boot(cfg: LightningSettings) -> None:
         opaque TLS error deep in the request path — here it aborts boot with the
         precise reason instead).
 
-    A disabled client (``enabled=False``) never touches the node → no-op.
+    **C-1 (W0/PR-C): an enabled CAPABILITY must have its credential.** Since PR-A a
+    write scope never falls back to the read macaroon. Without this check a Pi that
+    carries only the legacy single macaroon boots green and then fails per request:
+    ``/oracle/*`` answers 503 to every anonymous caller (the single real revenue path
+    silently dead) and every off-chain spend is permanently denied. A missing
+    credential for a capability the operator has switched ON is a configuration
+    error, not a runtime condition — it aborts the boot, loudly, once:
+
+      * ``l402_enabled`` or ``receive_enabled`` ⇒ the INVOICE credential is mandatory;
+      * ``pay_enabled``                        ⇒ the PAYMENT credential is mandatory.
+
+    ``onchain``/``channel`` are deliberately NOT boot-blocking: they have no dedicated
+    enable-flag, are operator-initiated one-offs behind HOTP, and their absence
+    surfaces immediately and interactively in the cockpit — not as a silent hole in an
+    unattended path. A disabled client (``enabled=False``) never touches the node → no-op.
     """
     if not cfg.enabled:
         return
@@ -218,3 +263,19 @@ def validate_lightning_boot(cfg: LightningSettings) -> None:
             f"lnd TLS cert expired at {cert.not_valid_after_utc.isoformat()} "
             f"({cert_path}) — refusing to boot with an expired trust anchor"
         )
+    # C-1 last: the transport must be trustworthy before we care which credential
+    # rides on it, so a broken trust anchor keeps reporting itself first.
+    if cfg.l402_enabled or cfg.receive_enabled:
+        because = "APP_LN_L402_ENABLED/APP_LN_RECEIVE_ENABLED=true (invoice minting)"
+        reason = _credential_boot_error(
+            "invoice", cfg.invoice_macaroon_hex, cfg.invoice_macaroon_path, because=because
+        )
+        if reason:
+            raise LightningBootError(f"{reason} — refusing to boot a dead receive path")
+    if cfg.pay_enabled:
+        because = "APP_LN_PAY_ENABLED=true (value layer armed)"
+        reason = _credential_boot_error(
+            "payment", cfg.payment_macaroon_hex, cfg.payment_macaroon_path, because=because
+        )
+        if reason:
+            raise LightningBootError(f"{reason} — refusing to boot an armed-but-mute send path")

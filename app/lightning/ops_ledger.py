@@ -1,24 +1,26 @@
-"""Lightning value-layer operations ledger — v1 (live) + v2 (parallel, not wired).
+"""Lightning value-layer operations ledger — v2 (live) + v1 (frozen legacy).
 
-Two ledgers coexist on purpose (W0 PR-B):
+**v2 — ``artifacts/ln_ops_ledger_v2.jsonl`` (LIVE since W0/PR-C).** The money
+journal: write-ahead, redacted at the writer, hash-chained. ``prepare_ln_intent``
+durably records the intent BEFORE the LND call (fail-closed — no intent, no spend),
+``append_ln_outcome`` records the terminal result (fail-soft — LND may already have
+moved value, so raising cannot undo it), ``verify_ln_ops_ledger`` checks
+links/hashes/lifecycle, ``attest_ln_ops_tip`` binds the verified tip into the KAI
+truth chain and ``spent_today_sat_v2`` is the daily-cap source.
 
-**v1 — ``artifacts/ln_ops_ledger.jsonl`` (LIVE, unchanged).** Flat, unchained,
-fail-soft JSONL. Every current caller (``value_layer.execute``, ``ln_control``
-daily-cap, the dashboard read path) keeps using ``append_ln_op`` /
-``spent_today_sat`` / ``read_recent_ln_ops`` / ``bolt11_amount_sat`` with exactly
-the behaviour they have today. Nothing in this PR changes what the running Pi
-writes or reads.
+**v1 — ``artifacts/ln_ops_ledger.jsonl`` (FROZEN legacy).** Flat, unchained,
+fail-soft JSONL. It was migrated into v2 by ``migrate_legacy_ln_ops`` and is never
+written again: ``append_ln_op`` and ``spent_today_sat`` have no live caller after
+the PR-C cutover and are retained ONLY as the documented rollback surface and as
+the readable historical file (a guard test keeps them caller-free). Writing both
+journals in parallel would fork the money history — that is the failure this split
+exists to prevent.
 
-**v2 — ``artifacts/ln_ops_ledger_v2.jsonl`` (PARALLEL, no callers yet).** A
-write-ahead, redacted, hash-chained money journal: ``prepare_ln_intent`` durably
-records the intent BEFORE the LND call (fail-closed), ``append_ln_outcome``
-records the terminal result (fail-soft — LND may already have moved value, so
-raising cannot undo it), ``verify_ln_ops_ledger`` checks links/hashes/lifecycle
-and ``attest_ln_ops_tip`` binds the verified tip into the KAI truth chain.
-``migrate_legacy_ln_ops`` builds a v2 file from a v1 file non-destructively.
+**RECEIVE events do not live here.** Invoice mints are audited in
+``app.lightning.receive_ledger`` — a separate, lock-free, best-effort file. See its
+module docstring for why the public mint path must not touch this journal (M-9/BL-2).
 
-The cutover (value_layer/ln_control/dashboard → v2) is PR-C and happens only
-after an attested migration; see ``docs/runbooks/ln_ops_ledger_v2_migration.md``.
+See ``docs/runbooks/ln_ops_ledger_v2_migration.md`` for migration + repair.
 No capital path of its own in either version.
 """
 
@@ -32,7 +34,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -47,16 +49,66 @@ _OPS_PATH = Path("artifacts/ln_ops_ledger.jsonl")
 
 
 # =========================================================================== #
-# v1 — LIVE legacy ledger. Behaviour is frozen: these four public functions are
-# what value_layer / ln_control / dashboard call today. Do not "improve" them
-# here; the improvements live in the v2 section below and are wired in PR-C.
+# v1 — FROZEN legacy ledger. ``append_ln_op``/``spent_today_sat`` lost their last
+# live caller in the PR-C cutover and are kept as the documented rollback surface
+# (a guard test asserts no app module writes v1). Do not "improve" them; the
+# improvements live in the v2 section below.
 # =========================================================================== #
 
 
+def legacy_ln_ops_path() -> Path:
+    """Path of the frozen v1 ledger (module attribute, so the test seam applies)."""
+    return _OPS_PATH
+
+
 def read_recent_ln_ops(path: Path | None = None, *, limit: int = 200) -> list[dict[str, Any]]:
-    """Read the most recent value-layer ops (newest last); ``[]`` until the gated
-    writer produces any. Tolerant: missing file / blank / corrupt lines skipped."""
-    return read_recent_jsonl(path or _OPS_PATH, limit=limit)
+    """Read the most recent value-layer ops for DISPLAY (newest last), redacted.
+
+    Source resolution (``path=None``): the live v2 money journal if it exists, else
+    the frozen v1 file — so the dashboard follows the cutover without a second
+    endpoint, and a pre-migration box still shows its history.
+
+    Two display invariants (MI-2 / m-18):
+
+      * **Redaction on read.** Every row is passed through
+        :func:`redact_ln_op_record` even though the v2 WRITER already redacts. The
+        v1 rows predate that boundary and carry raw BOLT11 invoices, preimages and
+        route hops; ``/dashboard/api/ln/ops`` must not be the one place that leaks
+        them. Defence in depth costs one pass over the bounded window below.
+      * **One row per money event.** A v2 action is TWO records (intent + outcome).
+        Rendering both would double the panel's "N Aktionen" count and show a
+        pending intent next to its own settled outcome. Records sharing an
+        ``intent_id`` therefore collapse to their terminal outcome, or — while none
+        exists — to the still-open intent (which is the honest state). Legacy rows
+        have no ``intent_id`` and are never merged with each other.
+
+    Tolerant: missing file / blank / corrupt lines skipped.
+    """
+    if path is not None:
+        target = path
+    else:
+        v2 = ln_ops_v2_path()
+        target = v2 if v2.exists() else _OPS_PATH
+    # Bounded window: a v2 event is at most two rows, so 2×limit (+ slack) can never
+    # under-fill the page. A partial view stays correct because all three cases still
+    # collapse to exactly one row: intent+outcome, outcome alone (its intent scrolled
+    # out of the window) and intent alone (not yet resolved).
+    window = 0 if limit <= 0 else limit * 2 + 50
+    rows = [redact_ln_op_record(row) for row in read_recent_jsonl(target, limit=window)]
+
+    merged: list[dict[str, Any]] = []
+    position: dict[str, int] = {}
+    for row in rows:
+        intent_id = str(row.get("intent_id", ""))
+        if not intent_id:
+            merged.append(row)
+            continue
+        if intent_id not in position:
+            position[intent_id] = len(merged)
+            merged.append(row)
+        elif row.get("state") in _TERMINAL_STATES:
+            merged[position[intent_id]] = row
+    return merged[-limit:] if limit > 0 else merged
 
 
 def append_ln_op(
@@ -67,10 +119,16 @@ def append_ln_op(
     response: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> None:
-    """Append one value-layer op (plan + outcome) to the audit ledger.
+    """Append one value-layer op (plan + outcome) to the FROZEN v1 audit ledger.
+
+    No live caller since the W0/PR-C cutover — the money path writes
+    :func:`prepare_ln_intent` + :func:`append_ln_outcome` (v2). Kept as the rollback
+    surface: re-pointing the value layer here restores the pre-cutover behaviour
+    byte for byte. Writing it in parallel with v2 would fork the money history.
 
     Fail-soft: a write error is logged and swallowed — the audit trail must NEVER
-    kill the (already-gated) send path. Append-only JSONL, one line per op.
+    kill the (already-gated) send path. Append-only JSONL, one line per op, NOT
+    redacted (which is precisely why the read path redacts).
     """
     record = {
         "ts": datetime.now(UTC).isoformat(),
@@ -148,14 +206,19 @@ def _spend_amount_sat(record: dict[str, Any]) -> int:
 
 
 def spent_today_sat(path: Path | None = None, *, now: datetime | None = None) -> int:
-    """Summe der heute (UTC) wert-abfließenden Sends — Daily-Cap-Quelle (fail-closed).
+    """Summe der heute (UTC) wert-abfließenden Sends — FROZEN v1-Cap-Quelle.
 
-    Zählt ``executed`` UND ``error``: ein error-Record kann ein real settled Spend
-    sein (Client-Timeout NACH dem Senden — live belegt durch den 25k-Spend vom
-    07-02, error geloggt, Channel-Balancen beweisen Settlement). Für ein
-    Sicherheits-Cap gilt: Unbekannt = mitzählen; ein echter Fehlschlag over-counted
-    dann nur Richtung needs_confirm. ``planned``/``disabled`` berühren den Node nie.
-    Tolerant gegen fehlende Datei/korrupte Zeilen.
+    Kein Live-Aufrufer mehr seit dem W0/PR-C-Cutover: das Tages-Cap kommt aus
+    :func:`spent_today_sat_v2`. Bleibt als Rollback-Fläche erhalten.
+
+    Zählt ``executed`` UND ``error`` — dieselbe m-14-Regel wie v2
+    (``UNPROVEN_OUTCOME_COUNTS_IN_CAP``): ein error-Record kann ein real settled
+    Spend sein (Client-Timeout NACH dem Senden — live belegt durch den 25k-Spend vom
+    07-02, error geloggt, Channel-Balancen beweisen Settlement). Unbekannt =
+    mitzählen; ein echter Fehlschlag over-counted dann nur Richtung needs_confirm.
+    ``planned``/``disabled`` berühren den Node nie. v1 reserviert KEINE offenen
+    Intents (es kennt keine) und kennt das m-15-Rolling-Fenster nicht — genau darum
+    ist v2 die Quelle. Tolerant gegen fehlende Datei/korrupte Zeilen.
     """
     today = (now or datetime.now(UTC)).date()
     total = 0
@@ -194,6 +257,28 @@ _INTENT_TTL_SECONDS = 3600
 
 _TERMINAL_STATES = frozenset({"executed", "error"})
 _ALLOWED_STATES = frozenset({"intent", "in_flight", "unknown", "executed", "error"})
+
+# --------------------------------------------------------------------------- #
+# m-14 — ONE rule for an UNPROVEN outcome ("error"), decided here, referenced by
+# both places that used to imply opposite things:
+#
+#   An ``error`` outcome means "we do not know whether value moved". Live-proven
+#   by the 25k spend of 07-02: the client timed out, the row says error, the
+#   channel balances say settled.
+#
+#   * CAP (:func:`spent_today_sat_v2`): it COUNTS. Budget must never be handed out
+#     twice on the strength of an unproven failure; over-counting only pushes the
+#     next action toward ``needs_confirm``.
+#   * DEDUP (:func:`_payment_hash_conflict`): it ALLOWS a retry. Double-spend
+#     safety for a retried invoice does not rest on our journal at all — lnd
+#     refuses a second payment to the same payment_hash. Blocking forever here
+#     would brick a legitimately failed invoice permanently (the reproduced M-4).
+#
+# Both directions are conservative for the value they protect; the pair is only a
+# contradiction if one reads "counts in the cap" as "we know it succeeded".
+# --------------------------------------------------------------------------- #
+UNPROVEN_OUTCOME_COUNTS_IN_CAP = True
+UNPROVEN_OUTCOME_ALLOWS_RETRY = True
 
 
 class LightningOpsLedgerError(RuntimeError):
@@ -487,7 +572,10 @@ def _payment_hash_conflict(
 
       * a terminal ``executed`` blocks FOREVER (never re-send a settled invoice);
       * an intent without any terminal outcome blocks until it expires (in flight);
-      * a terminal ``error`` or an expired open intent allows a retry.
+      * a terminal ``error`` or an expired open intent allows a retry
+        (``UNPROVEN_OUTCOME_ALLOWS_RETRY`` — see the m-14 rule above: an unproven
+        failure is not evidence of a spend, and lnd itself refuses to pay the same
+        payment_hash twice).
 
     A retried invoice still costs cap twice (``spent_today_sat_v2`` keeps reserving
     the open intent) — over-counting toward ``needs_confirm`` is the safe direction.
@@ -873,19 +961,26 @@ def _spend_amount_sat_v2(record: dict[str, Any]) -> int:
 def spent_today_sat_v2(path: Path | None = None, *, now: datetime | None = None) -> int:
     """Daily-cap source over the v2 journal — reserves OPEN intents (fail-closed).
 
-    Beyond the v1 semantics (``executed`` and ``error`` both count; a client timeout
-    after a real settlement is live-proven by the 25k spend of 07-02) the v2 source
-    also RESERVES an intent that has no terminal outcome yet: if the process dies
-    after the LND call but before the outcome fsync, the cap must not hand the same
-    budget out twice. Intent + outcome of one action count exactly once, and the
-    whole file is read (no unsafe 2000-line tail limit).
+    Beyond the v1 semantics (``executed`` and ``error`` both count — see the m-14
+    rule ``UNPROVEN_OUTCOME_COUNTS_IN_CAP``) the v2 source also RESERVES an intent
+    that has no terminal outcome yet: if the process dies after the LND call but
+    before the outcome fsync, the cap must not hand the same budget out twice.
+    Intent + outcome of one action count exactly once, and the whole file is read
+    (no unsafe 2000-line tail limit).
 
-    Day boundary: a resolved action is bucketed by its OUTCOME timestamp, an open one
-    by its intent. An action that spans UTC midnight therefore counts on the day it
-    was open and again on the day it settled — over-counting toward
-    ``needs_confirm``, never under-counting the live window.
+    **m-15 — the UTC-midnight leak, closed conservatively.** A pure calendar-day
+    window lets an operator spend the full cap at 23:59 and the full cap again at
+    00:01 — 2× the intended daily exposure inside two minutes, with no rule broken.
+    The returned figure is therefore ``max(calendar-day, trailing 24 h)``: the
+    calendar day keeps the operator's mental model (a cap that visibly resets), the
+    rolling window removes the boundary hop, and taking the maximum can only ever
+    push toward ``needs_confirm``. A resolved action is bucketed by its OUTCOME
+    timestamp, an open one by its intent; an action spanning midnight counts on both
+    days — again over-counting, never under-counting the live window.
     """
-    today = (now or datetime.now(UTC)).date()
+    moment = now or datetime.now(UTC)
+    today = moment.date()
+    window_start = moment - timedelta(hours=24)
     target = path or ln_ops_v2_path()
     if not target.exists():
         return 0
@@ -917,24 +1012,30 @@ def spent_today_sat_v2(path: Path | None = None, *, now: datetime | None = None)
         countable.append(terminal or records[0])
     countable.extend(record for record in unlinked if record.get("state") in _TERMINAL_STATES)
 
-    total = 0
+    calendar_day = rolling_24h = 0
     for record in countable:
         try:
-            ts = datetime.fromisoformat(str(record.get("ts", "")))
+            ts = datetime.fromisoformat(str(record.get("ts", ""))).astimezone(UTC)
         except ValueError:
             continue
-        if ts.astimezone(UTC).date() == today:
-            total += _spend_amount_sat_v2(record)
-    return total
+        amount = _spend_amount_sat_v2(record)
+        if ts.date() == today:
+            calendar_day += amount
+        if window_start <= ts <= moment:
+            rolling_24h += amount
+    return max(calendar_day, rolling_24h)
 
 
 __all__ = [
     "SPEND_ACTIONS",
+    "UNPROVEN_OUTCOME_ALLOWS_RETRY",
+    "UNPROVEN_OUTCOME_COUNTS_IN_CAP",
     "LightningOpsLedgerError",
     "append_ln_op",
     "append_ln_outcome",
     "attest_ln_ops_tip",
     "bolt11_amount_sat",
+    "legacy_ln_ops_path",
     "ln_ops_v2_path",
     "migrate_legacy_ln_ops",
     "normalize_payment_hash",

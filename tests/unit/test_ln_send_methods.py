@@ -17,6 +17,7 @@ import pytest
 from app.core.lightning_settings import LightningSettings
 from app.lightning import value_layer as vl
 from app.lightning.client import LndRestClient
+from app.lightning.ops_ledger import ln_ops_v2_path, verify_ln_ops_ledger
 from app.lightning.value_layer import (
     close_channel,
     keysend,
@@ -64,28 +65,38 @@ async def test_send_dry_run_default_plans_without_node(monkeypatch) -> None:
 
 
 async def test_pay_invoice_executes_with_all_gates_and_audits(monkeypatch) -> None:
+    """PR-C: the outcome closes the write-ahead intent in the v2 money journal."""
     client = MagicMock()
     client.pay_invoice = AsyncMock(return_value={"payment_preimage": "ab", "payment_error": ""})
     audited: list[tuple] = []
     monkeypatch.setattr(
-        vl, "append_ln_op", lambda action, state, **k: audited.append((action, state))
+        vl,
+        "append_ln_outcome",
+        lambda action, state, **k: audited.append((action, state, k["intent_id"])),
     )
     with patch("app.lightning.value_layer._build_client", return_value=client):
         r = await pay_invoice(payment_request="lnbc1", dry_run=False, confirm=True, cfg=_cfg(True))
     assert r.state == "executed"
     client.pay_invoice.assert_awaited_once()
-    assert ("pay_invoice", "executed") in audited  # node-touching outcome audited
+    # The outcome is journalled against the SAME intent that was written ahead of
+    # the node call — the pair is what makes the spend accountable.
+    assert r.intent_id and audited == [("pay_invoice", "executed", r.intent_id)]
+    assert verify_ln_ops_ledger(ln_ops_v2_path())["ok"] is True
 
 
 async def test_executed_error_is_audited_not_disabled(monkeypatch) -> None:
     audited: list[tuple] = []
     monkeypatch.setattr(
-        vl, "append_ln_op", lambda action, state, **k: audited.append((action, state))
+        vl, "append_ln_outcome", lambda action, state, **k: audited.append((action, state))
     )
-    # disabled (kill-switch) must NOT spam the audit ledger
+    # disabled (kill-switch) must NOT spam the audit ledger — and must not open an
+    # intent either: a non-event leaves no trace in the money journal.
     with patch("app.lightning.value_layer._build_client"):
-        await send_coins(addr="bc1q", amount_sat=1, dry_run=False, confirm=True, cfg=_cfg(False))
-    assert audited == []
+        r = await send_coins(
+            addr="bc1q", amount_sat=1, dry_run=False, confirm=True, cfg=_cfg(False)
+        )
+    assert audited == [] and r.intent_id == ""
+    assert verify_ln_ops_ledger(ln_ops_v2_path())["records"] == 0
 
 
 async def test_rebalance_plan_never_executes() -> None:

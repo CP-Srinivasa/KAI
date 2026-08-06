@@ -35,6 +35,11 @@ _SCHEMA = 1
 # vorbei — close_channel wäre, sobald allowlisted, ohne HOTP auto-executet worden.
 # Deny-by-default: eine hier nicht klassifizierte Aktion wird abgelehnt, selbst
 # wenn die Allowlist sie nennt (Allowlist sagt "erlaubt", Klasse sagt "wie").
+#
+# M-8 (W0/PR-C): Dies ist die EINZIGE Risiko-Taxonomie des Geldpfads. Die
+# Kontrollfläche (``ln_control._ACTIONS``) leitet ihre Kapital-Semantik über
+# :func:`is_capital_action` hieraus ab und führt keine zweite Klassifikation mehr;
+# ein Reflection-Test hält beide Register deckungsgleich (unklassifiziert ⇒ deny).
 ACTION_RISK_CLASSES: dict[str, str] = {
     "create_invoice": "receive",
     "pay_invoice": "spend",
@@ -45,7 +50,19 @@ ACTION_RISK_CLASSES: dict[str, str] = {
 }
 
 # Klassen mit Kapitalwirkung: Betrag 0/unbekannt ist hier nie ein Freifahrtschein.
-_CAPITAL_CLASSES = frozenset({"spend", "onchain_spend", "channel_open", "channel_irreversible"})
+CAPITAL_RISK_CLASSES = frozenset({"spend", "onchain_spend", "channel_open", "channel_irreversible"})
+
+
+def is_capital_action(action: str) -> bool:
+    """Bewegt/bindet diese Aktion Kapital? — die eine Wahrheit für alle Aufrufer.
+
+    Fail-closed: eine unbekannte oder nicht klassifizierte Aktion ist NICHT
+    kapitalfrei — sie ist gar nicht ausführbar (:func:`evaluate_policy` lehnt sie
+    ab), und jede Vorbedingung, die an dieser Funktion hängt (Freshness-Gate,
+    Journal-Gate, Confirm-Pflicht), greift für sie NICHT versehentlich als
+    "harmlos". Genau deshalb prüft der Reflection-Test beide Richtungen.
+    """
+    return ACTION_RISK_CLASSES.get(action) in CAPITAL_RISK_CLASSES
 
 
 @dataclass(frozen=True)
@@ -102,7 +119,7 @@ def evaluate_policy(
         )
     # A capital-class action whose amount is 0/unknown slipped past every cap and
     # the ">0" confirm-threshold guard — fail closed to operator confirm instead.
-    if risk_class in _CAPITAL_CLASSES and amount_sat <= 0:
+    if risk_class in CAPITAL_RISK_CLASSES and amount_sat <= 0:
         return PolicyDecision("needs_confirm", "zero/unknown amount on a capital action")
     # New counterparty (allowlist set + recipient not on it) → confirm.
     if envelope.recipient_allowlist and recipient and recipient not in envelope.recipient_allowlist:
@@ -158,8 +175,10 @@ class PolicyStore:
 
 __all__ = [
     "ACTION_RISK_CLASSES",
+    "CAPITAL_RISK_CLASSES",
     "PolicyDecision",
     "PolicyEnvelope",
     "PolicyStore",
     "evaluate_policy",
+    "is_capital_action",
 ]
