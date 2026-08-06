@@ -1,0 +1,27 @@
+[Unit]
+Description=KAI CORE8 Forecaster Panel — daily shadow issuance (append-only, hash-chained, p_kai=null)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Shadow epoch data clock (#647): issues yesterday's (UTC) CORE8 panel from the
+# read-only Binance daily-klines path. Duplicate t0 (Persistent=true catch-up
+# double-fire) is a no-op with exit 0; a provider failure exits 1 and leaves the
+# store untouched — the missed day is counted by `forecaster-status` as
+# t0_missing_days (MISSED_ISSUANCE at ops level, deliberately not backfilled).
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading forecaster-issue
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+
+# One paginated daily-klines fetch for BTC+ETH (~470 candles each).
+MemoryMax=256M
+CPUQuota=50%

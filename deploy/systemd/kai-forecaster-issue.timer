@@ -1,0 +1,17 @@
+[Unit]
+Description=KAI CORE8 Forecaster Panel — daily issuance shortly after the UTC daily close
+
+[Timer]
+# 00:20 UTC: yesterday's daily candle closed at 00:00 UTC; small buffer for the
+# venue to finalize it. Deliberately NO `Requires=` here (a Requires= on a
+# timer can strand it; Timer-Requires cascade lesson, #414).
+# Enabled deliberately by the operator/deploy step, NOT via ENABLE_ON_INSTALL.
+OnCalendar=*-*-* 00:20:00 UTC
+# Persistent: a missed slot (Pi down at 00:20 UTC) fires once on next boot.
+# Same-day catch-up still issues the correct t0 (yesterday, UTC).
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -85,7 +85,18 @@ UNITS=(
     "kai-operator-digest.timer"
     "kai-ln-scb-monitor.service"
     "kai-ln-scb-monitor.timer"
+    "kai-forecaster-issue.service"
+    "kai-forecaster-issue.timer"
+    "kai-forecaster-resolve.service"
+    "kai-forecaster-resolve.timer"
 )
+
+# NOTE 2026-08-06: kai-forecaster-issue.timer + kai-forecaster-resolve.timer
+# sind ABSICHTLICH nicht in ENABLE_ON_INSTALL (Lehre #626/#627: neue Timer nie
+# blind mit-enablen). Installiert (daemon-reload aware), aber das Scharfschalten
+# ist ein bewusster Deploy-Schritt: `systemctl enable --now kai-forecaster-issue.timer
+# kai-forecaster-resolve.timer`. Beide sind read-only gegen den Node-losen
+# Binance-Daily-Pfad und schreiben nur artifacts/research/forecaster_panel/.
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
 # ABSENT from ENABLE_ON_INSTALL below — installed (daemon-reload aware) but

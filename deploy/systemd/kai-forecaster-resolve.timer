@@ -1,0 +1,15 @@
+[Unit]
+Description=KAI CORE8 Forecaster Panel — daily resolution pass after issuance
+
+[Timer]
+# 00:50 UTC: after the issuance slot (00:20 UTC + up to 10 min jitter/accuracy),
+# so a freshly due horizon resolves the same morning. Deliberately NO
+# `Requires=` here (Timer-Requires cascade lesson, #414).
+# Enabled deliberately by the operator/deploy step, NOT via ENABLE_ON_INSTALL.
+OnCalendar=*-*-* 00:50:00 UTC
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
