@@ -6,22 +6,19 @@ Channel-Management nutzen **getrennte** Macaroons; jeder Wert-Schicht-Pfad ist
 zusätzlich hinter `APP_LN_PAY_ENABLED` + dry-run + confirm (B-002 zentraler
 Send-Gate) gegated.
 
-> **Stand W0/PR-A (2026-08-05):** Die fünf Credentials sind in
-> `LightningSettings.macaroon_credentials()` **deklariert** und werden vom
-> Preflight geprüft — aber noch von **keinem** Konsumenten angefordert.
-> `_build_client(cfg)` ohne Scope liefert weiterhin das Read-Credential, und alle
-> Live-Pfade (Oracle-Mint, Earnings, Wert-Schicht) laufen unverändert darüber.
-> Die Umverdrahtung ist **PR-C** und setzt voraus, dass die Macaroons vorher
-> gebacken und per Preflight bestätigt sind. Solange `APP_LN_MACAROON_*` also der
-> real benutzte Pfad ist, darf es **nicht** enger gestellt werden, als der heutige
-> Betrieb braucht — sonst bricht der Einnahmepfad still.
+> **Stand W0/PR-C (2026-08-06):** Die fünf Credentials sind gebacken, vom
+> Preflight bestätigt und an ihre jeweiligen Konsumenten verdrahtet. Der
+> öffentliche Invoice-Mint benutzt ausschließlich das Invoice-Credential; der
+> Sendepfad materialisiert sein Payment-Credential nur bei
+> `APP_LN_PAY_ENABLED=true`. Der Read-Scope bleibt der Default ausschließlich für
+> Lesepfade — Write-Scopes fallen niemals auf ihn zurück.
 
 | Pfad / Aktion | Modul | lnd REST | Benötigte lnd-Permission (`lncli bakemacaroon`) |
 |---|---|---|---|
 | Node-Status / Balances / Channels (Phase 1) | `adapter.py` | GET `/v1/state`,`/v1/getinfo`,`/v1/balance/*`,`/v1/channels`,`/v1/fees` | `info:read offchain:read onchain:read` (= readonly) |
 | Invoice erstellen (Receive) | `value_layer.create_invoice` | POST `/v1/invoices` | `invoices:write` |
 | BOLT12-Offer (Receive, Sprint 3) | (Sprint 3) | POST `/v2/...offers` | `invoices:write offchain:read` |
-| Invoice zahlen / Keysend (Send) | `value_layer.pay_invoice/keysend` | POST `/v1/channels/transactions` | `offchain:read offchain:write` |
+| Invoice zahlen / Keysend (Send) | `value_layer.pay_invoice/keysend` | GET `/v1/payreq/{pay_req}` vor POST `/v1/channels/transactions` | `offchain:read offchain:write` |
 | On-Chain-Withdraw (Send) | `value_layer.send_coins` | POST `/v1/transactions` | `onchain:write` |
 | Channel öffnen | `value_layer.open_channel` | POST `/v1/channels` | `onchain:write offchain:write` |
 | Channel schließen | `value_layer.close_channel` | DELETE `/v1/channels/{txid}/{idx}` | `offchain:write onchain:write` |

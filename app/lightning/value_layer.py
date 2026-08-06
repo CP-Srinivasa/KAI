@@ -46,8 +46,10 @@ from app.lightning.jsonl_tail import read_recent_jsonl
 from app.lightning.ops_ledger import (
     LightningOpsLedgerError,
     append_ln_outcome,
+    bolt11_amount_sat,
     legacy_ln_ops_path,
     ln_ops_v2_path,
+    normalize_payment_hash,
     prepare_ln_intent,
     verify_ln_ops_ledger,
 )
@@ -343,6 +345,79 @@ def _audit_receive(
     return result
 
 
+def _decoded_invoice_plan(
+    payment_request: str,
+    fee_limit_sat: int,
+    decoded: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind lnd's signed invoice facts into the write-ahead payment intent.
+
+    The BOLT11 HRP is an independent amount commitment. Comparing it with lnd's
+    decoded amount catches a substituted or inconsistently parsed invoice before
+    the journal intent exists and, crucially, before the send endpoint is called.
+    Amountless invoices remain denied because this API has no explicit amount
+    argument to bind into the operator's plan.
+    """
+
+    expected_sat = bolt11_amount_sat(payment_request)
+    if expected_sat <= 0:
+        raise ValueError("amountless or unparseable BOLT11 invoice")
+    try:
+        decoded_msat = int(decoded.get("num_msat") or 0)
+        decoded_sat_field = int(decoded.get("num_satoshis") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("decodepayreq returned a non-numeric amount") from exc
+    decoded_sat = (decoded_msat + 999) // 1000 if decoded_msat > 0 else decoded_sat_field
+    if decoded_sat <= 0:
+        raise ValueError("decodepayreq returned no positive amount")
+    if decoded_sat != expected_sat:
+        raise ValueError(
+            f"invoice amount mismatch: BOLT11 plan={expected_sat} sat, "
+            f"decodepayreq={decoded_sat} sat"
+        )
+
+    payment_hash = normalize_payment_hash(decoded.get("payment_hash"))
+    try:
+        payment_hash_bytes = bytes.fromhex(payment_hash)
+    except ValueError as exc:
+        raise ValueError("decodepayreq returned an invalid payment_hash") from exc
+    if len(payment_hash_bytes) != 32:
+        raise ValueError("decodepayreq returned an invalid payment_hash")
+
+    plan: dict[str, Any] = {
+        "payment_request": payment_request,
+        "fee_limit_sat": int(fee_limit_sat),
+        "amount_sat": decoded_sat,
+        "payment_hash": payment_hash,
+    }
+    try:
+        timestamp = int(decoded.get("timestamp") or 0)
+        expiry = int(decoded.get("expiry") or 0)
+    except (TypeError, ValueError):
+        timestamp = expiry = 0
+    if timestamp > 0 and expiry > 0:
+        plan["expires_at_unix"] = timestamp + expiry
+    return plan
+
+
+def _payment_failure_detail(response: dict[str, Any], expected_hash: str) -> str:
+    """Classify semantic lnd failures that are transported inside HTTP 200."""
+
+    payment_error = str(response.get("payment_error") or "").strip()
+    if payment_error:
+        return f"lnd payment failed: {payment_error}"
+    failure_reason = str(response.get("failure_reason") or "").strip()
+    if failure_reason.upper() not in {"", "0", "NONE", "FAILURE_REASON_NONE"}:
+        return f"lnd payment failed: {failure_reason}"
+
+    response_hash = normalize_payment_hash(response.get("payment_hash"))
+    if not response_hash:
+        return "lnd payment response omitted payment_hash"
+    if response_hash != expected_hash:
+        return "lnd payment response payment_hash mismatches the prepared intent"
+    return ""
+
+
 async def pay_invoice(
     *,
     payment_request: str,
@@ -355,11 +430,9 @@ async def pay_invoice(
 ) -> ValueLayerResult:
     """Pay a BOLT11 invoice — SPENDS, irreversible. Max-gated (confirm required).
 
-    NOTE (M-4 scope): the journal's payment-hash duplicate guard only bites when the
-    plan carries a ``payment_hash``. Deriving it needs an lnd ``decodepayreq`` call
-    in the send path, which lands with the reconciliation work (PR-D). Until then the
-    active duplicate defences are the intent-id replay refusal in the journal and the
-    cockpit's burned idempotency key.
+    Before writing the intent, lnd decodes the invoice and its signed amount and
+    payment hash are bound into the plan. That closes the duplicate-payment gap:
+    the v2 journal can now reject an already-prepared/executed payment hash.
     """
     cfg = _settings(cfg)
     plan = {"payment_request": payment_request, "fee_limit_sat": int(fee_limit_sat)}
@@ -376,16 +449,32 @@ async def pay_invoice(
         return blocked
     if not payment_request:
         return ValueLayerResult("pay_invoice", "error", "payment_request required", plan)
+
+    # Preserve the money journal as the FIRST external precondition. A broken
+    # journal must deny without even a read-only node touch; _prepare repeats the
+    # check after decode to close the check/decode/append race.
+    journal_ok, journal_reason = money_journal_status()
+    if not journal_ok:
+        return ValueLayerResult("pay_invoice", "error", f"{journal_reason}; node not touched", plan)
+    try:
+        client = _build_client(cfg, credential_scope="payment")
+        decoded = await client.decode_pay_req(payment_request=payment_request)
+        plan = _decoded_invoice_plan(payment_request, fee_limit_sat, decoded)
+    except (LightningUnavailableError, ValueError) as exc:
+        return ValueLayerResult("pay_invoice", "error", f"decodepayreq denied payment: {exc}", plan)
+
     prepared, denied = _prepare("pay_invoice", plan, intent_id, authorization)
     if denied is not None:
         return denied
     try:
-        resp = await _build_client(cfg, credential_scope="payment").pay_invoice(
+        resp = await client.pay_invoice(
             payment_request=payment_request, fee_limit_sat=fee_limit_sat
         )
     except LightningUnavailableError as exc:
         return _audit(ValueLayerResult("pay_invoice", "error", str(exc), plan, intent_id=prepared))
-    return _audit(ValueLayerResult("pay_invoice", "executed", "", plan, resp, intent_id=prepared))
+    failure = _payment_failure_detail(resp, str(plan["payment_hash"]))
+    state = "error" if failure else "executed"
+    return _audit(ValueLayerResult("pay_invoice", state, failure, plan, resp, intent_id=prepared))
 
 
 async def keysend(
