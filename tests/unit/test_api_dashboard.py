@@ -344,6 +344,125 @@ def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> 
     assert data["paper_evidence"]["warning"]
 
 
+def test_quality_api_epoch_cut_excludes_invalid_legacy_book(tmp_path: Path) -> None:
+    """Voll-Audit 2026-08-06 (P1-2): /dashboard/api/quality war der EINZIGE der
+    vier Paper-Read-Pfade ohne Epochengrenze — das per portfolio_epoch_reset als
+    INVALID_FOR_PERFORMANCE archivierte Alt-Buch floss in PnL/WinRate/Expectancy
+    und wurde dabei als scope "lifetime" etikettiert. Ein Screenshot des Panels
+    war damit ein Performance-Claim über ein für ungültig erklärtes Buch."""
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    rows = [
+        # Alt-Buch: Fill + fetter Gewinn VOR dem Reset — darf nichts färben.
+        {
+            "event_type": "order_filled",
+            "side": "buy",
+            "symbol": "BTC/USDT",
+            "timestamp_utc": "2026-07-01T10:00:00+00:00",
+        },
+        {
+            "schema_version": "v2",
+            "event_type": "position_closed",
+            "symbol": "BTC/USDT",
+            "trade_pnl_usd": 999.0,
+            "timestamp_utc": "2026-07-02T00:00:00+00:00",
+        },
+        # Epochengrenze (Weg B+, 2026-07-12): Alt-Buch INVALID_FOR_PERFORMANCE.
+        {
+            "event_type": "portfolio_epoch_reset",
+            "new_epoch_id": "paper_v2_attested",
+            "timestamp_utc": "2026-07-12T22:22:09+00:00",
+            "old_track_record_status": "INVALID_FOR_PERFORMANCE",
+        },
+        # Neue Epoche: 1 Fill, 1 Gewinn, 1 Verlust.
+        {
+            "event_type": "order_filled",
+            "side": "buy",
+            "symbol": "ETH/USDT",
+            "timestamp_utc": "2026-07-20T09:00:00+00:00",
+        },
+        {
+            "schema_version": "v2",
+            "event_type": "position_closed",
+            "symbol": "ETH/USDT",
+            "trade_pnl_usd": 100.0,
+            "timestamp_utc": "2026-07-20T10:00:00+00:00",
+        },
+        {
+            "schema_version": "v2",
+            "event_type": "position_partial_closed",
+            "symbol": "ETH/USDT",
+            "trade_pnl_usd": -50.0,
+            "timestamp_utc": "2026-07-21T10:00:00+00:00",
+        },
+        # Close ohne jeden Zeitstempel: unter Epochen-Regime nicht datierbar
+        # => KEIN Performance-Claim daraus (fail-closed), aber sichtbar gezählt.
+        {
+            "schema_version": "v2",
+            "event_type": "position_closed",
+            "symbol": "DOGE/USDT",
+            "trade_pnl_usd": 5.0,
+        },
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    # Nur die neue Epoche: 100 - 50 = 50; das 999er-Alt-Buch ist draußen.
+    assert data["paper_realized_pnl_usd"] == 50.0
+    assert data["paper_positions_closed"] == 1
+    assert data["paper_positions_partial_closed"] == 1
+    assert data["paper_fills"] == 1  # der Alt-Fill zählt nicht mehr
+    ev = data["paper_evidence"]
+    assert ev["scope"] == "epoch:paper_v2_attested"
+    assert ev["epoch_id"] == "paper_v2_attested"
+    assert ev["epoch_started_at_utc"] == "2026-07-12T22:22:09+00:00"
+    assert ev["pre_epoch_closes_excluded"] == 1
+    assert ev["pre_epoch_fills_excluded"] == 1
+    assert ev["closes_without_timestamp"] == 1
+    # Lifetime-Zahlen bleiben transparent daneben stehen (nichts verschwindet).
+    assert ev["closes_lifetime_total"] == 4
+    assert ev["fills_lifetime_total"] == 2
+    # WinRate/Expectancy epochenrein: 1 Win, 1 Loss.
+    assert ev["win_rate_pct"] == 50.0
+    assert ev["realized_pnl_total_usd"] == 50.0
+
+
+def test_quality_api_without_epoch_event_stays_lifetime(tmp_path: Path) -> None:
+    """Buch ohne Reset-Event (legacy): Verhalten unverändert, scope 'lifetime'."""
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": "v2",
+                "event_type": "position_closed",
+                "symbol": "BTC/USDT",
+                "trade_pnl_usd": 10.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+    data = r.json()
+    assert data["paper_realized_pnl_usd"] == 10.0
+    assert data["paper_evidence"]["scope"] == "lifetime"
+    assert data["paper_evidence"]["epoch_id"] is None
+
+
 def test_quality_api_separates_historical_paper_fills_from_rolling_24h(
     tmp_path: Path,
 ) -> None:
