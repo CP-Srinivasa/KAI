@@ -23,13 +23,17 @@ _DEMAND_DIR = Path("artifacts")
 
 
 async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) -> bool | None:
-    """RAW ``pay_invoice`` probe on ONE capability credential (bypasses the value gate).
+    """Raw ``pay_invoice`` probe on one capability credential.
 
     Returns True when the node PERMISSION-DENIED the attempt (credential carries no
     spend scope), False when it got past the permission layer (credential CAN spend),
     and ``None`` when the credential is not provisioned at all — an un-probed fact,
     never silently folded into a pass. The payment request is deliberately garbage, so
     even a spend-capable macaroon moves no capital.
+
+    This helper deliberately does not call a value-layer operation, but it does not
+    bypass the central client choke point: ``scope="payment"`` cannot be built while
+    ``APP_LN_PAY_ENABLED=false``.
     """
     try:
         client = _build_client(cfg, credential_scope=scope)

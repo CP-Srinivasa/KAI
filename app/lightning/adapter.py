@@ -163,7 +163,13 @@ def _build_client(
     A write scope resolves to its own macaroon and fails closed with
     ``LightningUnavailableError`` when that credential is not provisioned; it is
     never promoted to the read credential.
+
+    The ``"payment"`` credential has an additional structural kill-switch: it cannot
+    even be materialized while ``APP_LN_PAY_ENABLED=false``. This keeps raw helpers
+    such as the go-live preflight behind the same choke point as the value layer.
     """
+    if credential_scope == "payment" and not cfg.pay_enabled:
+        raise LightningUnavailableError("payment credential disabled: APP_LN_PAY_ENABLED=false")
     macaroon_hex, macaroon_path = cfg.macaroon_credentials(credential_scope)
     return LndRestClient(
         base_url=cfg.base_url,
