@@ -31,7 +31,7 @@ from app.security.exchange_perms import (
     PermissionStatus,
     Phase0Expectations,
 )
-from app.security.hotp_auth import HotpVerifier
+from app.security.hotp_auth import HotpVerifier, bootstrap_hotp_journal
 
 _TEST_SEED = "JBSWY3DPEHPK3PXP"
 
@@ -91,8 +91,10 @@ def _code_for(counter: int) -> str:
 def engine(tmp_path: Path) -> LiveExecutionEngine:
     seed = tmp_path / "seed.b32"
     seed.write_text(_TEST_SEED, encoding="ascii")
+    journal = tmp_path / "j.jsonl"
+    bootstrap_hotp_journal(journal, next_counter=0)
     return LiveExecutionEngine(
-        hotp_verifier=HotpVerifier(seed_path=seed, journal_path=tmp_path / "j.jsonl"),
+        hotp_verifier=HotpVerifier(seed_path=seed, journal_path=journal),
         risk_engine=RiskEngine(_phase0_risk_limits()),
         adapters={"binance": BinanceAdapter(dry_run=True)},
         perms_verifiers={"binance": _StubPermsVerifier()},

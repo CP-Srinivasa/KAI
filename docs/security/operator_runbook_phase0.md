@@ -220,6 +220,11 @@ unset SEED_VAR
 **4.A.5 Smoke-Test**
 
 ```bash
+# NUR bei Erst-Inbetriebnahme, bevor der erste Code erzeugt wird. Der Befehl
+# verweigert vorhandene Journal-Dateien und überschreibt keine Evidenz.
+ssh ubuntu@192.168.178.23 'cd /home/ubuntu/ai_analyst_trading_bot && \
+  .venv/bin/python scripts/hotp_bootstrap.py --next-counter 0'
+
 # Workstation: YubiKey berühren, Code generieren
 ykman oath code "KAI-Live:operator"
 # Output: KAI-Live:operator  123456
@@ -238,6 +243,14 @@ print(v.verify(\"123456\"))
 ```
 
 Wenn `HotpVerificationFailed`: SEED auf Workstation und Pi sind nicht identisch — Step 4.A.4 wiederholen.
+
+Wenn das Journal später fehlt, leer, korrupt oder unlesbar ist: **Pay-Pfad deaktiviert
+lassen und nicht erneut mit Counter 0 bootstrappen.** Zuerst das Journal aus einer
+attestierten Sicherung wiederherstellen. Nur wenn eine Wiederherstellung bewusst
+freigegeben ist, darf der Operator das unbekannte Artefakt separat sichern/entfernen
+und `hotp_bootstrap.py --next-counter <BELEGTER_NAECHSTER_COUNTER>` ausführen. Der
+Wert muss mindestens dem authenticator-seitig bekannten nächsten Counter entsprechen;
+der CLI überschreibt niemals eine vorhandene Datei.
 
 **4.A.6 Tresor-Backup (PFLICHT, verhindert Total-Lockout)**
 

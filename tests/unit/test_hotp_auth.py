@@ -5,10 +5,11 @@ Spec: docs/security/kai_light_live_phase0_spec.md §2.
 Deckt:
 - Seed-Loading: fehlt, leer, base32-invalid
 - Code-Format-Validation
-- Verify mit virgin Journal (counter=0 startet)
+- Verify nur nach explizitem Journal-Bootstrap (counter=0 startet)
 - Verify mit existing Journal (counter monoton inkrementiert)
 - Tolerance-Window: 1, 2 voraus akzeptiert; >=3 rejected
-- Replay-Detection: gleicher Counter zweimal → HotpReplayDetected
+- Fail-closed bei fehlendem/korruptem/unlesbarem Journal
+- Replay + Parallelität: gleicher Counter wird höchstens einmal konsumiert
 - Journal Append-Only Validation
 - humanize_counter Output für /live status
 
@@ -18,6 +19,8 @@ Test-Pattern: pytest-tmp_path für seed+journal files, echte pyotp-HOTP für Cod
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pyotp
@@ -26,10 +29,14 @@ import pytest
 from app.security.hotp_auth import (
     HOTP_DIGITS,
     MAX_ADVANCE_WINDOW,
+    HotpJournalCorrupt,
+    HotpJournalNotInitialized,
+    HotpJournalUnavailable,
     HotpSeedInvalid,
     HotpSeedMissing,
     HotpVerificationFailed,
     HotpVerifier,
+    bootstrap_hotp_journal,
     humanize_counter,
 )
 
@@ -60,6 +67,10 @@ def _make_verifier(
 def _code_for(counter: int) -> str:
     """Generate the expected HOTP-code for a given counter (mirror pyotp)."""
     return pyotp.HOTP(_TEST_SEED, digits=HOTP_DIGITS).at(counter)
+
+
+def _bootstrap(paths: tuple[Path, Path], *, next_counter: int = 0) -> None:
+    bootstrap_hotp_journal(paths[1], next_counter=next_counter)
 
 
 # -----------------------------------------------------------------
@@ -104,6 +115,7 @@ class TestSeedLoading:
             seed_path=seed,
             journal_path=tmp_path / "j.jsonl",
         )
+        bootstrap_hotp_journal(tmp_path / "j.jsonl", next_counter=0)
         # Should not raise SeedInvalid; verify with counter-0 code.
         # The cleaned seed is identical to _TEST_SEED.
         res = verifier.verify(pyotp.HOTP("JBSWY3DPEHPK3PXP").at(0))
@@ -128,6 +140,7 @@ class TestCodeFormat:
 
     def test_accepts_code_with_whitespace(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         code = _code_for(0)
         # Operator könnte Code mit Space tippen — wir trimmen.
         spaced = code[:3] + " " + code[3:]
@@ -141,7 +154,10 @@ class TestCodeFormat:
 
 
 class TestVerifyHappyPath:
-    def test_virgin_journal_accepts_counter_0(self, hotp_paths: tuple[Path, Path]) -> None:
+    def test_explicitly_bootstrapped_journal_accepts_counter_0(
+        self, hotp_paths: tuple[Path, Path]
+    ) -> None:
+        _bootstrap(hotp_paths)
         verifier = _make_verifier(hotp_paths)
         assert verifier.last_used_counter() == -1
         assert verifier.next_expected_counter() == 0
@@ -155,6 +171,7 @@ class TestVerifyHappyPath:
         assert verifier.next_expected_counter() == 1
 
     def test_sequential_verifications_increment(self, hotp_paths: tuple[Path, Path]) -> None:
+        _bootstrap(hotp_paths)
         verifier = _make_verifier(hotp_paths)
         for expected in (0, 1, 2, 3, 4):
             res = verifier.verify(_code_for(expected))
@@ -171,12 +188,14 @@ class TestToleranceWindow:
     def test_accepts_code_1_ahead(self, hotp_paths: tuple[Path, Path]) -> None:
         # Operator hat App vorgeklickt, Pi steht bei next=0, Code ist counter=1.
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         res = verifier.verify(_code_for(1))
         assert res.counter_used == 1
         assert res.counter_advance == 2  # 1 - (-1) = 2 (initial jump)
 
     def test_accepts_code_2_ahead(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         res = verifier.verify(_code_for(2))
         assert res.counter_used == 2
 
@@ -184,11 +203,13 @@ class TestToleranceWindow:
         # MAX_ADVANCE_WINDOW=3 → akzeptiert next/next+1/next+2.
         # Code für counter=10 sollte rejected werden bei virgin journal.
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         with pytest.raises(HotpVerificationFailed):
             verifier.verify(_code_for(10))
 
     def test_narrow_window_rejects_at_boundary(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths, allow_advance=1)
+        _bootstrap(hotp_paths)
         # window=1 → nur counter 0 akzeptiert bei virgin.
         with pytest.raises(HotpVerificationFailed):
             verifier.verify(_code_for(1))
@@ -216,6 +237,7 @@ class TestToleranceWindow:
 class TestReplayProtection:
     def test_same_code_twice_rejected_second_time(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         verifier.verify(_code_for(0))  # ok
         # Second attempt: same code for counter=0 — Pi has counter at 0,
         # next_expected is 1, code-for-0 wird gegen 1/2/3 geprüft, matched nicht.
@@ -241,6 +263,7 @@ class TestReplayProtection:
         und der candidate akzeptiert wird.
         """
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         # Verify counters 0..4.
         for i in range(5):
             verifier.verify(_code_for(i))
@@ -263,18 +286,87 @@ class TestReplayProtection:
 
 
 class TestJournalSemantics:
-    def test_journal_records_have_schema_version(self, hotp_paths: tuple[Path, Path]) -> None:
+    def test_missing_journal_denies_verification(self, hotp_paths: tuple[Path, Path]) -> None:
+        verifier = _make_verifier(hotp_paths)
+
+        with pytest.raises(HotpJournalNotInitialized):
+            verifier.verify(_code_for(0))
+
+    def test_deleted_journal_denies_instead_of_resetting_counter(
+        self, hotp_paths: tuple[Path, Path]
+    ) -> None:
+        _bootstrap(hotp_paths)
         verifier = _make_verifier(hotp_paths)
         verifier.verify(_code_for(0))
-        line = hotp_paths[1].read_text().strip()
+        hotp_paths[1].unlink()
+
+        with pytest.raises(HotpJournalNotInitialized):
+            verifier.verify(_code_for(0))
+
+    def test_torn_final_line_denies_verification(self, hotp_paths: tuple[Path, Path]) -> None:
+        _bootstrap(hotp_paths)
+        verifier = _make_verifier(hotp_paths)
+        verifier.verify(_code_for(0))
+        with hotp_paths[1].open("a", encoding="utf-8") as fh:
+            fh.write('{"counter": 1')
+
+        with pytest.raises(HotpJournalCorrupt):
+            verifier.verify(_code_for(1))
+
+    def test_read_oserror_denies_instead_of_returning_virgin(
+        self, hotp_paths: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _bootstrap(hotp_paths)
+        verifier = _make_verifier(hotp_paths)
+        original_open = Path.open
+
+        def fail_journal_open(path: Path, *args: object, **kwargs: object) -> object:
+            if path == hotp_paths[1]:
+                raise OSError("simulated storage failure")
+            return original_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "open", fail_journal_open)
+
+        with pytest.raises(HotpJournalUnavailable, match="storage failure"):
+            verifier.verify(_code_for(0))
+
+    def test_parallel_same_counter_is_consumed_once(self, hotp_paths: tuple[Path, Path]) -> None:
+        _bootstrap(hotp_paths)
+        verifier = _make_verifier(hotp_paths)
+        start = threading.Barrier(2)
+
+        def consume() -> bool:
+            start.wait(timeout=5)
+            try:
+                verifier.verify(_code_for(0))
+            except HotpVerificationFailed:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: consume(), range(2)))
+
+        assert sorted(outcomes) == [False, True]
+        accepted = [
+            json.loads(line)
+            for line in hotp_paths[1].read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("schema_version") == "hotp-v1"
+        ]
+        assert [record["counter"] for record in accepted] == [0]
+
+    def test_journal_records_have_schema_version(self, hotp_paths: tuple[Path, Path]) -> None:
+        verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
+        verifier.verify(_code_for(0))
+        line = hotp_paths[1].read_text().splitlines()[-1]
         record = json.loads(line)
         assert record["schema_version"] == "hotp-v1"
         assert record["counter"] == 0
         assert record["advance"] == 1
         assert "verified_at_utc" in record
 
-    def test_corrupt_journal_line_skipped(self, hotp_paths: tuple[Path, Path]) -> None:
-        # Write garbage + valid record. last_used_counter() should skip garbage.
+    def test_corrupt_journal_line_denied(self, hotp_paths: tuple[Path, Path]) -> None:
+        # Any malformed line makes the counter state unknowable: fail closed.
         hotp_paths[1].write_text(
             "this is not json\n"
             + json.dumps(
@@ -283,15 +375,58 @@ class TestJournalSemantics:
             + "\n"
         )
         verifier = _make_verifier(hotp_paths)
+        with pytest.raises(HotpJournalCorrupt):
+            verifier.last_used_counter()
+
+    def test_existing_legacy_v1_journal_remains_readable(
+        self, hotp_paths: tuple[Path, Path]
+    ) -> None:
+        hotp_paths[1].write_text(
+            json.dumps(
+                {"counter": 7, "advance": 1, "verified_at_utc": "x", "schema_version": "hotp-v1"}
+            )
+            + "\n"
+        )
+        verifier = _make_verifier(hotp_paths)
         assert verifier.last_used_counter() == 7
+
+    def test_append_fsyncs_before_success(
+        self, hotp_paths: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _bootstrap(hotp_paths)
+        verifier = _make_verifier(hotp_paths)
+        calls: list[int] = []
+        monkeypatch.setattr("app.security.hotp_auth.os.fsync", calls.append)
+
+        verifier.verify(_code_for(0))
+
+        assert calls
 
     def test_journal_directory_created_on_demand(self, tmp_path: Path) -> None:
         seed = tmp_path / "seed.b32"
         seed.write_text(_TEST_SEED)
         journal = tmp_path / "deep" / "nested" / "dir" / "hotp.jsonl"
         verifier = HotpVerifier(seed_path=seed, journal_path=journal)
+        bootstrap_hotp_journal(journal, next_counter=0)
         verifier.verify(_code_for(0))
         assert journal.exists()
+
+
+class TestJournalBootstrap:
+    def test_bootstrap_requires_explicit_next_counter(self, hotp_paths: tuple[Path, Path]) -> None:
+        bootstrap_hotp_journal(hotp_paths[1], next_counter=9)
+        verifier = _make_verifier(hotp_paths)
+        assert verifier.last_used_counter() == 8
+        assert verifier.next_expected_counter() == 9
+
+    def test_bootstrap_refuses_existing_journal(self, hotp_paths: tuple[Path, Path]) -> None:
+        _bootstrap(hotp_paths)
+        with pytest.raises(HotpJournalCorrupt, match="already exists"):
+            bootstrap_hotp_journal(hotp_paths[1], next_counter=0)
+
+    def test_bootstrap_rejects_negative_next_counter(self, hotp_paths: tuple[Path, Path]) -> None:
+        with pytest.raises(ValueError, match="next_counter"):
+            bootstrap_hotp_journal(hotp_paths[1], next_counter=-1)
 
 
 # -----------------------------------------------------------------
@@ -300,14 +435,21 @@ class TestJournalSemantics:
 
 
 class TestHumanize:
-    def test_virgin(self, hotp_paths: tuple[Path, Path]) -> None:
+    def test_uninitialized_denied(self, hotp_paths: tuple[Path, Path]) -> None:
+        verifier = _make_verifier(hotp_paths)
+        with pytest.raises(HotpJournalNotInitialized):
+            humanize_counter(verifier)
+
+    def test_bootstrapped(self, hotp_paths: tuple[Path, Path]) -> None:
+        _bootstrap(hotp_paths)
         verifier = _make_verifier(hotp_paths)
         out = humanize_counter(verifier)
-        assert "virgin" in out
+        assert "bootstrapped" in out
         assert "0" in out
 
     def test_after_verifies(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
+        _bootstrap(hotp_paths)
         verifier.verify(_code_for(0))
         verifier.verify(_code_for(1))
         out = humanize_counter(verifier)
