@@ -96,7 +96,12 @@ jobs:
           title: "chore(deps): weekly lock-file refresh"
           body-path: pr_body.md
           branch: chore/lock-update-${{ github.run_number }}
-          base: main
+          # Audit 2026-08-06 (P1): "main" ist eine verwaiste, historisch
+          # disjunkte Linie ohne gemeinsamen Ancestor — create-pull-request
+          # scheiterte damit seit >=5 Wochen bei JEDEM Scheduled-Lauf, der
+          # woechentliche Python-CVE-Refresh war komplett tot (Dependabot-pip
+          # ist bewusst aus, weil DIESER Workflow den Lock pflegt).
+          base: claude/p7/reentry-ia-codex-cycle
           delete-branch: true
           labels: |
             dependencies
