@@ -33,6 +33,18 @@ STATE_DIR="${KAI_SERVICE_WATCHDOG_STATE_DIR:-artifacts/pi_service_watchdog}"
 RECONCILE_TIMERS="${KAI_WATCHDOG_RECONCILE_TIMERS:-1}"
 TIMER_EXCLUDE="${KAI_WATCHDOG_TIMER_EXCLUDE:-kai-technical-paper-first-fill.timer kai-server-health-watchdog.timer}"
 
+# Failed-units-Sweep (Voll-Audit 2026-08-06, Befund P0-2): ein .timer bleibt
+# "active", auch wenn seine oneshot-.service bei JEDEM Feuern scheitert — die
+# is-active-Probes oben sehen das nie. Mehrere Units dokumentieren ihren
+# Non-Zero-Exit ausdruecklich als Tripwire, der "im failed-units-Smoke
+# auffaellt" (kai-canonical-edge-attest, kai-ln-scb-monitor,
+# kai-min-turnover-calibration, recalc_cycle) — dieser Sweep ist der bislang
+# fehlende Konsument. BEWUSST ohne Auto-Restart/reset-failed: ein failed
+# oneshot ist ein Befund, kein Reparaturkandidat; Tripwires muessen stehen
+# bleiben, bis jemand hinschaut.
+FAILED_SWEEP="${KAI_WATCHDOG_FAILED_SWEEP:-1}"
+FAILED_EXCLUDE="${KAI_WATCHDOG_FAILED_EXCLUDE:-}"
+
 mkdir -p "$STATE_DIR"
 
 ALARMS=()
@@ -123,6 +135,14 @@ if [[ "$RECONCILE_TIMERS" == "1" ]]; then
         fi
         ALARMS+=("[timer] ${timer}=${tstate}; restart=${restart_result}")
     done < <(systemctl list-unit-files 'kai-*.timer' --state=enabled --no-legend --no-pager 2>/dev/null)
+fi
+
+if [[ "$FAILED_SWEEP" == "1" ]]; then
+    while read -r funit _; do
+        [[ -n "$funit" ]] || continue
+        case " $FAILED_EXCLUDE " in *" $funit "*) continue ;; esac
+        ALARMS+=("[failed] ${funit}=failed; restart=not_attempted")
+    done < <(systemctl list-units --state=failed --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}')
 fi
 
 if (( ${#ALARMS[@]} == 0 )); then

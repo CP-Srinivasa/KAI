@@ -25,7 +25,9 @@ def _fake_systemctl(fake_bin: Path, body: str) -> None:
     sc.chmod(0o755)
 
 
-def _run_watchdog(tmp_path: Path, fake_bin: Path) -> subprocess.CompletedProcess:
+def _run_watchdog(
+    tmp_path: Path, fake_bin: Path, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -35,6 +37,7 @@ def _run_watchdog(tmp_path: Path, fake_bin: Path) -> subprocess.CompletedProcess
         # No telegram creds → send_telegram is a no-op.
         "ALERT_TELEGRAM_TOKEN": "",
         "ALERT_TELEGRAM_CHAT_ID": "",
+        **(extra_env or {}),
     }
     return subprocess.run(
         ["bash", "scripts/pi_service_watchdog.sh"],
@@ -82,3 +85,55 @@ def test_watchdog_still_restarts_genuinely_dead_unit(tmp_path) -> None:
     assert res.returncode == 0, res.stderr
     assert "alarm" in res.stdout.lower()
     assert "kai-server" in res.stdout
+
+
+# ── Failed-units-Sweep (Voll-Audit 2026-08-06, Befund P0-2) ──────────────────
+# Ein failed oneshot hinter einem aktiven Timer war bislang VOLLSTÄNDIG still:
+# is-active-Probes sehen ihn nie, kein OnFailure= existiert, und die Units, die
+# ihren Non-Zero-Exit als "fällt im failed-units-Smoke auf" dokumentieren,
+# hatten keinen Konsumenten.
+
+_FAKE_WITH_FAILED_UNIT = (
+    'if [[ "$1" == "is-active" ]]; then echo active; exit 0; fi\n'
+    'if [[ "$1" == "list-units" ]]; then\n'
+    '  for a in "$@"; do\n'
+    '    if [[ "$a" == "--state=failed" ]]; then\n'
+    '      echo "kai-truth-anchor.service loaded failed failed KAI L3 Truth-Ledger Anchor"\n'
+    "      exit 0\n"
+    "    fi\n"
+    "  done\n"
+    "  exit 0\n"
+    "fi\n"
+    "exit 0\n"
+)
+
+
+def test_failed_oneshot_behind_active_timer_raises_alarm(tmp_path) -> None:
+    if shutil.which("bash") is None:
+        pytest.skip("bash unavailable")
+    _fake_systemctl(tmp_path / "bin", _FAKE_WITH_FAILED_UNIT)
+    res = _run_watchdog(tmp_path, tmp_path / "bin")
+    assert res.returncode == 0, res.stderr
+    assert "alarm" in res.stdout.lower()
+    assert "[failed] kai-truth-anchor.service=failed" in res.stdout
+    # Bewusst KEIN Auto-Restart: der Tripwire muss stehen bleiben.
+    assert "restart=not_attempted" in res.stdout
+
+
+def test_failed_sweep_toggle_and_exclude(tmp_path) -> None:
+    if shutil.which("bash") is None:
+        pytest.skip("bash unavailable")
+    _fake_systemctl(tmp_path / "bin", _FAKE_WITH_FAILED_UNIT)
+
+    off = _run_watchdog(tmp_path, tmp_path / "bin", extra_env={"KAI_WATCHDOG_FAILED_SWEEP": "0"})
+    assert off.returncode == 0, off.stderr
+    assert "OK" in off.stdout
+    assert "failed" not in off.stdout.lower()
+
+    excluded = _run_watchdog(
+        tmp_path,
+        tmp_path / "bin",
+        extra_env={"KAI_WATCHDOG_FAILED_EXCLUDE": "kai-truth-anchor.service"},
+    )
+    assert excluded.returncode == 0, excluded.stderr
+    assert "OK" in excluded.stdout
