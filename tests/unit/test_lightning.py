@@ -124,12 +124,25 @@ async def test_list_payments_wire_and_normalizes_pagination() -> None:
             "include_incomplete": "true",
             "index_offset": "7",
             "max_payments": "25",
+            "omit_hops": "true",
             "reversed": "true",
         }
         return httpx.Response(
             200,
             json={
-                "payments": [{"payment_hash": "aa" * 32, "status": "SUCCEEDED"}],
+                "payments": [
+                    {
+                        "payment_hash": "aa" * 32,
+                        "status": "SUCCEEDED",
+                        "failure_reason": "FAILURE_REASON_NONE",
+                        "value_sat": "1200",
+                        "fee_sat": "3",
+                        "payment_index": "8",
+                        "payment_preimage": "must-not-escape",
+                        "payment_request": "lnbc-must-not-escape",
+                        "htlcs": [{"route": {"hops": ["must-not-escape"]}}],
+                    }
+                ],
                 "first_index_offset": "8",
                 "last_index_offset": "11",
                 "total_num_payments": "42",
@@ -143,10 +156,19 @@ async def test_list_payments_wire_and_normalizes_pagination() -> None:
         include_incomplete=True, index_offset=7, max_payments=25, reversed=True
     )
 
-    assert page.payments == ({"payment_hash": "aa" * 32, "status": "SUCCEEDED"},)
+    assert len(page.payments) == 1
+    payment = page.payments[0]
+    assert payment.payment_hash == "aa" * 32
+    assert payment.status == "SUCCEEDED"
+    assert payment.failure_reason == "FAILURE_REASON_NONE"
+    assert (payment.value_sat, payment.fee_sat, payment.payment_index) == (1200, 3, 8)
+    assert "preimage" not in repr(payment).lower()
+    assert "lnbc" not in repr(payment).lower()
+    assert "hops" not in repr(payment).lower()
     assert page.first_index_offset == 8
     assert page.last_index_offset == 11
-    assert page.next_index_offset == 11
+    assert page.reversed is True
+    assert page.next_index_offset == 8  # reverse pages resume from FIRST, per lnd contract
     assert page.total_num_payments == 42
 
 
@@ -155,6 +177,11 @@ async def test_list_payments_wire_and_normalizes_pagination() -> None:
     [
         {"payments": "not-a-list", "first_index_offset": "0", "last_index_offset": "0"},
         {"payments": ["not-an-object"], "first_index_offset": "0", "last_index_offset": "1"},
+        {
+            "payments": [{"payment_hash": "not-a-hash", "status": "SUCCEEDED"}],
+            "first_index_offset": "0",
+            "last_index_offset": "1",
+        },
         {"payments": [], "first_index_offset": "0", "last_index_offset": "-1"},
         {"payments": [], "first_index_offset": "0"},
     ],
@@ -193,6 +220,33 @@ async def test_list_payments_rejects_invalid_request_before_network(
     with pytest.raises(ValueError, match=message):
         await client.list_payments(**kwargs)
     assert called is False
+
+
+async def test_list_payments_forward_page_resumes_from_last_offset() -> None:
+    response = {
+        "payments": [
+            {
+                "payment_hash": "bb" * 32,
+                "status": "IN_FLIGHT",
+                "value_sat": "1",
+                "fee_sat": "0",
+                "payment_index": "4",
+            }
+        ],
+        "first_index_offset": "4",
+        "last_index_offset": "9",
+    }
+    client = LndRestClient(
+        base_url="https://x:8080",
+        macaroon_hex="ab",
+        transport=_transport(lambda _: httpx.Response(200, json=response)),
+    )
+
+    page = await client.list_payments(reversed=False)
+
+    assert page.reversed is False
+    assert page.next_index_offset == 9
+    assert page.total_num_payments is None
 
 
 # --- adapter: default-off + fail-closed ------------------------------------------
