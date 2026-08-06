@@ -152,14 +152,23 @@ def trading_prereg_maturity(
         # Woher der Zustand stammt, gehört SICHTBAR in die Zeile: eine exakte
         # Messung schlägt den Proxy, und nur sie darf ein Verdikt tragen.
         n_exact = r.get("n_exact")
-        if n_exact is None:
+        if r.get("kind") == "deadline":
+            # Fensterbasierte Prä-Reg: Reife ist ein Datum, kein n.
+            ps = r.get("per_source") or {}
+            n_render = f"Fenster bis {ps.get('window_end_utc')} (Rest {ps.get('days_remaining')}d)"
+        elif n_exact is None:
             n_render = f"n≈{r['n_proxy']}/{r['n_target']} (Proxy, Obergrenze)"
         else:
             n_render = f"n={n_exact}/{r['n_target']} (EXAKT; Proxy≈{r['n_proxy']})"
+        # Vermerk (z. B. Confounder-Pflicht) gehört in die Zeile, nicht ins
+        # Operator-Gedächtnis.
+        note = r.get("note")
+        note_render = f" — {note}" if note else ""
         # Runde Klammern: eckige wuerde rich als Markup-Tag schlucken —
         # die versiegelte ID verschwand dann aus der Konsole (Smoke 07-30).
         console.print(
-            f"{r['name']} ({pid}): {n_render} (seit {r['since_utc']}) {r['per_source']} → {state}"
+            f"{r['name']} ({pid}): {n_render} (seit {r['since_utc']}) {r['per_source']}"
+            f" → {state}{note_render}"
         )
 
 

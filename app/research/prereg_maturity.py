@@ -117,6 +117,9 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         "kind": "tech_precision",
         "since_utc": "2026-07-29T09:14:47.210068+00:00",
         "n_target": 200,
+        # gate.horizon_s aus dem Ledger — EXPLIZIT durchgereicht statt auf den
+        # Modul-Default des Evaluators zu vertrauen (Divergenz-Bauart von #648).
+        "gate_horizon_s": 604800,
     },
     {
         "name": "execution_translation_hit_to_win_v1",
@@ -124,6 +127,25 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         "kind": "exec_translation",
         "since_utc": "2026-07-29T09:15:10.626958+00:00",
         "n_target": 50,
+        "gate_horizon_s": 86400,
+    },
+    # Fensterbasierte Demand-Probe (gate=null, free-text-era): Reife ist hier
+    # KEIN n, sondern das versiegelte Fensterende. Nach Ablauf ⇒ EVAL_CHECK_DUE
+    # (die versiegelte Regel anwenden), niemals JUDGEABLE aus diesem Zähler.
+    # Fenster + Vermerk aus artifacts/research/analyst_probe_evaluation_rule_20260805.json
+    # (Pi, sealed 2026-08-05); Audit-Befund P0-3: lief sonst in KEINER Überwachung.
+    {
+        "name": "analyst_prediction_ledger_demand_v1",
+        "prereg_id": "f0e1a3a8073fd4c0",
+        "kind": "deadline",
+        "since_utc": "2026-07-11T00:13:00+00:00",
+        "window_end_utc": "2026-08-10T00:13:00+00:00",
+        "n_target": 0,
+        "note": (
+            "Verdikt NUR mit Confounder-Vermerk AP-DEF-2 (Mail-Rückkanal war kein "
+            "Postfach) nach versiegelter Regel analyst_probe_evaluation_rule_20260805.json; "
+            "PASS-Nachweis primär public_showcase, das Log kann Signale nur verschweigen."
+        ),
     },
 )
 
@@ -234,12 +256,13 @@ async def _maturity_documents(
 def _maturity_tech_precision(
     spec: dict[str, Any], artifacts_dir: Path
 ) -> tuple[int, dict[str, int], str]:
-    from app.research.quote_evals import evaluate_technical_paper_precision
+    from app.research import quote_evals
 
-    ev = evaluate_technical_paper_precision(
+    ev = quote_evals.evaluate_technical_paper_precision(
         outcomes_path=artifacts_dir / "alert_outcomes.jsonl",
         exec_audit_path=artifacts_dir / "paper_execution_audit.jsonl",
         registered_at_utc=str(spec["since_utc"]),
+        horizon_s=int(spec["gate_horizon_s"]),
     )
     pop = ev["population"]
     n = int(pop["docs_resolved"])
@@ -254,12 +277,13 @@ def _maturity_tech_precision(
 def _maturity_exec_translation(
     spec: dict[str, Any], artifacts_dir: Path
 ) -> tuple[int, dict[str, int], str]:
-    from app.research.quote_evals import evaluate_execution_translation
+    from app.research import quote_evals
 
-    ev = evaluate_execution_translation(
+    ev = quote_evals.evaluate_execution_translation(
         outcomes_path=artifacts_dir / "alert_outcomes.jsonl",
         exec_audit_path=artifacts_dir / "paper_execution_audit.jsonl",
         registered_at_utc=str(spec["since_utc"]),
+        horizon_s=int(spec["gate_horizon_s"]),
     )
     pop = ev["population"]
     n = int(pop["docs_joined_to_hit"])
@@ -268,6 +292,27 @@ def _maturity_exec_translation(
         "closed_docs": int(pop["closed_docs_since_reg"]),
     }
     return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
+
+
+def _maturity_deadline(spec: dict[str, Any], now: datetime) -> tuple[int, dict[str, Any], str]:
+    """Fensterbasierte Prä-Reg (gate=null): Reife = versiegeltes Fensterende.
+
+    Nach Ablauf ⇒ ``EVAL_CHECK_DUE`` — die versiegelte Auswertungsregel muss
+    angewandt werden. NIEMALS ``JUDGEABLE`` aus diesem Zähler: das Verdikt
+    fällt die Regel (manuell, attestiert), nicht der Kalender. Ein kaputtes
+    ``window_end_utc`` ist fail-closed sofort fällig statt still nie.
+    """
+    window_end = _as_dt(spec.get("window_end_utc"))
+    if window_end is None:
+        return 0, {"window_end_utc": None, "days_remaining": 0}, STATE_EVAL_CHECK_DUE
+    remaining = max((window_end - now).total_seconds(), 0.0)
+    days_remaining = int(remaining // 86400)
+    detail: dict[str, Any] = {
+        "window_end_utc": str(spec.get("window_end_utc")),
+        "days_remaining": days_remaining,
+    }
+    state = STATE_EVAL_CHECK_DUE if now >= window_end else STATE_NOT_DUE
+    return 0, detail, state
 
 
 def load_exact_observations(artifacts_dir: Path) -> dict[str, dict[str, Any]]:
@@ -378,6 +423,7 @@ def record_exact_observation(
             f"gate row {gate.get('level')}@{gate.get('horizon_s')}s not present in evaluator "
             "output — nothing was measured, so nothing is recorded"
         )
+    raw_meta = eval_result.get("meta")
     record = {
         "prereg_id": prereg_id,
         "observed_at_utc": observed_at.astimezone(UTC).isoformat(),
@@ -387,6 +433,11 @@ def record_exact_observation(
         "horizon_s": int(gate.get("horizon_s", 0)),
         "gate_passed": bool(result["passed"]),
         "source_json": source_json,
+        # Voller Konstruktions-Fingerabdruck des Laufs (P0-2, Audit 2026-08-06):
+        # der Guard prüft nur die Hedge-Achse; max_symbols/tiered_costs/timeframe
+        # verändern die Kohorte ebenso. Ohne persistiertes meta wäre ein mit
+        # abweichenden Parametern gefahrener Lauf nachträglich nicht erkennbar.
+        "meta": raw_meta if isinstance(raw_meta, dict) else None,
     }
     path = artifacts_dir / EXACT_OBSERVATIONS_RELPATH
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -430,24 +481,36 @@ async def compute_maturity(
     out: list[dict[str, Any]] = []
     for spec in specs:
         kind = str(spec.get("kind", "documents"))
+        detail: dict[str, Any]
         if kind == "tech_precision":
             n, detail, state = _maturity_tech_precision(spec, artifacts_dir)
         elif kind == "exec_translation":
             n, detail, state = _maturity_exec_translation(spec, artifacts_dir)
+        elif kind == "deadline":
+            n, detail, state = _maturity_deadline(spec, now_utc)
         else:
             n, detail, state = await _maturity_documents(session, spec, now_utc)
         n_target = int(spec["n_target"])
-        exact = _state_from_exact(
-            observations.get(str(spec.get("prereg_id") or "")), n_target=n_target, now=now_utc
-        )
         n_exact: int | None = None
-        state_source = "proxy"
-        if exact is not None:
-            n_exact, state = exact
-            state_source = "exact_observation"
+        state_source = "proxy" if kind != "deadline" else "window"
+        if kind != "deadline":
+            # Deadline-Specs haben keinen exakten n-Evaluator — eine (fehlerhaft
+            # zugeordnete) Beobachtung darf das Fenster nicht stummschalten.
+            exact = _state_from_exact(
+                observations.get(str(spec.get("prereg_id") or "")), n_target=n_target, now=now_utc
+            )
+            if exact is not None:
+                n_exact, state = exact
+                state_source = "exact_observation"
         out.append(
             {
                 "name": spec["name"],
+                # Zähl-Art durchgereicht: Konsumenten (Render/Board) müssen
+                # fensterbasierte Reife anders darstellen als n-basierte.
+                "kind": kind,
+                # Vermerk aus dem Spec (z. B. Confounder-Pflicht) — hängt an der
+                # Zeile, nicht am Operator-Gedächtnis.
+                "note": spec.get("note"),
                 # Durchgereicht, damit Konsumenten über die versiegelte Identität
                 # joinen können statt über den (driftenden) Namen.
                 "prereg_id": spec.get("prereg_id"),

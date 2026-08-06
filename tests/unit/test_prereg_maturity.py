@@ -170,12 +170,16 @@ async def test_file_kind_specs_count_via_evaluators(session_factory, tmp_path) -
             "kind": "tech_precision",
             "since_utc": reg,
             "n_target": 2,
+            # Pflichtfeld seit WP2 (Audit 2026-08-06): Gate-Horizont explizit,
+            # ein Spec ohne Horizont scheitert laut statt still per Default.
+            "gate_horizon_s": 604800,
         },
         {
             "name": "exec_like",
             "kind": "exec_translation",
             "since_utc": reg,
             "n_target": 1,
+            "gate_horizon_s": 86400,
         },
     )
     async with session_factory() as session:
@@ -256,6 +260,7 @@ async def test_states_proxy_caps_at_eval_check_due(session_factory, tmp_path) ->
             "kind": "tech_precision",
             "since_utc": reg,
             "n_target": 1,
+            "gate_horizon_s": 604800,
         },
     )
     async with session_factory() as session:
