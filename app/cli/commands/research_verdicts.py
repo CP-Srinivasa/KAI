@@ -18,6 +18,34 @@ from app.cli.commands.trading import console, trading_app
 from app.research.prereg_ledger import DEFAULT_PREREG_LEDGER_PATH
 
 
+def _render_maturity_state(row: dict[str, Any]) -> str:
+    """Render a maturity state without echoing untrusted verdict prose."""
+    raw = str(row.get("state"))
+    if raw == "RESOLVED":
+        resolution = row.get("resolution")
+        safe = resolution if isinstance(resolution, dict) else {}
+        verdict_class = str(safe.get("verdict_class") or "TERMINAL")
+        seq = safe.get("seq")
+        seq_render = f", Truth-seq {seq}" if isinstance(seq, int) else ""
+        return f"[cyan]ABGESCHLOSSEN — {verdict_class}{seq_render}; keine neue Auswertung[/cyan]"
+    if raw == "RESOLUTION_HOLD":
+        resolution = row.get("resolution")
+        safe = resolution if isinstance(resolution, dict) else {}
+        status = str(safe.get("status") or "unknown")
+        return (
+            "[red]HOLD — Resolution-Evidenz "
+            f"{status}; Truth-Kette prüfen, keine neue Auswertung[/red]"
+        )
+    renders = {
+        "NOT_DUE": "reift",
+        "EVAL_CHECK_DUE": (
+            "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
+        ),
+        "JUDGEABLE": "[green]URTEILBAR — Verdikt-Kette fahren (prereg-check --report)[/green]",
+    }
+    return renders.get(raw, raw)
+
+
 @trading_app.command("prereg-check")
 def trading_prereg_check(
     prereg_id: str = typer.Option(..., "--prereg-id", help="Registered claim to judge"),
@@ -137,17 +165,8 @@ def trading_prereg_maturity(
     if as_json:
         print(json.dumps(rows, indent=2))
         return
-    # P0-01: drei Zustände statt eines FÄLLIG-Bits — der Proxy ist eine
-    # Obergrenze, ein Verdikt gibt es nur aus dem exakten Evaluator.
-    renders = {
-        "NOT_DUE": "reift",
-        "EVAL_CHECK_DUE": (
-            "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
-        ),
-        "JUDGEABLE": "[green]URTEILBAR — Verdikt-Kette fahren (prereg-check --report)[/green]",
-    }
     for r in rows:
-        state = renders.get(str(r.get("state")), str(r.get("state")))
+        state = _render_maturity_state(r)
         pid = r.get("prereg_id") or "ohne-prereg-id"
         # Woher der Zustand stammt, gehört SICHTBAR in die Zeile: eine exakte
         # Messung schlägt den Proxy, und nur sie darf ein Verdikt tragen.

@@ -22,6 +22,7 @@ from app.truth.ledger import (
     attest_verdict_reports,
     chain_tip,
     read_record,
+    read_verified_ledger,
     verify_ledger,
 )
 
@@ -51,6 +52,49 @@ def test_verify_ok_and_reproducible(tmp_path) -> None:
     assert report["ok"] is True
     assert report["records"] == 2
     assert report["errors"] == []
+
+
+def test_read_verified_ledger_returns_records_from_one_exact_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    """Consumers receive only records from the bytes that were verified."""
+    path = tmp_path / "truth.jsonl"
+    append_attestation("prereg", "a", {"n": 1}, path=path, mirror_audit=False)
+    append_attestation("edge", "b", {"n": 2}, path=path, mirror_audit=False)
+    original_read_text = type(path).read_text
+    reads = 0
+
+    def counted_read_text(self, *args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "read_text", counted_read_text)
+
+    report = read_verified_ledger(path)
+
+    assert report["ok"] is True
+    assert report["checked"] == 2
+    assert [record["seq"] for record in report["records"]] == [1, 2]
+    assert reads == 1
+
+
+def test_read_verified_ledger_never_returns_a_tampered_prefix(tmp_path) -> None:
+    """A broken snapshot is fail-closed; even its readable prefix is untrusted."""
+    path = tmp_path / "truth.jsonl"
+    append_attestation("prereg", "a", {"n": 1}, path=path, mirror_audit=False)
+    append_attestation("edge", "b", {"n": 2}, path=path, mirror_audit=False)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    second = json.loads(lines[1])
+    second["payload"]["n"] = 999
+    path.write_text(lines[0] + "\n" + json.dumps(second) + "\n", encoding="utf-8")
+
+    report = read_verified_ledger(path)
+
+    assert report["ok"] is False
+    assert report["checked"] == 2
+    assert report["records"] == []
+    assert report["errors"]
 
 
 def test_verify_flags_tampered_payload(tmp_path) -> None:

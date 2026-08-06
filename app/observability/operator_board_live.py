@@ -15,8 +15,10 @@ Defekte in einem:
 Dieses Modul liefert die Sektion, die nicht gepflegt werden muss: sie fällt aus
 den Ledgern ab, die die Falsifikations-Doktrin (ADR 0012) ohnehin schreibt —
 ``prereg_ledger.jsonl`` (registriert) minus ``prereg_verdicts.jsonl``
-(aufgelöst), angereichert um die Reife-Zahlen aus
-:mod:`app.research.prereg_maturity`.
+(aufgelöst), angereichert um Reife und terminale Resolution aus
+:mod:`app.research.prereg_maturity`. Letztere stammt ausschließlich aus einer
+vollständig verifizierten Truth-Kette; beschädigte/widersprüchliche Evidenz
+bleibt als HOLD sichtbar.
 
 **Rein (kein I/O, keine DB)** wie :func:`app.observability.n_overview.
 build_n_overview`: der Endpoint liest die Artefakte und reicht die Rohwerte
@@ -51,14 +53,16 @@ CURATED_STALE_DAYS = 7
 # Urteilsreife lesbar machen.
 STATE_JUDGEABLE = "judgeable"
 STATE_EVAL_CHECK = "eval_check"
+STATE_EVIDENCE_HOLD = "evidence_hold"
 STATE_MATURING = "maturing"
 STATE_NO_COUNTER = "no_counter"
 
 _STATE_RANK = {
-    STATE_JUDGEABLE: 0,
-    STATE_EVAL_CHECK: 1,
-    STATE_MATURING: 2,
-    STATE_NO_COUNTER: 3,
+    STATE_EVIDENCE_HOLD: 0,
+    STATE_JUDGEABLE: 1,
+    STATE_EVAL_CHECK: 2,
+    STATE_MATURING: 3,
+    STATE_NO_COUNTER: 4,
 }
 
 
@@ -80,6 +84,8 @@ def _board_state(mat: dict[str, Any]) -> str:
     SCHWÄCHERE Zustand angenommen — nie der stärkere.
     """
     raw = mat.get("state")
+    if raw == "RESOLUTION_HOLD":
+        return STATE_EVIDENCE_HOLD
     if raw == "JUDGEABLE":
         return STATE_JUDGEABLE
     if raw == "EVAL_CHECK_DUE":
@@ -175,6 +181,11 @@ def build_live_board(
         mat = by_id.get(claim["prereg_id"])
         if mat is None and claim["name"] not in claimed_names:
             mat = by_name.get(claim["name"])
+        # Ein terminales Verdict in der vollständig verifizierten Truth-Kette
+        # schließt den Claim auch dann, wenn das redundante
+        # prereg_verdicts.jsonl noch keine Zeile trägt (ND-v2, seq 73).
+        if mat is not None and mat.get("state") == "RESOLVED":
+            continue
         n_proxy: int | None = None
         n_target: int | None = None
         progress: float | None = None
@@ -190,7 +201,12 @@ def build_live_board(
                 progress = round(min(100.0, 100.0 * n_proxy / n_target), 1)
             state = _board_state(mat)
 
-        if state == STATE_JUDGEABLE:
+        if state == STATE_EVIDENCE_HOLD:
+            action = (
+                "HOLD — Resolution-Evidenz ist beschädigt, widersprüchlich oder "
+                "unklar; Truth-Kette prüfen, keine neue Auswertung."
+            )
+        elif state == STATE_JUDGEABLE:
             action = "urteilsfähig — die Zählung IST der exakte Evaluator, Verdikt möglich."
         elif state == STATE_EVAL_CHECK:
             action = (
@@ -217,18 +233,21 @@ def build_live_board(
     rows.sort(key=_sort_key)
     judgeable = sum(1 for r in rows if r["state"] == STATE_JUDGEABLE)
     eval_check = sum(1 for r in rows if r["state"] == STATE_EVAL_CHECK)
+    evidence_hold = sum(1 for r in rows if r["state"] == STATE_EVIDENCE_HOLD)
     return {
         "open_preregs": rows,
         "open_count": len(rows),
         "judgeable_count": judgeable,
         "eval_check_count": eval_check,
+        "evidence_hold_count": evidence_hold,
         # Kompat für bestehende Konsumenten: alles, was Handlung braucht.
         # Achtung — das ist NICHT „urteilbar" (s. _board_state).
         "due_count": judgeable + eval_check,
         "has_content": bool(rows),
         # Sprachregel: die Sektion ist live-berechnet, die Reife ist ein Proxy.
         "note": (
-            "Live aus prereg_ledger − prereg_verdicts (ADR 0012). Reife-n ist "
+            "Live aus prereg_ledger − prereg_verdicts plus verifizierter Truth-Resolution "
+            "(ADR 0012). Reife-n ist "
             "Upper-Bound-Proxy: Ziel-n im Proxy erreicht heisst „exakten Evaluator "
             "fahren“, nie „bestanden“ — urteilsfähig ist nur, wo die Zählung selbst "
             "der Evaluator ist."
@@ -267,6 +286,7 @@ def curated_is_stale(curated: dict[str, Any], *, age_days: int | None = None) ->
 
 __all__ = [
     "STATE_EVAL_CHECK",
+    "STATE_EVIDENCE_HOLD",
     "STATE_JUDGEABLE",
     "STATE_MATURING",
     "STATE_NO_COUNTER",

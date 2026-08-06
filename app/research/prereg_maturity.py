@@ -26,9 +26,16 @@ zusätzlich Events an OHLCV-Lücken/Symbol-Caps, gemessen ~30 %):
 * ``JUDGEABLE``        — nur wenn die Zählung selbst der exakte Evaluator ist
                          (kind ``tech_precision``/``exec_translation``) und
                          deren n das Ziel erreicht.
+* ``RESOLVED``         — ein terminales Verdict für die versiegelte
+                         ``prereg_id`` liegt in der vollständig verifizierten
+                         Truth-Kette; keine erneute Auswertung.
+* ``RESOLUTION_HOLD``  — die Resolution-Evidenz ist beschädigt,
+                         widersprüchlich oder nicht eindeutig klassifizierbar;
+                         HOLD statt Doppel-Auswertung.
 
-``due`` bleibt als Kompat-Feld erhalten (True == Zustand != NOT_DUE); jede
-Zeile trägt die versiegelte ``prereg_id``.
+``due`` bleibt als Kompat-Feld erhalten und ist nur für
+``EVAL_CHECK_DUE``/``JUDGEABLE`` wahr; jede Zeile trägt die versiegelte
+``prereg_id``.
 
 WICHTIG (Lehre 2026-08-02, zweiter Wiederholungsfall): der Story-Proxy meldete
 FÄLLIG bei 380, während der exakte Evaluator am Gate-Horizont 273/300 zählte.
@@ -59,15 +66,24 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.truth.ledger import read_verified_ledger
+
 STATE_NOT_DUE = "NOT_DUE"
 STATE_EVAL_CHECK_DUE = "EVAL_CHECK_DUE"
 STATE_JUDGEABLE = "JUDGEABLE"
+STATE_RESOLVED = "RESOLVED"
+STATE_RESOLUTION_HOLD = "RESOLUTION_HOLD"
 
 # Eine exakte Messung altert: die Kohorte wächst weiter (~9 Stories/Tag bei
 # b20ef1487ccba99d). Drei Tage decken diesen Drift ab und erzwingen danach eine
 # neue Messung, statt den Alarm unbefristet zu unterdrücken.
 EXACT_OBSERVATION_MAX_AGE_DAYS = 3
 EXACT_OBSERVATIONS_RELPATH = Path("research") / "prereg_exact_observations.jsonl"
+TRUTH_LEDGER_RELPATH = Path("truth") / "attestation_ledger.jsonl"
+
+_VERDICT_NON_TERMINAL_PREFIXES = ("INSUFFICIENT_N", "PENDING", "NOT_DUE", "INCONCLUSIVE")
+_VERDICT_NOT_MET_PREFIXES = ("NOT_MET", "FAILED", "FAIL")
+_VERDICT_MET_PREFIXES = ("MET", "PASSED", "PASS")
 
 # Registered out-of-sample windows start at the claim's registration time — these
 # constants ARE part of the doctrine (auditable against the prereg ledger).
@@ -349,6 +365,124 @@ def load_exact_observations(artifacts_dir: Path) -> dict[str, dict[str, Any]]:
     return newest
 
 
+def _terminal_verdict_class(verdict: object) -> str | None:
+    """Classify the explicit terminal prefix of an attested verdict.
+
+    ``None`` means explicitly non-terminal. Unknown prose is deliberately not
+    guessed into MET/NOT_MET: a verdict controls whether an irreversible
+    evaluation is repeated, so ambiguous wording becomes a visible HOLD.
+    """
+    if not isinstance(verdict, str) or not verdict.strip():
+        return "UNKNOWN"
+    normalized = verdict.strip().upper()
+
+    def starts_with_token(prefixes: tuple[str, ...]) -> bool:
+        for prefix in prefixes:
+            if not normalized.startswith(prefix):
+                continue
+            suffix = normalized[len(prefix) :]
+            if not suffix or (not suffix[0].isalnum() and suffix[0] != "_"):
+                return True
+        return False
+
+    if starts_with_token(_VERDICT_NON_TERMINAL_PREFIXES):
+        return None
+    if starts_with_token(_VERDICT_NOT_MET_PREFIXES):
+        return "NOT_MET"
+    if starts_with_token(_VERDICT_MET_PREFIXES):
+        return "MET"
+    return "UNKNOWN"
+
+
+def load_attested_resolutions(
+    artifacts_dir: Path,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
+    """Read terminal prereg resolutions from the verified Truth ledger.
+
+    Returns ``(by_prereg_id, global_error)``. The complete ledger is verified
+    before a single verdict is trusted. A broken chain therefore yields one
+    global fail-closed error instead of partially trusting the readable prefix.
+
+    A verdict additionally needs the canonical report provenance used by
+    ``attest_verdict_reports``: ``subject_id == payload_hash``. Multiple reports
+    in the same terminal direction are harmless (for example a robustness
+    annex after a FAILED report). Opposite terminal directions are a conflict.
+    Explicit ``INSUFFICIENT_N``-class reports remain non-terminal.
+    """
+    path = artifacts_dir / TRUTH_LEDGER_RELPATH
+    if not path.exists():
+        return {}, None
+
+    snapshot = read_verified_ledger(path)
+    if not snapshot.get("ok"):
+        return {}, {
+            "status": "invalid_ledger",
+            "ledger": str(path),
+            "errors": list(snapshot.get("errors") or []),
+        }
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in snapshot["records"]:
+        if record.get("kind") != "verdict":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        prereg_id = payload.get("prereg_id")
+        if not isinstance(prereg_id, str) or not prereg_id:
+            continue
+        verdict_class: str | None
+        if record.get("subject_id") != record.get("payload_hash"):
+            verdict_class = "UNTRUSTED"
+        else:
+            verdict_class = _terminal_verdict_class(payload.get("verdict"))
+        if verdict_class is None:
+            continue
+        grouped.setdefault(prereg_id, []).append(
+            {
+                "verdict_class": verdict_class,
+                "seq": int(record["seq"]),
+                "subject_id": str(record.get("subject_id") or ""),
+            }
+        )
+
+    resolutions: dict[str, dict[str, Any]] = {}
+    for prereg_id, records in grouped.items():
+        untrusted_seqs = [r["seq"] for r in records if r["verdict_class"] == "UNTRUSTED"]
+        if untrusted_seqs:
+            resolutions[prereg_id] = {
+                "status": "untrusted_attestation",
+                "seqs": untrusted_seqs,
+            }
+            continue
+        known = {r["verdict_class"] for r in records if r["verdict_class"] in {"MET", "NOT_MET"}}
+        unknown_seqs = [r["seq"] for r in records if r["verdict_class"] == "UNKNOWN"]
+        if len(known) > 1:
+            resolutions[prereg_id] = {
+                "status": "conflict",
+                "verdict_classes": sorted(known),
+                "seqs": [r["seq"] for r in records],
+            }
+            continue
+        if known:
+            verdict_class = next(iter(known))
+            matching = [r for r in records if r["verdict_class"] == verdict_class]
+            latest = max(matching, key=lambda r: r["seq"])
+            resolutions[prereg_id] = {
+                "status": "resolved",
+                "verdict_class": verdict_class,
+                "seq": latest["seq"],
+                "subject_id": latest["subject_id"],
+                "unclassified_seqs": unknown_seqs,
+            }
+            continue
+        resolutions[prereg_id] = {
+            "status": "unclassified",
+            "seqs": unknown_seqs,
+        }
+    return resolutions, None
+
+
 def _seals_hedged_construction(success_criteria: str) -> bool:
     """Verlangt der versiegelte Freitext eine BTC-gehedgte Konstruktion?
 
@@ -474,10 +608,13 @@ async def compute_maturity(
 
     Eine frische exakte Beobachtung schlägt den Proxy — der Proxy ist per
     Konstruktion eine Obergrenze und darf keine Fälligkeit gegen eine
-    vorliegende Messung behaupten.
+    vorliegende Messung behaupten. Eine terminale Resolution aus der
+    verifizierten Truth-Kette schlägt beide: ein entschiedener Claim darf nie
+    erneut als auswertungsfällig erscheinen.
     """
     now_utc = now or datetime.now(UTC)
     observations = load_exact_observations(artifacts_dir)
+    resolutions, resolution_error = load_attested_resolutions(artifacts_dir)
     out: list[dict[str, Any]] = []
     for spec in specs:
         kind = str(spec.get("kind", "documents"))
@@ -502,6 +639,21 @@ async def compute_maturity(
             if exact is not None:
                 n_exact, state = exact
                 state_source = "exact_observation"
+        resolution: dict[str, Any] | None = None
+        prereg_id = spec.get("prereg_id")
+        if resolution_error is not None:
+            # Die Truth-Kette ist eine gemeinsame Wahrheitsquelle. Ist sie
+            # ungültig, wird kein Claim erneut zur Auswertung empfohlen — auch
+            # ein lesbarer Prefix wäre nicht mehr beweisbar vollständig.
+            state = STATE_RESOLUTION_HOLD
+            state_source = "truth_ledger"
+            resolution = resolution_error
+        elif isinstance(prereg_id, str) and prereg_id in resolutions:
+            resolution = resolutions[prereg_id]
+            state_source = "truth_ledger"
+            state = (
+                STATE_RESOLVED if resolution.get("status") == "resolved" else STATE_RESOLUTION_HOLD
+            )
         out.append(
             {
                 "name": spec["name"],
@@ -513,7 +665,7 @@ async def compute_maturity(
                 "note": spec.get("note"),
                 # Durchgereicht, damit Konsumenten über die versiegelte Identität
                 # joinen können statt über den (driftenden) Namen.
-                "prereg_id": spec.get("prereg_id"),
+                "prereg_id": prereg_id,
                 "since_utc": spec["since_utc"],
                 "n_target": spec["n_target"],
                 "n_proxy": n,
@@ -524,9 +676,11 @@ async def compute_maturity(
                 "state_source": state_source,
                 "per_source": detail,
                 "state": state,
-                # Kompat-Bit: True == Zustand != NOT_DUE. Bedeutet NIE "urteilbar" —
-                # ein Verdikt braucht STATE_JUDGEABLE bzw. den exakten Evaluator (P0-01).
-                "due": state != STATE_NOT_DUE,
+                "resolution": resolution,
+                # Kompat-Bit: Nur die beiden echten Handlungszustände sind due.
+                # RESOLVED und RESOLUTION_HOLD dürfen niemals eine zweite
+                # Verdikt-Kette triggern.
+                "due": state in {STATE_EVAL_CHECK_DUE, STATE_JUDGEABLE},
             }
         )
     return out
@@ -539,7 +693,11 @@ __all__ = [
     "STATE_EVAL_CHECK_DUE",
     "STATE_JUDGEABLE",
     "STATE_NOT_DUE",
+    "STATE_RESOLUTION_HOLD",
+    "STATE_RESOLVED",
+    "TRUTH_LEDGER_RELPATH",
     "compute_maturity",
+    "load_attested_resolutions",
     "load_exact_observations",
     "record_exact_observation",
 ]
