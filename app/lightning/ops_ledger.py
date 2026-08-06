@@ -238,8 +238,8 @@ def spent_today_sat(path: Path | None = None, *, now: datetime | None = None) ->
 
 
 # =========================================================================== #
-# v2 — PARALLEL hash-chained money journal. Nothing above this line calls
-# anything below it, and no production caller reaches this section yet (PR-C).
+# v2 — LIVE hash-chained money journal since PR-C. The frozen v1 section above is
+# deliberately independent and remains only as a readable rollback surface.
 # =========================================================================== #
 
 _OPS_V2_DEFAULT_PATH = Path("artifacts/ln_ops_ledger_v2.jsonl")
@@ -738,17 +738,14 @@ def append_ln_outcome(
     return True
 
 
-def verify_ln_ops_ledger(path: Path | None = None) -> dict[str, Any]:
-    """Verify hash links, row hashes and intent→terminal lifecycle invariants."""
-    target = path or ln_ops_v2_path()
-    if not target.exists():
-        return {"ok": True, "records": 0, "open_intents": [], "errors": []}
+def _verify_ln_ops_text(raw: str) -> dict[str, Any]:
+    """Pure full-chain verification shared by public verify and locked cap reads."""
     errors: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     prev_hash = _GENESIS_HASH
     prev_seq = 0
     by_intent: dict[str, list[str]] = {}
-    for line_no, line in enumerate(target.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, line in enumerate(raw.splitlines(), start=1):
         if not line.strip():
             continue
         try:
@@ -792,6 +789,14 @@ def verify_ln_ops_ledger(path: Path | None = None) -> dict[str, Any]:
         "open_intents": open_intents,
         "errors": errors,
     }
+
+
+def verify_ln_ops_ledger(path: Path | None = None) -> dict[str, Any]:
+    """Verify hash links, row hashes and intent→terminal lifecycle invariants."""
+    target = path or ln_ops_v2_path()
+    if not target.exists():
+        return {"ok": True, "records": 0, "open_intents": [], "errors": []}
+    return _verify_ln_ops_text(target.read_text(encoding="utf-8"))
 
 
 def migrate_legacy_ln_ops(source: Path, destination: Path) -> dict[str, Any]:
@@ -868,6 +873,21 @@ def migrate_legacy_ln_ops(source: Path, destination: Path) -> dict[str, Any]:
         )
         _append_chained_record(outcome, path=destination, require_intent=True)
         written += 2
+
+    # A successful zero-row migration needs a durable identity of its own. Without
+    # an existing destination, the cap reader cannot distinguish "known empty" from
+    # a journal that vanished after prior spends and must return UNKNOWN.
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with destination.open("x", encoding="utf-8") as handle:
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:
+            raise LightningOpsLedgerError(
+                f"cannot persist empty migrated ledger: {type(exc).__name__}: {exc}"
+            ) from exc
+        _fsync_directory(destination.parent)
 
     verification = verify_ln_ops_ledger(destination)
     if not verification["ok"]:
@@ -958,7 +978,7 @@ def _spend_amount_sat_v2(record: dict[str, Any]) -> int:
     return amount
 
 
-def spent_today_sat_v2(path: Path | None = None, *, now: datetime | None = None) -> int:
+def spent_today_sat_v2(path: Path | None = None, *, now: datetime | None = None) -> int | None:
     """Daily-cap source over the v2 journal — reserves OPEN intents (fail-closed).
 
     Beyond the v1 semantics (``executed`` and ``error`` both count — see the m-14
@@ -977,22 +997,53 @@ def spent_today_sat_v2(path: Path | None = None, *, now: datetime | None = None)
     push toward ``needs_confirm``. A resolved action is bucketed by its OUTCOME
     timestamp, an open one by its intent; an action spanning midnight counts on both
     days — again over-counting, never under-counting the live window.
+
+    ``None`` is the explicit UNKNOWN sentinel. Missing/unreadable/locked/corrupt
+    state must never become numeric zero, because zero grants the full daily budget.
+    A present, valid, empty journal is distinguishable and returns the honest ``0``.
+    The full read and verification share a read lock with the append writer, so the
+    cap cannot be calculated from a half-written or mid-transition snapshot.
     """
     moment = now or datetime.now(UTC)
     today = moment.date()
     window_start = moment - timedelta(hours=24)
     target = path or ln_ops_v2_path()
-    if not target.exists():
-        return 0
+    if not target.is_file():
+        logger.error("[ln-ops] v2 spend cap unknown: ledger missing/non-file: %s", target)
+        return None
+
+    try:
+        flags = portalocker.LockFlags.SHARED | portalocker.LockFlags.NON_BLOCKING
+        with portalocker.Lock(
+            target,
+            mode="r",
+            encoding="utf-8",
+            timeout=10,
+            flags=flags,
+        ) as handle:
+            raw = handle.read()
+    except Exception as exc:  # noqa: BLE001 — every read/lock uncertainty is UNKNOWN
+        logger.error(
+            "[ln-ops] v2 spend cap unknown: ledger unreadable: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    verification = _verify_ln_ops_text(raw)
+    if not verification["ok"]:
+        logger.error(
+            "[ln-ops] v2 spend cap unknown: ledger verification failed: %s",
+            verification["errors"],
+        )
+        return None
+
     grouped: dict[str, list[dict[str, Any]]] = {}
     unlinked: list[dict[str, Any]] = []
-    for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in raw.splitlines():
         if not line.strip():
             continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
+        record = json.loads(line)
         if not isinstance(record, dict) or record.get("action") not in SPEND_ACTIONS:
             continue
         intent_id = str(record.get("intent_id", ""))

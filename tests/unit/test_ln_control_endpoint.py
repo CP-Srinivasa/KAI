@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routers import ln_control as lc
+from app.lightning import ops_ledger
 from app.lightning.policy import PolicyEnvelope
 
 _URL = "/dashboard/api/ln/value-action"
@@ -181,6 +182,83 @@ def test_stale_node_state_does_not_block_receive_action(monkeypatch) -> None:
     )
     assert r.status_code == 200
     assert r.json()["policy"]["decision"] == "auto_execute"
+
+
+# --- W0-B1: an unknown v2 cap is never interpreted as zero -----------------------
+
+
+def _use_real_cap_reader(monkeypatch, path) -> None:
+    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(path))
+    monkeypatch.setattr(lc, "spent_today_sat_v2", ops_ledger.spent_today_sat_v2)
+    # Isolate this controller gate: in production money_journal_status independently
+    # denies the same missing/corrupt states before the node can be touched.
+    monkeypatch.setattr(lc, "_money_journal_blocker", lambda: "")
+
+
+def test_missing_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> None:
+    env = PolicyEnvelope(
+        allowed_actions=frozenset({"send_coins"}),
+        per_action_cap_sat=1_000_000,
+        daily_cap_sat=1_000_000,
+    )
+    _patch(monkeypatch, env)
+    _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
+
+    response = TestClient(_app()).post(
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["policy"]["decision"] == "denied"
+    assert "daily spend cap unknown" in response.json()["policy"]["reason"]
+
+
+def test_corrupt_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "corrupt.jsonl"
+    path.write_text('{"seq":1', encoding="utf-8")
+    env = PolicyEnvelope(
+        allowed_actions=frozenset({"send_coins"}),
+        per_action_cap_sat=1_000_000,
+        daily_cap_sat=1_000_000,
+    )
+    _patch(monkeypatch, env)
+    _use_real_cap_reader(monkeypatch, path)
+
+    response = TestClient(_app()).post(
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+    )
+
+    assert response.json()["policy"]["decision"] == "denied"
+    assert "daily spend cap unknown" in response.json()["policy"]["reason"]
+
+
+def test_existing_empty_v2_cap_is_known_zero(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "freshly_migrated.jsonl"
+    path.write_text("", encoding="utf-8")
+    env = PolicyEnvelope(
+        allowed_actions=frozenset({"send_coins"}),
+        per_action_cap_sat=10_000,
+        daily_cap_sat=50_000,
+    )
+    _patch(monkeypatch, env)
+    _use_real_cap_reader(monkeypatch, path)
+
+    response = TestClient(_app()).post(
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+    )
+
+    assert response.json()["policy"]["decision"] == "auto_execute"
+
+
+def test_unknown_v2_cap_does_not_block_receive_action(tmp_path, monkeypatch) -> None:
+    _patch(monkeypatch, PolicyEnvelope(allowed_actions=frozenset({"create_invoice"})))
+    _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
+
+    response = TestClient(_app()).post(
+        _URL, json={"action": "create_invoice", "params": {"memo": "receive", "value_sat": 0}}
+    )
+
+    assert response.json()["policy"]["decision"] == "auto_execute"
 
 
 # --- pay_invoice amount is parsed from the BOLT11 (Audit-P0 completion) ------------

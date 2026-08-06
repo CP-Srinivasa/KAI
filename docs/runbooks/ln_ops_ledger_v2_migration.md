@@ -31,6 +31,10 @@ Operator-Aktion.
    Zeilen hat, verweigert die Wert-Schicht jeden Spend („run the migration first")
    statt eine zweite Geldhistorie mit Cap-Reset bei 0 zu beginnen. Ein Deploy VOR
    der Migration ist damit ungefährlich, aber sende-unfähig.
+6. **Cap-Quelle kennt keinen stillen Null-Fallback.** Fehlt die v2-Datei, ist sie
+   unlesbar oder scheitert die Vollverifikation, liefert `spent_today_sat_v2`
+   UNKNOWN und der Controller verweigert Kapitalaktionen. Nur eine vorhandene,
+   valide Leerdatei aus einer erfolgreichen Nullzeilen-Migration bedeutet 0 sat.
 
 ## 0. Dry-Run gegen eine KOPIE (Pflicht, vor allem anderen)
 
