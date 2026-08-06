@@ -26,10 +26,11 @@ async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) ->
     """Raw ``pay_invoice`` probe on one capability credential.
 
     Returns True when the node PERMISSION-DENIED the attempt (credential carries no
-    spend scope), False when it got past the permission layer (credential CAN spend),
-    and ``None`` when the credential is not provisioned at all — an un-probed fact,
-    never silently folded into a pass. The payment request is deliberately garbage, so
-    even a spend-capable macaroon moves no capital.
+    spend scope), False only when lnd rejected the deliberately invalid invoice AFTER
+    the permission layer (credential CAN spend), and ``None`` when the credential is
+    unavailable or transport/TLS/timeout makes the result unproven. Unknown is never
+    silently folded into a pass. The payment request is deliberately garbage, so even
+    a spend-capable macaroon moves no capital.
 
     This helper deliberately does not call a value-layer operation, but it does not
     bypass the central client choke point: ``scope="payment"`` cannot be built while
@@ -44,7 +45,11 @@ async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) ->
         return False  # node ACCEPTED a spend attempt → macaroon too broad
     except LightningUnavailableError as exc:
         text = str(exc).lower()
-        return "permission" in text or "403" in text
+        if "permission denied" in text or "lnd returned 403" in text:
+            return True
+        if "invalid payment request" in text or "lnd returned 400" in text:
+            return False
+        return None
 
 
 async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool | None, bool, int]:
@@ -60,8 +65,8 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool | None, bool, 
       capital-free, and expires unpaid;
     - ``pay_invoice`` MUST be permission-denied on BOTH receive-side credentials
       (read + invoice) while the layer is unarmed (satoshi auflage 4) — the read
-      credential is still the one every live path uses until PR-C, so dropping it
-      from the probe would silently retire the invariant. Once armed, the probe
+      credential remains the read-only production credential after PR-C, so dropping
+      it from the probe would silently retire the invariant. Once armed, the probe
       instead targets the dedicated PAYMENT credential, which MUST be accepted.
 
     A missing capability credential is reported as an un-probed/failed capability —

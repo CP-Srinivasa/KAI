@@ -168,7 +168,9 @@ class LightningSettings(BaseSettings):
             return self.payment_macaroon_hex, self.payment_macaroon_path
         if scope == "onchain":
             return self.onchain_macaroon_hex, self.onchain_macaroon_path
-        return self.channel_macaroon_hex, self.channel_macaroon_path
+        if scope == "channel":
+            return self.channel_macaroon_hex, self.channel_macaroon_path
+        raise ValueError(f"unknown Lightning credential scope: {scope!r}")
 
 
 class LightningBootError(RuntimeError):

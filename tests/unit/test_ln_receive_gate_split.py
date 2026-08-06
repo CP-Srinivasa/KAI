@@ -20,6 +20,7 @@ import pytest
 
 import app.lightning.value_layer as vl
 from app.core.lightning_settings import LightningSettings
+from app.lightning.client import LightningUnavailableError
 from app.lightning.value_layer import (
     RECEIVE_ACTIONS,
     _assert_send_allowed,
@@ -64,6 +65,35 @@ async def test_invoice_mints_with_receive_enabled_even_when_pay_disabled() -> No
         )
     assert r.state == "executed"
     client.add_invoice.assert_awaited_once()
+
+
+@pytest.mark.parametrize("node_fails", [False, True])
+async def test_every_node_touched_invoice_outcome_gets_one_receive_audit_line(
+    node_fails: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B-7/PR-C: success and node-error are audited without the spend journal."""
+    client = _fake_client()
+    if node_fails:
+        client.add_invoice = AsyncMock(
+            side_effect=LightningUnavailableError("lnd request failed: test failure")
+        )
+    events: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        vl,
+        "append_receive_event",
+        lambda action, state, **_: events.append((action, state)),
+    )
+
+    with patch("app.lightning.value_layer._build_client", return_value=client):
+        result = await create_invoice(
+            value_sat=100,
+            dry_run=False,
+            cfg=_cfg(pay_enabled=False, receive_enabled=True),
+        )
+
+    expected_state = "error" if node_fails else "executed"
+    assert result.state == expected_state
+    assert events == [("create_invoice", expected_state)]
 
 
 @pytest.mark.asyncio
@@ -142,6 +172,7 @@ def test_reflection_direction_declared_correctly_per_method() -> None:
     every other value-layer write must declare 'send'. A spend that silently flips to
     receive in a future refactor fails here."""
     pat = re.compile(r"direction\s*=\s*[\"'](\w+)[\"']")
+    irreversible_pat = re.compile(r"irreversible\s*=\s*(True|False)")
     checked = 0
     for name, fn in inspect.getmembers(vl, inspect.iscoroutinefunction):
         if name.startswith("_") or getattr(fn, "__module__", "") != vl.__name__:
@@ -152,11 +183,16 @@ def test_reflection_direction_declared_correctly_per_method() -> None:
         m = pat.search(src)
         assert m is not None, f"{name} does not declare an explicit direction="
         direction = m.group(1)
+        irreversible_match = irreversible_pat.search(src)
+        assert irreversible_match is not None, f"{name} does not declare irreversible="
+        irreversible = irreversible_match.group(1) == "True"
         checked += 1
         if name in RECEIVE_ACTIONS:
             assert direction == "receive", f"{name} must declare direction='receive'"
+            assert irreversible is False, f"{name} receive action must remain reversible"
         else:
             assert direction == "send", (
                 f"{name} (spend) must declare direction='send', got {direction!r}"
             )
+            assert irreversible is True, f"{name} non-receive action must be irreversible"
     assert checked >= 6  # all write methods covered

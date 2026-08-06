@@ -295,6 +295,13 @@ def test_read_scope_is_the_legacy_macaroon_pair_backwards_compatible() -> None:
     assert _build_client(cfg)._headers["Grpc-Metadata-macaroon"] == "read"
 
 
+def test_unknown_credential_scope_fails_instead_of_promoting_to_channel() -> None:
+    """B-4: a typo/new scope must never inherit the strongest catch-all credential."""
+    cfg = _scoped_cfg()
+    with pytest.raises(ValueError, match="unknown Lightning credential scope"):
+        cfg.macaroon_credentials("admin")  # type: ignore[arg-type]
+
+
 def test_non_payment_capability_clients_never_fall_back_to_the_read_macaroon() -> None:
     cfg = _scoped_cfg()
     for scope in ("invoice", "onchain", "channel"):
