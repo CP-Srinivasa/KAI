@@ -18,7 +18,7 @@ import binascii
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -45,6 +45,20 @@ class LndInfo:
     num_active_channels: int
     num_pending_channels: int
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class LndPaymentPage:
+    """Validated page from lnd ListPayments, ready for deterministic pagination."""
+
+    payments: tuple[dict[str, Any], ...]
+    first_index_offset: int
+    last_index_offset: int
+    total_num_payments: int | None = None
+
+    @property
+    def next_index_offset(self) -> int:
+        return self.last_index_offset
 
 
 def _load_macaroon_hex(*, macaroon_hex: str, macaroon_path: str) -> str:
@@ -181,6 +195,69 @@ class LndRestClient:
         confs) plus force-close/waiting-close limbo — without this an open that
         was JUST funded is invisible to every channel view."""
         return await self._get("/v1/channels/pending")
+
+    async def list_payments(
+        self,
+        *,
+        include_incomplete: bool = True,
+        index_offset: int = 0,
+        max_payments: int = 1000,
+        reversed: bool = False,
+    ) -> LndPaymentPage:
+        """GET /v1/payments — outgoing payment history (read-only).
+
+        The response shape and pagination offsets are validated instead of being
+        passed through. Reconciliation must never interpret a malformed/missing
+        page token as an empty, fully-scanned payment history.
+        """
+        offset = int(index_offset)
+        limit = int(max_payments)
+        if offset < 0:
+            raise ValueError("index_offset must be >= 0")
+        if limit <= 0:
+            raise ValueError("max_payments must be > 0")
+        query = urlencode(
+            {
+                "include_incomplete": str(bool(include_incomplete)).lower(),
+                "index_offset": offset,
+                "max_payments": limit,
+                "reversed": str(bool(reversed)).lower(),
+            }
+        )
+        data = await self._get(f"/v1/payments?{query}")
+        raw_payments = data.get("payments")
+        if not isinstance(raw_payments, list) or any(
+            not isinstance(payment, dict) for payment in raw_payments
+        ):
+            raise LightningUnavailableError("listpayments returned an invalid payments array")
+
+        def _offset(field_name: str, *, optional: bool = False) -> int | None:
+            raw = data.get(field_name)
+            if optional and raw is None:
+                return None
+            if raw is None:
+                raise LightningUnavailableError(f"listpayments returned an invalid {field_name}")
+            try:
+                value = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise LightningUnavailableError(
+                    f"listpayments returned an invalid {field_name}"
+                ) from exc
+            if value < 0:
+                raise LightningUnavailableError(f"listpayments returned an invalid {field_name}")
+            return value
+
+        first = _offset("first_index_offset")
+        last = _offset("last_index_offset")
+        total = _offset("total_num_payments", optional=True)
+        if first is None or last is None:  # defensive: required offsets may never be absent
+            raise LightningUnavailableError("listpayments returned incomplete pagination")
+        return LndPaymentPage(
+            payments=tuple(dict(payment) for payment in raw_payments),
+            first_index_offset=first,
+            last_index_offset=last,
+            total_num_payments=total,
+        )
 
     # ── write surface (value layer; gated) ────────────────────────────────────
     # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.

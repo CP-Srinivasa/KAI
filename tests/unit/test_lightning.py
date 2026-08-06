@@ -117,6 +117,84 @@ async def test_transport_error_raises_unavailable() -> None:
         await client.get_info()
 
 
+async def test_list_payments_wire_and_normalizes_pagination() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == "/v1/payments"
+        assert dict(request.url.params) == {
+            "include_incomplete": "true",
+            "index_offset": "7",
+            "max_payments": "25",
+            "reversed": "true",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "payments": [{"payment_hash": "aa" * 32, "status": "SUCCEEDED"}],
+                "first_index_offset": "8",
+                "last_index_offset": "11",
+                "total_num_payments": "42",
+            },
+        )
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    page = await client.list_payments(
+        include_incomplete=True, index_offset=7, max_payments=25, reversed=True
+    )
+
+    assert page.payments == ({"payment_hash": "aa" * 32, "status": "SUCCEEDED"},)
+    assert page.first_index_offset == 8
+    assert page.last_index_offset == 11
+    assert page.next_index_offset == 11
+    assert page.total_num_payments == 42
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"payments": "not-a-list", "first_index_offset": "0", "last_index_offset": "0"},
+        {"payments": ["not-an-object"], "first_index_offset": "0", "last_index_offset": "1"},
+        {"payments": [], "first_index_offset": "0", "last_index_offset": "-1"},
+        {"payments": [], "first_index_offset": "0"},
+    ],
+)
+async def test_list_payments_rejects_malformed_pagination_response(response: dict) -> None:
+    client = LndRestClient(
+        base_url="https://x:8080",
+        macaroon_hex="ab",
+        transport=_transport(lambda _: httpx.Response(200, json=response)),
+    )
+
+    with pytest.raises(LightningUnavailableError, match="listpayments returned"):
+        await client.list_payments()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"index_offset": -1}, "index_offset"),
+        ({"max_payments": 0}, "max_payments"),
+    ],
+)
+async def test_list_payments_rejects_invalid_request_before_network(
+    kwargs: dict, message: str
+) -> None:
+    called = False
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={})
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    with pytest.raises(ValueError, match=message):
+        await client.list_payments(**kwargs)
+    assert called is False
+
+
 # --- adapter: default-off + fail-closed ------------------------------------------
 
 
