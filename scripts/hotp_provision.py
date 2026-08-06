@@ -62,6 +62,10 @@ def main() -> int:
     print(f"base32 secret: {secret}")
     print(f"otpauth URI:   {uri}")
     print("Load into an authenticator in HOTP/counter mode (start counter 0, 6 digits).")
+    print(
+        "Then initialize the counter journal explicitly: "
+        "python scripts/hotp_bootstrap.py --next-counter 0"
+    )
     return 0
 
 

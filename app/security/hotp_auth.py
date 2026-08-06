@@ -7,6 +7,11 @@ Counter wird in einem append-only JSONL gepflegt — jede erfolgreiche
 Verifikation MUSS einen neuen Eintrag schreiben, sonst ist Replay
 möglich. Counter darf nur monoton steigen.
 
+Das Journal hat keine implizite "virgin"-Semantik: fehlt es oder ist es
+leer/korrupt/unlesbar, wird jede Verifikation verweigert. Erst-Inbetriebnahme
+und Recovery erfolgen ausschließlich über ``bootstrap_hotp_journal`` bzw.
+``scripts/hotp_bootstrap.py`` mit einem expliziten nächsten Counter.
+
 Sicherheits-Annahmen:
 - Seed-File-Permissions sind responsability des Operators (`chmod 600`).
   Wir lesen ohne Permission-Check, weil das Filesystem-ACL-Pflicht ist;
@@ -16,20 +21,22 @@ Sicherheits-Annahmen:
   Toleranzen senken die effektive HOTP-Security exponentiell — daher
   hartcodiert auf max 3, nicht configurable.
 
-Status 2026-05-11: Modul-only, kein /trade-Command verdrahtet (Spec Step 6,
-``telegram_bot.py`` Erweiterung folgt nach N+2). Test-Pfad steht über die
-public API ``HotpVerifier``.
+Der komplette Read→Verify→Append-Pfad hält einen strikten Cross-Process-Lock;
+ein Erfolg wird erst nach durable ``fsync`` zurückgegeben.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pyotp
+
+from app.core.file_lock import FileLockError, append_lock
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +70,22 @@ class HotpVerificationFailed(HotpError):
     """
 
 
+class HotpJournalError(HotpError):
+    """Basisfehler für einen nicht vertrauenswürdig les-/schreibbaren Counter-Stand."""
+
+
+class HotpJournalNotInitialized(HotpJournalError):
+    """Journal fehlt oder ist leer; ein expliziter Operator-Bootstrap ist nötig."""
+
+
+class HotpJournalCorrupt(HotpJournalError):
+    """Journal-Inhalt ist unvollständig, ungültig oder nicht monoton."""
+
+
+class HotpJournalUnavailable(HotpJournalError):
+    """Journal oder sein strikter Lock ist wegen eines I/O-Fehlers nicht nutzbar."""
+
+
 @dataclass(frozen=True)
 class HotpVerifyResult:
     """Result einer erfolgreichen Verifikation."""
@@ -70,6 +93,49 @@ class HotpVerifyResult:
     counter_used: int
     counter_advance: int  # = counter_used - last_used (mindestens 1)
     verified_at_utc: str
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def bootstrap_hotp_journal(journal_path: Path, *, next_counter: int) -> str:
+    """Initialisiert ein noch nie vorhandenes Journal explizit und dauerhaft.
+
+    ``next_counter`` ist absichtlich verpflichtend: bei Erst-Inbetriebnahme gibt
+    der Operator ``0`` an; bei einer kontrollierten Wiederherstellung muss er den
+    authenticator-seitig bekannten nächsten Counter angeben. So wird ein
+    verschwundenes Journal niemals still als "virgin" interpretiert.
+
+    Ein vorhandener Pfad wird nicht überschrieben, auch nicht wenn er leer ist.
+    Der Operator muss den unbekannten Zustand zuerst separat sichern/auflösen.
+    """
+    if isinstance(next_counter, bool) or not isinstance(next_counter, int) or next_counter < 0:
+        raise ValueError("next_counter must be an integer >= 0")
+
+    timestamp = _utc_now()
+    record = {
+        "schema_version": "hotp-bootstrap-v1",
+        "event": "bootstrap",
+        "last_used_counter": next_counter - 1,
+        "bootstrapped_at_utc": timestamp,
+    }
+    try:
+        with append_lock(journal_path, strict=True):
+            if journal_path.exists():
+                raise HotpJournalCorrupt(f"journal already exists: {journal_path}")
+            journal_path.parent.mkdir(parents=True, exist_ok=True)
+            with journal_path.open("x", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+    except FileLockError as exc:
+        raise HotpJournalUnavailable(f"journal bootstrap lock unavailable: {exc}") from exc
+    except HotpJournalError:
+        raise
+    except OSError as exc:
+        raise HotpJournalUnavailable(f"journal bootstrap failed: {exc}") from exc
+    return timestamp
 
 
 class HotpVerifier:
@@ -123,67 +189,113 @@ class HotpVerifier:
             raise HotpSeedInvalid(f"seed not base32 (only A-Z2-7=): {self._seed_path}")
         return cleaned
 
-    def last_used_counter(self) -> int:
-        """Höchster bisher akzeptierter Counter, oder -1 wenn Journal leer/fehlt.
-
-        Liest das gesamte Journal — append-only-design garantiert dass das
-        max-counter == letzter-eintrag wäre, aber wir scannen defensiv für den
-        Fall dass extern manipuliert wurde.
-        """
-        if not self._journal_path.exists():
-            return -1
-        max_counter = -1
+    def _read_last_counter_unlocked(self) -> int:
+        """Validiert das komplette Journal; Caller hält den strikten Lock."""
+        last_counter = -1
+        saw_record = False
         try:
             with self._journal_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
+                for line_number, raw_line in enumerate(fh, start=1):
+                    line = raw_line.strip()
                     if not line:
-                        continue
+                        raise HotpJournalCorrupt(
+                            f"empty journal record at line {line_number}: {self._journal_path}"
+                        )
                     try:
                         record = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            "hotp_journal_corrupt_line file=%s line=%r",
-                            self._journal_path,
-                            line[:80],
+                    except json.JSONDecodeError as exc:
+                        raise HotpJournalCorrupt(
+                            f"invalid JSON at line {line_number}: {self._journal_path}"
+                        ) from exc
+                    if not isinstance(record, dict):
+                        raise HotpJournalCorrupt(
+                            f"non-object record at line {line_number}: {self._journal_path}"
                         )
-                        continue
-                    counter = record.get("counter")
-                    if isinstance(counter, int) and counter > max_counter:
-                        max_counter = counter
+
+                    schema = record.get("schema_version")
+                    if schema == "hotp-bootstrap-v1":
+                        bootstrap_last = record.get("last_used_counter")
+                        if (
+                            saw_record
+                            or record.get("event") != "bootstrap"
+                            or isinstance(bootstrap_last, bool)
+                            or not isinstance(bootstrap_last, int)
+                            or bootstrap_last < -1
+                            or not isinstance(record.get("bootstrapped_at_utc"), str)
+                        ):
+                            raise HotpJournalCorrupt(
+                                f"invalid bootstrap record at line {line_number}: "
+                                f"{self._journal_path}"
+                            )
+                        last_counter = bootstrap_last
+                    elif schema == "hotp-v1":
+                        counter = record.get("counter")
+                        advance = record.get("advance")
+                        if (
+                            isinstance(counter, bool)
+                            or not isinstance(counter, int)
+                            or counter < 0
+                            or isinstance(advance, bool)
+                            or not isinstance(advance, int)
+                            or advance < 1
+                            or not isinstance(record.get("verified_at_utc"), str)
+                            or counter <= last_counter
+                        ):
+                            raise HotpJournalCorrupt(
+                                f"invalid/non-monotonic record at line {line_number}: "
+                                f"{self._journal_path}"
+                            )
+                        last_counter = counter
+                    else:
+                        raise HotpJournalCorrupt(
+                            f"unknown schema at line {line_number}: {self._journal_path}"
+                        )
+                    saw_record = True
+        except FileNotFoundError as exc:
+            raise HotpJournalNotInitialized(
+                f"journal not initialized; run explicit bootstrap: {self._journal_path}"
+            ) from exc
+        except HotpJournalError:
+            raise
         except OSError as exc:
-            logger.error("hotp_journal_read_failed: %s", exc)
-            return -1
-        return max_counter
+            raise HotpJournalUnavailable(f"journal read failed: {exc}") from exc
+
+        if not saw_record:
+            raise HotpJournalNotInitialized(
+                f"journal empty; run explicit bootstrap: {self._journal_path}"
+            )
+        return last_counter
+
+    def last_used_counter(self) -> int:
+        """Höchster akzeptierter Counter; unbekannter Zustand wird nie zu ``-1``."""
+        try:
+            with append_lock(self._journal_path, strict=True):
+                return self._read_last_counter_unlocked()
+        except FileLockError as exc:
+            raise HotpJournalUnavailable(f"journal lock unavailable: {exc}") from exc
 
     def next_expected_counter(self) -> int:
         """Counter, den der nächste gültige Code matcht."""
         last = self.last_used_counter()
         return 0 if last < 0 else last + 1
 
-    def _append_journal(self, counter: int, advance: int) -> str:
-        """Append einer Verifikations-Spur. Returns ISO-Zeitstempel.
-
-        Wir öffnen mit 'a' (append) — POSIX garantiert Atomarität bei
-        small writes (<PIPE_BUF). Falls je zwei concurrent verifications
-        sich hier rein-racen, sind beide Lines geschrieben, der `verify`-
-        loop hat aber bereits durch `last_used_counter()` davor monotonie
-        sichergestellt — die zweite race-loser-Line ist harmlos.
-
-        Phase-1 wird das durch portalocker-Lock härten; in Phase-0 reicht
-        die Single-Process-Annahme (kai-server ist single-instance).
-        """
+    def _append_journal_unlocked(self, counter: int, advance: int) -> str:
+        """Append + durable flush; Caller hält den strikten Journal-Lock."""
         self._journal_path.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+        timestamp = _utc_now()
         record = {
             "counter": counter,
             "advance": advance,
             "verified_at_utc": timestamp,
             "schema_version": "hotp-v1",
         }
-        with self._journal_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
-            fh.flush()
+        try:
+            with self._journal_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError as exc:
+            raise HotpJournalUnavailable(f"journal append failed: {exc}") from exc
         return timestamp
 
     def verify(self, code: str) -> HotpVerifyResult:
@@ -207,6 +319,8 @@ class HotpVerifier:
             HotpReplayDetected: code würde counter ≤ last_used setzen
                 (theoretisch unreachable wenn next_expected korrekt — aber
                 Defense-in-Depth für externen Journal-Tamper).
+            HotpJournalError: Journal fehlt, ist korrupt/unlesbar oder kann
+                nicht strikt gesperrt bzw. dauerhaft geschrieben werden.
             ValueError: code-Format invalid (nicht 6 stellen oder nicht digit-only).
         """
         cleaned = code.strip().replace(" ", "")
@@ -216,29 +330,35 @@ class HotpVerifier:
         seed = self._load_seed()
         hotp = pyotp.HOTP(seed, digits=HOTP_DIGITS)
 
-        next_counter = self.next_expected_counter()
+        try:
+            # The money-path invariant is one critical section: a contender may
+            # not read the old counter until the winner's durable append exists.
+            with append_lock(self._journal_path, strict=True):
+                last = self._read_last_counter_unlocked()
+                next_counter = last + 1
 
-        # Tolerance-Loop: probiere [next, next+1, ..., next+allow_advance-1].
-        for offset in range(self._allow_advance):
-            candidate_counter = next_counter + offset
-            if hotp.verify(cleaned, candidate_counter):
-                # Defense-in-Depth: monotonie nochmal hart prüfen, falls
-                # next_expected_counter zwischenzeitlich von extern manipuliert.
-                last = self.last_used_counter()
-                if candidate_counter <= last:
-                    raise HotpReplayDetected(f"counter {candidate_counter} <= last_used {last}")
-                advance = candidate_counter - last  # ≥ 1
-                ts = self._append_journal(candidate_counter, advance)
-                logger.info(
-                    "hotp_verify_ok counter=%d advance=%d",
-                    candidate_counter,
-                    advance,
-                )
-                return HotpVerifyResult(
-                    counter_used=candidate_counter,
-                    counter_advance=advance,
-                    verified_at_utc=ts,
-                )
+                # Tolerance-Loop: probiere [next, next+1, ..., next+allow_advance-1].
+                for offset in range(self._allow_advance):
+                    candidate_counter = next_counter + offset
+                    if hotp.verify(cleaned, candidate_counter):
+                        if candidate_counter <= last:
+                            raise HotpReplayDetected(
+                                f"counter {candidate_counter} <= last_used {last}"
+                            )
+                        advance = candidate_counter - last  # ≥ 1
+                        ts = self._append_journal_unlocked(candidate_counter, advance)
+                        logger.info(
+                            "hotp_verify_ok counter=%d advance=%d",
+                            candidate_counter,
+                            advance,
+                        )
+                        return HotpVerifyResult(
+                            counter_used=candidate_counter,
+                            counter_advance=advance,
+                            verified_at_utc=ts,
+                        )
+        except FileLockError as exc:
+            raise HotpJournalUnavailable(f"journal lock unavailable: {exc}") from exc
 
         # Kein Match in der Tolerance-Window.
         logger.warning(
@@ -254,7 +374,7 @@ class HotpVerifier:
 def humanize_counter(verifier: HotpVerifier) -> str:
     """Human-readable summary for /live status command output."""
     last = verifier.last_used_counter()
-    nxt = verifier.next_expected_counter()
+    nxt = last + 1
     if last < 0:
-        return "HOTP-Counter: virgin (next expected = 0)"
+        return "HOTP-Counter: explicitly bootstrapped (next expected = 0)"
     return f"HOTP-Counter: last_used={last}, next_expected={nxt}"

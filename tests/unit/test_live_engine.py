@@ -39,7 +39,7 @@ from app.security.exchange_perms import (
     PermissionStatus,
     Phase0Expectations,
 )
-from app.security.hotp_auth import HotpVerifier
+from app.security.hotp_auth import HotpVerifier, bootstrap_hotp_journal
 
 
 def _phase0_risk_limits() -> RiskLimits:
@@ -125,7 +125,9 @@ def seed_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def journal_path(tmp_path: Path) -> Path:
-    return tmp_path / "hotp_counter.jsonl"
+    path = tmp_path / "hotp_counter.jsonl"
+    bootstrap_hotp_journal(path, next_counter=0)
+    return path
 
 
 @pytest.fixture
