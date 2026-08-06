@@ -173,6 +173,10 @@ class EpisodeDedupeReport:
     largest_episode_size: int
     audit_path: str
     alert_audit_path: str
+    # Alle Episodengrößen (absteigend). Bewusst NICHT in to_dict(): Konsument
+    # ist die Invariante TL-004 (Zählung "Episoden über Schwelle"), das
+    # persistierte Artefakt-Schema bleibt unverändert.
+    episode_sizes: tuple[int, ...] = ()
 
     @property
     def episode_precision_str(self) -> str:
@@ -291,6 +295,7 @@ def build_episode_dedupe_report(
     episode_miss = 0
     episode_total = 0
     largest_episode_size = 0
+    episode_sizes: list[int] = []
     for (_, _, horizon), rows in groups.items():
         max_gap = timedelta(hours=horizon)
         anchored: list[tuple[datetime, str]] = [
@@ -309,6 +314,7 @@ def build_episode_dedupe_report(
         episodes.extend([outcome] for anchor, outcome in rows if anchor is None)
         for members in episodes:
             episode_total += 1
+            episode_sizes.append(len(members))
             largest_episode_size = max(largest_episode_size, len(members))
             hits = sum(1 for o in members if o == "hit")
             if hits > len(members) - hits:
@@ -325,6 +331,7 @@ def build_episode_dedupe_report(
         largest_episode_size=largest_episode_size,
         audit_path=str(outcomes_path),
         alert_audit_path=str(dispatch_path),
+        episode_sizes=tuple(sorted(episode_sizes, reverse=True)),
     )
 
 

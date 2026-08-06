@@ -77,6 +77,12 @@ _TL012_BATCH_GAP_S = 900.0  # Zeilen ≤15 min nach Batch-Anker = derselbe Lauf
 _TL012_MIN_N = 20  # unterhalb ist "Konzentration" statistisch bedeutungslos
 _TL012_TOP_SHARE = 0.5  # Verletzung: größter Batch > 50 % der Fenster-Resolutionen
 
+# TL-004-Schwelle (vorher Magic Number im Check): Auslöse-Vorfall war der
+# Backlog-Batch 2026-07-06 mit ~150 Rows auf EINEM BTC-Move (#579-Klasse).
+# Wert unverändert aus der Erst-Implementierung übernommen — hier nur benannt,
+# damit ein statusfärbender Pfad keine unbelegte Zahl trägt.
+_TL004_EPISODE_ROWS_MAX = 40
+
 
 class Severity(IntEnum):
     INFO = 10
@@ -377,24 +383,42 @@ def _tl004_metrics(ctx: LintContext) -> dict[str, Any]:
     }
 
 
-def _tl004_previous_largest(ctx: LintContext) -> int | None:
-    """largest_episode_size des VORHERIGEN Lint-Laufs (read-only) für
-    growth_since_last_run; None wenn kein früherer TL-004-Eintrag existiert."""
-    prev: int | None = None
+def _tl004_previous_run(ctx: LintContext) -> tuple[int | None, int | None]:
+    """(largest_episode_size, episodes_over_threshold) des VORHERIGEN Lint-Laufs
+    (read-only); (None, None) wenn kein früherer TL-004-Eintrag existiert.
+    Alt-Läufe vor der Zweiteilung kennen nur largest — over bleibt dann None
+    (fail-closed: ohne Vergleichszählung keine INFO-Einstufung)."""
+    prev_largest: int | None = None
+    prev_over: int | None = None
     for rec in iter_jsonl_tolerant(ctx.artifacts_dir / "truth_lint_report.jsonl"):
         for v in rec.get("violations") or []:
             if v.get("invariant_id") != "TL-004":
                 continue
-            size = (v.get("evidence") or {}).get("largest_episode_size")
+            evidence = v.get("evidence") or {}
+            size = evidence.get("largest_episode_size")
             if isinstance(size, int):
-                prev = size
-    return prev
+                prev_largest = size
+                over = evidence.get("episodes_over_threshold")
+                prev_over = over if isinstance(over, int) else None
+    return prev_largest, prev_over
 
 
 def _check_cross_path_episode_inflation(ctx: LintContext) -> list[Violation]:
     """TL-004: Ein einzelner Markt-Move darf die Outcome-Zählung nicht über
     parallele Signalpfade aufblähen (#579-Klasse). Reuse der kanonischen
-    Episoden-Clusterung; Schwelle = größte Episode > 40 Rows."""
+    Episoden-Clusterung; Schwelle = größte Episode > ``_TL004_EPISODE_ROWS_MAX``.
+
+    Zweistufig seit 2026-08-06 (TL-008-Präzedenz, wortgleiche Begründung
+    ``_check_missing_provenance``): ``alert_outcomes.jsonl`` ist append-only,
+    nicht in der Rotations-Allowlist, und der Report kennt kein Zeitfenster —
+    das historische Maximum (Batch 2026-07-06, ~150 Rows) kann nie wieder
+    sinken. Als Dauer-WARNING erzieht das zum Ignorieren des Lints. Darum:
+
+    * WARNING — die größte Episode IST gewachsen ODER es gibt NEUE Episoden
+      über der Schwelle ODER es fehlt der Vergleichslauf (fail-closed).
+    * INFO — eingefrorener Altbestand ohne Neuzuwachs. Die Zitier-Auflage
+      bleibt wörtlich bestehen; nichts wird aus der Evidence entfernt.
+    """
     if not ctx.alert_outcomes.exists():
         return []
     try:
@@ -415,27 +439,61 @@ def _check_cross_path_episode_inflation(ctx: LintContext) -> list[Violation]:
             )
         ]
     largest = int(getattr(report, "largest_episode_size", 0) or 0)
-    if largest <= 40:
+    if largest <= _TL004_EPISODE_ROWS_MAX:
         return []
     metrics = _tl004_metrics(ctx)
-    prev_largest = _tl004_previous_largest(ctx)
+    prev_largest, prev_over = _tl004_previous_run(ctx)
     episode_total = int(getattr(report, "episode_total", 0) or 0)
+    sizes = tuple(int(s) for s in (getattr(report, "episode_sizes", ()) or ()))
+    # Anzahl Episoden über der Schwelle: fängt auch eine NEUE 41+-Episode
+    # UNTERHALB des alten Maximums — largest allein würde die verstecken.
+    over_now = sum(1 for s in sizes if s > _TL004_EPISODE_ROWS_MAX) if sizes else None
+    growth = largest - prev_largest if prev_largest is not None else None
+    new_over = over_now - prev_over if (over_now is not None and prev_over is not None) else None
+    frozen = growth is not None and growth <= 0 and new_over is not None and new_over <= 0
+
+    citation_rule = (
+        "rohe Zeilenzahl NIE als unabhängige Episodenanzahl verwenden; "
+        "nur episoden-dedupliziert zitieren"
+    )
+    if frozen:
+        severity = Severity.INFO
+        message = (
+            f"größte Markt-Episode umfasst {largest} resolved Rows "
+            f"({episode_total} kanonische Episoden), unverändert seit dem letzten "
+            f"Lauf — eingefrorenes historisches Maximum (Batch 2026-07-06). "
+            f"Zitier-Auflage bleibt: {citation_rule}. Erwarteter Neuzuwachs 0; die "
+            f"Regel bleibt aktiv: jede neue Episode über {_TL004_EPISODE_ROWS_MAX} "
+            "Rows hebt sofort wieder auf WARNING"
+        )
+    elif growth is None or new_over is None:
+        severity = Severity.WARNING
+        message = (
+            f"größte Markt-Episode umfasst {largest} resolved Rows "
+            f"({episode_total} kanonische Episoden); kein Vorlauf mit "
+            f"Vergleichszählung (fail-closed WARNING) — {citation_rule}"
+        )
+    else:
+        severity = Severity.WARNING
+        message = (
+            f"größte Markt-Episode umfasst {largest} resolved Rows "
+            f"({episode_total} kanonische Episoden; +{max(growth, 0)} Rows / "
+            f"+{max(new_over, 0)} Episoden über Schwelle seit dem letzten Lauf) — "
+            f"{citation_rule}"
+        )
     return [
         Violation(
             invariant_id="TL-004",
-            severity=Severity.WARNING,
+            severity=severity,
             dataset="alert_outcomes.jsonl",
-            message=(
-                f"größte Markt-Episode umfasst {largest} resolved Rows "
-                f"({episode_total} kanonische Episoden) — rohe Zeilenzahl NIE als "
-                "unabhängige Episodenanzahl verwenden; nur episoden-dedupliziert zitieren"
-            ),
+            message=message,
             evidence={
                 "largest_episode_size": largest,
                 "canonical_episode_count": episode_total,
-                "growth_since_last_run": (
-                    largest - prev_largest if prev_largest is not None else None
-                ),
+                "episodes_over_threshold": over_now,
+                "threshold_rows": _TL004_EPISODE_ROWS_MAX,
+                "growth_since_last_run": growth,
+                "new_episodes_over_threshold": new_over,
                 **metrics,
             },
         )

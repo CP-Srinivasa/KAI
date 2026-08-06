@@ -624,6 +624,27 @@ def test_truth_lint_warning_reads_degraded() -> None:
     assert "Status DEGRADED" in msg
 
 
+def test_truth_lint_info_only_reads_ok_but_discloses_findings() -> None:
+    """TL-004/TL-008-Zweiteilung (Audit 2026-08-06): nur eingefrorene
+    Alt-Befunde ⇒ Status NICHT degraded, Befunde bleiben wörtlich sichtbar."""
+    msg = _compose(
+        truth_lint={
+            "violations": [
+                {"invariant_id": "TL-004", "severity": "INFO", "message": "eingefroren"},
+                {"invariant_id": "TL-008", "severity": "INFO", "message": "legacy"},
+            ],
+            "max_severity": "INFO",
+            "registry_active": 6,
+            "registry_total": 12,
+        }
+    )
+    assert "Status DEGRADED" not in msg
+    assert "eingefrorene Alt-Befunde offengelegt" in msg
+    assert "2 Verletzung(en)" in msg
+    assert "TL-004" in msg
+    assert "TL-008" in msg
+
+
 def test_collect_truth_lint_reads_last_run(tmp_path: Path) -> None:
     p = tmp_path / "truth_lint_report.jsonl"
     p.write_text(
