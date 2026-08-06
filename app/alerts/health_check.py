@@ -53,6 +53,16 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     "source_confluence_audit.jsonl": 1500,
     "ph5_feature_analysis.json": 1500,
     "source_reliability.json": 1500,  # lives in monitor/, not artifacts/
+    # Truth-Kette (Voll-Audit 2026-08-06, Blindstelle #2): kai-truth-anchor
+    # (04:35 UTC) + kai-canonical-edge-attest (06:20 UTC) schreiben mindestens
+    # täglich. 2880 min = 2× legitime Stille — ein still scheiternder Anchor
+    # fiel bisher NIEMANDEM auf (kein Digest-/Probe-Konsument).
+    "attestation_ledger.jsonl": 2880,
+    # Outcome-/Shadow-Streams (Blindstelle #6): ereignisgetrieben — genau die
+    # Streams, auf denen TL-004/TL-008/TL-012 rechnen. Ein toter Writer sah
+    # für den Lint wie ein sauberes System aus. 3 Tage Toleranz.
+    "alert_outcomes.jsonl": 4320,
+    "shadow_candidate_ledger.jsonl": 4320,
 }
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
@@ -152,7 +162,37 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             "source_reliability_recalc",
             False,
         ),
+        # Truth-Observability (Voll-Audit 2026-08-06, WP7): required=False —
+        # Staleness greift erst, wenn die Datei existiert (fresh checkout
+        # stolpert nicht); auf dem Pi existieren alle drei.
+        (
+            adir / "truth" / "attestation_ledger.jsonl",
+            "attestation_ledger.jsonl",
+            "truth_anchor",
+            False,
+        ),
+        (adir / "alert_outcomes.jsonl", "alert_outcomes.jsonl", "outcome_writer", False),
+        (
+            adir / "shadow_candidate_ledger.jsonl",
+            "shadow_candidate_ledger.jsonl",
+            "shadow_writer",
+            False,
+        ),
     ]
+    # Prä-Reg-Ledger (Blindstelle #5): NUR Existenz, keine mtime-Schwelle —
+    # Prä-Regs dürfen Wochen legitim ruhen (Stille ≠ Defekt), aber ein
+    # VERSCHWUNDENES Ledger ist ein Wahrheitsverlust. Armiert nur, wenn
+    # artifacts/research/ existiert (Pi-Realität; Tests/fresh checkout nicht).
+    prereg_path = adir / "research" / "prereg_ledger.jsonl"
+    if (adir / "research").is_dir() and not prereg_path.exists():
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_ledger_presence",
+                message=f"prereg_ledger.jsonl does not exist at {prereg_path}",
+            )
+        )
+        stale = True
     for path, fname, component, required in files_to_check:
         if not path.exists():
             if not required:
