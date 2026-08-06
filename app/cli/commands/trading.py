@@ -3398,6 +3398,7 @@ def trading_source_intelligence(
 # auf trading_app — eigene Module, damit weder diese Datei noch der God-File
 # app/cli/main.py wächst.
 from app.cli.commands import (  # noqa: E402,F401
+    forecaster_cli,
     quote_evals_cli,
     research_verdicts,
     truth_compliance,
