@@ -24,8 +24,16 @@ from dataclasses import dataclass
 
 from app.learning.source_reliability import wilson_lower_bound
 
-_DEFAULT_MIN_CLOSES = 5
-_DEFAULT_WILSON_FLOOR = 0.5
+# B4 (Plan 08-08, PR-3): Bei min_closes=5 + floor=0.5 war der Wilson-Arm nur
+# mit 100 % Trefferquote passierbar (LB(5/5)=0.566, LB(4/5)=0.376) — de facto
+# entschied allein net_pnl>0, die versprochene Zwei-Arm-Absicherung war keine.
+# Herleitung: Break-even-WR bei gemessenem Payoff 1,7 ist 1/(1+1,7)=0,37;
+# floor=0.35 liegt knapp darunter, min_closes=8 gibt dem Intervall genug n:
+# LB(6/8)=0.409 passiert, LB(5/8)=0.306 nicht (empirisch gegen
+# wilson_lower_bound verifiziert). Endgültige Werte werden mit der Prä-Reg
+# rotation_gated_universe_v1 versiegelt (Phase F).
+_DEFAULT_MIN_CLOSES = 8
+_DEFAULT_WILSON_FLOOR = 0.35
 
 
 @dataclass(frozen=True)

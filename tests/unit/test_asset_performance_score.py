@@ -85,3 +85,41 @@ class TestEvaluateAsset:
         hi = evaluate_asset(_stats("A/USDT", -1.0, 20, 12), min_closes=5, wilson_floor=0.8)
         assert lo.wilson_ok is True
         assert hi.wilson_ok is False
+
+
+# ── B4 (Plan 08-08, PR-3): Wilson-Arm real erreichbar ────────────────────────
+# Alt (min_closes=5, floor=0.5): LB(5/5)=0.566 war der EINZIGE passierbare
+# Fall — der Zwei-Arm-Trigger degenerierte zum Ein-Arm net_pnl>0.
+
+
+def _stats_b4(net: float, closes: int, wins: int):
+    from app.learning.asset_performance_score import AssetWindowStats
+
+    return AssetWindowStats(symbol="X/USDT", net_pnl_usd=net, closes=closes, wins=wins)
+
+
+def test_wilson_arm_passable_below_100_percent() -> None:
+    from app.learning.asset_performance_score import evaluate_asset
+
+    # 6/8 bei negativem PnL: Wilson-Arm (LB 0.409 >= 0.35) rettet -> healthy.
+    v = evaluate_asset(_stats_b4(net=-5.0, closes=8, wins=6))
+    assert v.wilson_ok is True
+    assert v.healthy is True
+    assert v.weak is False
+
+
+def test_five_of_eight_fails_wilson_and_negative_pnl_is_weak() -> None:
+    from app.learning.asset_performance_score import evaluate_asset
+
+    # 5/8 (LB 0.306 < 0.35) + negativer PnL: beide Arme scheitern -> weak.
+    v = evaluate_asset(_stats_b4(net=-5.0, closes=8, wins=5))
+    assert v.wilson_ok is False
+    assert v.weak is True
+
+
+def test_below_min_closes_is_insufficient() -> None:
+    from app.learning.asset_performance_score import evaluate_asset
+
+    v = evaluate_asset(_stats_b4(net=-5.0, closes=7, wins=1))
+    assert v.sufficient is False
+    assert v.weak is False  # Unreife ist kein Verdikt (Doktrin)
