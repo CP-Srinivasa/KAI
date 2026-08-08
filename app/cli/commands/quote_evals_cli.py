@@ -20,6 +20,7 @@ from app.cli.commands.trading import console, trading_app
 from app.research.prereg_ledger import DEFAULT_PREREG_LEDGER_PATH
 from app.research.quote_evals import (
     EXEC_TRANSLATION_PREREG_ID,
+    HIT_TO_WIN_V2_PREREG_ID,
     TECH_PRECISION_PREREG_ID,
 )
 
@@ -109,3 +110,43 @@ def trading_exec_translation_eval(
     )
     result["prereg_id"] = prereg_id
     _emit(result, as_json=as_json)
+
+
+@trading_app.command("hit-to-win-eval")
+def trading_hit_to_win_eval(
+    prereg_id: str = typer.Option(HIT_TO_WIN_V2_PREREG_ID, "--prereg-id"),
+    outcomes_path: str = typer.Option(_DEFAULT_OUTCOMES, "--outcomes-path"),
+    exec_audit_path: str = typer.Option(_DEFAULT_EXEC_AUDIT, "--exec-audit-path"),
+    ledger_path: str = typer.Option(str(DEFAULT_PREREG_LEDGER_PATH), "--ledger-path"),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+) -> None:
+    """H2-Nachfolger: wird ein bestätigt richtiges Signal zu einem Gewinn-Trade?
+
+    Gate ``26d3e0eb29f553f3`` (n≥30, p_positive≥0,90, Frist 2026-09-22 ⇒
+    INCONCLUSIVE_BY_TIMEOUT). Gatend ist NUR die hit-Konversion; die
+    ``diagnostics`` (miss-Seite, Trennschärfe, Konkordanz) und die
+    Populationslücke nach ``signal_source`` sind pflicht-ausgewiesen, aber
+    urteilen nicht mit. Kein Verdikt — das fällt ``prereg-check``.
+    """
+    from app.research.quote_evals import evaluate_hit_to_win_conversion
+
+    entry = _load_entry(ledger_path, prereg_id)
+    horizon_s = int((entry.gate or {}).get("horizon_s", 86400))
+    result = evaluate_hit_to_win_conversion(
+        outcomes_path=Path(outcomes_path),
+        exec_audit_path=Path(exec_audit_path),
+        registered_at_utc=entry.created_at_utc,
+        horizon_s=horizon_s,
+    )
+    result["prereg_id"] = prereg_id
+    if as_json:
+        print(json.dumps(result, indent=2))
+        return
+    _emit(result, as_json=False)
+    diag = result["diagnostics"]
+    console.print(
+        f"  [dim]diagnostisch (gatet NICHT):[/dim] cells={diag['cells']} "
+        f"win_rate_hit={diag['win_rate_hit']} win_rate_miss={diag['win_rate_miss']} "
+        f"discrimination_pp={diag['discrimination_pp']} "
+        f"concordance={diag['concordance_rate']} (n={diag['concordance_n']})"
+    )
