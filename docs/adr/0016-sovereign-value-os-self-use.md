@@ -18,6 +18,15 @@ Der Operator hat eine Neupositionierung vorgelegt: Der wertvollste Teil von KAI 
 
 Hinzu kommt ein Befund, der die Ausgangslage verändert (siehe „Nachfragelage").
 
+### Technischer Zwischenstand (neutral)
+
+Die bis einschließlich PR-C live geschaltete Welle-0-Geldpfad-Härtung ist
+ausschließlich Betriebssicherheitsarbeit am bestehenden Self-Use-System. Sie ist
+weder Annahme dieses DRAFTs noch Freigabe von Welle 1, Arming/Kapital oder einer
+Dritt-Schnittstelle und zählt nicht als Demand-Evidenz. Maßgeblich für den
+operativen Iststand bleiben Code, Runbooks und attestierte Live-Nachweise — nicht
+dieses ADR; dessen Status und Operator-Entscheid bleiben davon unberührt.
+
 ## Entscheidung (vorgeschlagen)
 
 **KAI wird als souveränes Value-OS ausgebaut — ausschließlich in der Self-Use-Form.**
