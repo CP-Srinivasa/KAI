@@ -146,3 +146,89 @@ class TestRotationPolicy:
         assert d.target is None
         assert d.reason == "insufficient_hold"
         assert d.flagged_runs == 1
+
+
+# ── B3 (Plan 08-08, PR-2): Hysterese zählt Evidenz, nicht Timer-Ticks ────────
+# Der Shadow-Lauf rechnet jeden Tick über DIESELBEN letzten 200 Closes: ohne
+# neue Trades kletterte flagged_runs pro Kalendertag und archivierte Symbole
+# nach 3 ruhigen Tagen auf Basis von null neuer Evidenz. archived war zudem
+# eine Einbahnstraße (kein Pfad zurück).
+
+
+def _weak_verdict():
+    from app.learning.asset_performance_score import AssetVerdict
+
+    return AssetVerdict(
+        symbol="X/USDT",
+        closes=8,
+        sufficient=True,
+        net_pnl_usd=-10.0,
+        pnl_positive=False,
+        wilson_lb=0.1,
+        wilson_ok=False,
+        healthy=False,
+        weak=True,
+    )
+
+
+def _healthy_verdict():
+    from app.learning.asset_performance_score import AssetVerdict
+
+    return AssetVerdict(
+        symbol="X/USDT",
+        closes=8,
+        sufficient=True,
+        net_pnl_usd=25.0,
+        pnl_positive=True,
+        wilson_lb=0.8,
+        wilson_ok=True,
+        healthy=True,
+        weak=False,
+    )
+
+
+def test_weak_without_new_evidence_freezes_counter() -> None:
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_policy import decide_asset_rotation
+
+    d = decide_asset_rotation(
+        AssetStatus.ACTIVE,
+        _weak_verdict(),
+        pinned=False,
+        prior_flagged_runs=1,
+        has_new_evidence=False,
+    )
+    assert d.target is None
+    assert d.flagged_runs == 1  # eingefroren, NICHT inkrementiert
+    assert d.reason == "weak_no_new_evidence_hold"
+
+
+def test_weak_with_new_evidence_still_increments() -> None:
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_policy import decide_asset_rotation
+
+    d = decide_asset_rotation(
+        AssetStatus.ACTIVE,
+        _weak_verdict(),
+        pinned=False,
+        prior_flagged_runs=1,
+        has_new_evidence=True,
+    )
+    assert d.target is AssetStatus.ROTATION_FLAGGED
+    assert d.flagged_runs == 2
+
+
+def test_archived_with_healthy_verdict_proposes_candidate_rearm() -> None:
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_policy import decide_asset_rotation
+
+    d = decide_asset_rotation(
+        AssetStatus.ARCHIVED,
+        _healthy_verdict(),
+        pinned=False,
+        prior_flagged_runs=3,
+        has_new_evidence=True,
+    )
+    assert d.target is AssetStatus.CANDIDATE
+    assert d.reason == "rearm_healthy"
+    assert d.flagged_runs == 0

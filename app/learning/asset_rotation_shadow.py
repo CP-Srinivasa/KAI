@@ -28,6 +28,10 @@ _DEFAULT_WILSON_FLOOR = 0.5
 class AssetRotationState:
     status: AssetStatus
     flagged_runs: int
+    # B3 (Plan 08-08): Close-Zähler des Symbols beim letzten Lauf — nur wenn er
+    # sich ändert, liegt neue Evidenz vor und der weak-Zähler darf klettern.
+    # 0 = Legacy-State ohne Feld (erster Lauf nach Deploy zählt als Evidenz).
+    last_evaluated_close_count: int = 0
 
 
 def evaluate_rotations(
@@ -54,17 +58,21 @@ def evaluate_rotations(
             wilson_floor=wilson_floor,
         )
         prior = prior_state.get(symbol, AssetRotationState(AssetStatus.PROBATION, 0))
+        # B3: Evidenz = der Close-Zähler des Fensters hat sich seit dem letzten
+        # Lauf bewegt. Gleicher Zähler ⇒ dasselbe Datenfenster ⇒ Hysterese friert.
+        has_new_evidence = closes != prior.last_evaluated_close_count
         decision = decide_asset_rotation(
             prior.status,
             verdict,
             pinned=(prior.status == AssetStatus.PINNED),
             prior_flagged_runs=prior.flagged_runs,
+            has_new_evidence=has_new_evidence,
         )
         if decision.target is not None and can_transition(prior.status, decision.target):
             next_status = decision.target
         else:
             next_status = prior.status
-        new_state[symbol] = AssetRotationState(next_status, decision.flagged_runs)
+        new_state[symbol] = AssetRotationState(next_status, decision.flagged_runs, closes)
         wilson_lb = round(verdict.wilson_lb, 4) if verdict.wilson_lb is not None else None
         verdict_label = "healthy" if verdict.healthy else "weak" if verdict.weak else "insufficient"
         decisions.append(
@@ -108,7 +116,11 @@ def load_state(path: Path) -> dict[str, AssetRotationState]:
             flagged = int(entry.get("flagged_runs", 0))
         except (TypeError, ValueError):
             flagged = 0
-        out[str(symbol)] = AssetRotationState(status, max(0, flagged))
+        try:
+            last_count = int(entry.get("last_evaluated_close_count", 0))
+        except (TypeError, ValueError):
+            last_count = 0
+        out[str(symbol)] = AssetRotationState(status, max(0, flagged), max(0, last_count))
     return out
 
 
@@ -116,7 +128,11 @@ def save_state(path: Path, state: Mapping[str, AssetRotationState]) -> None:
     """Persist the per-symbol rotation state atomically-ish (write then replace)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        symbol: {"status": st.status.value, "flagged_runs": st.flagged_runs}
+        symbol: {
+            "status": st.status.value,
+            "flagged_runs": st.flagged_runs,
+            "last_evaluated_close_count": st.last_evaluated_close_count,
+        }
         for symbol, st in state.items()
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
