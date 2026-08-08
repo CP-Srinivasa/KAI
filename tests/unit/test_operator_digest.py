@@ -13,6 +13,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import operator_digest as od  # noqa: E402
@@ -720,3 +722,107 @@ def test_collect_truth_lint_reads_last_run(tmp_path: Path) -> None:
     got = od.collect_truth_lint(p)
     assert got is not None and got["ts_utc"] == "2"
     assert od.collect_truth_lint(tmp_path / "missing.jsonl") is None
+
+
+# ── Paper-24h: Tier-Gewinne sichtbar + TL-003-fail-closed (Plan 08-08, PR-1) ─
+# Getierte Multi-Target-Gewinner enden als position_partial_closed (der letzte
+# Tier schliesst die Restmenge dort) — der Digest zaehlte nur position_closed:
+# Verluste voll, getierte Gewinne unsichtbar. Und: Fallback auf KUMULATIVES
+# realized_pnl_usd war die TL-003-Falle (in paper_quality_snapshot laengst
+# gefixt, hier noch offen).
+
+
+def _write_audit(tmp_path: Path, rows: list[dict]) -> None:
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+
+def test_paper_fills_24h_counts_partial_closes_and_their_pnl(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+    ts = now.isoformat()
+    monkeypatch.setattr(od, "_ARTIFACTS", tmp_path)
+    _write_audit(
+        tmp_path,
+        [
+            # Tier-Leiter: 2 Teil-Gewinne + finaler Tier-Close als partial.
+            {
+                "event_type": "position_partial_closed",
+                "symbol": "ETH/USDT",
+                "signal_source": "telegram_premium_channel_approved",
+                "trade_pnl_usd": 5.0,
+                "timestamp_utc": ts,
+            },
+            {
+                "event_type": "position_partial_closed",
+                "symbol": "ETH/USDT",
+                "signal_source": "telegram_premium_channel_approved",
+                "trade_pnl_usd": 3.0,
+                "timestamp_utc": ts,
+            },
+            # SL-Vollclose derselben Quelle.
+            {
+                "event_type": "position_closed",
+                "symbol": "BTC/USDT",
+                "signal_source": "telegram_premium_channel_approved",
+                "trade_pnl_usd": -4.0,
+                "timestamp_utc": ts,
+            },
+        ],
+    )
+    out = od.collect_paper_fills_24h(now=now)
+    b = out["telegram_premium_channel_approved"]
+    assert b["closes"] == 1
+    assert b["partial_closes"] == 2
+    assert b["pnl_usd"] == pytest.approx(4.0)  # 5 + 3 - 4 — Gewinne nicht mehr unsichtbar
+
+
+def test_paper_fills_24h_never_uses_cumulative_realized_pnl(tmp_path, monkeypatch) -> None:
+    """TL-003: Zeile ohne trade_pnl_usd darf NIE mit dem kumulativen
+    realized_pnl_usd einfliessen — sichtbar zaehlen statt still verfaelschen."""
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(od, "_ARTIFACTS", tmp_path)
+    _write_audit(
+        tmp_path,
+        [
+            {
+                "event_type": "position_closed",
+                "symbol": "BTC/USDT",
+                "signal_source": "real_analysis",
+                "realized_pnl_usd": 1977.92,  # kumulativ — Gift
+                "timestamp_utc": now.isoformat(),
+            }
+        ],
+    )
+    out = od.collect_paper_fills_24h(now=now)
+    b = out["real_analysis"]
+    assert b["pnl_usd"] == pytest.approx(0.0)
+    assert b["rows_missing_trade_pnl"] == 1
+    assert b["closes"] == 1
+
+
+def test_compose_renders_partial_closes_and_missing_pnl_warning() -> None:
+    msg = _compose(
+        fills_by_source={
+            "telegram_premium_channel_approved": {
+                "fills": 1,
+                "closes": 1,
+                "partial_closes": 2,
+                "pnl_usd": 4.0,
+                "rows_missing_trade_pnl": 0,
+            },
+            "real_analysis": {
+                "fills": 0,
+                "closes": 1,
+                "partial_closes": 0,
+                "pnl_usd": 0.0,
+                "rows_missing_trade_pnl": 1,
+            },
+        }
+    )
+    assert "+2 Teil" in msg
+    assert "ohne trade_pnl" in msg

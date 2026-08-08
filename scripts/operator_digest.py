@@ -259,27 +259,47 @@ def collect_paper_fills_24h(now: datetime | None = None) -> dict[str, dict[str, 
             by_document.setdefault(doc, src)
     for r in rows:
         et = r.get("event_type")
-        if et not in ("order_filled", "position_closed"):
+        # PR-1 (Plan 08-08): position_partial_closed MUSS mitzaehlen — getierte
+        # Multi-Target-Gewinner enden dort (der letzte Tier schliesst die
+        # Restmenge als partial); nur-position_closed machte Tier-Gewinne
+        # unsichtbar, waehrend SL-Verluste voll zaehlten.
+        if et not in ("order_filled", "position_closed", "position_partial_closed"):
             continue
         ts = _parse_ts(r.get("timestamp_utc"))
         if ts is None or ts < cutoff:
             continue
         src = _attribute_paper_row(r, et, labels, by_document)
-        b = by_source.setdefault(src, {"fills": 0, "closes": 0, "pnl_usd": 0.0})
+        b = by_source.setdefault(
+            src,
+            {
+                "fills": 0,
+                "closes": 0,
+                "partial_closes": 0,
+                "pnl_usd": 0.0,
+                "rows_missing_trade_pnl": 0,
+            },
+        )
         if et == "order_filled":
             side = str(r.get("side") or "").lower()
             pos = str(r.get("position_side") or "long").lower()
             if (side == "buy" and pos == "long") or (side == "sell" and pos == "short"):
                 b["fills"] += 1
         else:
-            b["closes"] += 1
-            for key in ("trade_pnl_usd", "realized_pnl_usd"):
-                if r.get(key) is not None:
-                    try:
-                        b["pnl_usd"] += float(r[key])
-                    except (TypeError, ValueError):
-                        pass
-                    break
+            if et == "position_closed":
+                b["closes"] += 1
+            else:
+                b["partial_closes"] += 1
+            # TL-003 fail-closed: NUR das per-Trade-Feld zaehlt. realized_pnl_usd
+            # ist KUMULATIV (Legacy-Alias des Portfoliostands) — der alte
+            # Fallback addierte Portfoliostaende als Trade-PnL. Fehlende Zeilen
+            # werden sichtbar gezaehlt statt still verfaelscht (Muster #614).
+            if r.get("trade_pnl_usd") is not None:
+                try:
+                    b["pnl_usd"] += float(r["trade_pnl_usd"])
+                except (TypeError, ValueError):
+                    b["rows_missing_trade_pnl"] += 1
+            else:
+                b["rows_missing_trade_pnl"] += 1
     return by_source
 
 
@@ -655,14 +675,23 @@ def compose_digest_message(
         route_str = ", ".join(routes) if routes else "keine Route offen"
         lines.append(f"⚙️ *Modus:* {mode} · offen: {route_str}")
 
-    # Paper-Lernströme 24h.
+    # Paper-Lernströme 24h (inkl. Teil-Closes — Tier-Gewinne, PR-1 Plan 08-08).
     if fills_by_source:
         parts = []
+        missing_total = 0
         for src, b in sorted(fills_by_source.items()):
             pnl = b.get("pnl_usd", 0.0)
-            pnl_str = f", PnL {pnl:+.0f}$" if b.get("closes") else ""
-            parts.append(f"{src}: {b.get('fills', 0)} Fills/{b.get('closes', 0)} Closes{pnl_str}")
-        lines.append("📒 *Paper 24h:* " + " · ".join(parts))
+            partials = b.get("partial_closes", 0)
+            missing_total += b.get("rows_missing_trade_pnl", 0)
+            closes_str = f"{b.get('closes', 0)} Closes"
+            if partials:
+                closes_str += f"(+{partials} Teil)"
+            pnl_str = f", PnL {pnl:+.0f}$" if (b.get("closes") or partials) else ""
+            parts.append(f"{src}: {b.get('fills', 0)} Fills/{closes_str}{pnl_str}")
+        line = "📒 *Paper 24h:* " + " · ".join(parts)
+        if missing_total:
+            line += f" · ⚠️ {missing_total} Zeile(n) ohne trade_pnl_usd (nicht gezählt)"
+        lines.append(line)
     else:
         lines.append("📒 *Paper 24h:* keine Fills/Closes")
 

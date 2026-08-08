@@ -777,3 +777,38 @@ def test_row_without_exit_price_is_never_quarantined():
     kept, excl = parse_closed_trades_with_exclusions(events)
     assert kept == []  # dropped as invalid
     assert excl.excluded_count == 0  # NOT a quarantine drop
+
+
+# ── PR-1 (Plan 08-08): Teil-Closes sichtbar ausweisen, Population unverändert ─
+def test_partial_closes_tallied_additively_without_touching_population() -> None:
+    from app.observability.edge_report import parse_closed_trades_with_exclusions
+
+    events = [
+        {
+            "event_type": "position_closed",
+            "symbol": "BTC/USDT",
+            "position_side": "long",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "quantity": 1.0,
+            "timestamp_utc": "2026-08-08T10:00:00+00:00",
+        },
+        {
+            "event_type": "position_partial_closed",
+            "symbol": "ETH/USDT",
+            "trade_pnl_usd": 5.0,
+            "timestamp_utc": "2026-08-08T10:01:00+00:00",
+        },
+        {
+            "event_type": "position_partial_closed",
+            "symbol": "ETH/USDT",
+            "timestamp_utc": "2026-08-08T10:02:00+00:00",
+        },
+    ]
+    trades, excl = parse_closed_trades_with_exclusions(events)
+    # Kanonische RT-Population UNVERÄNDERT (Konstruktion!):
+    assert len(trades) == 1
+    d = excl.to_dict()
+    assert d["partial_closed_count"] == 2
+    assert d["partial_closed_pnl_usd"] == 5.0  # fail-closed: nur trade_pnl_usd
+    assert d["partial_closed_missing_pnl"] == 1
