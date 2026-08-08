@@ -1036,11 +1036,22 @@ class QuarantineExclusion:
 
     excluded_count: int
     reasons: dict[str, int]  # reason -> count
+    # PR-1 (Plan 08-08), additiv: Teil-Closes (TP-Tier-Leiter endet als
+    # position_partial_closed) gehoeren NICHT in die kanonische RT-Population
+    # (Konstruktion unveraendert!), aber der Leser muss sehen, was die
+    # RT-Statistik nicht enthaelt — sonst sind getierte Gewinne unsichtbar,
+    # waehrend SL-Vollverluste voll zaehlen. PnL fail-closed: nur trade_pnl_usd.
+    partial_closed_count: int = 0
+    partial_closed_pnl_usd: float = 0.0
+    partial_closed_missing_pnl: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "excluded_count": self.excluded_count,
             "reasons": dict(sorted(self.reasons.items())),
+            "partial_closed_count": self.partial_closed_count,
+            "partial_closed_pnl_usd": round(self.partial_closed_pnl_usd, 2),
+            "partial_closed_missing_pnl": self.partial_closed_missing_pnl,
         }
 
 
@@ -1083,8 +1094,24 @@ def parse_closed_trades_with_exclusions(
             ).astimezone(UTC)
         except ValueError:
             cutoff_dt = None
+    partial_count = 0
+    partial_pnl = 0.0
+    partial_missing = 0
     for ev in events:
         if ev.get("event_type") != "position_closed":
+            # PR-1: Teil-Closes additiv tallien (Population bleibt unveraendert;
+            # Voll-Oekonomie rechnet weiterhin churn_report). Fail-closed: nur
+            # trade_pnl_usd, fehlend wird sichtbar gezaehlt.
+            if ev.get("event_type") == "position_partial_closed":
+                partial_count += 1
+                raw_pnl = ev.get("trade_pnl_usd")
+                if raw_pnl is None:
+                    partial_missing += 1
+                else:
+                    try:
+                        partial_pnl += float(raw_pnl)
+                    except (TypeError, ValueError):
+                        partial_missing += 1
             continue
         try:
             entry = float(ev["entry_price"])
@@ -1151,7 +1178,13 @@ def parse_closed_trades_with_exclusions(
                 document_id=str(ev.get("document_id") or ev.get("source_id") or ""),
             )
         )
-    return out, QuarantineExclusion(excluded_count=excluded, reasons=dict(reasons))
+    return out, QuarantineExclusion(
+        excluded_count=excluded,
+        reasons=dict(reasons),
+        partial_closed_count=partial_count,
+        partial_closed_pnl_usd=partial_pnl,
+        partial_closed_missing_pnl=partial_missing,
+    )
 
 
 def parse_closed_trades(events: Iterable[dict[str, Any]]) -> list[ClosedTrade]:
