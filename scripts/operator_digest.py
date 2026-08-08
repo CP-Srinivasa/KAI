@@ -438,6 +438,63 @@ def collect_truth_anchor(
         return None
 
 
+def collect_asset_rotation(
+    state_path: Path | None = None, shadow_path: Path | None = None
+) -> dict[str, Any] | None:
+    """Asset-Rotation-Lage (read-only, fail-soft): Status-Verteilung + letzter Lauf.
+
+    PR-5 (Plan 08-08): Die Rotation bewertete täglich und war für den Operator
+    komplett unsichtbar (kein Digest, kein Dashboard, keine Freshness) — genau
+    so blieb 'Diagnose ohne Wirkung' wochenlang unbemerkt."""
+    try:
+        sp = state_path or (_ARTIFACTS / "asset_rotation_state.json")
+        if not sp.exists():
+            return {"available": False}
+        raw = json.loads(sp.read_text(encoding="utf-8"))
+        dist: dict[str, int] = {}
+        if isinstance(raw, dict):
+            for entry in raw.values():
+                if isinstance(entry, dict):
+                    status = str(entry.get("status") or "?")
+                    dist[status] = dist.get(status, 0) + 1
+        last = _read_jsonl_tail(shadow_path or (_ARTIFACTS / "asset_rotation_shadow.jsonl"), 2)
+        last_run = last[-1] if last else {}
+        return {
+            "available": True,
+            "symbols": sum(dist.values()),
+            "distribution": dict(sorted(dist.items())),
+            "last_run_ts": last_run.get("ts"),
+            "last_run_evaluated": last_run.get("evaluated"),
+            "last_run_changes": last_run.get("changes"),
+        }
+    except Exception:  # noqa: BLE001 — Digest darf nie am Collector sterben
+        return None
+
+
+def collect_rotation_gate_24h(now: datetime | None = None) -> dict[str, int]:
+    """rotation_gate_*-Audit-Zähler der letzten 24 h (PR-4-Events, fail-soft {}).
+
+    would_block = Counterfactual (shadow bzw. Route außerhalb des Enforce-
+    Scopes, z. B. die H1-versiegelte technical_paper-Route), block = real
+    verhindert, unattributed = archived-Öffnung ohne auflösbare Quelle."""
+    now_utc = now or datetime.now(UTC)
+    cutoff = now_utc - timedelta(hours=24)
+    counts: dict[str, int] = {}
+    try:
+        for r in _read_jsonl_tail(_ARTIFACTS / "paper_execution_audit.jsonl"):
+            et = str(r.get("event_type") or "")
+            if not et.startswith("rotation_gate_"):
+                continue
+            ts = _parse_ts(r.get("timestamp_utc"))
+            if ts is None or ts < cutoff:
+                continue
+            key = f"{et.removeprefix('rotation_gate_')}:{r.get('route') or '?'}"
+            counts[key] = counts.get(key, 0) + 1
+    except Exception:  # noqa: BLE001
+        return {}
+    return counts
+
+
 def collect_d227() -> dict[str, Any]:
     try:
         from app.alerts.blocked_outcome_report import build_blocked_outcome_report
@@ -655,6 +712,8 @@ def compose_digest_message(
     v5_verdict: dict[str, Any] | None = None,
     truth_lint: dict[str, Any] | None = None,
     truth_anchor: dict[str, Any] | None = None,
+    asset_rotation: dict[str, Any] | None = None,
+    rotation_gate_24h: dict[str, int] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Testbar.
 
@@ -823,6 +882,23 @@ def compose_digest_message(
             f"⚓ *Truth-Anchor:* seq {truth_anchor.get('tip_seq')} "
             f"({truth_anchor.get('records')} Records) · {ta_chain} · {ta_anchor}"
         )
+
+    # Asset-Rotation (PR-5, Plan 08-08): Diagnose war wochenlang unsichtbar.
+    if asset_rotation is not None:
+        if not asset_rotation.get("available"):
+            lines.append("🔄 *Asset-Rotation:* kein State (Shadow-Lauf nie gelaufen?)")
+        else:
+            dist = asset_rotation.get("distribution") or {}
+            dist_str = " · ".join(f"{k}: {v}" for k, v in dist.items()) or "leer"
+            lines.append(
+                f"🔄 *Asset-Rotation:* {asset_rotation.get('symbols', 0)} Symbole ({dist_str})"
+                f" · letzter Lauf {str(asset_rotation.get('last_run_ts') or '?')[:16]}"
+                f" ({asset_rotation.get('last_run_changes', '?')} Änderungen)"
+            )
+        gate = rotation_gate_24h or {}
+        if gate:
+            top = sorted(gate.items(), key=lambda kv: -kv[1])[:4]
+            lines.append("🚧 *Rotation-Gate 24h:* " + " · ".join(f"{k}: {n}" for k, n in top))
 
     # V5-Evidence-Frische.
     fund_age, oi_age = v5_freshness.get("funding"), v5_freshness.get("oi")
@@ -1055,6 +1131,8 @@ def main(argv: list[str] | None = None) -> int:
             v5_verdict=collect_v5_verdict(),
             truth_lint=collect_truth_lint(),
             truth_anchor=collect_truth_anchor(),
+            asset_rotation=collect_asset_rotation(),
+            rotation_gate_24h=collect_rotation_gate_24h(),
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")
