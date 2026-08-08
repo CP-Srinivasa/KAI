@@ -63,6 +63,11 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # für den Lint wie ein sauberes System aus. 3 Tage Toleranz.
     "alert_outcomes.jsonl": 4320,
     "shadow_candidate_ledger.jsonl": 4320,
+    # Asset-Rotation (Plan 08-08, PR-5): Shadow-Timer läuft täglich (24 h +
+    # OnBootSec/RandomizedDelay). 1560 min = 26 h — stirbt der Writer, wird die
+    # Rotation sonst wieder unsichtbar leer laufen wie vor dem Voll-Audit.
+    "asset_rotation_shadow.jsonl": 1560,
+    "asset_rotation_state.json": 1560,
     # Lightning-Reconciliation (PR-D/T6b, live seit 2026-08-08): der Timer
     # laeuft alle 15 min und schreibt JEDEN Lauf eine Reportzeile — auch den
     # Leerlauf ohne offene Intents. 45 min = 3 verpasste Laeufe, also klar
@@ -182,6 +187,20 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             adir / "shadow_candidate_ledger.jsonl",
             "shadow_candidate_ledger.jsonl",
             "shadow_writer",
+            False,
+        ),
+        # Asset-Rotation (Plan 08-08, PR-5): required=False — fresh checkout
+        # stolpert nicht; auf dem Pi existieren beide seit G1.
+        (
+            adir / "asset_rotation_shadow.jsonl",
+            "asset_rotation_shadow.jsonl",
+            "asset_rotation",
+            False,
+        ),
+        (
+            adir / "asset_rotation_state.json",
+            "asset_rotation_state.json",
+            "asset_rotation_state",
             False,
         ),
         # Geldpfad-Integritaet (PR-D/T6b): der Reconcile-Timer war der erste

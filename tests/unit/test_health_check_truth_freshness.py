@@ -127,3 +127,18 @@ def test_fresh_reconciliation_report_is_clean(tmp_path: Path) -> None:
     _age(report, 20)  # ein verpasster Lauf ist noch kein Alarm
     issues, _ = _check_data_freshness(tmp_path, NOW)
     assert not any(i.component == "ln_reconcile_freshness" for i in issues)
+
+
+def test_stale_asset_rotation_artifacts_are_flagged(tmp_path: Path) -> None:
+    """PR-5 (Plan 08-08): stirbt der tägliche Rotation-Shadow-Writer, muss die
+    Probe es melden — sonst läuft die Rotation wieder unsichtbar leer."""
+    _base(tmp_path)
+    shadow = tmp_path / "asset_rotation_shadow.jsonl"
+    state = tmp_path / "asset_rotation_state.json"
+    shadow.write_text("{}\n", encoding="utf-8")
+    state.write_text("{}", encoding="utf-8")
+    _age(shadow, 1700)  # > 1560 min
+    _age(state, 1700)
+    issues, _ = _check_data_freshness(tmp_path, NOW)
+    assert any(i.component == "asset_rotation_freshness" for i in issues)
+    assert any(i.component == "asset_rotation_state_freshness" for i in issues)

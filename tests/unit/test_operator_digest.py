@@ -826,3 +826,87 @@ def test_compose_renders_partial_closes_and_missing_pnl_warning() -> None:
     )
     assert "+2 Teil" in msg
     assert "ohne trade_pnl" in msg
+
+
+# ── Asset-Rotation-Sichtbarkeit (Plan 08-08, PR-5) ───────────────────────────
+# Die Rotation bewertete täglich und war für den Operator KOMPLETT unsichtbar
+# (kein Digest, keine Freshness) — „Diagnose ohne Wirkung" blieb wochenlang
+# unbemerkt.
+
+
+def test_collect_asset_rotation_reads_state_and_last_run(tmp_path: Path) -> None:
+    state = tmp_path / "asset_rotation_state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "A/USDT": {"status": "active", "flagged_runs": 0},
+                "B/USDT": {"status": "archived", "flagged_runs": 3},
+                "C/USDT": {"status": "archived", "flagged_runs": 4},
+            }
+        ),
+        encoding="utf-8",
+    )
+    shadow = tmp_path / "asset_rotation_shadow.jsonl"
+    shadow.write_text(
+        json.dumps({"ts": "2026-08-08T13:41:00+00:00", "evaluated": 39, "changes": 2}) + "\n",
+        encoding="utf-8",
+    )
+    got = od.collect_asset_rotation(state_path=state, shadow_path=shadow)
+    assert got is not None and got["available"] is True
+    assert got["symbols"] == 3
+    assert got["distribution"] == {"active": 1, "archived": 2}
+    assert got["last_run_changes"] == 2
+    missing = od.collect_asset_rotation(state_path=tmp_path / "nope.json", shadow_path=shadow)
+    assert missing == {"available": False}
+
+
+def test_collect_rotation_gate_counts_by_action_and_route(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(od, "_ARTIFACTS", tmp_path)
+    rows = [
+        {
+            "event_type": "rotation_gate_would_block",
+            "route": "technical_paper",
+            "timestamp_utc": now.isoformat(),
+        },
+        {
+            "event_type": "rotation_gate_would_block",
+            "route": "technical_paper",
+            "timestamp_utc": now.isoformat(),
+        },
+        {
+            "event_type": "rotation_gate_block",
+            "route": "autonomous_loop",
+            "timestamp_utc": now.isoformat(),
+        },
+        {  # zu alt — fällt raus
+            "event_type": "rotation_gate_block",
+            "route": "autonomous_loop",
+            "timestamp_utc": "2026-08-01T00:00:00+00:00",
+        },
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    got = od.collect_rotation_gate_24h(now=now)
+    assert got == {"would_block:technical_paper": 2, "block:autonomous_loop": 1}
+
+
+def test_compose_renders_rotation_sections() -> None:
+    msg = _compose(
+        asset_rotation={
+            "available": True,
+            "symbols": 69,
+            "distribution": {"active": 2, "archived": 19, "probation": 47},
+            "last_run_ts": "2026-08-08T13:41:00+00:00",
+            "last_run_evaluated": 39,
+            "last_run_changes": 1,
+        },
+        rotation_gate_24h={"would_block:technical_paper": 5, "block:autonomous_loop": 2},
+    )
+    assert "Asset-Rotation:* 69 Symbole" in msg
+    assert "archived: 19" in msg
+    assert "Rotation-Gate 24h:" in msg
+    assert "would_block:technical_paper: 5" in msg
