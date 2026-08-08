@@ -63,6 +63,12 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # für den Lint wie ein sauberes System aus. 3 Tage Toleranz.
     "alert_outcomes.jsonl": 4320,
     "shadow_candidate_ledger.jsonl": 4320,
+    # Lightning-Reconciliation (PR-D/T6b, live seit 2026-08-08): der Timer
+    # laeuft alle 15 min und schreibt JEDEN Lauf eine Reportzeile — auch den
+    # Leerlauf ohne offene Intents. 45 min = 3 verpasste Laeufe, also klar
+    # ueber der legitimen Stille (15 min + RandomizedDelaySec 2 min), aber
+    # eng genug, um einen toten Timer binnen einer Stunde aufzudecken.
+    "ln_reconciliation.jsonl": 45,
 }
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
@@ -176,6 +182,16 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             adir / "shadow_candidate_ledger.jsonl",
             "shadow_candidate_ledger.jsonl",
             "shadow_writer",
+            False,
+        ),
+        # Geldpfad-Integritaet (PR-D/T6b): der Reconcile-Timer war der erste
+        # neue Timer nach der TV-Ingest-Lehre vom 2026-08-08 — ein Ausgang
+        # OHNE Waechter faellt sechs Tage lang niemandem auf. required=False,
+        # weil ein frischer Checkout die Datei legitim noch nicht hat.
+        (
+            adir / "lightning" / "ln_reconciliation.jsonl",
+            "ln_reconciliation.jsonl",
+            "ln_reconcile",
             False,
         ),
     ]
