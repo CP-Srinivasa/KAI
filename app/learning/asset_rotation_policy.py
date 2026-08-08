@@ -51,8 +51,16 @@ def decide_asset_rotation(
     prior_flagged_runs: int,
     flag_after_runs: int = FLAG_AFTER_RUNS,
     archive_after_runs: int = ARCHIVE_AFTER_RUNS,
+    has_new_evidence: bool = True,
 ) -> AssetRotationDecision:
-    """Decide the target lifecycle status for one asset (pure, deterministic)."""
+    """Decide the target lifecycle status for one asset (pure, deterministic).
+
+    ``has_new_evidence`` (B3, Plan 08-08): Der Shadow-Lauf rechnet pro Tick
+    über DIESELBEN letzten N Closes — ohne neue Trades kletterte der
+    weak-Zähler pro Kalendertag und archivierte Symbole nach 3 ruhigen Tagen
+    auf Basis von null neuer Evidenz. Ohne neue Evidenz friert der Zähler ein;
+    Default ``True`` erhält das Verhalten aller Alt-Aufrufer.
+    """
     if pinned or current == AssetStatus.PINNED:
         return AssetRotationDecision(None, "protected_pinned", 0)
 
@@ -64,10 +72,21 @@ def decide_asset_rotation(
             AssetStatus.ROTATION_FLAGGED,
         ):
             return AssetRotationDecision(AssetStatus.ACTIVE, "promote_healthy", 0)
+        # B3b: archived war eine Einbahnstraße — ein wieder gesundes Symbol
+        # bekommt den FSM-legalen Rückweg ARCHIVED→CANDIDATE (Re-Evaluation),
+        # NICHT direkt ACTIVE (erst wieder beweisen).
+        if current == AssetStatus.ARCHIVED:
+            return AssetRotationDecision(AssetStatus.CANDIDATE, "rearm_healthy", 0)
         return AssetRotationDecision(None, "healthy", 0)
 
     # Sustained weakness (both arms fail) with hysteresis.
     if verdict.weak:
+        if not has_new_evidence:
+            # Kein neuer Close seit dem letzten Lauf: dasselbe Fenster darf den
+            # Zähler nicht erneut belasten (Evidenz zählt, nicht Kalender).
+            return AssetRotationDecision(
+                None, "weak_no_new_evidence_hold", max(0, prior_flagged_runs)
+            )
         runs = max(0, prior_flagged_runs) + 1
         if current == AssetStatus.ROTATION_FLAGGED and runs >= archive_after_runs:
             return AssetRotationDecision(

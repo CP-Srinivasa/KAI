@@ -59,9 +59,29 @@ class TestEvaluateRotations:
         assert decisions[0]["changed"] is False
         assert state["XRP/USDT"].status == AssetStatus.ACTIVE
 
-    def test_illegal_target_falls_back_to_prior(self) -> None:
-        # ARCHIVED can only go to CANDIDATE; a healthy verdict wants ACTIVE → illegal,
-        # so the status must not change (FSM guard), even though the policy proposed it.
+    def test_archived_healthy_now_rearms_to_candidate(self) -> None:
+        # B3b (Plan 08-08): ARCHIVED war eine Einbahnstraße — ein wieder
+        # gesundes Symbol geht jetzt FSM-legal zurück auf CANDIDATE
+        # (Re-Evaluation), nie direkt ACTIVE.
+        by_symbol = _by_symbol(**{"OLD/USDT": (50.0, 8, 7)})
+        prior = {"OLD/USDT": AssetRotationState(AssetStatus.ARCHIVED, 0)}
+        decisions, state = evaluate_rotations(by_symbol, prior)
+        assert state["OLD/USDT"].status == AssetStatus.CANDIDATE
+        assert decisions[0]["reason"] == "rearm_healthy"
+
+    def test_illegal_target_falls_back_to_prior(self, monkeypatch) -> None:
+        # FSM-Wache (Intention des Alt-Tests erhalten): ein — erzwungen —
+        # illegaler Policy-Vorschlag (ARCHIVED→ACTIVE ist im FSM verboten)
+        # darf den Status nicht ändern. Seit B3b liefert die echte Policy
+        # keinen natürlichen Illegal-Fall mehr, daher gestubbt.
+        import app.learning.asset_rotation_shadow as mod
+        from app.learning.asset_rotation_policy import AssetRotationDecision
+
+        monkeypatch.setattr(
+            mod,
+            "decide_asset_rotation",
+            lambda *a, **k: AssetRotationDecision(AssetStatus.ACTIVE, "forced_illegal", 0),
+        )
         by_symbol = _by_symbol(**{"OLD/USDT": (50.0, 8, 7)})
         prior = {"OLD/USDT": AssetRotationState(AssetStatus.ARCHIVED, 0)}
         decisions, state = evaluate_rotations(by_symbol, prior)
@@ -115,3 +135,66 @@ class TestRunRotationShadow:
         assert state_path.exists()
         loaded = load_state(state_path)
         assert loaded["BTC/USDT"].status == AssetStatus.ACTIVE
+
+
+# ── B3 (Plan 08-08, PR-2): Evidenz-Hysterese Ende-zu-Ende + State-Roundtrip ──
+
+
+def test_repeated_runs_without_new_closes_never_archive(tmp_path) -> None:
+    """3 Läufe über dasselbe Datenfenster: flagged_runs darf NICHT klettern."""
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_shadow import (
+        AssetRotationState,
+        evaluate_rotations,
+    )
+
+    by_symbol = {"WEAK/USDT": {"count": 8.0, "wins": 1.0, "sum_pnl_usd": -50.0}}
+    state = {"WEAK/USDT": AssetRotationState(AssetStatus.ACTIVE, 0, 0)}
+    # Lauf 1: Zähler 0 -> neue Evidenz (Legacy-Count 0 != 8) -> inkrementiert.
+    _, state = evaluate_rotations(by_symbol, state)
+    assert state["WEAK/USDT"].flagged_runs == 1
+    assert state["WEAK/USDT"].last_evaluated_close_count == 8
+    # Läufe 2..4: identisches Fenster -> Zähler friert, Status bleibt.
+    for _ in range(3):
+        _, state = evaluate_rotations(by_symbol, state)
+    assert state["WEAK/USDT"].flagged_runs == 1
+    assert state["WEAK/USDT"].status is AssetStatus.ACTIVE
+
+
+def test_new_closes_advance_hysteresis_again(tmp_path) -> None:
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_shadow import (
+        AssetRotationState,
+        evaluate_rotations,
+    )
+
+    state = {"WEAK/USDT": AssetRotationState(AssetStatus.ACTIVE, 1, 8)}
+    by_symbol = {"WEAK/USDT": {"count": 11.0, "wins": 2.0, "sum_pnl_usd": -60.0}}
+    _, state = evaluate_rotations(by_symbol, state)
+    assert state["WEAK/USDT"].flagged_runs == 2
+    assert state["WEAK/USDT"].status is AssetStatus.ROTATION_FLAGGED
+    assert state["WEAK/USDT"].last_evaluated_close_count == 11
+
+
+def test_state_roundtrip_with_close_count_and_legacy_tolerance(tmp_path) -> None:
+    import json as _json
+
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_shadow import (
+        AssetRotationState,
+        load_state,
+        save_state,
+    )
+
+    p = tmp_path / "state.json"
+    save_state(p, {"A/USDT": AssetRotationState(AssetStatus.ACTIVE, 2, 17)})
+    loaded = load_state(p)
+    assert loaded["A/USDT"].last_evaluated_close_count == 17
+    # Legacy-Datei ohne das neue Feld lädt tolerant mit 0.
+    p.write_text(
+        _json.dumps({"B/USDT": {"status": "probation", "flagged_runs": 1}}),
+        encoding="utf-8",
+    )
+    legacy = load_state(p)
+    assert legacy["B/USDT"].last_evaluated_close_count == 0
+    assert legacy["B/USDT"].flagged_runs == 1

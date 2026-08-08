@@ -110,6 +110,40 @@ def rotate_show(
     typer.echo(json.dumps({"count": len(out), "assets": out}, indent=2))
 
 
+@universe_app.command("rotation-rearm")
+def rotation_rearm(
+    symbol: Annotated[str, typer.Argument(help="Symbol, z. B. AAVE/USDT")],
+    state: Annotated[Path, typer.Option(help="Rotation FSM state JSON.")] = _ROT_STATE,
+) -> None:
+    """Operator-Rückweg (B3b, Plan 08-08): archiviertes Symbol auf CANDIDATE.
+
+    Gegatete Symbole bekommen keine neuen Closes mehr und können sich daher nie
+    selbst rehabilitieren — dieser bewusste Operator-Schritt setzt den Status
+    auf CANDIDATE (Re-Evaluation), NICHT direkt auf ACTIVE. Kein Auto-Rearm.
+    """
+    from app.learning.asset_lifecycle import AssetStatus
+    from app.learning.asset_rotation_shadow import (
+        AssetRotationState,
+        load_state,
+        save_state,
+    )
+
+    loaded = load_state(state)
+    prior = loaded.get(symbol)
+    if prior is None:
+        typer.echo(f"rotation-rearm: {symbol} nicht im State — nichts zu tun.")
+        raise typer.Exit(2)
+    if prior.status is not AssetStatus.ARCHIVED:
+        typer.echo(
+            f"rotation-rearm: {symbol} ist {prior.status.value!r}, nicht 'archived' — "
+            "kein Rearm nötig."
+        )
+        raise typer.Exit(2)
+    loaded[symbol] = AssetRotationState(AssetStatus.CANDIDATE, 0, prior.last_evaluated_close_count)
+    save_state(state, loaded)
+    typer.echo(f"rotation-rearm: {symbol} archived -> candidate (flagged_runs=0).")
+
+
 @universe_app.command("feed-run")
 def feed_run() -> None:
     """G2: feed the universe into PAPER once (gated by MOMENTUM_UNIVERSE_FEED_ENABLED)."""
