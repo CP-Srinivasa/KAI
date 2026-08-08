@@ -1,4 +1,4 @@
-"""Evaluatoren für die versiegelten Quoten-Prä-Registrierungen vom 2026-07-29.
+"""Evaluatoren für die versiegelten Quoten-Prä-Registrierungen.
 
 H1 ``technical_paper_precision_fwd_v1`` (``fd6f5f7842f49244``) und
 H2 ``execution_translation_hit_to_win_v1`` (``0c7ead764621dd17``) werden von
@@ -8,6 +8,16 @@ folgt den ``success_criteria`` der Ledger-Einträge WÖRTLICH: ±1-Kodierung
 (hit/win=+1, miss/loss=-1), ``p_positive`` = Normal-Approximation von
 P(mean>0) — äquivalent P(Quote>0,5). Read-only über die Artefakt-JSONL,
 kein Netzwerk, kein Zustand.
+
+H2 ist am 2026-08-08 als CLOSED_UNMEASURABLE geschlossen (n=14/50, kein
+Sachverdikt): nur ~26 % der geschlossenen Trades konnten die Population je
+erreichen. Nachfolger ist ``signal_hit_to_win_conversion_v2``
+(``26d3e0eb29f553f3``) — gleiche Frage, reparierte Messung: die miss-Seite
+wird als **nicht gatende** Diagnostik mitgemessen (erst die Zellmatrix trennt
+ein Signal- von einem Execution-Problem), die Populationslücke wird nach
+``signal_source`` gezählt statt verschwiegen, und der Claim trägt eine Frist.
+Der H2-Evaluator bleibt erhalten: ein geschlossener Claim muss reproduzierbar
+bleiben.
 
 Fail-closed-Verhalten: fehlende Dateien zählen als leere Population;
 ``p_positive`` ist ``None`` bei n<2 (das Gate wertet das als nicht bestanden);
@@ -28,7 +38,10 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 
 # Versiegelte Claim-IDs (Pi-Ledger artifacts/research/prereg_ledger.jsonl).
 TECH_PRECISION_PREREG_ID = "fd6f5f7842f49244"
-EXEC_TRANSLATION_PREREG_ID = "0c7ead764621dd17"
+EXEC_TRANSLATION_PREREG_ID = "0c7ead764621dd17"  # 2026-08-08 CLOSED_UNMEASURABLE
+# Nachfolger von H2, registriert 2026-08-08T10:41:26Z. Gate n>=30/p>=0.90,
+# Frist 2026-09-22 ⇒ INCONCLUSIVE_BY_TIMEOUT (der Vorgänger hatte keine).
+HIT_TO_WIN_V2_PREREG_ID = "26d3e0eb29f553f3"
 
 _TECHNICAL_PAPER_PREFIX = "technical_paper"
 _CLOSE_EVENTS = ("position_closed", "position_partial_closed")
@@ -262,10 +275,133 @@ def evaluate_execution_translation(
     }
 
 
+def evaluate_hit_to_win_conversion(
+    *,
+    outcomes_path: Path,
+    exec_audit_path: Path,
+    registered_at_utc: str,
+    horizon_s: int = 86400,
+) -> dict[str, Any]:
+    """H2-Nachfolger: wird ein bestätigt richtiges Signal zu einem Gewinn-Trade?
+
+    Nachfolger von ``execution_translation_hit_to_win_v1`` (2026-08-08 als
+    CLOSED_UNMEASURABLE geschlossen: nur ~26 % der Closes konnten die
+    Population je erreichen). Die **Frage** bleibt, die **Messung** ist
+    repariert — und zwar in drei Punkten:
+
+    1. **Gatend** ist weiterhin die Konversion über ``outcome == "hit"``
+       (±1 auf die ``trade_pnl_usd``-Summe je Dokument). Das ist die
+       ökonomisch entscheidende Größe und wird NICHT verwässert.
+    2. **Diagnostisch** (nicht gatend) wird die ``miss``-Seite mitgemessen.
+       Erst die Zellmatrix trennt ein Signal- von einem Execution-Problem:
+       diskriminiert das Signal (hohe Trennschärfe), scheitert aber die
+       Umsetzung, liegt es an der Stop-/Ziel-Geometrie — nicht am Signal.
+    3. Die **Populationslücke** wird gezählt statt verschwiegen: Closes ohne
+       Outcome-Eintrag erscheinen nach ``signal_source`` aufgeschlüsselt.
+       Genau diese Blindstelle ließ den Vorgänger verhungern.
+
+    Ausreißerfest per Konstruktion: ±1 statt PnL-Mittelwert (die Lehre aus
+    „ohne Best-Trade 3,50 %" — ein einzelner Trade darf kein Verdikt tragen).
+
+    Fail-closed wie H1/H2: fehlende Datei ⇒ leere Population; Dokumente ohne
+    ``trade_pnl_usd`` werden ausgeschlossen und gezählt (TL-003-Falle);
+    ``p_positive`` ist ``None`` bei n<2.
+    """
+    reg = _parse_ts(registered_at_utc)
+    if reg is None:
+        raise ValueError(f"registered_at_utc nicht parsebar: {registered_at_utc!r}")
+
+    latest = _last_outcome_rows(outcomes_path)
+
+    pnl_by_doc: dict[str, list[float]] = {}
+    docs_missing_pnl: set[str] = set()
+    source_by_doc: dict[str, str] = {}
+    for rec in iter_jsonl_tolerant(exec_audit_path):
+        if rec.get("event_type") not in _CLOSE_EVENTS:
+            continue
+        ts = _parse_ts(rec.get("timestamp_utc"))
+        if ts is None or ts <= reg:
+            continue
+        doc = str(rec.get("document_id") or "")
+        if not doc:
+            continue
+        source_by_doc[doc] = str(rec.get("signal_source") or "unknown")
+        pnl = rec.get("trade_pnl_usd")
+        if not isinstance(pnl, int | float):
+            docs_missing_pnl.add(doc)
+            continue
+        pnl_by_doc.setdefault(doc, []).append(float(pnl))
+
+    xs: list[int] = []  # GATEND: nur hit-Dokumente
+    cells = {"hit_win": 0, "hit_loss": 0, "miss_win": 0, "miss_loss": 0}
+    concordant = 0
+    concordance_n = 0
+    absent_by_source: dict[str, int] = {}
+    excluded_outcomes: dict[str, int] = {}
+
+    for doc in sorted(set(pnl_by_doc) - docs_missing_pnl):
+        row = latest.get(doc)
+        if row is None:
+            src = source_by_doc.get(doc, "unknown")
+            absent_by_source[src] = absent_by_source.get(src, 0) + 1
+            continue
+        outcome = str(row.get("outcome") or "")
+        if outcome not in ("hit", "miss"):
+            key = outcome or "missing"
+            excluded_outcomes[key] = excluded_outcomes.get(key, 0) + 1
+            continue
+        won = fsum(pnl_by_doc[doc]) > 0
+        cells[f"{outcome}_{'win' if won else 'loss'}"] += 1
+        concordance_n += 1
+        if (outcome == "hit") == won:
+            concordant += 1
+        if outcome == "hit":
+            xs.append(1 if won else -1)
+
+    n_hit = cells["hit_win"] + cells["hit_loss"]
+    n_miss = cells["miss_win"] + cells["miss_loss"]
+    win_rate_hit = (cells["hit_win"] / n_hit) if n_hit else None
+    win_rate_miss = (cells["miss_win"] / n_miss) if n_miss else None
+    discrimination = (
+        round(win_rate_hit - win_rate_miss, 4)
+        if win_rate_hit is not None and win_rate_miss is not None
+        else None
+    )
+
+    return {
+        "schema": "quote_eval/hit_to_win_conversion/v2",
+        "hypothesis": "signal_hit_to_win_conversion_v2",
+        "registered_at_utc": registered_at_utc,
+        "horizon_s": int(horizon_s),
+        "population": {
+            "closed_docs_since_reg": len(set(pnl_by_doc) | docs_missing_pnl),
+            "annotated_hit_or_miss": concordance_n,
+            "docs_excluded_missing_trade_pnl": len(docs_missing_pnl),
+            "absent_from_outcome_ledger": sum(absent_by_source.values()),
+            "absent_by_signal_source": dict(sorted(absent_by_source.items())),
+            "excluded_by_outcome": dict(sorted(excluded_outcomes.items())),
+        },
+        # NICHT gatend — Diagnose, die aus einem FAIL die nächste Handlung macht.
+        "diagnostics": {
+            "cells": dict(cells),
+            "n_hit": n_hit,
+            "n_miss": n_miss,
+            "win_rate_hit": round(win_rate_hit, 4) if win_rate_hit is not None else None,
+            "win_rate_miss": round(win_rate_miss, 4) if win_rate_miss is not None else None,
+            "discrimination_pp": discrimination,
+            "concordance_n": concordance_n,
+            "concordance_rate": (round(concordant / concordance_n, 4) if concordance_n else None),
+        },
+        "overall": _overall_block(xs, horizon_s),
+    }
+
+
 __all__ = [
     "EXEC_TRANSLATION_PREREG_ID",
+    "HIT_TO_WIN_V2_PREREG_ID",
     "TECH_PRECISION_PREREG_ID",
     "evaluate_execution_translation",
+    "evaluate_hit_to_win_conversion",
     "evaluate_technical_paper_precision",
     "normal_p_positive",
     "reconstruct_tv_signal_id",

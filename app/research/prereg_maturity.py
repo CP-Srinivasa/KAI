@@ -137,6 +137,10 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         # Modul-Default des Evaluators zu vertrauen (Divergenz-Bauart von #648).
         "gate_horizon_s": 604800,
     },
+    # H2 ist am 2026-08-08 als CLOSED_UNMEASURABLE geschlossen (Verdict-Report
+    # 20260808_103720, attestiert). Der Spec bleibt bewusst STEHEN: die
+    # Truth-Kette liefert die Resolution und der Eintrag zeigt sie an — löschen
+    # würde einen entschiedenen Claim unsichtbar machen statt abgeschlossen.
     {
         "name": "execution_translation_hit_to_win_v1",
         "prereg_id": "0c7ead764621dd17",
@@ -144,6 +148,32 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         "since_utc": "2026-07-29T09:15:10.626958+00:00",
         "n_target": 50,
         "gate_horizon_s": 86400,
+        "note": (
+            "GESCHLOSSEN 2026-08-08 als CLOSED_UNMEASURABLE bei n=14/50 — kein "
+            "Sachverdikt. Nur ~26 % der Closes konnten die Population je erreichen "
+            "(28/53 ohne Outcome-Eintrag, davon 26x real_analysis; 12 weitere miss "
+            "und per Konstruktion ausgeschlossen). Nachfolger: "
+            "signal_hit_to_win_conversion_v2 (26d3e0eb29f553f3)."
+        ),
+    },
+    # H2-Nachfolger (2026-08-08): gleiche Frage, reparierte Messung. Trägt als
+    # ERSTER n-basierter Claim eine Frist — genau die Bremse, deren Fehlen den
+    # Vorgänger unbegrenzt "reifen" ließ.
+    {
+        "name": "signal_hit_to_win_conversion_v2",
+        "prereg_id": "26d3e0eb29f553f3",
+        "kind": "hit_to_win",
+        "since_utc": "2026-08-08T10:41:26.736211+00:00",
+        "n_target": 30,
+        "gate_horizon_s": 86400,
+        "window_end_utc": "2026-09-22T00:00:00+00:00",
+        "note": (
+            "Frist 2026-09-22: wird n>=30 bis dahin nicht erreicht, schliesst der "
+            "Claim als INCONCLUSIVE_BY_TIMEOUT — kein Sachverdikt, keine "
+            "Verlaengerung, keine Kriteriumsaenderung. Gatend ist NUR die "
+            "hit-Konversion; miss-Seite/Trennschaerfe sind pflicht-ausgewiesene "
+            "Diagnostik und urteilen nicht mit."
+        ),
     },
     # Fensterbasierte Demand-Probe (gate=null, free-text-era): Reife ist hier
     # KEIN n, sondern das versiegelte Fensterende. Nach Ablauf ⇒ EVAL_CHECK_DUE
@@ -306,6 +336,34 @@ def _maturity_exec_translation(
     detail = {
         "joined": n,
         "closed_docs": int(pop["closed_docs_since_reg"]),
+    }
+    return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
+
+
+def _maturity_hit_to_win(
+    spec: dict[str, Any], artifacts_dir: Path
+) -> tuple[int, dict[str, int], str]:
+    """H2-Nachfolger: gezählt wird die GATENDE hit-Kohorte, nichts sonst.
+
+    Die ``diagnostics`` des Evaluators (miss-Seite, Trennschärfe) sind
+    ausdrücklich NICHT reiferelevant — sie erklären ein Ergebnis, sie
+    erzeugen keines. Identische Populations-Definition wie das spätere
+    Verdikt (DRY, Divergenz-Bauart von #648 vermieden).
+    """
+    from app.research import quote_evals
+
+    ev = quote_evals.evaluate_hit_to_win_conversion(
+        outcomes_path=artifacts_dir / "alert_outcomes.jsonl",
+        exec_audit_path=artifacts_dir / "paper_execution_audit.jsonl",
+        registered_at_utc=str(spec["since_utc"]),
+        horizon_s=int(spec["gate_horizon_s"]),
+    )
+    n = int(ev["overall"]["n"])
+    detail = {
+        "n_hit_gating": n,
+        "n_miss_diagnostic": int(ev["diagnostics"]["n_miss"]),
+        "closed_docs": int(ev["population"]["closed_docs_since_reg"]),
+        "absent_from_ledger": int(ev["population"]["absent_from_outcome_ledger"]),
     }
     return n, detail, STATE_JUDGEABLE if n >= int(spec["n_target"]) else STATE_NOT_DUE
 
@@ -623,6 +681,8 @@ async def compute_maturity(
             n, detail, state = _maturity_tech_precision(spec, artifacts_dir)
         elif kind == "exec_translation":
             n, detail, state = _maturity_exec_translation(spec, artifacts_dir)
+        elif kind == "hit_to_win":
+            n, detail, state = _maturity_hit_to_win(spec, artifacts_dir)
         elif kind == "deadline":
             n, detail, state = _maturity_deadline(spec, now_utc)
         else:
@@ -639,6 +699,21 @@ async def compute_maturity(
             if exact is not None:
                 n_exact, state = exact
                 state_source = "exact_observation"
+        # Optionale FRIST auf n-basierten Specs. H1/H2 hatten sie nicht: ohne
+        # Frist kann ein Claim, der sein n_min nie erreicht, weder PASS noch
+        # FAIL werden und "reift" unbegrenzt weiter (H2 stand bei 14/50, weil
+        # nur ~26 % der Closes die Population je erreichen konnten). Läuft das
+        # Fenster ab, BEVOR n_target erreicht ist, wird der Claim fällig — und
+        # zwar als INCONCLUSIVE_BY_TIMEOUT: kein Sachverdikt, nur ein Ende.
+        # Ein bereits erreichtes n_target bleibt JUDGEABLE (Frist bremst nicht).
+        window_end = _as_dt(spec.get("window_end_utc")) if kind != "deadline" else None
+        timed_out = False
+        if window_end is not None and now_utc >= window_end:
+            n_seen = n_exact if n_exact is not None else n
+            if n_seen < n_target:
+                timed_out = True
+                state = STATE_EVAL_CHECK_DUE
+                state_source = "window_timeout"
         resolution: dict[str, Any] | None = None
         prereg_id = spec.get("prereg_id")
         if resolution_error is not None:
@@ -676,6 +751,11 @@ async def compute_maturity(
                 "state_source": state_source,
                 "per_source": detail,
                 "state": state,
+                # Frist + Timeout-Bit durchgereicht, damit Render/Board ein
+                # abgelaufenes n-Gate von einem erreichten unterscheiden können:
+                # beide sind `due`, aber nur eines trägt ein Sachverdikt.
+                "window_end_utc": spec.get("window_end_utc"),
+                "timed_out": timed_out,
                 "resolution": resolution,
                 # Kompat-Bit: Nur die beiden echten Handlungszustände sind due.
                 # RESOLVED und RESOLUTION_HOLD dürfen niemals eine zweite
