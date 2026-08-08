@@ -9,10 +9,11 @@ Edge-Gate min_resolved — Operator-Vorgabe 2026-06-14, switched off shadow-n).
 from __future__ import annotations
 
 import json
-import pytest
 import sys
 from datetime import date
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
