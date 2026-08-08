@@ -34,6 +34,7 @@ from math import erf, fsum, sqrt
 from pathlib import Path
 from typing import Any
 
+from app.research.decomposition import decompose_rate
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
 # Versiegelte Claim-IDs (Pi-Ledger artifacts/research/prereg_ledger.jsonl).
@@ -145,6 +146,10 @@ def evaluate_technical_paper_precision(
     pending = 0
     ps_rows = 0
     ps_fallback = 0
+    # Zerlegungs-Achse: Preisquelle. Eine Precision, die nur unter dem
+    # CoinGecko-Fallback hält, ist eine andere Aussage als eine, die unter
+    # Binance hält — das Aggregat allein zeigt den Unterschied nicht.
+    units_for_decomposition: list[tuple[str, bool]] = []
     for doc in sorted(population):
         row = latest.get(doc)
         outcome = (row or {}).get("outcome")
@@ -160,6 +165,9 @@ def evaluate_technical_paper_precision(
             ps_rows += 1
             if src != "binance":
                 ps_fallback += 1
+        units_for_decomposition.append(
+            (src if isinstance(src, str) and src else "unknown", outcome == "hit")
+        )
 
     n_outcomed = len(xs) + inconclusive
     return {
@@ -177,6 +185,12 @@ def evaluate_technical_paper_precision(
             "price_source_coverage": round(ps_rows / len(xs), 4) if xs else None,
             "price_source_fallback_share": round(ps_fallback / ps_rows, 4) if ps_rows else None,
         },
+        # PFLICHT (Direktive 2026-08-08): kein Aggregat ohne Zerlegung.
+        "decomposition": decompose_rate(
+            units_for_decomposition,
+            group_of=lambda u: u[0],
+            is_positive=lambda u: u[1],
+        ),
         "overall": _overall_block(xs, horizon_s),
     }
 
@@ -248,14 +262,21 @@ def evaluate_execution_translation(
     xs: list[int] = []
     joined_direct = 0
     joined_reconstructed = 0
+    # Zerlegungs-Achse: Join-Art. Ein Ergebnis, das nur an rekonstruierten
+    # TV-IDs hängt, ist schwächer belegt als eines aus direkten Joins.
+    units_for_decomposition: list[tuple[str, bool]] = []
     for doc in sorted(set(pnl_by_doc) - docs_missing_pnl):
         if doc in hit_direct:
             joined_direct += 1
+            join_kind = "direct"
         elif doc in hit_reconstructed:
             joined_reconstructed += 1
+            join_kind = "reconstructed"
         else:
             continue
-        xs.append(1 if fsum(pnl_by_doc[doc]) > 0 else -1)
+        won = fsum(pnl_by_doc[doc]) > 0
+        xs.append(1 if won else -1)
+        units_for_decomposition.append((join_kind, won))
 
     return {
         "schema": "quote_eval/exec_translation/v1",
@@ -271,6 +292,14 @@ def evaluate_execution_translation(
             "hit_outcomes_available": len(hit_direct),
             "tv_hits_without_asset": tv_without_asset,
         },
+        # PFLICHT (Direktive 2026-08-08): kein Aggregat ohne Zerlegung.
+        # Auch für den GESCHLOSSENEN Claim — ein archiviertes Ergebnis muss
+        # genauso prüfbar bleiben wie ein laufendes.
+        "decomposition": decompose_rate(
+            units_for_decomposition,
+            group_of=lambda u: u[0],
+            is_positive=lambda u: u[1],
+        ),
         "overall": _overall_block(xs, horizon_s),
     }
 
@@ -338,6 +367,7 @@ def evaluate_hit_to_win_conversion(
     concordance_n = 0
     absent_by_source: dict[str, int] = {}
     excluded_outcomes: dict[str, int] = {}
+    units_for_decomposition: list[tuple[str, bool]] = []
 
     for doc in sorted(set(pnl_by_doc) - docs_missing_pnl):
         row = latest.get(doc)
@@ -353,6 +383,10 @@ def evaluate_hit_to_win_conversion(
         won = fsum(pnl_by_doc[doc]) > 0
         cells[f"{outcome}_{'win' if won else 'loss'}"] += 1
         concordance_n += 1
+        # Einheit für die Pflicht-Zerlegung: Gruppe = Signal-Outcome,
+        # positiv = konkordant. Genau diese Achse deckte am 2026-08-08 auf,
+        # dass die Konkordanz fast vollständig von der miss-Seite kam.
+        units_for_decomposition.append((outcome, (outcome == "hit") == won))
         if (outcome == "hit") == won:
             concordant += 1
         if outcome == "hit":
@@ -384,6 +418,12 @@ def evaluate_hit_to_win_conversion(
             "absent_by_signal_source": dict(sorted(absent_by_source.items())),
             "excluded_by_outcome": dict(sorted(excluded_outcomes.items())),
         },
+        # PFLICHT (Direktive 2026-08-08): kein Aggregat ohne Zerlegung.
+        "decomposition": decompose_rate(
+            [(o, w) for o, w in units_for_decomposition],
+            group_of=lambda u: u[0],
+            is_positive=lambda u: u[1],
+        ),
         # NICHT gatend — Diagnose, die aus einem FAIL die nächste Handlung macht.
         "diagnostics": {
             "cells": dict(cells),
