@@ -19,6 +19,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from app.observability.l2_evidence_eval import moving_block_bootstrap_p_mean_positive
+from app.research.decomposition import decompose_mean, decompose_rate
 from app.research.news_outcomes import NEWS_HORIZONS_S
 from app.research.news_stories import DEFAULT_STORY_WINDOW_S, cluster_stories, dedup_stats
 from app.research.shadow_evidence_eval import (
@@ -70,6 +71,12 @@ def evaluate_cohort(
             and sym_share <= max_concentration
         )
         actionable = actionable or is_actionable
+        # Direktive 2026-08-08 „kein Aggregat ohne Zerlegung", rein ADDITIV:
+        # ``top_symbol_share`` fängt Symbol-Konzentration, aber NICHT
+        # Wert-Konzentration. ``mean_bps`` kann von einem einzigen Ausreißer
+        # getragen sein — exakt das canonical-edge-Muster (10,44 % → 3,50 %
+        # ohne den besten Trade). ``is_actionable`` bleibt UNVERÄNDERT: die
+        # Zerlegung berichtet, sie urteilt nicht mit (versiegelte Gates).
         horizons_out[h] = {
             "n": n,
             "mean_bps": round(mean, 2),
@@ -78,6 +85,10 @@ def evaluate_cohort(
             "top_symbol_share": round(sym_share, 3),
             "cost_ref_bps": round(cost_ref, 2),
             "actionable": is_actionable,
+            "value_decomposition": decompose_mean(vals, labels=[s for _, s in pairs]),
+            "hit_decomposition_by_symbol": decompose_rate(
+                pairs, group_of=lambda p: p[1], is_positive=lambda p: p[0] > 0
+            ),
         }
     return {
         "n": len(outcomes),

@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from app.research.decomposition import assess_group_table
 
 _DEFAULT_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
 _CLOSE_EVENTS = ("position_closed", "position_partial_closed")
@@ -65,6 +67,18 @@ class PaperQualitySnapshot:
     rows_missing_trade_pnl: int = 0
     epoch_scoped: bool = False
     epoch_start_utc: str | None = None
+    # Direktive 2026-08-08 „kein Aggregat ohne Zerlegung": ``by_symbol``
+    # existierte längst — nur BEWERTET hat es niemand. Dieses Feld sagt im
+    # Klartext, ob die ``win_rate`` von einem Symbol getragen wird, statt das
+    # dem Leser zu überlassen.
+    #
+    # Bewusst NICHT über ``by_reason``: ``reason`` ist mit dem Ergebnis
+    # definitorisch gekoppelt (``take`` = Gewinn-Exit, ``stop`` = Verlust-Exit),
+    # eine Win-Rate-Zerlegung darüber ergibt zwangsläufig 100 % vs 0 % und
+    # trägt null Information. Am echten Buch feuerte genau dort ein Dauer-Flag.
+    # Die stop/take-Verteilung bleibt als ``by_reason`` sichtbar — sie ist eine
+    # eigene Kennzahl (Stop-Quote), keine Erklärung der Win-Rate.
+    win_rate_by_symbol_assessment: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -192,6 +206,16 @@ def build_paper_quality_snapshot(
         rows_missing_trade_pnl=missing_pnl,
         epoch_scoped=epoch_scope,
         epoch_start_utc=epoch_start_utc,
+        # Nur ENTSCHIEDENE Trades zählen (wins+losses) — dieselbe Basis wie
+        # ``win_rate``. Würde hier ``count`` stehen, wären unentschiedene
+        # Zeilen stille Verlierer und die Zerlegung widerspräche der Quote.
+        win_rate_by_symbol_assessment=assess_group_table(
+            {
+                sym: {"n": sc.wins + sc.losses, "positives": sc.wins}
+                for sym, sc in by_symbol.items()
+                if sc.wins + sc.losses > 0
+            }
+        ),
     )
 
 

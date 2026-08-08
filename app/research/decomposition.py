@@ -40,6 +40,14 @@ from typing import Any
 GROUP_DISPARITY_PP = 0.25
 # Ab diesem Anteil dominiert eine Gruppe das Aggregat schlicht durch Masse.
 GROUP_DOMINANCE_SHARE = 0.60
+# Mindestgröße, ab der die Quote einer Gruppe für den Spannweiten-Vergleich
+# zählt. Ohne diese Schranke feuert der Vergleich bei feingliedrigen Achsen
+# IMMER: bei n=1 ist jede Rate zwangsläufig 0 % oder 100 %, und schon zwei
+# Einzeltrades erzeugen 100 % Spannweite. Am echten Paper-Buch (25 Trades auf
+# 17 Symbole) war genau das der Fall — eine Wache, die immer schreit, wird
+# ignoriert (die TL-008-Lehre). Kleine Gruppen bleiben in der Tabelle sichtbar,
+# sie lösen nur keinen Alarm aus.
+MIN_GROUP_N_FOR_DISPARITY = 5
 # Entscheidungsschwelle einer ±1-Rate (P(positiv) > 0,5 = besser als Münzwurf).
 DECISION_THRESHOLD = 0.5
 
@@ -72,29 +80,55 @@ def decompose_rate[T](
             "flags": [],
         }
 
-    positives = sum(1 for u in units if is_positive(u))
-    rate = positives / n
-
-    groups: dict[str, dict[str, Any]] = {}
+    counts: dict[str, dict[str, int]] = {}
     for u in units:
-        g = group_of(u)
-        cell = groups.setdefault(g, {"n": 0, "positives": 0})
+        cell = counts.setdefault(group_of(u), {"n": 0, "positives": 0})
         cell["n"] += 1
         if is_positive(u):
             cell["positives"] += 1
-    for cell in groups.values():
-        cell["rate"] = round(cell["positives"] / cell["n"], 4)
-        cell["share_of_units"] = round(cell["n"] / n, 4)
+    return assess_group_table(counts)
+
+
+def assess_group_table(counts: dict[str, dict[str, int]]) -> dict[str, Any]:
+    """Bewertet eine BEREITS vorhandene Gruppentabelle ``{gruppe: {n, positives}}``.
+
+    Getrennt von :func:`decompose_rate`, weil viele Kennzahlen ihre Zerlegung
+    längst berechnen (``paper_quality_snapshot.by_symbol``/``by_reason``,
+    ``news_signal_eval.per_source``) — nur bewertet sie niemand. Genau das war
+    auch bei der Konkordanz der Fall: die Zellen waren berechenbar, die
+    Warnung fehlte. Diese Funktion braucht keine Rohdaten und lässt sich
+    deshalb überall andocken, wo eine Gruppentabelle existiert.
+    """
+    total_n = sum(c["n"] for c in counts.values())
+    if total_n == 0:
+        return {
+            "n": 0,
+            "rate": None,
+            "by_group": {},
+            "concentration": None,
+            "leave_one_group_out_worst": None,
+            "flags": [],
+        }
+
+    total_pos = sum(c["positives"] for c in counts.values())
+    rate = total_pos / total_n
+
+    by_group: dict[str, dict[str, Any]] = {}
+    for g, c in sorted(counts.items()):
+        by_group[g] = {
+            "n": c["n"],
+            "positives": c["positives"],
+            "rate": round(c["positives"] / c["n"], 4) if c["n"] else None,
+            "share_of_units": round(c["n"] / total_n, 4),
+        }
 
     flags: list[str] = []
-    by_group = dict(sorted(groups.items()))
-
     top_group = max(by_group.items(), key=lambda kv: kv[1]["n"])
     concentration = {
         "top_group": top_group[0],
         "top_group_share": top_group[1]["share_of_units"],
     }
-    if top_group[1]["share_of_units"] >= GROUP_DOMINANCE_SHARE:
+    if top_group[1]["share_of_units"] >= GROUP_DOMINANCE_SHARE and len(by_group) > 1:
         flags.append(
             f"Gruppe {top_group[0]!r} stellt "
             f"{top_group[1]['share_of_units']:.0%} aller Einheiten — das Aggregat "
@@ -110,11 +144,11 @@ def decompose_rate[T](
     if len(by_group) > 1:
         candidates = []
         for g in by_group:
-            rest = [u for u in units if group_of(u) != g]
-            if not rest:
+            rest_n = total_n - by_group[g]["n"]
+            if rest_n <= 0:
                 continue
-            rest_rate = sum(1 for u in rest if is_positive(u)) / len(rest)
-            candidates.append((rest_rate, g, len(rest)))
+            rest_rate = (total_pos - by_group[g]["positives"]) / rest_n
+            candidates.append((rest_rate, g, rest_n))
         if candidates:
             rest_rate, g, rest_n = min(candidates)
             worst = {"group": g, "n": rest_n, "rate": round(rest_rate, 4)}
@@ -127,21 +161,29 @@ def decompose_rate[T](
                     f"Population."
                 )
 
-    if len(by_group) > 1:
-        rates = [c["rate"] for c in by_group.values()]
-        spread = max(rates) - min(rates)
-        if spread >= GROUP_DISPARITY_PP:
-            best_rate_group = max(by_group.items(), key=lambda kv: kv[1]["rate"])
-            worst_rate_group = min(by_group.items(), key=lambda kv: kv[1]["rate"])
-            flags.append(
-                f"Gruppen laufen auseinander: {best_rate_group[0]!r} "
-                f"{best_rate_group[1]['rate']:.1%} vs {worst_rate_group[0]!r} "
-                f"{worst_rate_group[1]['rate']:.1%} ({spread:.0%} Spannweite) — "
-                f"die Gesamtquote mittelt verschiedene Regime zusammen."
-            )
+        # Nur ausreichend besetzte Gruppen vergleichen — sonst ist die
+        # Spannweite ein Kleinstichproben-Artefakt statt eines Befunds.
+        ranked = [
+            kv
+            for kv in by_group.items()
+            if kv[1]["rate"] is not None and kv[1]["n"] >= MIN_GROUP_N_FOR_DISPARITY
+        ]
+        if len(ranked) > 1:
+            rates = [kv[1]["rate"] for kv in ranked]
+            spread = max(rates) - min(rates)
+            if spread >= GROUP_DISPARITY_PP:
+                best_rate_group = max(ranked, key=lambda kv: kv[1]["rate"])
+                worst_rate_group = min(ranked, key=lambda kv: kv[1]["rate"])
+                flags.append(
+                    f"Gruppen laufen auseinander: {best_rate_group[0]!r} "
+                    f"{best_rate_group[1]['rate']:.1%} (n={best_rate_group[1]['n']}) vs "
+                    f"{worst_rate_group[0]!r} {worst_rate_group[1]['rate']:.1%} "
+                    f"(n={worst_rate_group[1]['n']}, {spread:.0%} Spannweite) — "
+                    f"die Gesamtquote mittelt verschiedene Regime zusammen."
+                )
 
     return {
-        "n": n,
+        "n": total_n,
         "rate": round(rate, 4),
         "by_group": by_group,
         "concentration": concentration,
@@ -200,6 +242,7 @@ def decompose_mean(
 
 __all__ = [
     "DECISION_THRESHOLD",
+    "assess_group_table",
     "GROUP_DISPARITY_PP",
     "GROUP_DOMINANCE_SHARE",
     "decompose_mean",

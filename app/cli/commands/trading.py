@@ -2895,6 +2895,18 @@ def trading_paper_quality_snapshot(
                 f"{row['sum_pnl_usd']:.2f}",
             )
         console.print(rsn_table)
+    # Direktive 2026-08-08: die Quote NIE ohne ihre Bewertung zeigen. Die
+    # by_symbol-Tabelle lag schon vor — gelesen wurde trotzdem nur `win_rate`.
+    assessment = snapshot.win_rate_by_symbol_assessment
+    worst = assessment.get("leave_one_group_out_worst") if assessment else None
+    if isinstance(worst, dict):
+        console.print(
+            f"[dim]win_rate ohne symbol={worst['group']!r}: {worst['rate']} (n={worst['n']})[/dim]"
+        )
+    flags = assessment.get("flags") if assessment else None
+    if isinstance(flags, list):
+        for flag in flags:
+            console.print(f"[red]! symbol: {flag}[/red]")
     console.print(f"audit_path={snapshot.audit_path}")
 
 

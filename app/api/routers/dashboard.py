@@ -33,6 +33,7 @@ from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
 )
+from app.research.decomposition import assess_group_table, decompose_mean
 from app.storage.jsonl_io import iter_jsonl_tolerant
 from app.storage.repositories.document_repo import DocumentRepository
 from app.storage.repositories.source_repo import SourceRepository
@@ -856,6 +857,27 @@ async def dashboard_quality_api() -> JSONResponse:
     avg_win = round(sum(wins) / len(wins), 2) if wins else None
     avg_loss = round(sum(losses) / len(losses), 2) if losses else None
 
+    # Direktive 2026-08-08 „kein Aggregat ohne Zerlegung". Dieser Endpoint
+    # rechnet `win_rate`/`expectancy` EIGENSTÄNDIG (nicht über
+    # paper_quality_snapshot), also braucht er seine eigene Bewertung — sonst
+    # bleibt ausgerechnet die Zahl unbelegt, die im Dashboard am meisten
+    # gelesen wird. `expectancy` ist ein Mittelwert und damit anfällig für das
+    # canonical-edge-Muster: ein einzelner Trade trägt das Ergebnis.
+    _win_counts: dict[str, dict[str, int]] = {}
+    for _r in closes:
+        _p = _close_pnl(_r)
+        if _p == 0:
+            continue  # unentschieden — dieselbe Basis wie `win_rate`
+        _sym = str(_r.get("symbol") or "unknown")
+        _cell = _win_counts.setdefault(_sym, {"n": 0, "positives": 0})
+        _cell["n"] += 1
+        if _p > 0:
+            _cell["positives"] += 1
+    win_rate_assessment = assess_group_table(_win_counts)
+    expectancy_decomposition = decompose_mean(
+        pnl_values, labels=[str(r.get("symbol") or "unknown") for r in closes]
+    )
+
     realized_pnl_usd = round(sum(_close_pnl(r) for r in closes), 2)
     quarantined_pnl_usd = round(sum(_close_pnl(r) for r in quarantined_closes_list), 2)
     positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
@@ -1139,6 +1161,10 @@ async def dashboard_quality_api() -> JSONResponse:
             "win_rate_pct": win_rate,
             "avg_win_usd": avg_win,
             "avg_loss_usd": avg_loss,
+            # Pflicht-Zerlegung (Direktive 2026-08-08) — die beiden Kennzahlen
+            # oben dürfen nicht ohne ihre Belastungsprobe ausgeliefert werden.
+            "win_rate_assessment": win_rate_assessment,
+            "expectancy_decomposition": expectancy_decomposition,
             "fees_slippage_included": "partial",
             "source_artifact": str(_PAPER_EXECUTION_AUDIT),
             "source_artifact_updated_at": _artifact_updated_at(_PAPER_EXECUTION_AUDIT),
