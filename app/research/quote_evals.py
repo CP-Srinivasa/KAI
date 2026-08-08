@@ -362,6 +362,9 @@ def evaluate_hit_to_win_conversion(
     n_miss = cells["miss_win"] + cells["miss_loss"]
     win_rate_hit = (cells["hit_win"] / n_hit) if n_hit else None
     win_rate_miss = (cells["miss_win"] / n_miss) if n_miss else None
+    # ANTEILS-Differenz, nicht Prozentpunkte: 0.3778 sind 37,78 pp. Der
+    # Feldname steht so in den versiegelten ``success_criteria`` und wird
+    # deshalb NICHT umbenannt — wer ihn rendert, multipliziert mit 100.
     discrimination = (
         round(win_rate_hit - win_rate_miss, 4)
         if win_rate_hit is not None and win_rate_miss is not None
