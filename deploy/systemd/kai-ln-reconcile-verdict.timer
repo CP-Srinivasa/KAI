@@ -1,0 +1,14 @@
+[Unit]
+Description=Pull the reconciliation shadow pre-registration verdict hourly
+
+[Timer]
+# Kein Requires= und kein Persistent=: der Verdikt-Zug ist von jedem Dienst
+# entkoppelt und darf nach Ausfallzeit keinen Nachhol-Schub ausloesen. Das
+# Fenster ist versiegelt — ein verpasster Lauf aendert das Ergebnis nicht.
+OnCalendar=hourly
+AccuracySec=1min
+RandomizedDelaySec=5min
+Unit=kai-ln-reconcile-verdict.service
+
+[Install]
+WantedBy=timers.target

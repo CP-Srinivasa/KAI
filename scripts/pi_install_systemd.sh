@@ -87,6 +87,8 @@ UNITS=(
     "kai-ln-scb-monitor.timer"
     "kai-ln-reconcile.service"
     "kai-ln-reconcile.timer"
+    "kai-ln-reconcile-verdict.service"
+    "kai-ln-reconcile-verdict.timer"
     "kai-forecaster-issue.service"
     "kai-forecaster-issue.timer"
     "kai-forecaster-resolve.service"
@@ -104,6 +106,13 @@ UNITS=(
 # ENABLE_ON_INSTALL. Der outcome-only Abgleich darf erst nach versiegelter
 # Shadow-Prae-Registrierung und explizitem Deploy-Smoke aktiviert werden. Er
 # benutzt nur das Read-Credential und sendet/erstellt niemals eine Zahlung.
+
+# NOTE 2026-08-08: kai-ln-reconcile-verdict.timer ist ABSICHTLICH nicht in
+# ENABLE_ON_INSTALL (Lehre #626/#627). Er zieht stuendlich das Verdikt der
+# versiegelten Prae-Reg 0879a65c5fd01f65, schreibt NUR bei Verdikt-Wechsel nach
+# artifacts/research/ln_reconciliation_verdict.jsonl und alarmiert NUR bei FAIL.
+# Rein lesend gegenueber Geld- und Truth-Pfad; scharf via
+# `systemctl enable --now kai-ln-reconcile-verdict.timer`.
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
 # ABSENT from ENABLE_ON_INSTALL below — installed (daemon-reload aware) but

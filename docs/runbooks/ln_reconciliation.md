@@ -52,3 +52,40 @@ Rollback der Automatik (keine Datenloeschung):
 ```bash
 sudo systemctl disable --now kai-ln-reconcile.timer
 ```
+
+## Verdikt der Shadow-Prä-Registrierung
+
+`kai-ln-reconcile-verdict.timer` zieht stündlich das Verdikt zur versiegelten
+Prä-Reg `0879a65c5fd01f65` und ist rein lesend:
+
+```bash
+sudo systemctl enable --now kai-ln-reconcile-verdict.timer
+systemctl list-timers kai-ln-reconcile-verdict.timer
+```
+
+Der Evaluator (`scripts/ln_reconciliation_eval.py`) liest Fenster und
+Stichprobenziel aus dem Prä-Reg-Satz, prüft sechs wörtliche Klauseln des
+versiegelten `success_criteria` und bricht bei Divergenz ab. Die Konstruktion
+wird nie geändert, nur ausgewertet.
+
+Verhalten des Timers:
+
+* **Chronik** — angehängt wird nach `artifacts/research/ln_reconciliation_verdict.jsonl`
+  ausschließlich bei einem **Verdikt-Wechsel**. Stündliches Schreiben würde die
+  Datei zu Rauschen machen, in dem ein echter Wechsel untergeht.
+* **Alarm** — nur bei `FAIL`, und nur beim Wechsel dorthin: Telegram über
+  `ALERT_TELEGRAM_TOKEN`/`ALERT_TELEGRAM_CHAT_ID` plus Exit≠0, wodurch die Unit
+  `failed` wird und im Failed-Units-Sweep sowie in der Health-Probe auftaucht.
+* **`IMMATURE`** ist bis zur Reife der Normalzustand: kein Alarm, kein roter
+  Unit-Status. Unreife ist kein Sachverdikt.
+
+Bei `FAIL` gilt dieselbe Regel wie beim Reconciler selbst: nichts reparieren,
+nichts abschneiden, keinen Outcome manuell setzen. Verdikt-JSON und
+Reportzeilen sichern, dann die Truth-/v2-Kette untersuchen.
+
+Verdikt manuell und reproduzierbar ziehen — immer über `--json` in eine Datei
+und programmatisch lesen, nie aus gerendertem Text:
+
+```bash
+.venv/bin/python scripts/ln_reconciliation_eval.py --json > /tmp/verdict.json
+```

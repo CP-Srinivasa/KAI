@@ -25,7 +25,10 @@ import pytest
 from scripts.ln_reconciliation_eval import (
     CriteriaDivergenceError,
     evaluate,
+    exit_code,
     load_prereg,
+    maybe_alert,
+    record_verdict,
 )
 
 T0 = datetime(2026, 8, 8, 10, 50, 9, tzinfo=UTC)
@@ -291,3 +294,73 @@ def test_load_prereg_meldet_fehlenden_satz(tmp_path: Path) -> None:
     ledger.write_text(json.dumps({"prereg_id": "aaaa"}) + "\n", encoding="utf-8")
     with pytest.raises(LookupError):
         load_prereg(ledger, "0879a65c5fd01f65")
+
+
+# --------------------------------------------------------------------------
+# Automatisches Verdikt-Ziehen (Timer) + Alarm nur bei FAIL
+# --------------------------------------------------------------------------
+
+
+def _fail_result() -> dict[str, Any]:
+    runs = _leerlauf(96)
+    runs[3] = _run(15 * 3, contained=False, status="error")
+    return evaluate(prereg=_prereg(), runs=runs)
+
+
+def test_record_schreibt_den_ersten_stand(tmp_path: Path) -> None:
+    ledger = tmp_path / "verdict.jsonl"
+    written = record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(10)), ledger)
+    assert written is True
+    assert len(ledger.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_record_schweigt_bei_unveraendertem_verdikt(tmp_path: Path) -> None:
+    """Stuendlich laufen, aber nicht stuendlich schreiben — sonst ist die Datei Rauschen."""
+    ledger = tmp_path / "verdict.jsonl"
+    immature = evaluate(prereg=_prereg(), runs=_leerlauf(10))
+    assert record_verdict(immature, ledger) is True
+    assert record_verdict(immature, ledger) is False
+    assert len(ledger.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_record_schreibt_beim_wechsel(tmp_path: Path) -> None:
+    ledger = tmp_path / "verdict.jsonl"
+    record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(10)), ledger)
+    written = record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(96)), ledger)
+    assert written is True
+    zeilen = ledger.read_text(encoding="utf-8").strip().splitlines()
+    assert [json.loads(z)["verdict"] for z in zeilen] == ["IMMATURE", "PASS"]
+
+
+def test_alarm_nur_bei_fail_und_nur_beim_wechsel(tmp_path: Path) -> None:
+    ledger = tmp_path / "verdict.jsonl"
+    gesendet: list[str] = []
+
+    # IMMATURE und PASS alarmieren nicht.
+    for result in (
+        evaluate(prereg=_prereg(), runs=_leerlauf(10)),
+        evaluate(prereg=_prereg(), runs=_leerlauf(96)),
+    ):
+        neu = record_verdict(result, ledger)
+        assert maybe_alert(result, recorded=neu, sender=gesendet.append) is False
+    assert gesendet == []
+
+    # FAIL alarmiert genau einmal — beim Wechsel, nicht bei jedem Timer-Lauf.
+    fail = _fail_result()
+    neu = record_verdict(fail, ledger)
+    assert maybe_alert(fail, recorded=neu, sender=gesendet.append) is True
+    assert len(gesendet) == 1
+    assert "FAIL" in gesendet[0]
+    assert "0879a65c5fd01f65" in gesendet[0]
+
+    wieder = record_verdict(fail, ledger)
+    assert maybe_alert(fail, recorded=wieder, sender=gesendet.append) is False
+    assert len(gesendet) == 1
+
+
+def test_exit_code_trennt_fail_von_unreife() -> None:
+    """Nur FAIL darf die Unit rot faerben — IMMATURE ist der Normalzustand."""
+    assert exit_code(_fail_result(), exit_nonzero_on_fail=True) == 1
+    assert exit_code(evaluate(prereg=_prereg(), runs=_leerlauf(10)), exit_nonzero_on_fail=True) == 0
+    assert exit_code(evaluate(prereg=_prereg(), runs=_leerlauf(96)), exit_nonzero_on_fail=True) == 0
+    assert exit_code(_fail_result(), exit_nonzero_on_fail=False) == 0

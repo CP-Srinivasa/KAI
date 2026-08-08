@@ -33,7 +33,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -259,16 +262,95 @@ def evaluate(*, prereg: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str,
     }
 
 
+def record_verdict(result: dict[str, Any], path: Path) -> bool:
+    """Den Stand NUR bei Verdikt-Wechsel anhaengen. Gibt zurueck, ob geschrieben wurde.
+
+    Der Timer laeuft stuendlich, das Verdikt aendert sich hoechstens zweimal.
+    Wuerde jeder Lauf schreiben, waere die Datei Rauschen statt Chronik — und
+    ein echter Wechsel ginge darin unter.
+    """
+    previous = read_jsonl(path)
+    if previous and str(previous[-1].get("verdict") or "") == str(result.get("verdict") or ""):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return True
+
+
+def _send_telegram(message: str) -> None:
+    """Alarm ueber den vorhandenen env-basierten Kanal; Stille statt Absturz ohne Creds."""
+    token = os.environ.get("ALERT_TELEGRAM_TOKEN", "")
+    chat_id = os.environ.get("ALERT_TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        print("alert: ALERT_TELEGRAM_TOKEN/CHAT_ID fehlen — kein Versand", file=sys.stderr)
+        return
+    import httpx
+
+    response = httpx.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data={"chat_id": chat_id, "text": message},
+        timeout=15,
+    )
+    if response.status_code != 200:
+        print(f"alert: telegram send failed {response.status_code}", file=sys.stderr)
+
+
+def maybe_alert(
+    result: dict[str, Any],
+    *,
+    recorded: bool,
+    sender: Callable[[str], Any] = _send_telegram,
+) -> bool:
+    """Alarm ausschliesslich bei FAIL und ausschliesslich beim Wechsel dorthin."""
+    if result.get("verdict") != "FAIL" or not recorded:
+        return False
+    safety = result["safety_axis"]
+    transition = result["transition_axis"]
+    sender(
+        "KAI FAIL — LN-Reconciliation-Shadow-Prae-Reg "
+        f"{result['prereg_id']} ({result['hypothesis']}): "
+        f"Sicherheit/Tip passed={safety['passed']} "
+        f"tip_failures={safety['tip_containment_failures']} "
+        f"illegale_terminalisierungen={safety['illegal_terminalisations']}, "
+        f"Transition {transition['status']} "
+        f"doppelt={transition['duplicate_terminalisations']} "
+        f"ohne_anhang={transition['unappended_matches']}. "
+        "Nichts reparieren, nichts abschneiden, keinen Outcome manuell setzen — "
+        "Runbook docs/runbooks/ln_reconciliation.md."
+    )
+    return True
+
+
+def exit_code(result: dict[str, Any], *, exit_nonzero_on_fail: bool) -> int:
+    """Nur FAIL faerbt die Unit rot. IMMATURE ist der erwartete Normalzustand."""
+    return 1 if exit_nonzero_on_fail and result.get("verdict") == "FAIL" else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prereg-ledger", type=Path, default=DEFAULT_PREREG_LEDGER)
     parser.add_argument("--reports", type=Path, default=DEFAULT_REPORT_PATH)
     parser.add_argument("--prereg-id", default=PREREG_ID)
     parser.add_argument("--json", dest="as_json", action="store_true")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        default=None,
+        help="Verdikt-Chronik; es wird NUR bei Verdikt-Wechsel angehaengt.",
+    )
+    parser.add_argument("--alert-on-fail", action="store_true")
+    parser.add_argument("--exit-nonzero-on-fail", action="store_true")
     args = parser.parse_args()
 
     prereg = load_prereg(args.prereg_ledger, args.prereg_id)
     result = evaluate(prereg=prereg, runs=read_jsonl(args.reports))
+
+    recorded = record_verdict(result, args.record) if args.record else False
+    if args.alert_on_fail:
+        maybe_alert(result, recorded=recorded)
 
     if args.as_json:
         print(json.dumps(result, indent=2, sort_keys=True, default=str))
@@ -292,7 +374,7 @@ def main() -> int:
         )
         if result["scope_note"]:
             print(f"  {result['scope_note']}")
-    return 0
+    return exit_code(result, exit_nonzero_on_fail=args.exit_nonzero_on_fail)
 
 
 if __name__ == "__main__":
