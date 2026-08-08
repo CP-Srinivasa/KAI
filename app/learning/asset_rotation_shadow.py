@@ -20,8 +20,9 @@ from app.learning.asset_lifecycle import AssetStatus, can_transition
 from app.learning.asset_performance_score import AssetWindowStats, evaluate_asset
 from app.learning.asset_rotation_policy import decide_asset_rotation
 
-_DEFAULT_MIN_CLOSES = 5
-_DEFAULT_WILSON_FLOOR = 0.5
+# B4 (PR-3): identisch zu asset_performance_score — Herleitung + Empirie dort.
+_DEFAULT_MIN_CLOSES = 8
+_DEFAULT_WILSON_FLOOR = 0.35
 
 
 @dataclass(frozen=True)

@@ -119,8 +119,9 @@ class TestRunRotationShadow:
 
     def test_run_writes_shadow_log_and_state(self, tmp_path: Path) -> None:
         audit = tmp_path / "audit.jsonl"
-        # 6 winning BTC closes → healthy → promote from default probation.
-        self._write_audit(audit, [("BTC/USDT", 10.0)] * 6)
+        # 8 winning BTC closes → healthy → promote from default probation
+        # (B4/PR-3: min_closes ist jetzt 8; 6 wäre insufficient).
+        self._write_audit(audit, [("BTC/USDT", 10.0)] * 8)
         state_path = tmp_path / "state.json"
         shadow_log = tmp_path / "rot_shadow.jsonl"
         record = run_rotation_shadow(
