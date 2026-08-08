@@ -54,6 +54,30 @@ def _emit(result: dict[str, Any], *, as_json: bool) -> None:
         f"  overall@{horizon}s: n={row['n']} mean_x={row['mean_x']} "
         f"positive_rate={row['positive_rate']} p_positive={row['p_positive']}"
     )
+    _emit_decomposition(result)
+
+
+def _emit_decomposition(result: dict[str, Any]) -> None:
+    """Zerlegung IMMER mitdrucken — eine Quote ohne sie ist ein halber Bericht.
+
+    Die Warnungen stehen bewusst am Ende und in Rot: wer nur die Gesamtquote
+    liest, soll trotzdem sehen, wenn sie von einer Gruppe getragen wird.
+    """
+    dec = result.get("decomposition")
+    if not isinstance(dec, dict) or not dec.get("n"):
+        return
+    console.print(f"  [dim]Zerlegung (n={dec['n']}, Gesamtquote {dec['rate']}):[/dim]")
+    for group, cell in dec["by_group"].items():
+        console.print(
+            f"    {group}: n={cell['n']} quote={cell['rate']} anteil={cell['share_of_units']}"
+        )
+    worst = dec.get("leave_one_group_out_worst")
+    if worst:
+        console.print(
+            f"    [dim]ohne {worst['group']!r}: n={worst['n']} quote={worst['rate']}[/dim]"
+        )
+    for flag in dec.get("flags", []):
+        console.print(f"  [red]! {flag}[/red]")
 
 
 @trading_app.command("tech-precision-eval")
