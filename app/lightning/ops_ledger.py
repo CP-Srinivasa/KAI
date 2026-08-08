@@ -799,6 +799,67 @@ def verify_ln_ops_ledger(path: Path | None = None) -> dict[str, Any]:
     return _verify_ln_ops_text(target.read_text(encoding="utf-8"))
 
 
+def read_verified_ln_ops_snapshot(path: Path | None = None) -> dict[str, Any]:
+    """Return records from one locked, fully verified v2-journal snapshot.
+
+    Unlike the legacy public verifier, a missing/non-file journal is an explicit
+    failure here.  Reconciliation needs the record bodies which produced
+    ``open_intents`` and must never verify one read and consume another (TOCTOU).
+    On every read, lock or chain failure ``records`` is empty so no caller can
+    accidentally act on a valid-looking prefix.
+    """
+    target = path or ln_ops_v2_path()
+    if not target.is_file():
+        return {
+            "ok": False,
+            "checked": 0,
+            "records": [],
+            "open_intents": [],
+            "errors": [{"seq": 0, "reason": "ledger missing or not a file"}],
+        }
+    try:
+        flags = portalocker.LockFlags.SHARED | portalocker.LockFlags.NON_BLOCKING
+        with portalocker.Lock(
+            target,
+            mode="r",
+            encoding="utf-8",
+            timeout=10,
+            flags=flags,
+        ) as handle:
+            raw = handle.read()
+    except Exception as exc:  # noqa: BLE001 — any snapshot uncertainty is failure
+        logger.error(
+            "[ln-ops] verified snapshot unavailable: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return {
+            "ok": False,
+            "checked": 0,
+            "records": [],
+            "open_intents": [],
+            "errors": [{"seq": 0, "reason": f"ledger unreadable ({type(exc).__name__})"}],
+        }
+
+    verification = _verify_ln_ops_text(raw)
+    if not verification["ok"]:
+        return {
+            "ok": False,
+            "checked": int(verification["records"]),
+            "records": [],
+            "open_intents": [],
+            "errors": list(verification["errors"]),
+        }
+    records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    return {
+        "ok": True,
+        "checked": len(records),
+        "records": records,
+        "open_intents": list(verification["open_intents"]),
+        "errors": [],
+    }
+
+
 def migrate_legacy_ln_ops(source: Path, destination: Path) -> dict[str, Any]:
     """Build a redacted, chained v2 ledger from a v1 file (non-destructive).
 
@@ -1092,6 +1153,7 @@ __all__ = [
     "normalize_payment_hash",
     "prepare_ln_intent",
     "read_recent_ln_ops",
+    "read_verified_ln_ops_snapshot",
     "redact_ln_op_record",
     "spent_today_sat",
     "spent_today_sat_v2",

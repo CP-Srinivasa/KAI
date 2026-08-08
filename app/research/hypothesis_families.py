@@ -159,6 +159,16 @@ FAMILIES: dict[str, HypothesisFamily] = {
             "und prove-by-doing-Kanäle; externe Einnahmen lifetime = 0 sat (Stand 08-06).",
         ),
         HypothesisFamily(
+            name="money_path_integrity",
+            status=OPEN,
+            constructions_failed=0,
+            evidence=(
+                "W0/PR-D 2026-08-06: first reconciliation shadow construction; no verdict yet",
+            ),
+            notes="Operational safety/integrity hypotheses only; never an alpha, readiness, "
+            "capital or revenue claim.",
+        ),
+        HypothesisFamily(
             name="l2_microstructure",
             status=OPEN,
             constructions_failed=0,

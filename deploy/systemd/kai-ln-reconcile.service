@@ -1,0 +1,21 @@
+[Unit]
+Description=KAI Lightning money-journal reconciliation (read node, outcome-only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/kai/ai_analyst_trading_bot
+Environment=PYTHONIOENCODING=utf-8
+EnvironmentFile=-/home/kai/ai_analyst_trading_bot/.env
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/ln_reconcile.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=5min
+MemoryMax=192M
+CPUQuota=25%
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
