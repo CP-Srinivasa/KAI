@@ -54,6 +54,23 @@ updates:
       # (ignore wirkt nur auf Version-Updates dieses Majors).
       - dependency-name: "tailwindcss"
         update-types: ["version-update:semver-major"]
+      # React 19 ist eine Ökosystem-Migration (JSX-Runtime, Typen quer durch
+      # alle Komponenten). #668 bewies die Bump-Untauglichkeit: react-dom 19
+      # ohne react 19 = ERESOLVE-Peer-Bruch nach 14s. Nur als eigenes Projekt.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 (native Compiler) entfernt `baseUrl` (TS5102) und
+      # verbietet non-relative paths (TS5090) — unser "@/…"-Alias-Setup hängt
+      # genau daran (#669 rot nach 17s). tsconfig-Migration als eigenes
+      # Projekt; Minors/Patches der 5.x-Linie laufen weiter.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
     labels:
