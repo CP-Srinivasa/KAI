@@ -100,3 +100,30 @@ def test_no_research_dir_means_no_prereg_check(tmp_path: Path) -> None:
     _base(tmp_path)
     issues, _ = _check_data_freshness(tmp_path, NOW)
     assert not any(i.component == "prereg_ledger_presence" for i in issues)
+
+
+def test_stale_reconciliation_report_is_flagged(tmp_path: Path) -> None:
+    """Ein still gestorbener kai-ln-reconcile.timer muss sichtbar werden.
+
+    Der Timer lief ab 2026-08-08 alle 15 min, aber sein Ausgang stand in
+    KEINER Wache — exakt das Muster, das den TV-Ingest 6 Tage unbemerkt tot
+    liegen liess.
+    """
+    _base(tmp_path)
+    report = tmp_path / "lightning" / "ln_reconciliation.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("{}\n", encoding="utf-8")
+    _age(report, 60)  # > 45 min (3 verpasste 15-min-Laeufe)
+    issues, stale = _check_data_freshness(tmp_path, NOW)
+    assert any(i.component == "ln_reconcile_freshness" for i in issues)
+    assert stale is True
+
+
+def test_fresh_reconciliation_report_is_clean(tmp_path: Path) -> None:
+    _base(tmp_path)
+    report = tmp_path / "lightning" / "ln_reconciliation.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("{}\n", encoding="utf-8")
+    _age(report, 20)  # ein verpasster Lauf ist noch kein Alarm
+    issues, _ = _check_data_freshness(tmp_path, NOW)
+    assert not any(i.component == "ln_reconcile_freshness" for i in issues)
