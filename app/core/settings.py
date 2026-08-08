@@ -620,6 +620,19 @@ class ExecutionSettings(BaseSettings):
     # env: EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE
     universe_eligibility_enforce: bool = Field(default=False)
 
+    # Rotation-Gate (Plan 08-08, PR-4): off = Gate existiert nicht (Default,
+    # Null-Verhaltensänderung beim Deploy) · shadow = nichts wird geblockt,
+    # archived-Öffnungen erzeugen rotation_gate_would_block-Audit-Events
+    # (Counterfactual für die Prä-Reg rotation_gated_universe_v1) · enforce =
+    # blockt archived-Öffnungen, NUR für Routen in asset_rotation_gate_routes.
+    # H1/H2-DOKTRIN: technical_paper (versiegelte Prä-Reg-Population
+    # fd6f5f7842f49244/0c7ead764621dd17) darf bis zu deren Abschluss NIE im
+    # Enforce-Scope stehen (Operator-Entscheid Zweig A, 08-08). enforce erst
+    # nach versiegelter Prä-Reg + >=2 Wochen Shadow-Fenster.
+    # env: EXECUTION_ASSET_ROTATION_GATE_MODE / _ROUTES
+    asset_rotation_gate_mode: Literal["off", "shadow", "enforce"] = Field(default="off")
+    asset_rotation_gate_routes: str = Field(default="autonomous_loop")
+
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
         if self.live_enabled and self.mode is not ExecutionMode.LIVE:

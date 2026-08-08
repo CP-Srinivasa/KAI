@@ -34,6 +34,7 @@ from app.execution.models import (
 )
 from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.order_intent import ExecutableOrderIntent
+from app.execution.rotation_gate import evaluate_rotation_gate
 from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
     IllegalStateTransitionError,
@@ -787,6 +788,43 @@ class PaperExecutionEngine:
                     order.symbol,
                 )
                 return None
+
+        # Rotation-Gate (Plan 08-08, PR-4): Symbole, die die Asset-Rotation als
+        # 'archived' führt, verlieren route-scoped ihr Open-Recht — Closes
+        # passieren immer (Block läuft nur für _opens). off = kein Gate; shadow
+        # = nur Counterfactual-Audit; enforce blockt NUR Routen im Scope
+        # (technical_paper NIE, solange H1/H2 versiegelt messen — Operator-
+        # Entscheid Zweig A 08-08). Fail-open bei fehlendem/korruptem State und
+        # unattribuierter Quelle.
+        if _opens:
+            _exec_cfg = get_settings().execution
+            if _exec_cfg.asset_rotation_gate_mode != "off":
+                _rg = evaluate_rotation_gate(
+                    order.symbol,
+                    order.source or "",
+                    mode=_exec_cfg.asset_rotation_gate_mode,
+                    routes_csv=_exec_cfg.asset_rotation_gate_routes,
+                )
+                if _rg.action != "pass":
+                    self._append_audit(
+                        _rg.audit_event,
+                        {
+                            "symbol": order.symbol,
+                            "source": order.source or "",
+                            "route": _rg.route or "",
+                            "rotation_status": _rg.status or "",
+                            "gate_mode": _rg.mode,
+                            "order_id": order.order_id,
+                        },
+                    )
+                    if _rg.action == "block":
+                        logger.warning(
+                            "[PAPER] Rejecting open on archived symbol %s "
+                            "(rotation gate enforce, route=%s)",
+                            order.symbol,
+                            _rg.route,
+                        )
+                        return None
 
         # Epoche v2 (Weg B+): Cash-Delta ↔ Order-Notional je Event nachvollziehbar.
         # cash_before/cash_delta wandern auf die order_filled-Zeile, damit (a) der
