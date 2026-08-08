@@ -95,6 +95,10 @@ jobs:
           commit-message: "chore(deps): weekly lock-file refresh"
           title: "chore(deps): weekly lock-file refresh"
           body-path: pr_body.md
+          # Nur der Lock gehoert in den PR — ohne add-paths committete der
+          # Erstlauf (#673) seine Scratch-Dateien (audit_output.txt, pr_body.md)
+          # in die Repo-Wurzel. Der Audit-Output steht im PR-Body.
+          add-paths: requirements.lock
           branch: chore/lock-update-${{ github.run_number }}
           # Audit 2026-08-06 (P1): "main" ist eine verwaiste, historisch
           # disjunkte Linie ohne gemeinsamen Ancestor — create-pull-request
