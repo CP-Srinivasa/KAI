@@ -69,11 +69,25 @@ tests/run_sprint14.ps1
 # Deckungsgleichheit. Solange sie unversioniert waren, konnten SSOT und
 # Definitionen unbemerkt auseinanderlaufen (2026-08-09: kai-finder in der SSOT
 # ohne Definition, sentr mit Definition am falschen Ort, vier Agenten gar nicht
-# registriert). Bewusst eng: nur *.md unter agents/, nichts sonst.
+# registriert). Bewusst eng: nur *.md, nichts sonst.
+#
+# Dasselbe gilt fuer .claude/skills/**/*.md: CLAUDE.md §7 verweist auf
+# daily-strategy-review, kai-finder.md auf source-expansion und
+# architecture-red-team.md auf research-crosscheck. Ein Skill, den ein
+# versionierter Agent referenziert, gehoert selbst in die Versionierung --
+# sonst zeigt die Referenz ins Leere und niemand merkt es.
+#
+# Weiterhin ignoriert: settings.json, alles Nicht-*.md (Skripte, Assets,
+# Caches). Wird ein Skill je ein Helfer-Skript brauchen, ist das eine bewusste
+# Erweiterung dieser Liste, keine stille.
 .claude/*
 !.claude/agents/
 .claude/agents/*
 !.claude/agents/*.md
+!.claude/skills/
+.claude/skills/**
+!.claude/skills/**/
+!.claude/skills/**/*.md
 
 # APIs directory — contains real secrets, never commit
 APIs/

@@ -308,7 +308,7 @@ Klarheit > Annahmen
 
 ## Testing-Regeln (Skill)
 
-Nutze den Skill `.claude/skill/Testing-Regeln` IMMER, wenn es um Tests, Qualitätssicherung oder Validierung von Änderungen geht.
+Nutze den Skill `kai-testing-regeln` IMMER, wenn es um Tests, Qualitätssicherung oder Validierung von Änderungen geht.
 
 Grundprinzip:
 Tests dienen nicht der Formalität, sondern der echten Absicherung von Verhalten und Risiken.
@@ -357,7 +357,7 @@ Wenn Tests gut sind:
 
 ## Skill-Aktivierung: Testing-Regeln
 
-Aktiviere `.claude/skill/Testing-Regeln`, wenn:
+Aktiviere `kai-testing-regeln`, wenn:
 
 - neuer Code geschrieben wird
 - bestehender Code verändert wird
