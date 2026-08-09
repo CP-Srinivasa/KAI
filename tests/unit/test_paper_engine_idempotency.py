@@ -87,14 +87,28 @@ def test_replay_returns_filled_idempotency_keys(audit_with_filled_order: Path) -
 
 def test_rehydrate_populates_filled_keys(audit_with_filled_order: Path) -> None:
     """Sprint C: rehydrate_from_audit must seed _filled_keys cross-instance."""
-    eng = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        # Lesen UND schreiben auf demselben Stream: ohne audit_log_path
+        # rehydriert die Engine aus tmp, schreibt aber in den
+        # Produktions-Evidenz-Stream.
+        audit_log_path=audit_with_filled_order,
+    )
     eng.rehydrate_from_audit(audit_with_filled_order)
     assert "opbridge:ENV-20260509162116-6c51f5bf" in eng._filled_keys
 
 
 def test_create_order_rejects_duplicate_idempotency_key(audit_with_filled_order: Path) -> None:
     """Sprint C: A second create_order for a known-filled key must raise."""
-    eng = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        # Lesen UND schreiben auf demselben Stream: ohne audit_log_path
+        # rehydriert die Engine aus tmp, schreibt aber in den
+        # Produktions-Evidenz-Stream.
+        audit_log_path=audit_with_filled_order,
+    )
     eng.rehydrate_from_audit(audit_with_filled_order)
     with pytest.raises(DuplicateOrderError):
         eng.create_order(
@@ -116,9 +130,23 @@ def test_two_parallel_engines_share_filled_keys_via_audit(audit_with_filled_orde
     run_tick() eine neue Engine-Instanz. Beide rehydraten parallel vom audit
     und sehen denselben filled_keys-Snapshot → beide blocken den dup-Key.
     """
-    eng_a = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng_a = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        # Lesen UND schreiben auf demselben Stream: ohne audit_log_path
+        # rehydriert die Engine aus tmp, schreibt aber in den
+        # Produktions-Evidenz-Stream.
+        audit_log_path=audit_with_filled_order,
+    )
     eng_a.rehydrate_from_audit(audit_with_filled_order)
-    eng_b = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng_b = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        # Lesen UND schreiben auf demselben Stream: ohne audit_log_path
+        # rehydriert die Engine aus tmp, schreibt aber in den
+        # Produktions-Evidenz-Stream.
+        audit_log_path=audit_with_filled_order,
+    )
     eng_b.rehydrate_from_audit(audit_with_filled_order)
     for eng in (eng_a, eng_b):
         with pytest.raises(DuplicateOrderError):
@@ -134,7 +162,14 @@ def test_two_parallel_engines_share_filled_keys_via_audit(audit_with_filled_orde
 
 def test_create_order_accepts_fresh_idempotency_key(audit_with_filled_order: Path) -> None:
     """Sanity: Sprint-C-Fix darf nicht ALLE orders blocken — nur den Dup-Key."""
-    eng = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        # Lesen UND schreiben auf demselben Stream: ohne audit_log_path
+        # rehydriert die Engine aus tmp, schreibt aber in den
+        # Produktions-Evidenz-Stream.
+        audit_log_path=audit_with_filled_order,
+    )
     eng.rehydrate_from_audit(audit_with_filled_order)
     # different symbol + different envelope = fresh idempotency key
     order = eng.create_order(

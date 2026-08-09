@@ -8,7 +8,12 @@ from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 
 
 def test_target_completion_refuses_non_premium_position_source(tmp_path: Path) -> None:
-    engine = PaperExecutionEngine(initial_equity=10_000.0, fee_pct=0.0, slippage_pct=0.0)
+    engine = PaperExecutionEngine(
+        initial_equity=10_000.0,
+        fee_pct=0.0,
+        slippage_pct=0.0,
+        audit_log_path=tmp_path / "paper_execution_audit.jsonl",
+    )
     order = engine.create_order(
         symbol="CYS/USDT",
         side="buy",
@@ -32,6 +37,7 @@ def test_target_completion_refuses_non_premium_position_source(tmp_path: Path) -
         source_envelope_id="ENV-premium-cys-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
 
     assert out.status == "requires_review"

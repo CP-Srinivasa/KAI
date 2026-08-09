@@ -978,7 +978,13 @@ def compute_realized_by_asset(
                 and isinstance(xp, (int, float))
                 and isinstance(qty, (int, float))
             ):
-                pnl = (float(xp) - float(ep)) * float(qty)
+                # Seitenbewusst: ohne diese Kehrung geht jeder Short-Close mit
+                # invertiertem Vorzeichen in die Aggregate (analytics_db macht
+                # es seit je richtig, dieser Pfad nicht).
+                delta = float(xp) - float(ep)
+                if str(d.get("position_side") or "").strip().lower() == "short":
+                    delta = -delta
+                pnl = delta * float(qty)
             else:
                 invalid.append((line_no, "close_event_missing_trade_pnl_usd_and_v1_fields"))
                 continue
