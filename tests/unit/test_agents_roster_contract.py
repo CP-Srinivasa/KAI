@@ -7,7 +7,11 @@ never implies autonomous execution an interactive agent never performs.
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
+
+import pytest
 
 from app.agents.worker import HANDLERS
 from app.api.routers.agents import _AGENTS
@@ -16,8 +20,7 @@ from app.api.routers.agents import _AGENTS
 # edit. The roster lives in three places -- this dict, CLAUDE.md's auto-routing
 # table and `.claude/agents/*.md` -- and they drifted apart once already:
 # kai-finder was registered here without a definition file, sentr had a
-# definition that the working directory could not reach. `.claude/` is
-# gitignored, so this file is the only register CI can enforce.
+# definition that the working directory could not reach.
 _INTERACTIVE = {
     "dali",
     "neo",
@@ -30,6 +33,26 @@ _INTERACTIVE = {
 }
 
 _SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+# `.claude/agents/*.md` is what Claude Code actually loads. Since 2026-08-09 it
+# is version-controlled (targeted .gitignore exception) so this contract can
+# compare the two registers instead of merely asserting they should agree.
+_DEFINITIONS_DIR = Path(__file__).resolve().parents[2] / ".claude" / "agents"
+_FRONTMATTER_NAME_RE = re.compile(r"^name:[ \t]*(\S+)[ \t]*$", re.MULTILINE)
+
+
+def _definition_files() -> list[Path]:
+    """Definition files, or skip locally when they are not checked out.
+
+    Sparse worktrees may omit `.claude/`. That is fine for a local run but must
+    never silently pass in CI, where a full checkout is guaranteed -- a skipped
+    guard is indistinguishable from a satisfied one in the summary line.
+    """
+    if not _DEFINITIONS_DIR.is_dir():
+        if os.environ.get("CI"):
+            raise AssertionError(f"{_DEFINITIONS_DIR} is missing although CI runs a full checkout")
+        pytest.skip(f"{_DEFINITIONS_DIR} not checked out (sparse worktree)")
+    return sorted(_DEFINITIONS_DIR.glob("*.md"))
 
 
 def _handler_agents() -> set[str]:
@@ -78,3 +101,31 @@ def test_every_agent_declares_modes_and_permissions() -> None:
     for slug, defn in _AGENTS.items():
         assert defn.modes, f"{slug} declares no modes"
         assert defn.permissions, f"{slug} declares no permissions"
+
+
+def test_ssot_and_definition_files_cover_the_same_agents() -> None:
+    """The guard that was missing when the roster split apart.
+
+    A slug in `_AGENTS` without a definition file is listed in the dashboard but
+    cannot be dispatched; a definition file without a slug is dispatchable but
+    invisible in the API. Both happened before this test existed.
+    """
+    defined = {p.stem for p in _definition_files()}
+    registered = set(_AGENTS)
+    assert defined == registered, (
+        f"registered but no definition file: {sorted(registered - defined)}; "
+        f"definition file but not registered: {sorted(defined - registered)}"
+    )
+
+
+def test_definition_frontmatter_name_matches_its_filename() -> None:
+    for path in _definition_files():
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---"), f"{path.name} has no YAML frontmatter"
+        frontmatter = text.split("---", 2)[1]
+        match = _FRONTMATTER_NAME_RE.search(frontmatter)
+        assert match, f"{path.name} declares no name in its frontmatter"
+        assert match.group(1) == path.stem, (
+            f"{path.name} declares name={match.group(1)!r}; Claude Code resolves "
+            f"agents by this field, so it must equal the filename"
+        )

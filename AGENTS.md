@@ -85,12 +85,16 @@ oder Abgang nie still passiert.
 | **Autonomer JSONL-Queue-Worker** (`wiring="autonomous"`) | `app/agents/worker.py` (`HANDLERS`, cron/systemd) | **3**: `watchdog` (check/report), `sentr` (inspect/report/kyt-review/governance-audit), `architect` (review/propose) |
 | **Interaktiv** (`wiring="interactive"`, kein Worker-Handler) | `.claude/agents/*.md`, vom Hauptagent on-demand dispatcht | **8**: dali, neo, satoshi, kai-finder, einstein, xqu, architecture-red-team, data-quality-inspector |
 
-**Register-Warnung:** Der Roster steht an drei Orten — `_AGENTS`, `CLAUDE.md` § Agent Roster
-und `.claude/agents/*.md`. `.claude/` ist gitignored, also kann CI nur die ersten beiden sehen.
-Am 2026-08-09 war die Folge sichtbar: `kai-finder` stand in der SSOT ohne Definitionsdatei,
-`sentr` hatte eine Definition, die vom tatsächlichen Arbeitsverzeichnis aus nicht erreichbar
-war, und vier dispatchbare Agenten fehlten in der SSOT ganz. Bei jeder Roster-Änderung alle
-drei Register nachziehen.
+**Register-Disziplin:** Der Roster steht an drei Orten — `_AGENTS`, `CLAUDE.md` § Agent Roster
+und `.claude/agents/*.md`. Am 2026-08-09 war die Folge des Auseinanderlaufens sichtbar:
+`kai-finder` stand in der SSOT ohne Definitionsdatei, `sentr` hatte eine Definition, die vom
+tatsächlichen Arbeitsverzeichnis aus nicht erreichbar war, und vier dispatchbare Agenten
+fehlten in der SSOT ganz. Ursache: `.claude/` war vollständig gitignored, CI konnte die
+Definitionen also gar nicht sehen. Seit 2026-08-09 sind `.claude/agents/*.md` versioniert
+(gezielte `.gitignore`-Ausnahme — ausschließlich `*.md` unter `agents/`; `settings.json` und
+`skills/` bleiben ignoriert), und `test_agents_roster_contract.py` vergleicht SSOT und
+Definitionen direkt. Einen Agenten hinzufügen heißt: Eintrag in `_AGENTS`, Definitionsdatei,
+Zeile in der Auto-Routing-Tabelle — sonst ist CI rot.
 
 **Konsequenz / Designentscheidung:** Die acht interaktiven Agenten werden vom Operator oder
 Hauptagent getriggert, nicht von einem autonomen Queue-Worker — für Design-, Tiefenanalyse-,

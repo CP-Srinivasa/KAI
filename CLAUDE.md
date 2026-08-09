@@ -433,7 +433,7 @@ Elf operative Agenten — alle ausschließlich von Claude Code ausführbar, niem
 
 Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail (Trading/Decision-Writes, artifacts-only).
 Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder,einstein,xqu,architecture-red-team,data-quality-inspector}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
-Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein; die `interactive`-Menge ist im Contract-Test `tests/unit/test_agents_roster_contract.py` gepinnt, damit ein Zugang nie still passiert. Der Roster steht in drei Registern — `_AGENTS`, dieser Liste und `.claude/agents/*.md`; `.claude/` ist gitignored und daher nicht CI-prüfbar, also bei jeder Änderung alle drei nachziehen. Volle Definition: siehe `AGENTS.md` § Agent Roster.
+Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein; die `interactive`-Menge ist im Contract-Test `tests/unit/test_agents_roster_contract.py` gepinnt, damit ein Zugang nie still passiert. Der Roster steht in drei Registern — `_AGENTS`, dieser Liste und `.claude/agents/*.md`. Die Definitionsdateien sind seit 2026-08-09 versioniert (gezielte `.gitignore`-Ausnahme, nur `*.md` unter `agents/`), daher vergleicht der Contract-Test SSOT und Definitionen direkt gegeneinander. Einen Agenten hinzufügen heißt: Eintrag in `_AGENTS`, Definitionsdatei, Zeile in der Auto-Routing-Tabelle — sonst ist CI rot. Volle Definition: siehe `AGENTS.md` § Agent Roster.
 
 ### Auto-Routing-Pflicht (verbindlich)
 
