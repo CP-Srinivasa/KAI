@@ -15,7 +15,13 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # the journal means "run the eval now" (the count is an upper-bound proxy),
 # never "the claim passed". Writes nothing but journal output; artifact-free by
 # design so the prereg ledger stays the single source of claim truth.
-ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading prereg-maturity
+#
+# --notify: faellige Zeilen gehen zusaetzlich an den Operator-Kanal. Ohne das
+# Flag stand die Faelligkeit ausschliesslich im Journal — richtig berechnet und
+# trotzdem wirkungslos, weil niemand woechentlich hineinsieht. Gesendet wird NUR
+# bei mindestens einer faelligen Prae-Reg; ein Versandfehler meldet sich sichtbar,
+# faerbt die Unit aber nicht rot (sonst saehe ein Netzausfall aus wie ein Stichtag).
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading prereg-maturity --notify
 
 StandardOutput=journal
 StandardError=journal

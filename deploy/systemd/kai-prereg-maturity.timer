@@ -1,15 +1,22 @@
 [Unit]
-Description=KAI Prereg Maturity Check — weekly schedule
+Description=KAI Prereg Maturity Check — daily schedule (n-Kohorten UND Stichtage)
 
 [Timer]
-# Weekly cadence: out-of-sample cohorts grow by tens of events per week, so a
-# Monday-morning count is ample. Deliberately NO `Requires=` here (a Requires=
-# on a timer can strand it; Timer-Requires cascade lesson, #414).
+# Taeglich statt woechentlich: die Kohorten wachsen zwar nur um Dutzende
+# Ereignisse pro Woche, aber dieser Timer traegt seit den Frist-Prae-Regs auch
+# die Stichtage (kind="deadline"). Eine Wochen-Uhr kann eine Frist um bis zu
+# sieben Tage verfehlen — die Analyst-Probe f0e1a3a8 laeuft am 2026-08-10 aus,
+# einem Montag, und waere bei Mo 05:23 nur zufaellig rechtzeitig erwischt worden.
+# Der Lauf sind zwei SELECT COUNT(*); taeglich ist billig.
+# Deliberately NO `Requires=` here (a Requires= on a timer can strand it;
+# Timer-Requires cascade lesson, #414).
 # Enabled at deploy time via `systemctl enable --now kai-prereg-maturity.timer`.
-OnCalendar=Mon *-*-* 05:23:00
-# Persistent: if the Pi was down on Monday, run once on next boot rather than
-# waiting a full week.
+OnCalendar=*-*-* 05:23:00
+# Persistent: if the Pi was down, run once on next boot rather than skipping the
+# day entirely — a missed deadline must not depend on uptime.
 Persistent=true
+# AccuracySec bleibt grob (der Zeitpunkt ist unkritisch), aber deutlich unter
+# dem Tagesabstand, damit sich Laeufe nicht ueberlappen.
 AccuracySec=1h
 RandomizedDelaySec=20min
 

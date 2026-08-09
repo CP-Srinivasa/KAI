@@ -45,6 +45,12 @@ PREREG_ID = "0879a65c5fd01f65"
 DEFAULT_PREREG_LEDGER = Path("artifacts/research/prereg_ledger.jsonl")
 DEFAULT_REPORT_PATH = Path("artifacts/lightning/ln_reconciliation.jsonl")
 
+# Fristablauf ohne Reife. KEIN Sachverdikt: die Hypothese ist nicht widerlegt,
+# sie wurde nur nicht messbar — dieselbe Ehrlichkeit wie H2/CLOSED_UNMEASURABLE.
+# Ohne diesen Zustand endet eine unreife Prae-Reg still in ``IMMATURE``, das
+# bewusst nicht alarmiert; der Stichtag verstreicht dann unbemerkt.
+VERDICT_TIMEOUT = "INCONCLUSIVE_BY_TIMEOUT"
+
 # Wörtliche Klauseln aus dem versiegelten ``success_criteria``. Fehlt eine,
 # ist der Text nicht mehr der, gegen den hier gemessen wird.
 REQUIRED_CLAUSES = (
@@ -152,7 +158,12 @@ def _select_runs(
     return [run for _, run in dated[:limit]]
 
 
-def evaluate(*, prereg: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate(
+    *,
+    prereg: dict[str, Any],
+    runs: list[dict[str, Any]],
+    now: datetime | None = None,
+) -> dict[str, Any]:
     criteria = str(prereg.get("success_criteria") or "")
     _verify_criteria(criteria)
 
@@ -222,8 +233,11 @@ def evaluate(*, prereg: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str,
     }
 
     mature = len(counted) >= target
+    # Reife schlaegt die Frist: wer sein n erreicht hat, wird normal beurteilt.
+    # Die Frist ist eine Bremse gegen Zombies, kein Deckel auf erreichte Evidenz.
+    expired = (now or datetime.now(UTC)) > window_end
     if not mature:
-        verdict = "IMMATURE"
+        verdict = VERDICT_TIMEOUT if expired else "IMMATURE"
     elif not safety_passed or transition_status == "FAIL":
         verdict = "FAIL"
     else:
@@ -304,8 +318,28 @@ def maybe_alert(
     recorded: bool,
     sender: Callable[[str], Any] = _send_telegram,
 ) -> bool:
-    """Alarm ausschliesslich bei FAIL und ausschliesslich beim Wechsel dorthin."""
-    if result.get("verdict") != "FAIL" or not recorded:
+    """Alarm bei FAIL und bei Fristablauf — jeweils nur beim Wechsel dorthin.
+
+    ``IMMATURE`` bleibt stumm (Normalzustand bis zur Reife). Ein verstrichener
+    Stichtag ist dagegen kein Normalzustand: er verlangt eine Entscheidung des
+    Operators und darf nicht im Journal versickern.
+    """
+    if not recorded:
+        return False
+    if result.get("verdict") == VERDICT_TIMEOUT:
+        window = result["window"]
+        sender(
+            "KAI FRIST ABGELAUFEN — LN-Reconciliation-Shadow-Prae-Reg "
+            f"{result['prereg_id']} ({result['hypothesis']}): "
+            f"Fenster endete {window['end_utc']}, "
+            f"Laeufe {result['runs_counted']}/{window['sample_size_target']} — unreif. "
+            "Verdikt INCONCLUSIVE_BY_TIMEOUT: die Hypothese ist NICHT widerlegt, "
+            "sie wurde nicht messbar. Kein Nachtragen, kein Fenster verlaengern, "
+            "keine Kriterien nachbessern — Resolution im Prae-Reg-Ledger setzen "
+            "und ggf. eine neue Prae-Reg mit erreichbarer Population registrieren."
+        )
+        return True
+    if result.get("verdict") != "FAIL":
         return False
     safety = result["safety_axis"]
     transition = result["transition_axis"]
@@ -325,8 +359,16 @@ def maybe_alert(
 
 
 def exit_code(result: dict[str, Any], *, exit_nonzero_on_fail: bool) -> int:
-    """Nur FAIL faerbt die Unit rot. IMMATURE ist der erwartete Normalzustand."""
-    return 1 if exit_nonzero_on_fail and result.get("verdict") == "FAIL" else 0
+    """FAIL und Fristablauf faerben die Unit rot. IMMATURE ist der Normalzustand.
+
+    Der Timeout faerbt bewusst dauerhaft rot statt einmal zu alarmieren: der
+    Alarm feuert nur beim Verdikt-Wechsel, und ein einzelne verlorene Nachricht
+    duerfte einen verpassten Stichtag nicht unsichtbar machen. Rot bleibt rot,
+    bis der Operator die Resolution setzt.
+    """
+    if not exit_nonzero_on_fail:
+        return 0
+    return 1 if result.get("verdict") in {"FAIL", VERDICT_TIMEOUT} else 0
 
 
 def main() -> int:
