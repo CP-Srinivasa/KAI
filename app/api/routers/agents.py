@@ -1,12 +1,20 @@
 """Agent control surface — read-only inventory of the agent roster (SSOT).
 
 ``_AGENTS`` is the single source of truth for the roster (imported by the
-worker and the telegram menu). It lists all seven agents — three
+worker and the telegram menu). It lists all eleven agents — three
 ``wiring="autonomous"`` (SENTR / Watchdog / Architect, backed by
-``app/agents/worker.py`` HANDLERS) and four ``wiring="interactive"`` (DALI /
-Neo / Satoshi / KAI-Finder, Claude-Code-only, no worker handler). The ``wiring``
+``app/agents/worker.py`` HANDLERS) and eight ``wiring="interactive"`` (DALI /
+Neo / Satoshi / KAI-Finder / Einstein / Xqu / Architecture-Red-Team /
+Data-Quality-Inspector, Claude-Code-only, no worker handler). The ``wiring``
 field keeps the dashboard from implying autonomous execution an interactive
 agent never performs (F-06/KAI-05).
+
+The roster is also written down in ``CLAUDE.md`` (auto-routing table) and in
+``.claude/agents/*.md`` (the definitions Claude Code actually loads). Those two
+registers are not importable here — ``.claude/`` is gitignored — so
+``tests/unit/test_agents_roster_contract.py`` pins the interactive set to force
+every addition through a deliberate edit. Keep all three in sync when changing
+this dict.
 
 Status is derived honestly from a JSONL dropbox under
 `artifacts/agents/{slug}/` — no fake heartbeats, no mocks:
@@ -132,6 +140,54 @@ _AGENTS: dict[str, AgentDefinition] = {
             "bewerten, vorschlagen (Legal/Stabilität/Kosten)"
         ),
         modes=["search", "propose"],
+        permissions=["read", "report"],
+    ),
+    "einstein": AgentDefinition(
+        slug="einstein",
+        name="Einstein",
+        wiring="interactive",
+        agent_id=None,
+        role=(
+            "Wissenschaftliche Tiefe — Mathematik, Physik, Modellierung, "
+            "Simulation, Sensitivitäts-/Fehleranalyse, Machbarkeit"
+        ),
+        modes=["analyze", "model", "simulate"],
+        permissions=["read", "report"],
+    ),
+    "xqu": AgentDefinition(
+        slug="xqu",
+        name="Xqu",
+        wiring="interactive",
+        agent_id=None,
+        role=(
+            "Framing-Interrogation — versteckte Annahmen, falsche Dichotomien, "
+            "Anomalien, Cross-Domain-Transfer, Drei-Ebenen-Lösungen"
+        ),
+        modes=["interrogate", "break", "missing"],
+        permissions=["read", "report"],
+    ),
+    "architecture-red-team": AgentDefinition(
+        slug="architecture-red-team",
+        name="Architecture Red Team",
+        wiring="interactive",
+        agent_id=None,
+        role=(
+            "Design-Gegenhypothesen — Architektur-Thesen zerlegen, Showstopper "
+            "vor dem Bauen finden, simplere Alternative gegenrechnen"
+        ),
+        modes=["review"],
+        permissions=["read", "report"],
+    ),
+    "data-quality-inspector": AgentDefinition(
+        slug="data-quality-inspector",
+        name="Data Quality Inspector",
+        wiring="interactive",
+        agent_id=None,
+        role=(
+            "Datenqualität — Schema-Konsistenz, Dedup-Logik, Validierungs-Gaps, "
+            "Typ-Drift, Audit-Trail-Vollständigkeit"
+        ),
+        modes=["scan"],
         permissions=["read", "report"],
     ),
 }

@@ -417,7 +417,7 @@ Claude darf NICHT:
 
 ## Agent Roster (Claude-Code-only)
 
-Sieben operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs. SSOT: `app/api/routers/agents.py::_AGENTS`; Feld `wiring` trennt `autonomous` (Worker-Handler, cron-getrieben) von `interactive` (Claude-Code-only, kein Auto-Handler):
+Elf operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs. SSOT: `app/api/routers/agents.py::_AGENTS`; Feld `wiring` trennt `autonomous` (Worker-Handler, cron-getrieben) von `interactive` (Claude-Code-only, kein Auto-Handler):
 
 - **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. `wiring=autonomous`. Modi: `inspect`, `report`.
 - **Watchdog** — Health & Drift Monitor. `wiring=autonomous`. Modi: `check`, `report`.
@@ -425,11 +425,15 @@ Sieben operative Agenten — alle ausschließlich von Claude Code ausführbar, n
 - **DALI** — Design/UI-Audit & UI-Propose. `wiring=interactive`. `implement` schreibt nie direkt — Patch-Proposal landet in `artifacts/agents/dali/proposals.jsonl`, Operator-Apply via regulären Dev-Flow.
 - **Neo** — Code-Tiefenanalyse, Root-Cause-Debugging, Refactor mit Risikoabwägung. `wiring=interactive`. `implement` nur bei explizitem Operator-Auftrag mit `proposal_id`. Audit-Spur in `artifacts/agents/neo/{findings,proposals,implementations}.jsonl`.
 - **SATOSHI** — Kryptographie, Wallet/Custody/Key-Material, Smart-Contract-Review, kryptographische Verifikation (Signaturen, HMAC, Webhooks), Tokenomics-vs-Onchain-Konsistenz, forensische Doc-/Provenance-Analyse, Threat-Models. `wiring=interactive`. Krypto-Pfade/Key-Material/Approval-Mode niemals stillschweigend ändern.
-- **KAI-Finder** — Quellen-/Daten-Discovery (neue Feeds/APIs recherchieren, bewerten, vorschlagen). `wiring=interactive`. Modi: `search`, `propose`.
+- **KAI-Finder** — Quellen-/Daten-Discovery (neue Feeds/APIs recherchieren, bewerten, vorschlagen). `wiring=interactive`. Modi: `search`, `propose`. Discovery ist gegated (Seed-Freeze) — Recherche ja, Integration nur mit prä-registriertem Ziel.
+- **Einstein** — Wissenschaftliche Tiefe: Mathematik, Physik, Modellierung, Simulation, Sensitivitäts-/Fehleranalyse, Machbarkeit. `wiring=interactive`. Modi: `analyze`, `model`, `simulate`. Trennt Fakt/Ableitung/Hypothese/Spekulation explizit.
+- **Xqu** — Framing-Interrogation: versteckte Annahmen, falsche Dichotomien, Anomalien, Cross-Domain-Transfer. `wiring=interactive`. Modi: `interrogate`, `break`, `missing`. Greift die Fragestellung an, nicht die Antwort.
+- **Architecture Red Team** — Design-Gegenhypothesen, Showstopper vor dem Bauen. `wiring=interactive`. Modi: `review`. Urteil inline (Grün/Gelb/Rot).
+- **Data Quality Inspector** — Schema-Konsistenz, Dedup-Logik, Validierungs-Gaps, Typ-Drift, Audit-Trail-Vollständigkeit. `wiring=interactive`. Modi: `scan`. Findet, fixt nicht.
 
 Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail (Trading/Decision-Writes, artifacts-only).
-Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
-Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein (Contract-Test `tests/unit/test_agents_roster_contract.py`). Volle Definition: siehe `AGENTS.md` § Agent Roster.
+Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder,einstein,xqu,architecture-red-team,data-quality-inspector}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
+Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein; die `interactive`-Menge ist im Contract-Test `tests/unit/test_agents_roster_contract.py` gepinnt, damit ein Zugang nie still passiert. Der Roster steht in drei Registern — `_AGENTS`, dieser Liste und `.claude/agents/*.md`; `.claude/` ist gitignored und daher nicht CI-prüfbar, also bei jeder Änderung alle drei nachziehen. Volle Definition: siehe `AGENTS.md` § Agent Roster.
 
 ### Auto-Routing-Pflicht (verbindlich)
 
@@ -445,7 +449,9 @@ Claude Code MUSS bei den folgenden Trigger-Topics den passenden Subagent über d
 | Bug, Crash, Race-Condition, Concurrency, Performance, Root-Cause, Refactor-Code | **Neo** | + SATOSHI bei Krypto-Pfad, + DALI bei UI-Bug |
 | Crypto, HMAC, Webhook-Signatur, Wallet, Custody, Smart-Contract, Tokenomics, Whitepaper, Provenance, Replay-Schutz | **SATOSHI** | + Neo bei Code-Pfad, + SENTR bei Secret-Bezug |
 | Datenschema, Pydantic, Dedup, Validierung, Type-Konsistenz, JSONL-Schema | **data-quality-inspector** | + Architect bei Strukturfolge |
-| Neue Datenquelle, RSS, API-Quelle, Quell-Recherche, Feed-Bewertung | **source-scout** | + data-quality-inspector vor Integration |
+| Neue Datenquelle, RSS, API-Quelle, Quell-Recherche, Feed-Bewertung | **KAI-Finder** | + data-quality-inspector vor Integration |
+| Mathematische Herleitung, Physik-/Modellfrage, Simulation, Sensitivitäts-/Fehleranalyse, Größenordnung, Machbarkeit | **Einstein** | + Neo bei Code-Pfad |
+| Festgefahrenes Problem, mehrere gescheiterte Versuche, zu schneller Konsens, „was übersehen wir", Framing-Zweifel | **Xqu** | + Architecture-Red-Team bei Design-Bezug |
 
 **Cross-Referenz-Pflicht:** Wenn ein Subagent ein Finding in seiner JSONL ablegt (`finding_id`/`report_id`/`proposal_id`), übergibt der Hauptagent diese ID beim Folge-Aufruf an den nächsten Subagent. Der referenziert sie im eigenen Output über das Feld `cross_ref: ["NEO-F-001", "SAT-C-014"]`. Subagents reden nicht direkt miteinander — der Hauptagent ist Dispatcher und Moderator. Siehe `AGENTS.md` § Cross-Reference-Pattern.
 

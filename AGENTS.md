@@ -31,9 +31,9 @@
 >
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
-## Agent Roster (D-141, 2026-04-15; erweitert auf 6)
+## Agent Roster (D-141, 2026-04-15; erweitert auf 11 am 2026-08-09)
 
-Alle **sieben** Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
+Alle **elf** Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
 nicht von Antigravity, nicht von externen LLMs. Permissions-Boundary: read + report;
 write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail. Kanonische Roster-Quelle
 (SSOT) ist `app/api/routers/agents.py::_AGENTS` (von Worker + Telegram-Menü importiert).
@@ -47,11 +47,17 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail. Kanonische 
 | **Neo** | — | `analyze`, `fix` | Code-Tiefenanalyse — Root-Cause-Debugging, Concurrency, Datenfluss, Performance, Refactor mit Risikoabwägung |
 | **SATOSHI** | — | `review`, `verify` | Kryptographie/Wallet/Smart-Contract/Forensik — Signaturen, HMAC, Webhooks, Key-Material, Tokenomics-vs-Onchain, Doc-vs-Code-Konsistenz, Provenance, Threat-Models |
 | **KAI-Finder** | — | `search`, `propose` | Quellen-/Daten-Discovery — neue Feeds/APIs recherchieren, bewerten, vorschlagen (Legal/Stabilität/Kosten) |
+| **Einstein** | — | `analyze`, `model`, `simulate` | Wissenschaftliche Tiefe — Mathematik, Physik, Modellierung, Simulation, Sensitivitäts-/Fehleranalyse, Machbarkeit; trennt Fakt/Ableitung/Hypothese/Spekulation explizit |
+| **Xqu** | — | `interrogate`, `break`, `missing` | Framing-Interrogation — versteckte Annahmen, falsche Dichotomien, Anomalien, Cross-Domain-Transfer; greift die Fragestellung an, nicht die Antwort |
+| **Architecture Red Team** | — | `review` | Design-Gegenhypothesen — Architektur-Thesen zerlegen, Showstopper vor dem Bauen, simplere Alternative gegenrechnen; Urteil inline (Grün/Gelb/Rot) |
+| **Data Quality Inspector** | — | `scan` | Datenqualität — Schema-Konsistenz, Dedup-Logik, Validierungs-Gaps, Typ-Drift, Audit-Trail-Vollständigkeit; findet, fixt nicht |
 
 (Modi = API-Command-Surface `_AGENTS.modes`; die interaktiven `.claude/agents/*.md`-Subagenten können feingranularere Rollen haben.)
 
+**Vorgeschichte KAI-Finder:** hieß in `.claude/agents/` bis 2026-08-09 `source-scout`. Der Slug in der SSOT war immer `kai-finder`, die Definitionsdatei trug den anderen Namen — der Agent stand also in zwei Registern unter zwei Namen und war unter keinem vollständig eingetragen. Seit 2026-08-09 gilt durchgängig `kai-finder`.
+
 **Dropbox-Pattern (honest by design):**
-- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder}/*.jsonl`
+- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder,einstein,xqu,architecture-red-team,data-quality-inspector}/*.jsonl`
 - Status `live` = JSONL in den letzten 24h; `prepared` = Verzeichnis existiert, leer; `unavailable` = kein Verzeichnis
 - Kein Fake-Heartbeat, keine Mock-Daten
 
@@ -63,25 +69,33 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail. Kanonische 
 
 **Master-Rules** (gelten für alle Agenten): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
 
-### Wiring-Realität (ehrlich, Stand 2026-06-30)
+### Wiring-Realität (ehrlich, Stand 2026-08-09)
 
-Der 7-Agenten-Roster existiert auf unterschiedlich tief verdrahteten Ebenen — das ist
+Der 11-Agenten-Roster existiert auf unterschiedlich tief verdrahteten Ebenen — das ist
 **bewusst so**, kein halbfertiges Feature. Die `_AGENTS`-SSOT macht die Grenze jetzt explizit
 über das Feld `wiring` (`autonomous` vs `interactive`), sodass das Dashboard keine autonome
 Ausführung suggeriert, die ein interaktiver Agent nie leistet. Der Contract-Test
 `tests/unit/test_agents_roster_contract.py` erzwingt: jeder Worker-`HANDLERS`-Agent **muss**
-`wiring="autonomous"` sein.
+`wiring="autonomous"` sein — und pinnt zusätzlich die `interactive`-Menge, damit ein Zugang
+oder Abgang nie still passiert.
 
 | Ebene | Mechanismus | Verdrahtete Agenten |
 |---|---|---|
-| **Dashboard-API-Surface (SSOT)** | `app/api/routers/agents.py` (`_AGENTS`) | **alle 7** (sentr, watchdog, architect, dali, neo, satoshi, kai-finder) — Feld `wiring` unterscheidet |
+| **Dashboard-API-Surface (SSOT)** | `app/api/routers/agents.py` (`_AGENTS`) | **alle 11** — Feld `wiring` unterscheidet |
 | **Autonomer JSONL-Queue-Worker** (`wiring="autonomous"`) | `app/agents/worker.py` (`HANDLERS`, cron/systemd) | **3**: `watchdog` (check/report), `sentr` (inspect/report/kyt-review/governance-audit), `architect` (review/propose) |
-| **Interaktiv** (`wiring="interactive"`, kein Worker-Handler) | `.claude/agents/*.md`, vom Hauptagent on-demand dispatcht | **4**: dali, neo, satoshi, kai-finder |
+| **Interaktiv** (`wiring="interactive"`, kein Worker-Handler) | `.claude/agents/*.md`, vom Hauptagent on-demand dispatcht | **8**: dali, neo, satoshi, kai-finder, einstein, xqu, architecture-red-team, data-quality-inspector |
 
-**Konsequenz / Designentscheidung:** DALI, Neo, SATOSHI und KAI-Finder laufen als **interaktive**
-Subagenten (Operator-/Hauptagent-getriggert), nicht als autonome Queue-Worker — für Design-/
-Tiefenanalyse-/Krypto-/Discovery-Reviews ist das die richtige Granularität (kein sinnvoller
-cron-Default). Sie sind im Dashboard-API gelistet (Status-Sichtbarkeit) und über `wiring`
+**Register-Warnung:** Der Roster steht an drei Orten — `_AGENTS`, `CLAUDE.md` § Agent Roster
+und `.claude/agents/*.md`. `.claude/` ist gitignored, also kann CI nur die ersten beiden sehen.
+Am 2026-08-09 war die Folge sichtbar: `kai-finder` stand in der SSOT ohne Definitionsdatei,
+`sentr` hatte eine Definition, die vom tatsächlichen Arbeitsverzeichnis aus nicht erreichbar
+war, und vier dispatchbare Agenten fehlten in der SSOT ganz. Bei jeder Roster-Änderung alle
+drei Register nachziehen.
+
+**Konsequenz / Designentscheidung:** Die acht interaktiven Agenten werden vom Operator oder
+Hauptagent getriggert, nicht von einem autonomen Queue-Worker — für Design-, Tiefenanalyse-,
+Krypto-, Discovery-, Wissenschafts- und Framing-Reviews ist das die richtige Granularität
+(kein sinnvoller cron-Default). Sie sind im Dashboard-API gelistet (Status-Sichtbarkeit) und über `wiring`
 ehrlich als interaktiv markiert; eine an sie enqueuete Command fährt **kein** autonomer Handler
 aus. Autonome Worker-Handler für sie wären ein eigener Sprint mit Tests — **kein offener Bug.**
 
