@@ -7,12 +7,25 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# Ohne `User=` lief diese Unit als root und laed dabei die vollstaendige `.env`
+# in einen Root-Prozess (Audit 09.08.). Sie verarbeitet ausdruecklich
+# UNTRUSTED-Analyse (ADR 0015) — genau der Kontext, der am wenigsten
+# privilegiert laufen sollte. Sie ist noch nicht enabled; die Korrektur kostet
+# jetzt nichts und verhindert, dass sie jemals privilegiert startet.
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python scripts/llm_shadow_tick.py
 MemoryMax=512M
 CPUQuota=80%
 TimeoutStartSec=600
+# Untrusted-Analyse: minimale Rechte, Schreibzugriff nur auf artifacts/.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/ai_analyst_trading_bot/artifacts
 
 [Install]
 WantedBy=multi-user.target

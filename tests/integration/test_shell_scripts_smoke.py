@@ -139,7 +139,15 @@ def test_pi_service_watchdog_is_external_and_restart_capable() -> None:
     assert "kai-agent-worker" in text
     assert "kai-tg-listener" in text
     assert "systemctl is-active" in text
-    assert 'systemctl start "$unit"' in text
+    # Der Neustart laeuft seit 2026-08-09 ueber systemctl_start(): die Unit lief
+    # bis dahin ohne `User=` als root und fuehrte dabei dieses Skript aus, das
+    # dem unprivilegierten Service-User gehoert und von ihm beschreibbar ist.
+    # Sie laeuft jetzt als `ubuntu` und hebt sich nur fuer den mutierenden
+    # Aufruf. Geprueft wird die FAEHIGKEIT (Neustart moeglich), nicht mehr der
+    # wortwoertliche Aufruf.
+    assert 'systemctl_start "$unit"' in text
+    assert "systemctl_start()" in text
+    assert "sudo -n systemctl start" in text
     assert "KAI_SERVICE_WATCHDOG_THROTTLE_SECONDS" in text
     assert "ALERT_TELEGRAM_TOKEN" in text
 

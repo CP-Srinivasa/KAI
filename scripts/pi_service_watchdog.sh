@@ -85,6 +85,20 @@ send_telegram() {
     fi
 }
 
+# Nur die MUTIERENDEN systemctl-Aufrufe brauchen Rechte; is-active/list-* sind
+# lesend. Die Unit lief bisher ohne `User=`, also als root, und fuehrte dabei
+# dieses Skript aus — das fuer den unprivilegierten Service-User schreibbar ist
+# (Audit 2026-08-09). Wer `ubuntu` kompromittiert, haette beim naechsten Tick
+# root gehabt. Jetzt laeuft die Unit als `ubuntu` und hebt sich punktuell per
+# NOPASSWD-sudo, statt durchgehend root zu sein.
+systemctl_start() {
+    if [[ "$(id -u)" == "0" ]]; then
+        systemctl start "$1" >/dev/null 2>&1
+    else
+        sudo -n systemctl start "$1" >/dev/null 2>&1
+    fi
+}
+
 for unit in "${UNITS[@]}"; do
     state="$(systemctl is-active "$unit" 2>&1 || true)"
     # Transient states during a normal restart (deploy / health-watchdog /
@@ -103,7 +117,7 @@ for unit in "${UNITS[@]}"; do
 
     restart_result="not_attempted"
     if [[ "$AUTO_RESTART" == "1" ]]; then
-        if systemctl start "$unit" >/dev/null 2>&1; then
+        if systemctl_start "$unit"; then
             sleep 2
             new_state="$(systemctl is-active "$unit" 2>&1 || true)"
             restart_result="start_ok:${new_state}"
@@ -126,7 +140,7 @@ if [[ "$RECONCILE_TIMERS" == "1" ]]; then
         fi
         restart_result="not_attempted"
         if [[ "$AUTO_RESTART" == "1" ]]; then
-            if systemctl start "$timer" >/dev/null 2>&1; then
+            if systemctl_start "$timer"; then
                 sleep 1
                 restart_result="start_ok:$(systemctl is-active "$timer" 2>&1 || true)"
             else
