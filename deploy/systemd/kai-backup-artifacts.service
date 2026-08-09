@@ -1,0 +1,37 @@
+[Unit]
+Description=KAI Artifact Backup — bundle + encrypt the unreconstructable truth layer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Das Skript existierte, aber keine Unit rief es auf: unter 52 Timern sicherte
+# keiner (Audit 09.08.). Prae-Reg-Ledger, Attestierungskette und Verdikte lagen
+# damit ausschliesslich auf einer SD-Karte. Ein OTS-Anker beweist einen Hash zu
+# einem Inhalt — ohne den Inhalt beweist er nichts.
+#
+# Fail-closed: fehlt eine der beiden Wahrheits-Quellen, bricht das Skript mit
+# Code 3 ab und faerbt die Unit rot, statt ein leeres Archiv gruen zu melden.
+# Exit 5 (rclone-Push fehlgeschlagen) laesst die lokale Kopie stehen und ist
+# ebenfalls rot — ein Backup, das den Rechner nie verlaesst, ist keines.
+ExecStart=/bin/bash /home/ubuntu/ai_analyst_trading_bot/scripts/kai_backup_artifacts.sh
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=15min
+
+# tar + gzip auf ~10 MB JSONL; grosszuegig, aber begrenzt.
+MemoryMax=512M
+CPUQuota=60%
+
+# Haerten: das Skript liest Artefakte und schreibt nur nach artifacts/backups.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/ai_analyst_trading_bot/artifacts

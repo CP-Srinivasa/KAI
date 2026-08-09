@@ -97,6 +97,22 @@ fi
 # experiment outputs, and very large trading_loop_audit history that we
 # don't actually need offsite every run.
 DEFAULT_SOURCES=(
+    # --- Wahrheits-Schicht: buchstaeblich unersetzbar ------------------------
+    # Diese Dateien SIND das Produkt. Ein OTS-Anker beweist einen Hash zu einem
+    # Inhalt — geht der Inhalt verloren, beweist der Anker nichts mehr. Sie
+    # fehlten in dieser Liste, obwohl die Ueberschrift genau sie meint (Audit
+    # 09.08.): der Prae-Reg-Ledger traegt die versiegelten Kriterien samt Hash,
+    # das Attestierungs-Ledger die Kette darueber, der Hypothesen-Ledger den
+    # Trial-Count, an dem die DSR-Deflation haengt.
+    "artifacts/research/prereg_ledger.jsonl"
+    "artifacts/truth/attestation_ledger.jsonl"
+    "artifacts/research/hypothesis_ledger.jsonl"
+    "artifacts/research/falsification_verdicts.jsonl"
+    "artifacts/research/ln_reconciliation_verdict.jsonl"
+    # Auswertungsregeln: vor den Daten fixiert, danach nicht rekonstruierbar.
+    "artifacts/research/c1_evaluation_rule_20260802.json"
+    "artifacts/research/analyst_probe_evaluation_rule_20260805.json"
+    # --- Evidenz-Stroeme ----------------------------------------------------
     "artifacts/alert_audit.jsonl"
     "artifacts/alert_outcomes.jsonl"
     "artifacts/paper_execution_audit.jsonl"
@@ -107,6 +123,21 @@ DEFAULT_SOURCES=(
     "artifacts/telegram_channel_checkpoint.json"
     "artifacts/ph5_hold_metrics_report.json"
     "DECISION_LOG.md"
+)
+
+# Verzeichnisse, die als Ganzes mitmuessen (versiegelte Prognosen wachsen um
+# Dateien, nicht um Zeilen — eine feste Namensliste wuerde neue verpassen).
+DEFAULT_SOURCE_DIRS=(
+    "artifacts/research/forecaster_panel"
+)
+
+# Dateien, deren Fehlen ein FEHLER ist, kein Hinweis. Fuer die Evidenz-Stroeme
+# ist "noch nicht da" ein normaler Zustand; fuer die Wahrheits-Schicht heisst
+# es, dass entweder der Pfad falsch ist oder etwas geloescht wurde — beides
+# darf nicht in einem gruenen Backup enden.
+REQUIRED_SOURCES=(
+    "artifacts/research/prereg_ledger.jsonl"
+    "artifacts/truth/attestation_ledger.jsonl"
 )
 
 EXTRAS=()
@@ -128,9 +159,31 @@ for f in "${DEFAULT_SOURCES[@]}" "${EXTRAS[@]}"; do
     fi
 done
 
+# Verzeichnisse als Ganzes (tar nimmt sie rekursiv).
+for d in "${DEFAULT_SOURCE_DIRS[@]}"; do
+    if [[ -d "$ROOT/$d" ]]; then
+        EXISTING+=( "$d" )
+    else
+        MISSING+=( "$d" )
+    fi
+done
+
 if [[ ${#EXISTING[@]} -eq 0 ]]; then
     write_log "ERROR: zero source files exist — refusing empty backup. ROOT=$ROOT"
     write_audit "fail_no_sources" "" "" 0 "" "" "no source files present"
+    exit 3
+fi
+
+# Fail-closed auf die Wahrheits-Schicht: ein Backup ohne Prae-Reg- oder
+# Attestierungs-Ledger ist kein Backup, sondern eine Illusion davon. Lieber
+# hart abbrechen und rot faerben, als ein gruenes Archiv ohne das Produkt.
+ABSENT_REQUIRED=()
+for f in "${REQUIRED_SOURCES[@]}"; do
+    [[ -f "$ROOT/$f" ]] || ABSENT_REQUIRED+=( "$f" )
+done
+if [[ ${#ABSENT_REQUIRED[@]} -gt 0 ]]; then
+    write_log "ERROR: required truth-layer source(s) missing: ${ABSENT_REQUIRED[*]}"
+    write_audit "fail_missing_required" "" "" 0 "" "" "${ABSENT_REQUIRED[*]}"
     exit 3
 fi
 
