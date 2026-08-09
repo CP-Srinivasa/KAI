@@ -1,0 +1,16 @@
+[Unit]
+Description=KAI Artifact Backup — daily schedule
+
+[Timer]
+# Taeglich um 03:47 UTC: nach dem naechtlichen Rechenblock, vor dem Morgen des
+# Operators. Deliberately NO `Requires=` here (Timer-Requires cascade, #414).
+OnCalendar=*-*-* 03:47:00
+# Persistent: ein Tag ohne Backup, weil der Pi aus war, wird beim naechsten
+# Boot nachgeholt. Ein uebersprungener Tag ist genau das Fenster, in dem die
+# SD-Karte stirbt.
+Persistent=true
+AccuracySec=10min
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target
