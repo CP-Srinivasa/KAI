@@ -83,6 +83,12 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # Bewusst grosszuegig: lieber spaet und verlaesslich als flatternd.
     "tradingview_webhook_audit.jsonl": 720,
 }
+
+# Komponenten, die einen EINGANGSSTROM bewachen. Ihre Veralterung ist ein
+# Systembefund (die Quelle liefert nichts), keine Aussage ueber die
+# Verlaesslichkeit der Probe — sie duerfen deshalb `data_sources_stale` nicht
+# setzen und ueber --exit-on-stale keinen Abbruch ausloesen.
+_INGRESS_COMPONENTS: frozenset[str] = frozenset({"tradingview_ingress"})
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
 # V5 loop-deadlock watchdog (DS-20260531-V5). The 2026-05-31 incident: the loop
@@ -267,19 +273,32 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
         mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         if mtime < mtime_cutoff:
             age_min = int((now - mtime).total_seconds() / 60)
+            is_ingress = component in _INGRESS_COMPONENTS
+            hint = (
+                "kein eingehender Verkehr — Quelle pruefen (z. B. abgelaufene "
+                "TradingView-Alerts), NICHT die Pi-Synchronisation"
+                if is_ingress
+                else "probe may be running against stale data, check Pi sync"
+            )
             issues.append(
                 HealthIssue(
                     severity="warning",
                     component=f"{component}_freshness",
                     message=(
                         f"{fname} mtime is {age_min}min old "
-                        f"(threshold: {threshold_min}min) — "
-                        f"probe may be running against stale data, "
-                        f"check Pi sync"
+                        f"(threshold: {threshold_min}min) — {hint}"
                     ),
                 )
             )
-            stale = True
+            # Eingangsstroeme setzen `stale` NICHT: das Flag sagt aus, dass die
+            # PROBE unzuverlaessig ist (gespiegelte Workstation-Artefakte), und
+            # steuert ueber --exit-on-stale den Abbruch. Ein toter Eingang auf
+            # dem Pi ist dagegen ein echter SYSTEMBEFUND bei voll verlaesslicher
+            # Probe. Ohne diese Trennung waere die Unit dauerhaft `failed`,
+            # solange die Quelle schweigt — mit der irrefuehrenden Begruendung
+            # "check Pi sync" (beobachtet 09.08., TV-Ingress 10146 min alt).
+            if not is_ingress:
+                stale = True
     return issues, stale
 
 
