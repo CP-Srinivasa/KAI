@@ -10,9 +10,13 @@ WorkingDirectory=/home/kai/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/kai/ai_analyst_trading_bot
 Environment=PYTHONIOENCODING=utf-8
 EnvironmentFile=-/home/kai/ai_analyst_trading_bot/.env
-# Schreibt die Chronik NUR bei Verdikt-Wechsel, alarmiert NUR bei FAIL und
-# faerbt NUR dann die Unit rot. IMMATURE ist bis zur Reife der Normalzustand
-# und darf weder alarmieren noch als Stoerung erscheinen.
+# Schreibt die Chronik NUR bei Verdikt-Wechsel. Alarmiert und faerbt rot bei
+# FAIL sowie bei INCONCLUSIVE_BY_TIMEOUT (Fenster abgelaufen, n nicht erreicht).
+# IMMATURE ist bis zur Reife der Normalzustand und darf weder alarmieren noch
+# als Stoerung erscheinen — ein verstrichener Stichtag dagegen verlangt eine
+# Entscheidung und bleibt sichtbar rot, bis der Operator die Resolution setzt.
+# (--alert-on-fail deckt beide Zustaende ab; der Flag-Name bleibt aus
+# Kompatibilitaet mit der installierten Unit unveraendert.)
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python \
     /home/kai/ai_analyst_trading_bot/scripts/ln_reconciliation_eval.py \
     --json \

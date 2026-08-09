@@ -143,17 +143,26 @@ def trading_prereg_check(
 @trading_app.command("prereg-maturity")
 def trading_prereg_maturity(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+    notify: bool = typer.Option(
+        False,
+        "--notify",
+        help="Fällige Prä-Regs zusätzlich an den Operator-Kanal senden (Telegram).",
+    ),
 ) -> None:
     """Count out-of-sample cohorts of open pre-registrations; flag DUE ones.
 
     Read-only (document store only); the count is an upper-bound proxy — DUE means
     "run the eval now", never "the claim passed". Wired to a weekly systemd timer
     (``kai-prereg-maturity.timer``) so maturation is infrastructure, not memory.
+
+    ``--notify`` schickt fällige Zeilen an den Operator-Kanal. Ohne das Flag
+    landete die Fälligkeit ausschließlich im Journal — korrekt berechnet und
+    trotzdem wirkungslos, solange niemand hineinsieht.
     """
     import asyncio
 
     from app.core.settings import get_settings
-    from app.research.prereg_maturity import compute_maturity
+    from app.research.prereg_maturity import build_maturity_alert, compute_maturity
     from app.storage.db.session import build_session_factory
 
     async def _run() -> list[dict[str, Any]]:
@@ -162,6 +171,22 @@ def trading_prereg_maturity(
             return await compute_maturity(session)
 
     rows = asyncio.run(_run())
+
+    if notify:
+        # Vor dem Rendern senden: ein Renderfehler darf die Frist nicht
+        # verschlucken. Ein Versandfehler wird sichtbar gemeldet, faerbt die
+        # Unit aber nicht rot — sonst wuerde ein Netzausfall wie eine
+        # verpasste Frist aussehen.
+        alert = build_maturity_alert(rows)
+        if alert:
+            from app.alerts.notify import send_operator_notification
+
+            if not asyncio.run(send_operator_notification(alert)):
+                console.print(
+                    "[yellow]Prä-Reg fällig, aber Operator-Kanal nicht erreicht "
+                    "— Zeilen stehen unten im Journal.[/yellow]"
+                )
+
     if as_json:
         print(json.dumps(rows, indent=2))
         return

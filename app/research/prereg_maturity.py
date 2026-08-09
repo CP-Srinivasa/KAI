@@ -766,6 +766,43 @@ async def compute_maturity(
     return out
 
 
+def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
+    """Text für den Operator-Kanal, oder ``None`` wenn nichts fällig ist.
+
+    ``compute_maturity`` rechnete die Fälligkeit korrekt aus und schrieb sie
+    nach ``StandardOutput=journal`` — sie existierte damit nur, solange jemand
+    hinschaute. Eine Frist, die niemanden erreicht, ist keine Frist.
+
+    Der Text sagt ausdrücklich „wende die versiegelte Regel an", niemals „der
+    Claim ist bestanden": ``due`` ist ein Handlungs-, kein Ergebniszustand, und
+    der Proxy-Zähler ist eine Obergrenze, kein Verdikt.
+    """
+    due_rows = [r for r in rows if r.get("due")]
+    if not due_rows:
+        return None
+
+    lines: list[str] = [
+        f"KAI Prae-Reg faellig: {len(due_rows)} offene Auswertung(en) "
+        "— versiegelte Regel jetzt anwenden, kein Ergebnis behauptet.",
+    ]
+    for row in due_rows:
+        pid = str(row.get("prereg_id") or "ohne-prereg-id")
+        name = str(row.get("name") or "?")
+        detail = row.get("per_source") or {}
+        window_end = detail.get("window_end_utc") or row.get("window_end_utc")
+        if row.get("kind") == "deadline":
+            evidence = f"Fenster endete {window_end}"
+        else:
+            n_exact = row.get("n_exact")
+            n_shown = n_exact if n_exact is not None else row.get("n_proxy")
+            basis = "exakt" if n_exact is not None else "Proxy/Obergrenze"
+            evidence = f"n={n_shown}/{row.get('n_target')} ({basis})"
+            if row.get("timed_out"):
+                evidence += f", Frist {window_end} abgelaufen"
+        lines.append(f"- {name} ({pid}): {evidence} -> {row.get('state')}")
+    return "\n".join(lines)
+
+
 __all__ = [
     "EXACT_OBSERVATIONS_RELPATH",
     "EXACT_OBSERVATION_MAX_AGE_DAYS",
@@ -776,6 +813,7 @@ __all__ = [
     "STATE_RESOLUTION_HOLD",
     "STATE_RESOLVED",
     "TRUTH_LEDGER_RELPATH",
+    "build_maturity_alert",
     "compute_maturity",
     "load_attested_resolutions",
     "load_exact_observations",
