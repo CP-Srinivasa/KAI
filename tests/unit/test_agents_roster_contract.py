@@ -7,8 +7,29 @@ never implies autonomous execution an interactive agent never performs.
 
 from __future__ import annotations
 
+import re
+
 from app.agents.worker import HANDLERS
 from app.api.routers.agents import _AGENTS
+
+# Pinned so that adding or removing a Claude-Code-only agent is a deliberate
+# edit. The roster lives in three places -- this dict, CLAUDE.md's auto-routing
+# table and `.claude/agents/*.md` -- and they drifted apart once already:
+# kai-finder was registered here without a definition file, sentr had a
+# definition that the working directory could not reach. `.claude/` is
+# gitignored, so this file is the only register CI can enforce.
+_INTERACTIVE = {
+    "dali",
+    "neo",
+    "satoshi",
+    "kai-finder",
+    "einstein",
+    "xqu",
+    "architecture-red-team",
+    "data-quality-inspector",
+}
+
+_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def _handler_agents() -> set[str]:
@@ -40,3 +61,20 @@ def test_interactive_agents_have_no_worker_handler() -> None:
 def test_every_agent_declares_a_known_wiring() -> None:
     for slug, defn in _AGENTS.items():
         assert defn.wiring in {"autonomous", "interactive"}, slug
+
+
+def test_interactive_set_is_pinned() -> None:
+    interactive = {slug for slug, defn in _AGENTS.items() if defn.wiring == "interactive"}
+    assert interactive == _INTERACTIVE
+
+
+def test_slug_is_kebab_case_and_matches_its_key() -> None:
+    for key, defn in _AGENTS.items():
+        assert defn.slug == key, f"dict key {key!r} != slug {defn.slug!r}"
+        assert _SLUG_RE.fullmatch(key), f"slug is not kebab-case: {key!r}"
+
+
+def test_every_agent_declares_modes_and_permissions() -> None:
+    for slug, defn in _AGENTS.items():
+        assert defn.modes, f"{slug} declares no modes"
+        assert defn.permissions, f"{slug} declares no permissions"
