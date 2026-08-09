@@ -84,6 +84,17 @@ def _extract_client_ip(
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
 
+    # ``Cf-Connecting-IP`` setzt ausschliesslich Cloudflare am Edge, und der
+    # Tunnel ist der einzige Origin-Pfad (Single-Origin-Regel) — der Header ist
+    # von aussen nicht zu faelschen, ohne durch den Tunnel zu gehen. Ohne ihn
+    # stand JEDER externe Request in artifacts/api_request_audit.jsonl als
+    # 127.0.0.1: der einzige durchgaengige Request-Audit konnte einen Angreifer
+    # nicht von einem Cron-Job unterscheiden. ``app/security/auth.py`` liest den
+    # Header seit je so; hier fehlte er.
+    cf_ip = request.headers.get("Cf-Connecting-IP")
+    if cf_ip and cf_ip.strip():
+        return cf_ip.strip()
+
     return peer_ip
 
 

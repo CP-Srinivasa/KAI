@@ -148,19 +148,28 @@ def _audit_access(
 
     ``decision`` is ``granted`` or ``denied``. Email is hashed to a short
     fingerprint — enough for correlation across requests, never the full PII.
+
+    Die Felder stehen in der NACHRICHT, nicht in ``extra``: ``app/core/logging.py``
+    konfiguriert ``basicConfig(format="%(message)s")``, und kein Handler im Repo
+    rendert ``extra``. Vorher lautete jede Zeile in ``logs/server.log`` wörtlich
+    nur ``auth_access`` — granted und denied ununterscheidbar, ohne Pfad, ohne
+    IP, ohne Identität. Nach einem Vorfall gab es damit keine Forensik, und
+    ``caplog``-Tests blieben grün, weil sie das Record-*Objekt* prüfen statt der
+    gerenderten Zeile.
     """
-    logger.info(
-        "auth_access",
-        extra={
-            "decision": decision,
-            "reason": reason,
-            "path": request.url.path,
-            "method": request.method,
-            "client_ip": _client_ip(request),
-            "email_hash": _hash_email(email),
-            "status_code": status_code,
-        },
-    )
+    fields = {
+        "decision": decision,
+        "reason": reason,
+        "path": request.url.path,
+        "method": request.method,
+        "client_ip": _client_ip(request),
+        "email_hash": _hash_email(email),
+        "status_code": status_code,
+    }
+    rendered = " ".join(f"{k}={v}" for k, v in fields.items() if v not in (None, ""))
+    # ``extra`` bleibt erhalten: ein künftiger JSON-Handler kann die Felder
+    # strukturiert abgreifen, ohne die Zeile zu parsen.
+    logger.info("auth_access %s", rendered, extra=fields)
 
 
 # Environments where an empty API key is acceptable (local dev / CI).

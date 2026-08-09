@@ -465,7 +465,18 @@ def require_operator_api_token(
             include_www_authenticate=True,
         )
 
-    if not secrets.compare_digest(token.strip(), api_key):
+    # SENTR-F-008-Rotationsfenster: der Nachfolgeschluessel muss hier genauso
+    # gelten wie in app/security/auth.py. Vorher pruefte dieser Pfad NUR
+    # ``api_key`` — waehrend einer Rotation antworteten alle /operator/*-
+    # Endpunkte 403 auf den neuen Schluessel, was die Rotation abbrach und den
+    # alten Schluessel im Einsatz liess. compare_digest auf "" schlaegt immer
+    # fehl; der Einzelschluessel-Fall braucht deshalb keine Verzweigung.
+    api_key_next = (settings.api_key_next or "").strip()
+    presented = token.strip()
+    if not (
+        secrets.compare_digest(presented, api_key)
+        or (api_key_next and secrets.compare_digest(presented, api_key_next))
+    ):
         raise _operator_http_error(
             request,
             status_code=403,

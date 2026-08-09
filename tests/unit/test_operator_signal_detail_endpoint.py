@@ -23,7 +23,14 @@ def _make_app(api_key: str = "test-key") -> FastAPI:
     app.include_router(router)
 
     def _override_settings() -> SimpleNamespace:
-        return SimpleNamespace(api_key=api_key, cf_access_allowed_emails="")
+        return SimpleNamespace(
+            api_key=api_key,
+            # Rotationsfenster (SENTR-F-008): der Guard prueft beide
+            # Schluessel — der Stub muss das Feld fuehren, sonst testet
+            # er ein AppSettings, das es nicht gibt.
+            api_key_next="",
+            cf_access_allowed_emails="",
+        )
 
     app.dependency_overrides[get_settings] = _override_settings
     return app
