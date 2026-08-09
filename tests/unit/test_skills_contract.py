@@ -32,6 +32,36 @@ _SKILL_REF_RE = re.compile(r"\.claude/skills?/([A-Za-z0-9][A-Za-z0-9_-]*)")
 
 _REFERENCING_FILES = ("CLAUDE.md", "AGENTS.md")
 
+# Every `kai-...` written in backticks. The prefix is the project's own
+# namespace, so a name in it is a claim that something by that name exists.
+# The path check above only catches `.claude/skills/foo`; a bare name with a
+# typo would still slip through, which is exactly how CLAUDE.md ended up
+# telling Claude Code to "always" use a skill that was never once loaded.
+_KAI_NAME_RE = re.compile(r"`(kai-[a-z0-9-]+)`")
+
+# Skills that live at user level (`~/.claude/skills/`) rather than in the repo.
+# They stay there on purpose: work happens from several working directories and
+# a repo-local skill would be invisible outside the repo. CI cannot see them, so
+# the set is curated here -- that is the trade-off, and it is written down
+# rather than implied.
+_EXTERNAL_SKILLS = {
+    "kai-auftrag",
+    "kai-deploy-regeln",
+    "kai-master-coding-regeln",
+    "kai-systematic-debugging",
+    "kai-testing-regeln",
+    "kai-verification-before-completion",
+}
+
+# `kai-` names that are deliberately NOT skills. Without this the guard would
+# report systemd units as broken references. Note the trap these two encode:
+# they are namesakes of the Watchdog *agent* and their running says nothing
+# about whether that agent runs (see .claude/agents/watchdog.md).
+_NON_SKILL_KAI_NAMES = {
+    "kai-server-health-watchdog",
+    "kai-service-watchdog",
+}
+
 
 def _skill_dirs() -> list[Path]:
     """Skill directories, or skip locally when `.claude/` is not checked out.
@@ -91,3 +121,39 @@ def test_documented_skill_paths_exist() -> None:
                 broken.append(f"{source.relative_to(_REPO_ROOT)} -> .claude/skills/{referenced}")
 
     assert not broken, "reference points at a skill that does not exist: " + "; ".join(broken)
+
+
+def test_every_kai_name_resolves_to_something_real() -> None:
+    """No `kai-...` in the docs may name something that does not exist.
+
+    A bare name is the form that failed silently before: CLAUDE.md prescribed a
+    testing skill twice, the name was wrong, and it was never loaded once.
+    """
+    from app.api.routers.agents import _AGENTS
+
+    known = set(_AGENTS) | {d.name for d in _skill_dirs()} | _EXTERNAL_SKILLS
+    known |= _NON_SKILL_KAI_NAMES
+
+    sources = [_REPO_ROOT / name for name in _REFERENCING_FILES]
+    sources += sorted((_REPO_ROOT / ".claude" / "agents").glob("*.md"))
+    sources += sorted(_SKILLS_DIR.glob("*/SKILL.md"))
+
+    unknown: list[str] = []
+    for source in sources:
+        if not source.is_file():
+            continue
+        for name in _KAI_NAME_RE.findall(source.read_text(encoding="utf-8")):
+            if name not in known:
+                unknown.append(f"{source.relative_to(_REPO_ROOT)} -> `{name}`")
+
+    assert not unknown, (
+        "names something that is neither a registered agent, a repo skill, a "
+        "known user-level skill nor a declared non-skill: " + "; ".join(sorted(set(unknown)))
+    )
+
+
+def test_external_skill_list_stays_disjoint_from_repo_skills() -> None:
+    # A skill that exists in both places would drift, which is the failure the
+    # agent roster already went through.
+    overlap = _EXTERNAL_SKILLS & {d.name for d in _skill_dirs()}
+    assert not overlap, f"skill listed as external but also present in the repo: {sorted(overlap)}"
