@@ -46,6 +46,11 @@ from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 
 logger = logging.getLogger(__name__)
 
+# Schema-Stempel der von hier geschriebenen ``position_closed``-Zeilen. Muss
+# identisch zu dem sein, den ``PaperExecutionEngine._append_audit`` setzt —
+# sonst behandeln stempel-gatende Leser die Haelfte aller Closes als Legacy.
+PAPER_CLOSE_SCHEMA_VERSION = "v2"
+
 _DEFAULT_RECONCILE_LOG = Path("artifacts/target_completion_audit.jsonl")
 _PAPER_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
@@ -363,6 +368,11 @@ def reconcile_target_completion(
     # Keep portfolio-read aggregation in sync with target-completion closes.
     paper_close_record = {
         "event_type": "position_closed",
+        # Der Stempel MUSS mit, obwohl die Zeile inhaltlich immer v2 war
+        # (trade_pnl_usd + position_side liegen an): Leser, die auf den Stempel
+        # gaten, warfen den exakten Netto-Wert sonst weg und rekonstruierten
+        # brutto daneben. Auf dem Prod-Stream betraf das 74 von 139 Closes.
+        "schema_version": PAPER_CLOSE_SCHEMA_VERSION,
         "timestamp_utc": ts,
         "symbol": display_sym,
         # Trail-Join-Fix (2026-07-02): carry correlation_id so the reconcile

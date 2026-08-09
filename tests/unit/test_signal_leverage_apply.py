@@ -11,6 +11,8 @@ avg +1.30% spot, 10x → must be ~13% on the margin, not 1.3%. This pins:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.execution.paper_engine import PaperExecutionEngine, _liquidation_price
@@ -129,10 +131,16 @@ def test_liquidation_price_long_and_short() -> None:
     assert _liquidation_price(100.0, None, "long") is None
 
 
-def test_monitor_liquidates_leveraged_position_before_wide_stop() -> None:
+def test_monitor_liquidates_leveraged_position_before_wide_stop(tmp_path: Path) -> None:
     """A 10x long with a wide 20% stop liquidates at ~-10% (margin wiped) BEFORE
     the stop would ever trigger — the realistic futures outcome."""
-    eng = PaperExecutionEngine(initial_equity=100000.0, live_enabled=False)
+    eng = PaperExecutionEngine(
+        initial_equity=100000.0,
+        live_enabled=False,
+        # Ohne expliziten Pfad schreibt die Engine in den PRODUKTIONS-
+        # Evidenz-Stream artifacts/paper_execution_audit.jsonl.
+        audit_log_path=tmp_path / "paper_execution_audit.jsonl",
+    )
     order = eng.create_order(
         symbol="WIDE/USDT",
         side="buy",
@@ -152,9 +160,15 @@ def test_monitor_liquidates_leveraged_position_before_wide_stop() -> None:
     assert fills[0].fill_price <= 90.0 * 1.01
 
 
-def test_monitor_stop_still_wins_when_nearer_than_liquidation() -> None:
+def test_monitor_stop_still_wins_when_nearer_than_liquidation(tmp_path: Path) -> None:
     """COAI-like: 10x but a tight 4% stop fires before the 10% liquidation."""
-    eng = PaperExecutionEngine(initial_equity=100000.0, live_enabled=False)
+    eng = PaperExecutionEngine(
+        initial_equity=100000.0,
+        live_enabled=False,
+        # Ohne expliziten Pfad schreibt die Engine in den PRODUKTIONS-
+        # Evidenz-Stream artifacts/paper_execution_audit.jsonl.
+        audit_log_path=tmp_path / "paper_execution_audit.jsonl",
+    )
     order = eng.create_order(
         symbol="TIGHT/USDT",
         side="buy",

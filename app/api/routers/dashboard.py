@@ -28,6 +28,7 @@ from app.audit.stream_validation import (
     load_audit_stream,
     summarize_audit_stream_result,
 )
+from app.execution.close_pnl import close_pnl
 from app.learning.bayes_quarantine import is_corrupt_close
 from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
@@ -766,17 +767,11 @@ async def dashboard_quality_api() -> JSONResponse:
         else:
             closes.append(r)
 
-    def _close_pnl(r: dict[str, Any]) -> float:
-        # v2 rows carry the per-trade NET pnl (incl. fee) — the canonical value.
-        if r.get("schema_version") == "v2":
-            return float(r.get("trade_pnl_usd", 0.0))
-        # KAI-04: legacy v1 rows predate trade_pnl_usd, so this reconstructs a
-        # GROSS (pre-fee) approximation — knowingly a slight over-estimate on old
-        # rows only; new closes are all v2/net. Fees are not back-applied here to
-        # avoid inventing a per-trade fee model in the read path (NEO-P-106).
-        return (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0))) * float(
-            r.get("quantity", 0.0)
-        )
+    # Eine Regel fuer alle drei Lesepfade (analytics_db war die einzige
+    # korrekte): der exakte ``trade_pnl_usd`` schlaegt den Stempel, und die
+    # Rekonstruktion ist seitenbewusst. Das Stempel-Gate hier warf den
+    # Netto-Wert der Reconciler-Closes weg — 53 % aller Zeilen im Prod-Stream.
+    _close_pnl = close_pnl
 
     generated_at = str(report.get("generated_at", datetime.now(UTC).isoformat()))
     now_utc = datetime.now(UTC)

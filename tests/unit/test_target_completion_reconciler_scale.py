@@ -22,8 +22,16 @@ from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 
 
 @pytest.fixture
-def engine() -> PaperExecutionEngine:
-    return PaperExecutionEngine(initial_equity=10_000.0, fee_pct=0.0, slippage_pct=0.0)
+def engine(tmp_path: Path) -> PaperExecutionEngine:
+    # audit_log_path MUSS gesetzt sein: ohne ihn faellt die Engine auf
+    # artifacts/paper_execution_audit.jsonl zurueck und schreibt in den
+    # Produktions-Evidenz-Stream, aus dem die Verdikte gelesen werden.
+    return PaperExecutionEngine(
+        initial_equity=10_000.0,
+        fee_pct=0.0,
+        slippage_pct=0.0,
+        audit_log_path=tmp_path / "paper_execution_audit.jsonl",
+    )
 
 
 def _open_long(engine: PaperExecutionEngine, symbol: str, entry: float, qty: float) -> None:
@@ -56,6 +64,7 @@ def test_raw_touch_price_is_scaled_to_position_scale(
         source_envelope_id="ENV-cys-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert out.status == "closed"
     assert out.audit_record["scale_factor_applied"] == 1e4
@@ -78,6 +87,7 @@ def test_implausible_scale_blocks_pnl(engine: PaperExecutionEngine, tmp_path: Pa
         source_envelope_id="ENV-wtf-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert out.status == "requires_scale_review"
     assert out.realized_pnl_usd is None
@@ -133,6 +143,7 @@ def test_long_all_targets_below_entry_is_wrong_side_review(
         source_envelope_id="ENV-foo-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert out.status == "requires_scale_review"
     assert out.reason == "touch_price_wrong_side_of_entry"
@@ -154,6 +165,7 @@ def test_short_all_targets_above_entry_is_wrong_side_review(
         source_envelope_id="ENV-bar-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert out.status == "requires_scale_review"
     assert out.reason == "touch_price_wrong_side_of_entry"
@@ -175,6 +187,7 @@ def test_long_profitable_close_still_books_pnl(
         source_envelope_id="ENV-win-1",
         engine=engine,
         reconcile_log_path=tmp_path / "reconcile.jsonl",
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert out.status == "closed"
     assert out.realized_pnl_usd is not None and out.realized_pnl_usd > 0
@@ -189,10 +202,18 @@ def test_clean_close_is_idempotent(engine: PaperExecutionEngine, tmp_path: Path)
         symbol="CYSUSDT", display_symbol="CYS/USDT", touch_price=4869.0, raw_text="🎯"
     )
     first = reconcile_target_completion(
-        event, source_envelope_id="ENV-cys-1", engine=engine, reconcile_log_path=log
+        event,
+        source_envelope_id="ENV-cys-1",
+        engine=engine,
+        reconcile_log_path=log,
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert first.status == "closed"
     second = reconcile_target_completion(
-        event, source_envelope_id="ENV-cys-1", engine=engine, reconcile_log_path=log
+        event,
+        source_envelope_id="ENV-cys-1",
+        engine=engine,
+        reconcile_log_path=log,
+        paper_audit_path=tmp_path / "paper_execution_audit.jsonl",
     )
     assert second.status == "duplicate"

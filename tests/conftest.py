@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,48 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
     )
+
+
+_REPO_PAPER_AUDIT = (
+    Path(__file__).resolve().parents[1] / "artifacts" / "paper_execution_audit.jsonl"
+)
+
+
+def _paper_audit_fingerprint() -> tuple[bool, int, int]:
+    try:
+        st = _REPO_PAPER_AUDIT.stat()
+    except OSError:
+        return (False, 0, 0)
+    return (True, st.st_size, st.st_mtime_ns)
+
+
+@pytest.fixture(autouse=True)
+def _paper_audit_stream_untouched() -> Iterator[None]:
+    """Wächter: kein Test darf den Produktions-Evidenz-Stream anfassen (Befund 09.08.).
+
+    ``PaperExecutionEngine`` fällt ohne ``audit_log_path`` auf das relative
+    ``artifacts/paper_execution_audit.jsonl`` zurück — die Datei, aus der die
+    Verdikte gelesen werden. Auf dem lokalen Stand stehen dort 230 Zeilen mit
+    Fixture-Symbolen (TIGHT/WIN/WIDE/FOO/BAR/XYZ/BIRB/USDT); jede Kennzahl
+    darüber ist damit kontaminiert, unbestimmt in welche Richtung.
+
+    Bewusst ein Wächter und **kein** Redirect: die saubere Isolation dieser
+    Suite läuft über ``monkeypatch.chdir(tmp_path)`` und nutzt genau die
+    Relativität dieses Pfads. Ein Patch auf einen absoluten tmp-Pfad hebelt sie
+    aus — der Code schriebe dann woanders hin als der Test liest (fünf Tests
+    sind daran gescheitert). Der Wächter ändert kein Verhalten; er macht
+    fehlende Isolation sichtbar, statt sie stillschweigend zu ersetzen.
+    """
+    before = _paper_audit_fingerprint()
+    yield
+    after = _paper_audit_fingerprint()
+    if before != after:
+        pytest.fail(
+            "Dieser Test hat den PRODUKTIONS-Evidenz-Stream verändert "
+            f"({_REPO_PAPER_AUDIT}). Aus dieser Datei werden Verdikte gelesen — "
+            "sie darf von der Suite nie berührt werden. Isoliere den Test mit "
+            "monkeypatch.chdir(tmp_path) oder übergib audit_log_path explizit."
+        )
 
 
 @pytest.fixture(autouse=True)
