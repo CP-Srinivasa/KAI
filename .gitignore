@@ -62,8 +62,18 @@ tests/run_sprint14.ps1
 .ruff_cache/
 .hypothesis/
 
-# Claude Code local config (session-specific, not project config)
-.claude/
+# Claude Code local config (session-specific, not project config).
+# Ausnahme: .claude/agents/*.md sind KEINE Session-Config, sondern Projekt-
+# Config -- CLAUDE.md § Agent Roster und app/api/routers/agents.py::_AGENTS
+# verweisen darauf, und tests/unit/test_agents_roster_contract.py prueft die
+# Deckungsgleichheit. Solange sie unversioniert waren, konnten SSOT und
+# Definitionen unbemerkt auseinanderlaufen (2026-08-09: kai-finder in der SSOT
+# ohne Definition, sentr mit Definition am falschen Ort, vier Agenten gar nicht
+# registriert). Bewusst eng: nur *.md unter agents/, nichts sonst.
+.claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/*.md
 
 # APIs directory — contains real secrets, never commit
 APIs/

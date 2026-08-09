@@ -10,11 +10,11 @@ field keeps the dashboard from implying autonomous execution an interactive
 agent never performs (F-06/KAI-05).
 
 The roster is also written down in ``CLAUDE.md`` (auto-routing table) and in
-``.claude/agents/*.md`` (the definitions Claude Code actually loads). Those two
-registers are not importable here — ``.claude/`` is gitignored — so
-``tests/unit/test_agents_roster_contract.py`` pins the interactive set to force
-every addition through a deliberate edit. Keep all three in sync when changing
-this dict.
+``.claude/agents/*.md`` (the definitions Claude Code actually loads). Since
+2026-08-09 those definition files are version-controlled through a targeted
+.gitignore exception, so ``tests/unit/test_agents_roster_contract.py`` compares
+this dict against them directly instead of merely pinning a set. Adding an
+agent means all three: entry here, definition file, CLAUDE.md row.
 
 Status is derived honestly from a JSONL dropbox under
 `artifacts/agents/{slug}/` — no fake heartbeats, no mocks:
