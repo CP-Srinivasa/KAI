@@ -2153,8 +2153,6 @@ def alerts_health_check(
     P2: hostname detection + exit-on-stale for workstation-redirect.
     """
     import asyncio
-    import time
-    from pathlib import Path as _Path
 
     from app.alerts.health_check import run_health_check_report
 
@@ -2183,10 +2181,22 @@ def alerts_health_check(
         )
     # P2: exit semantic — non-authoritative means either stale mtime OR
     # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
-    if exit_on_stale and not allow_stale and (report.data_sources_stale or not report.runs_on_pi):
-        reason = "stale data" if report.data_sources_stale else "off-Pi host"
+    #
+    # Die Entscheidung wird hier nur VORGEMERKT und erst nach dem Versand
+    # vollzogen. Vorher stand `raise typer.Exit(code=2)` an dieser Stelle —
+    # also VOR dem Telegram-Block. Wirkung: der Health-Check meldete nur,
+    # solange die Daten frisch waren, und schwieg, sobald ein Schreiber starb.
+    # Das ist der Fall, fuer den er existiert. (Zweite Ursache des
+    # TV-Ingest-Ausfalls 02.–08.08.: selbst mit dem Eingangsstrom in
+    # files_to_check haette Staleness den Alarm unterdrueckt statt ausgeloest.)
+    stale_exit = bool(
+        exit_on_stale and not allow_stale and (report.data_sources_stale or not report.runs_on_pi)
+    )
+    stale_reason = "stale data" if report.data_sources_stale else "off-Pi host"
+
+    def _stale_exit_now() -> None:
         console.print(
-            f"[red bold]Exit-on-stale: aborting with code 2 ({reason}) — "
+            f"[red bold]Exit-on-stale: aborting with code 2 ({stale_reason}) — "
             f"use --allow-stale to override.[/red bold]"
         )
         raise typer.Exit(code=2)
@@ -2199,6 +2209,8 @@ def alerts_health_check(
             ok = asyncio.run(send_operator_notification("KAI Health Check: All systems healthy."))
             if ok:
                 console.print("[green]Telegram notification sent.[/green]")
+        if stale_exit:
+            _stale_exit_now()
         return
 
     for issue in report.issues:
@@ -2214,45 +2226,18 @@ def alerts_health_check(
     )
 
     if notify or telegram_on_issue:
-        # Cooldown gate (state file in artifacts/)
-        state_file = _Path("artifacts") / ".health_check_last_notification"
-        now_ts = time.time()
-        if state_file.exists():
-            try:
-                last_ts = float(state_file.read_text(encoding="utf-8").strip())
-            except (ValueError, OSError):
-                last_ts = 0.0
-            elapsed_min = (now_ts - last_ts) / 60.0
-            if elapsed_min < notify_cooldown_minutes:
-                console.print(
-                    f"[dim]Notification suppressed (cooldown: "
-                    f"{elapsed_min:.1f}/{notify_cooldown_minutes}min).[/dim]"
-                )
-                return
+        from app.alerts.health_notify import dispatch_health_notification
 
-        from app.alerts.notify import send_operator_notification
-
-        lines = ["KAI Health Alert"]
-        if report.data_sources_stale:
-            lines.append("[NOTE] data sources stale — Pi-sync may be lagging")
-        lines.append(
-            f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
-            f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
+        dispatch_health_notification(
+            report,
+            lookback_hours=lookback_hours,
+            notify_cooldown_minutes=notify_cooldown_minutes,
+            console=console,
         )
-        for issue in report.issues:
-            tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
-            lines.append(f"[{tag}] {issue.component}: {issue.message}")
-        text = "\n".join(lines)
-        ok = asyncio.run(send_operator_notification(text))
-        if ok:
-            try:
-                state_file.parent.mkdir(parents=True, exist_ok=True)
-                state_file.write_text(str(now_ts), encoding="utf-8")
-            except OSError:
-                pass
-            console.print("[green]Telegram notification sent.[/green]")
-        else:
-            console.print("[yellow]Telegram not configured or send failed.[/yellow]")
+
+    # Erst jetzt aussteigen — der Befund ist raus.
+    if stale_exit:
+        _stale_exit_now()
 
 
 @alerts_app.command("ops-status")

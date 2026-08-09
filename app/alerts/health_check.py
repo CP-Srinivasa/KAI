@@ -74,6 +74,14 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # ueber der legitimen Stille (15 min + RandomizedDelaySec 2 min), aber
     # eng genug, um einen toten Timer binnen einer Stunde aufzudecken.
     "ln_reconciliation.jsonl": 45,
+    # EINGANGSSTROM (Audit 09.08.). Jede andere Schwelle hier bewacht einen
+    # Ausgang; diese bewacht, ob ueberhaupt noch etwas hereinkommt.
+    # 720 min = 12 h: TradingView-Alerts feuern unregelmaessig, aber ein ganzer
+    # halber Tag ohne einen einzigen eingehenden Webhook ist kein ruhiger Markt
+    # mehr, sondern ein toter Eingang. Die reale Stille vom 02.–08.08. betrug
+    # 6 TAGE und blieb unbemerkt, weil dieser Strom in keiner Liste stand.
+    # Bewusst grosszuegig: lieber spaet und verlaesslich als flatternd.
+    "tradingview_webhook_audit.jsonl": 720,
 }
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
@@ -211,6 +219,19 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             adir / "lightning" / "ln_reconciliation.jsonl",
             "ln_reconciliation.jsonl",
             "ln_reconcile",
+            False,
+        ),
+        # EINGANGSSTROM, kein Ausgang (Audit 09.08.). Bis hier wachte diese
+        # Liste ausschliesslich ueber Ergebnisse — und ein gesunder Ausgang
+        # beweist keinen lebenden Eingang: der TV-Webhook war vom 02.08. bis
+        # 08.08. tot, waehrend der Promotion-Timer 1728-mal gruen lief, weil
+        # "0 offene Ereignisse" als Erfolg zaehlt. Diese Datei ist der einzige
+        # Beleg dafuer, dass ueberhaupt noch etwas HEREINKOMMT.
+        # required=False: ein frischer Checkout hat sie legitim nicht.
+        (
+            adir / "tradingview_webhook_audit.jsonl",
+            "tradingview_webhook_audit.jsonl",
+            "tradingview_ingress",
             False,
         ),
     ]
