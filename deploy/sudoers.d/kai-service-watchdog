@@ -1,0 +1,21 @@
+# Eingeschraenktes sudo fuer den Service-Watchdog.
+#
+# Installation (als root):
+#   sudo install -m 0440 -o root -g root \
+#     deploy/sudoers.d/kai-service-watchdog /etc/sudoers.d/kai-service-watchdog
+#   sudo visudo -c        # Syntax pruefen, BEVOR die Datei wirkt
+#
+# Warum: die Watchdog-Unit lief ohne `User=` als root und fuehrte dabei ein
+# Skript aus, das dem unprivilegierten Service-User gehoert und von ihm
+# beschreibbar ist. Sie laeuft jetzt als `ubuntu` und hebt sich nur fuer
+# `systemctl start` — den einzigen mutierenden Aufruf des Skripts.
+#
+# WICHTIG: Der Sicherheitsgewinn tritt erst vollstaendig ein, wenn `ubuntu`
+# KEIN uneingeschraenktes NOPASSWD-ALL mehr besitzt. Solange eine breite Regel
+# daneben steht, ist die Eskalation weiterhin trivial und diese Datei nur
+# Vorbereitung. Der Rueckbau der breiten Regel ist eine Operator-Entscheidung
+# (er trifft auch Deploy-Skripte) und deshalb NICHT Teil dieses Commits.
+
+Cmnd_Alias KAI_WATCHDOG_START = /usr/bin/systemctl start kai-*
+
+ubuntu ALL=(root) NOPASSWD: KAI_WATCHDOG_START
