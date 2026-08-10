@@ -8,9 +8,15 @@ nie auf. ``churn_report`` weiß das und korrigiert es nachträglich
 anderem ``paper_quality_snapshot``, dessen Ausgabe als „net-of-fee realized
 PnL" in das Rotations-Verdikt fließt.
 
-Gemessen am Pi-Buch (2026-08-10, Fenster 200 Closes): die fehlende Entry-Fee
-macht **25,3 %** des ausgewiesenen |PnL| aus. Bei einem Fee-Drag von ~120 % ist
-das grob die halben Round-Trip-Kosten.
+Gemessen am Pi-Buch (2026-08-10, Epoche nach dem letzten
+``portfolio_epoch_reset``, 174 Closes): die fehlende Entry-Fee macht **43,5 %**
+des ausgewiesenen Betrags aus — 261,90 USD auf 602,37 USD. Bei einem Fee-Drag
+von ~120 % grob die halben Round-Trip-Kosten.
+
+Der Epochen-Schnitt ist dabei nicht optional: ohne ihn zieht ein 200er-Fenster
+26 Trades aus dem archivierten Buch mit, und die Summe dreht von −602 USD auf
++1391 USD. Diese Kontamination ist im Projekt dokumentiert und trat bei der
+Erstmessung dieses Befunds prompt wieder auf.
 
 Die Zuordnung ist FIFO über die Entry-Fills desselben Symbols, identisch zur
 Logik in ``churn_report``: jede Öffnung legt (Menge, Fee-pro-Einheit) in eine
