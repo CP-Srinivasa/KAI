@@ -51,8 +51,16 @@ def evaluate_rotations(
     new_state: dict[str, AssetRotationState] = dict(prior_state)
     for symbol, stats in by_symbol.items():
         closes = int(stats.get("count", 0.0))
-        wins = int(stats.get("wins", 0.0))
-        net = float(stats.get("sum_pnl_usd", 0.0))
+        # Voll belastet: ``sum_pnl_usd``/``wins`` tragen die Entry-Fee NICHT
+        # (paper_engine zieht beim Close nur die Close-Fee ab). Am Pi-Buch sind
+        # das 43,5 % des ausgewiesenen Betrags — bei Fee-Drag ~120 % grob die
+        # halben Round-Trip-Kosten. Beide Arme des Verdikts haengen daran: die
+        # PnL-Summe UND die Win-Zaehlung, weil ein Trade knapp ueber Null nach
+        # Abzug der Entry-Fee ein Verlust ist. Die Verzerrung wirkt
+        # ausschliesslich Richtung ``healthy``.
+        # Fallback auf die Bruttofelder haelt aeltere Snapshots lesbar.
+        wins = int(stats.get("net_wins", stats.get("wins", 0.0)))
+        net = float(stats.get("sum_net_pnl_usd", stats.get("sum_pnl_usd", 0.0)))
         verdict = evaluate_asset(
             AssetWindowStats(symbol=symbol, net_pnl_usd=net, closes=closes, wins=wins),
             min_closes=min_closes,
