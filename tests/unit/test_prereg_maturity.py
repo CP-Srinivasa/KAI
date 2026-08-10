@@ -87,7 +87,22 @@ async def test_compute_maturity_empty_store(session_factory, tmp_path) -> None:
     # (tech_precision/exec_translation) duerfen nicht die Repo-Artefakte lesen.
     async with session_factory() as session:
         rows = await compute_maturity(session, artifacts_dir=tmp_path / "empty")
-    assert all(r["due"] is False and r["n_proxy"] == 0 for r in rows)
+
+    # Frist-Prae-Regs (kind="deadline") haengen NICHT am Datenbestand: sie
+    # werden mit Ablauf ihres Fensters faellig, auch bei leerem Store — das ist
+    # ihr Zweck. Dieser Test lief bis zum 2026-08-10 gruen und kippte in dem
+    # Moment, als die Analyst-Probe f0e1a3a8 ihr window_end_utc erreichte
+    # (00:13 UTC). Eine Zeitbombe, kein Regress: die Zeile IST korrekt faellig.
+    # Geprueft wird deshalb nur, was vom leeren Store abhaengt.
+    zaehl_rows = [r for r in rows if r.get("kind") != "deadline"]
+    assert zaehl_rows, "Ohne zaehlbasierte Prae-Regs prueft dieser Test nichts mehr"
+    assert all(r["due"] is False and r["n_proxy"] == 0 for r in zaehl_rows)
+
+    # Die Frist-Zeilen muessen weiterhin erscheinen — nur ihre Faelligkeit
+    # richtet sich nach der Uhr, nicht nach dem Store.
+    for row in rows:
+        if row.get("kind") == "deadline":
+            assert row["n_proxy"] == 0
 
 
 @pytest.mark.asyncio
