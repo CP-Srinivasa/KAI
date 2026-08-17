@@ -84,6 +84,21 @@ TRUTH_LEDGER_RELPATH = Path("truth") / "attestation_ledger.jsonl"
 _VERDICT_NON_TERMINAL_PREFIXES = ("INSUFFICIENT_N", "PENDING", "NOT_DUE", "INCONCLUSIVE")
 _VERDICT_NOT_MET_PREFIXES = ("NOT_MET", "FAILED", "FAIL")
 _VERDICT_MET_PREFIXES = ("MET", "PASSED", "PASS")
+# Terminale Abschlüsse OHNE Sachverdikt. Der Claim ist beendet, trägt aber
+# weder MET noch NOT_MET — beides gleichzeitig wahr und deshalb eine eigene
+# Klasse. Ohne sie landet ein sauber geschlossener Claim in ``UNKNOWN`` und
+# damit im HOLD, also im selben Topf wie eine beschädigte Truth-Kette (Befund
+# 2026-08-17 an H2/seq 79). Die ``_BY_TIMEOUT``-Variante ist bewusst NICHT vom
+# nicht-terminalen ``INCONCLUSIVE`` abgedeckt: die Underscore-Regel in
+# ``starts_with_token`` trennt beide, und genau diese Trennung ist gewollt —
+# "noch nicht auswertbar" und "Frist abgelaufen, kein Sachverdikt" sind
+# gegensätzliche Zustände.
+_VERDICT_CLOSED_NO_VERDICT_PREFIXES = (
+    "CLOSED_UNMEASURABLE",
+    "CLOSED_NO_VERDICT",
+    "INCONCLUSIVE_BY_TIMEOUT",
+)
+VERDICT_CLASS_CLOSED_NO_VERDICT = "CLOSED_NO_VERDICT"
 
 # Registered out-of-sample windows start at the claim's registration time — these
 # constants ARE part of the doctrine (auditable against the prereg ledger).
@@ -443,6 +458,11 @@ def _terminal_verdict_class(verdict: object) -> str | None:
                 return True
         return False
 
+    # Zuerst: ein ausdrücklicher Abschluss ohne Sachverdikt. Muss VOR der
+    # nicht-terminalen Liste stehen, damit die Reihenfolge die Absicht trägt
+    # statt sie einer Präfix-Feinheit zu überlassen.
+    if starts_with_token(_VERDICT_CLOSED_NO_VERDICT_PREFIXES):
+        return VERDICT_CLASS_CLOSED_NO_VERDICT
     if starts_with_token(_VERDICT_NON_TERMINAL_PREFIXES):
         return None
     if starts_with_token(_VERDICT_NOT_MET_PREFIXES):
@@ -522,6 +542,12 @@ def load_attested_resolutions(
                 "seqs": [r["seq"] for r in records],
             }
             continue
+        # Ein Sachverdikt schlägt einen Abschluss ohne Sachverdikt: beide sind
+        # terminal, aber MET/NOT_MET trägt mehr Information.
+        if not known and any(
+            r["verdict_class"] == VERDICT_CLASS_CLOSED_NO_VERDICT for r in records
+        ):
+            known = {VERDICT_CLASS_CLOSED_NO_VERDICT}
         if known:
             verdict_class = next(iter(known))
             matching = [r for r in records if r["verdict_class"] == verdict_class]

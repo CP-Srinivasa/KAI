@@ -51,7 +51,8 @@ def _measure_canonical(
     from app.observability.evidence_window import CANONICAL_EDGE_SOURCES, edge_source_of
     from app.research.ledger import HypothesisLedger
 
-    ledger_count = HypothesisLedger(Path(ledger_path)).tested_count()
+    # Suchbreite (Regel x Symbol) — s. HypothesisLedger.search_breadth_count.
+    ledger_count = HypothesisLedger(Path(ledger_path)).search_breadth_count()
     resolved = resolve_trial_count(ledger_count, trials_override)
     events = load_audit_events(exec_audit_path)
     trades, _exclusions = parse_closed_trades_with_exclusions(

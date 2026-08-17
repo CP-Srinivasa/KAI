@@ -140,3 +140,34 @@ class HypothesisLedger:
     def tested_count(self) -> int:
         """Number of distinct hypothesis configurations ever recorded."""
         return len(self.keys())
+
+    def search_breadth_count(self) -> int:
+        """Distinct (rule, timeframe, horizon, cost, SYMBOL) selections tested.
+
+        ``tested_count`` counts configurations, and a configuration carries the
+        whole ``universe`` — so one rule swept over five symbols is a single
+        entry. Survival is decided PER SYMBOL (``n_symbols_survived``), so the
+        best candidate is drawn from rules x symbols attempts. Deflating a
+        Sharpe ratio by the configuration count therefore under-reports the
+        search and flatters the winner (live ledger 2026-08-17: 12 configs vs
+        60 real selections, a factor of 5).
+
+        The hypothesis ``key`` is deliberately left alone — dedup and
+        ``was_tested`` depend on its identity. This is an additional, honest
+        read of the same rows, never below ``tested_count``.
+        """
+        breadth: set[tuple[str, str, int, float, str]] = set()
+        for entry in self.entries():
+            for symbol in entry.universe:
+                breadth.add(
+                    (
+                        entry.name,
+                        entry.timeframe,
+                        entry.horizon,
+                        round(entry.round_trip_cost_bps, 6),
+                        symbol,
+                    )
+                )
+        # An entry without a recorded universe would otherwise vanish from the
+        # count. Fail-closed: never report a narrower search than we already do.
+        return max(len(breadth), len(self.keys()))

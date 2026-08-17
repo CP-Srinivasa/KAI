@@ -84,6 +84,52 @@ def test_missing_file_is_empty(tmp_path: Path) -> None:
     ledger = HypothesisLedger(tmp_path / "nope.jsonl")
     assert ledger.entries() == []
     assert ledger.tested_count() == 0
+    assert ledger.search_breadth_count() == 0
+
+
+# ── Suchbreite vs. Konfigurationszahl ───────────────────────────────────────
+#
+# Befund 2026-08-17: ``tested_count`` zählt distinkte ``key``s, und ``key``
+# hängt am GESAMTEN ``universe``. Eine Regel über 5 Symbole ist damit EIN
+# Eintrag — obwohl je Symbol auf Überleben geprüft wird
+# (``n_symbols_evaluated`` / ``n_symbols_survived``). Der DSR deflationiert
+# dann gegen 12 statt gegen 60 Versuche (Live-Ledger Pi, Faktor 5,0x) und
+# überschätzt die Signifikanz des besten Kandidaten.
+#
+# Der ``key`` bleibt bewusst unverändert: an ihm hängen Dedup und
+# ``was_tested``. Die Suchbreite wird stattdessen zusätzlich ausgewiesen.
+
+
+def test_search_breadth_counts_rule_times_symbol(tmp_path: Path) -> None:
+    ledger = HypothesisLedger(tmp_path / "ledger.jsonl")
+    ledger.record(_entry(_key(name="a"), name="a"))
+    ledger.record(_entry(_key(name="b"), name="b"))
+
+    # 2 Regeln x 2 Symbole = 4 Selektionsversuche, aber nur 2 Konfigurationen.
+    assert ledger.tested_count() == 2
+    assert ledger.search_breadth_count() == 4
+
+
+def test_search_breadth_deduplicates_repeated_runs(tmp_path: Path) -> None:
+    """A re-run on fresh data is the same hypothesis, not a new trial."""
+    ledger = HypothesisLedger(tmp_path / "ledger.jsonl")
+    k = _key(name="a")
+    ledger.record(_entry(k, name="a"))
+    ledger.record(_entry(k, name="a"))
+
+    assert ledger.search_breadth_count() == 2  # BTC + ETH, once each
+
+
+def test_search_breadth_never_below_config_count(tmp_path: Path) -> None:
+    """An entry with an empty universe must not shrink the honest count."""
+    path = tmp_path / "ledger.jsonl"
+    ledger = HypothesisLedger(path)
+    entry = _entry(_key(name="a"), name="a")
+    object.__setattr__(entry, "universe", [])
+    ledger.record(entry)
+
+    assert ledger.tested_count() == 1
+    assert ledger.search_breadth_count() >= ledger.tested_count()
 
 
 def test_corrupt_line_is_skipped(tmp_path: Path) -> None:
