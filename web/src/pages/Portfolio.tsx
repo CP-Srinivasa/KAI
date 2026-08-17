@@ -23,7 +23,6 @@ import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
-import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
 import { UnlockCalendarPanel } from "@/components/panels/UnlockCalendarPanel";
 import { ChurnPanel } from "@/components/panels/ChurnPanel";
 import { MomentumUniversePanel } from "@/components/panels/MomentumUniversePanel";
@@ -613,11 +612,6 @@ export function PortfolioPage() {
           </div>
         </Card>
       )}
-
-      {/* 2026-06-23: Edge-Wahrheit sicht- + nachvollziehbar im Dashboard
-          (canonical vs voller Stream, Quarantäne-Transparenz) — schließt die
-          Lücke aus der Edge-Epochen-Forensik (canonical-Edge lag nur in der CLI). */}
-      <EdgeTruthPanel />
 
       {/* ADR 0012 truth-pivot (Phase 2): Unlock-Kalender als READ-ONLY Kontext-
           Marker (nächste Token-Freischaltung je Coin, Tage + Anteil max_supply).

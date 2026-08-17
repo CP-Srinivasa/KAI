@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/Primitives";
+import { Card, ProgressBar } from "@/components/ui/Primitives";
 import { Sparkline } from "@/components/kpi/Sparkline";
 import { useCurrency } from "@/state/CurrencyProvider";
 
@@ -40,9 +40,10 @@ export function KpiCard({
 
   const hasGap = target !== undefined && valueNumeric !== undefined && Number.isFinite(valueNumeric);
   const gap = hasGap ? (valueNumeric as number) - (target as number) : undefined;
-  const progressPct = hasGap && (target as number) !== 0
-    ? Math.max(0, Math.min(100, ((valueNumeric as number) / (target as number)) * 100))
-    : undefined;
+  // Kein vorab geclampter Prozentwert mehr: ProgressBar braucht den ROHEN Wert,
+  // um "unter null" von "null" unterscheiden zu können. Ein Ziel von 0 bleibt
+  // ausgeschlossen — dagegen lässt sich kein Fortschritt messen.
+  const hasTargetBar = hasGap && (target as number) !== 0;
   const gapTone: "pos" | "neg" | "warn" =
     gap === undefined ? "warn" : gap >= 0 ? "pos" : "neg";
 
@@ -131,37 +132,22 @@ export function KpiCard({
         )}
       </div>
 
-      {progressPct !== undefined && (() => {
-        const isOutOfRange = progressPct === 0 && (tone === "warn" || tone === "neg");
-        const fillWidth = isOutOfRange ? 100 : progressPct;
-        return (
-          <div
-            className={cn(
-              "mt-3 h-1.5 rounded-full overflow-hidden",
-              tone === "pos" && "bg-pos/20",
-              tone === "neg" && "bg-neg/20",
-              tone === "warn" && "bg-warn/20",
-              tone === "info" && "bg-info/20",
-              tone === "ai" && "bg-ai/20",
-              tone === "neutral" && "bg-bg-3",
-            )}
-            aria-hidden
-          >
-            <div
-              className={cn(
-                "h-full transition-[width] duration-300",
-                tone === "pos" && "bg-pos",
-                tone === "neg" && "bg-neg",
-                tone === "warn" && "bg-warn",
-                tone === "info" && "bg-info",
-                tone === "ai" && "bg-ai",
-                tone === "neutral" && "bg-fg-muted",
-              )}
-              style={{ width: `${fillWidth}%` }}
-            />
-          </div>
-        );
-      })()}
+      {/* Zentrale ProgressBar statt eigener Balken (Befund 2026-08-17).
+          Die frühere Implementierung clampte den Prozentwert VOR dem Rendern
+          auf [0,100] und machte aus `pct === 0 && tone in (warn, neg)` eine
+          Füllbreite von 100 %. Damit zeichneten 0 % Forward-Precision und ein
+          Tier-Lift von -6pp einen VOLLEN Balken — optisch nicht von "Ziel
+          erreicht" zu unterscheiden. Genau dieser Fall ist in ProgressBar seit
+          2026-05-08 gelöst (proportionaler, gestreifter Sub-Zero-Balken), und
+          sie bringt die ARIA-Semantik mit, die hier `aria-hidden` war. */}
+      {hasTargetBar && (
+        <ProgressBar
+          className="mt-3"
+          value={valueNumeric}
+          target={target as number}
+          label={label}
+        />
+      )}
 
       {helper && (
         <div className="mt-3 pt-3 border-t border-line-subtle text-2xs text-fg-muted">{helper}</div>
