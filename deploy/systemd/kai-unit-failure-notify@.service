@@ -1,0 +1,12 @@
+[Unit]
+Description=KAI notify operator that %i failed
+# BEWUSST OHNE OnFailure=: ein Alarm, der sich selbst alarmiert, kaskadiert.
+# Scheitert der Notifier, bleibt der Befund im Journal (Lehre: NIE Requires=
+# zwischen Timer-Units, 2026-06-24).
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/notify_unit_failure.py %i

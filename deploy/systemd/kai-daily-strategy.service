@@ -1,5 +1,6 @@
 [Unit]
 Description=KAI Daily Strategy Skeleton (morning bootstrap)
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

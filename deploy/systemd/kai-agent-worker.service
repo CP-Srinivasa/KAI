@@ -2,6 +2,7 @@
 Description=KAI Agent Worker (SENTR/Watchdog/Architect/DALI/Neo/SATOSHI)
 After=kai-server.service
 Requires=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=simple

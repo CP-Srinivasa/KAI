@@ -2,6 +2,7 @@
 Description=KAI System Health Check — Pi-side authoritative probe with Telegram-on-issue
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

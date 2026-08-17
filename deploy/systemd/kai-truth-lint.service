@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Truth-Lint — Invariant-Registry ueber die eigenen Ledger (Operator-Direktive 07-11)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

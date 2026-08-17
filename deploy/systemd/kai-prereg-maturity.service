@@ -2,6 +2,7 @@
 Description=KAI Prereg Maturity Check — count out-of-sample cohorts of open pre-registrations, flag DUE ones (read-only)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

@@ -5,6 +5,7 @@ Description=KAI canonical-edge Report taeglich attestieren (Truth-Ledger, ADR 00
 # bewusst FAILEN -> failed-units-Smoke/Watchdog schlagen an (Tripwire, kein Bug).
 # KEIN Requires= auf andere kai-Units (memory kai_timer_requires_cascade_20260624).
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

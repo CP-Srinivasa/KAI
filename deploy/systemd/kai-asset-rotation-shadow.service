@@ -2,6 +2,7 @@
 Description=KAI Asset-Rotation-Shadow — evaluate rotation decisions on paper data (Goal G1)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -16,7 +17,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # appends a decision record to artifacts/asset_rotation_shadow.jsonl. NOTHING
 # acts on the decisions (no feed, no sizing, no capital) — this is the G1
 # "rotiert nachvollziehbar"-Sicht. "-" prefix: a failed run must not propagate.
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/asset_rotation_shadow_refresh.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/asset_rotation_shadow_refresh.py
 
 StandardOutput=journal
 StandardError=journal

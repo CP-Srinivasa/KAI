@@ -2,6 +2,7 @@
 Description=KAI Unlock-Refresh — rebuild the read-only token-unlock calendar artifact (ADR 0012 Phase 2)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -17,7 +18,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # "-" prefix: a failed refresh must not propagate — the dashboard keeps reading
 # the last artifact and flags it STALE once generated_at ages past the threshold
 # (honest staleness, no silent freshness on a dead feed).
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/build_unlock_events.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/build_unlock_events.py
 
 StandardOutput=journal
 StandardError=journal

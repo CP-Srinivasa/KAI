@@ -2,6 +2,7 @@
 Description=KAI Momentum-Universe-Refresh — build the own-data universe snapshot (Goal G0)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -16,7 +17,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # data, no scraping). NO trades, NO capital. "-" prefix: a failed refresh must
 # not propagate; build_universe is fail-soft and the refresher KEEPS the last
 # good snapshot on a dead source rather than overwriting it with an empty one.
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_refresh.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_refresh.py
 
 StandardOutput=journal
 StandardError=journal

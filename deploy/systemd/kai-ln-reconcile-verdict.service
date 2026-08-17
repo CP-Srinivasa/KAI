@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI pull the sealed reconciliation shadow pre-registration verdict (read-only)
 After=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

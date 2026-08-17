@@ -2,6 +2,7 @@
 Description=KAI CORE8 Forecaster Panel — resolve due shadow questions (idempotent, fail-closed)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

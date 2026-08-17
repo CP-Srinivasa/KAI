@@ -2,6 +2,7 @@
 Description=KAI Recalc-Cycle — daily refresh of source-reliability/lifecycle/bayes/confluence/ph5
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -12,7 +13,7 @@ Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Wrapper runs all 5 recalc steps best-effort (a crashed step does NOT abort the
-# rest — that independence is why we used ExecStart=- per line). It then exits
+# rest — that independence is why we used ExecStart= per line). It then exits
 # non-zero if ANY step failed, so the unit is marked `failed` immediately instead
 # of reporting success while an output silently goes stale (2026-06-24: a bayes
 # circular-import crash stayed invisible at the unit level for ~31h under the old

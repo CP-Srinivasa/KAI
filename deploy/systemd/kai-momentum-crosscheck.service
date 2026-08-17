@@ -2,6 +2,7 @@
 Description=KAI Momentum-Crosscheck — own momentum rank vs own-TA rating (Goal G4)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -15,7 +16,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # with a ToS-compliant TA rating computed from our OWN OHLCV (no scraping, no
 # key) and writes artifacts/momentum_crosscheck.jsonl. NO trades, NO sizing.
 # "-" prefix: a failed run must not propagate (build is fail-soft).
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_crosscheck_refresh.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_crosscheck_refresh.py
 
 StandardOutput=journal
 StandardError=journal

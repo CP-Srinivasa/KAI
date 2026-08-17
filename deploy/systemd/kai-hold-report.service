@@ -2,6 +2,7 @@
 Description=KAI Hold-Metrics + Forward-Replay Nightly
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

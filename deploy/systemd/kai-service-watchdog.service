@@ -2,6 +2,7 @@
 Description=KAI Pi External Service Watchdog
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

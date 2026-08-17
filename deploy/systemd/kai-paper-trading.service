@@ -2,6 +2,7 @@
 Description=KAI Paper-Trading cron tick (10-min functional parity with Windows Task Scheduler)
 After=kai-server.service
 Requires=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

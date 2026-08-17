@@ -8,6 +8,7 @@
 [Unit]
 Description=KAI Audit Rotation — archive oversized audit streams (allowlisted, tail-preserving)
 After=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

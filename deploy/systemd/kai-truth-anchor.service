@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI L3 Truth-Ledger Anchor (attest verdicts + prereg, OTS-anchor tip; default-off)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

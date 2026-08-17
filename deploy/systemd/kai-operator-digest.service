@@ -10,6 +10,7 @@
 Description=KAI Operator-Digest — one readable daily status message (off by default)
 After=network-online.target kai-server.service
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

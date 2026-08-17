@@ -2,6 +2,7 @@
 Description=KAI Funding-Refresh — warm the decoupled funding-rate snapshot (Goal V5 Phase 1)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -16,7 +17,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # "-" prefix: a failed refresh must not propagate; the loop keeps reading the
 # last known snapshot until it goes stale (then it simply skips funding
 # evidence — fail-safe, no trade on dead funding data).
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/funding_cache_refresh.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/funding_cache_refresh.py
 
 StandardOutput=journal
 StandardError=journal

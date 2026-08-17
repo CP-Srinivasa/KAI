@@ -93,6 +93,11 @@ UNITS=(
     "kai-forecaster-issue.timer"
     "kai-forecaster-resolve.service"
     "kai-forecaster-resolve.timer"
+    # Template-Unit hinter jedem OnFailure=. MUSS installiert sein, sonst zeigt
+    # die Fehlerbehandlung ALLER anderen Units ins Leere. Templates werden nie
+    # enabled — sie werden je Fehlschlag instanziiert und gehoeren deshalb
+    # NICHT in ENABLE_ON_INSTALL.
+    "kai-unit-failure-notify@.service"
 )
 
 # NOTE 2026-08-06: kai-forecaster-issue.timer + kai-forecaster-resolve.timer

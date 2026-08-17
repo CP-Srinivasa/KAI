@@ -2,6 +2,7 @@
 Description=KAI Artifact Backup — bundle + encrypt the unreconstructable truth layer
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

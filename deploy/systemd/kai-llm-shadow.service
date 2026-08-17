@@ -4,6 +4,7 @@
 [Unit]
 Description=KAI LLM shadow tick (untrusted analysis, ADR 0015)
 After=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

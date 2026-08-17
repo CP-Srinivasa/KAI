@@ -1,5 +1,6 @@
 [Unit]
 Description=KAI Pi systemd Timer Health Probe (DS-V-C 2026-05-21)
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
