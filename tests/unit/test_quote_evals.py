@@ -20,6 +20,7 @@ from app.research.quote_evals import (
     evaluate_execution_translation,
     evaluate_technical_paper_precision,
     normal_p_positive,
+    p_positive_robustness,
     reconstruct_tv_signal_id,
 )
 
@@ -80,6 +81,48 @@ def test_normal_p_positive_degenerate_and_small_samples() -> None:
     assert normal_p_positive([1.0, 1.0, 1.0]) == 1.0
     assert normal_p_positive([-1.0, -1.0]) == 0.0
     assert normal_p_positive([1.0, -1.0]) == 0.5
+
+
+# ── Robustheits-Diagnostik zur versiegelten Approximation ────────────────────
+#
+# Der v2-Claim (26d3e0eb29f553f3) versiegelt die Messgröße WÖRTLICH als
+# "p_positive = normal approximation of P(mean>0)" und verbietet ausdrücklich
+# jede Kriteriumsänderung. Die Approximation bleibt deshalb gatend.
+#
+# Sie ist bei n=30 aber knapp optimistischer als die exakte Rechnung, und bei
+# GENAU EINEM Ausgang (k=19, der Schwellenfall) sind sich die Verfahren uneins.
+# Ein PASS, das nur an der Approximation hängt, muss als solches sichtbar sein —
+# sonst wird aus einem Grenzfall stillschweigend ein Ergebnis.
+
+
+def test_p_positive_robustness_flags_the_knife_edge_at_k19() -> None:
+    xs = [1.0] * 19 + [-1.0] * 11
+
+    rob = p_positive_robustness(xs)
+
+    # Gatend bleibt die versiegelte Approximation — Wert unverändert.
+    assert rob["gating_wald"] == pytest.approx(normal_p_positive(xs))
+    assert rob["gating_wald"] == pytest.approx(0.9319, abs=5e-4)
+    # Exakte Bayes-Posterior (uniform prior) stimmt hier noch zu ...
+    assert rob["bayes_posterior_uniform"] == pytest.approx(0.9252, abs=5e-4)
+    # ... der exakte einseitige Binomialtest kippt knapp darunter.
+    assert rob["binomial_exact_onesided"] == pytest.approx(0.8998, abs=5e-4)
+    assert rob["methods_disagree_at_gate"] is True
+    assert rob["gate_p_min"] == 0.90
+
+
+@pytest.mark.parametrize("k", [18, 20, 21, 25])
+def test_p_positive_robustness_is_quiet_away_from_the_knife_edge(k: int) -> None:
+    rob = p_positive_robustness([1.0] * k + [-1.0] * (30 - k))
+
+    assert rob["methods_disagree_at_gate"] is False
+
+
+def test_p_positive_robustness_is_none_safe_for_tiny_samples() -> None:
+    rob = p_positive_robustness([1.0])
+
+    assert rob["gating_wald"] is None
+    assert rob["methods_disagree_at_gate"] is False
 
 
 # ── H1 technical_paper_precision_fwd_v1 ──────────────────────────────────────

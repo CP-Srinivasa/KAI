@@ -179,3 +179,69 @@ async def test_untrusted_verdict_subject_is_visible_hold(tmp_path: Path) -> None
     assert row["due"] is False
     assert row["resolution"]["status"] == "untrusted_attestation"
     assert row["resolution"]["seqs"] == [1]
+
+
+# --- Abschluss OHNE Sachverdikt --------------------------------------------
+#
+# Befund 2026-08-17: H2 (``execution_translation_hit_to_win_v1``) wurde am
+# 2026-08-08 bewusst als CLOSED_UNMEASURABLE geschlossen und in der Truth-Kette
+# attestiert (seq 79) — ``prereg-maturity`` meldete den Claim dennoch als
+# ``RESOLUTION_HOLD``/``unclassified``. Ein Abschluss ohne Sachverdikt ist aber
+# eine gültige, TERMINALE Auflösung: der Claim ist beendet, nur eben ohne MET
+# oder NOT_MET. Ihn als beschädigte Evidenz zu führen macht einen sauber
+# geschlossenen Claim ununterscheidbar von einer kaputten Truth-Kette.
+#
+# Dasselbe gilt für INCONCLUSIVE_BY_TIMEOUT: der Nachfolger-Claim
+# ``signal_hit_to_win_conversion_v2`` versiegelt ausdrücklich "kein Sachverdikt,
+# keine Verlaengerung". Ohne terminale Klassifikation liefe genau der
+# Zombie-Fall wieder auf, gegen den die Frist eingeführt wurde.
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [
+        "CLOSED_UNMEASURABLE at n=14/50 — population unreachable by construction",
+        "INCONCLUSIVE_BY_TIMEOUT: window closed below n_target",
+    ],
+)
+async def test_closure_without_a_substantive_verdict_is_terminal(
+    tmp_path: Path, verdict: str
+) -> None:
+    _attest(tmp_path, verdict)
+
+    row = await _row(tmp_path)
+
+    assert row["state"] == STATE_RESOLVED
+    assert row["state_source"] == "truth_ledger"
+    assert row["due"] is False
+    assert row["resolution"]["status"] == "resolved"
+    assert row["resolution"]["verdict_class"] == "CLOSED_NO_VERDICT"
+    render = _render_maturity_state(row)
+    assert "ABGESCHLOSSEN" in render
+    assert "Verdikt-Kette fahren" not in render
+    # Ein Abschluss ohne Sachverdikt darf NIE wie ein bestandener oder
+    # widerlegter Claim gelesen werden.
+    assert "OHNE SACHVERDIKT" in render
+
+
+async def test_bare_inconclusive_still_keeps_the_claim_open(tmp_path: Path) -> None:
+    """Only the sealed *_BY_TIMEOUT closure is terminal — bare prose is not."""
+    _attest(tmp_path, "INCONCLUSIVE — rerun once more data lands")
+
+    row = await _row(tmp_path)
+
+    assert row["state"] == STATE_EVAL_CHECK_DUE
+    assert row["due"] is True
+    assert row["resolution"] is None
+
+
+async def test_substantive_verdict_outranks_a_no_verdict_closure(tmp_path: Path) -> None:
+    """MET/NOT_MET is more informative than 'closed without a verdict'."""
+    _attest(tmp_path, "CLOSED_UNMEASURABLE at n=14/50")
+    _attest(tmp_path, "FAILED at registered gate")
+
+    row = await _row(tmp_path)
+
+    assert row["state"] == STATE_RESOLVED
+    assert row["due"] is False
+    assert row["resolution"]["verdict_class"] == "NOT_MET"
