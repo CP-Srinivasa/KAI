@@ -43,6 +43,29 @@ AGG_TOKENS = frozenset(
         "ratio",
         "winrate",
         "accuracy",
+        # --- Geld- und Risiko-Kennzahlen (ergänzt 2026-08-17) ---------------
+        # Befund: die zwölf ursprünglichen Tokens trafen KEINE einzige
+        # Geld-Kennzahl. `p_mu_net_positive`, `fee_drag`, `sharpe`,
+        # `median_bps`, `pnl_usd` und `drawdown` liefen allesamt am Ratchet
+        # vorbei — ausgerechnet die Zahlen, für die die Direktive
+        # "kein Aggregat ohne Zerlegung" (2026-08-08) geschrieben wurde.
+        # `mu` steht für die canonical-edge-Kennzahl `p_mu_net_positive`;
+        # als eigenes Wort ist es im Bestand eindeutig (0 Falsch-Positive).
+        "pnl",
+        "bps",
+        "sharpe",
+        "drawdown",
+        "fee",
+        "fees",
+        "drag",
+        "edge",
+        "equity",
+        "profit",
+        "loss",
+        "exposure",
+        "turnover",
+        "slippage",
+        "mu",
     }
 )
 DECO_TOKENS = frozenset(
@@ -50,7 +73,20 @@ DECO_TOKENS = frozenset(
 )
 DECO_PREFIXES = ("by_", "per_", "without_", "leave_one")
 
-SCAN_ROOTS = ("app/research", "app/observability", "app/api/routers", "app/alerts")
+# ``app/execution`` ergänzt 2026-08-17: dort entstehen die Geld-Kennzahlen
+# (Close-PnL, Entry-Fee-Matching, Reconciliation) — die Quelle der Zahlen, die
+# der Ratchet bis dahin nicht einmal als Kennzahl erkannt hat.
+# ``app/cli`` bleibt bewusst DRAUSSEN: die CLI rendert überwiegend, was andere
+# Schichten berechnet haben, und brächte ~20 weitere Baseline-Einträge mit dem
+# geringsten Erkenntnisgewinn. Eine Schuldenliste, die niemand mehr liest, ist
+# der Fehler, den dieser Ratchet gerade vermeiden soll.
+SCAN_ROOTS = (
+    "app/research",
+    "app/observability",
+    "app/api/routers",
+    "app/alerts",
+    "app/execution",
+)
 # Das Modul IST die Zerlegung — es gegen sich selbst zu prüfen ergibt nichts.
 SKIP_FILES = frozenset({"app/research/decomposition.py"})
 # Reine Deserialisierung erzeugt keine Kennzahl, sie liest eine zurück.
