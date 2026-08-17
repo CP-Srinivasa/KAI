@@ -29,13 +29,16 @@ Methodik (forensik-konsistent zur canonical Edge):
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from app.execution.paper_audit_stream import (
+    load_audit_events as _port_load_audit_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -224,21 +227,13 @@ def _empty(since: str | None, note: str) -> ChurnReport:
 
 
 def load_audit_events(path: str | Path) -> list[dict[str, Any]]:
-    """Audit-JSONL → dicts. Überspringt kaputte Zeilen. Leer wenn Datei fehlt."""
-    p = Path(path)
-    if not p.exists():
-        logger.warning("[churn_report] audit file not found: %s", p)
-        return []
-    out: list[dict[str, Any]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
+    """Audit-JSONL → dicts. Delegiert an den Stream-Port (eine Leseregel).
+
+    Bis 2026-08-17 stand hier eine eigene Kopie — Zeile für Zeile identisch mit
+    der in ``edge_report.py``, bis auf das Log-Präfix. Beide verwarfen defekte
+    Zeilen still; der Port zählt sie und meldet sie einmal mit Anzahl.
+    """
+    return _port_load_audit_events(path, source="churn_report")
 
 
 def _is_entry_fill(ev: dict[str, Any]) -> bool:

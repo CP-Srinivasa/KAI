@@ -39,7 +39,6 @@ fallible inference and is out of Sprint C scope).
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import random
@@ -51,6 +50,9 @@ from pathlib import Path
 from typing import Any
 
 from app.execution.cost_model import CostModel
+from app.execution.paper_audit_stream import (
+    load_audit_events as _port_load_audit_events,
+)
 from app.learning.bayes_quarantine import quarantine_reason
 from app.storage.jsonl_io import read_jsonl_tolerant
 
@@ -1225,21 +1227,13 @@ def extract_entry_times(events: Iterable[dict[str, Any]]) -> dict[str, list[str]
 
 
 def load_audit_events(path: str | Path) -> list[dict[str, Any]]:
-    """Load a paper_execution_audit.jsonl file into dicts. Skips bad lines."""
-    p = Path(path)
-    if not p.exists():
-        logger.warning("[edge_report] audit file not found: %s", p)
-        return []
-    events: list[dict[str, Any]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            logger.warning("[edge_report] skipping malformed audit line")
-    return events
+    """Load a paper_execution_audit.jsonl file into dicts (via the stream port).
+
+    Bis 2026-08-17 stand hier eine eigene Kopie, identisch mit der in
+    ``churn_report.py``. Sie warnte zudem PRO defekter Zeile — bei einer
+    beschädigten Datei ein Log-Sturm. Der Port meldet einmal mit Anzahl.
+    """
+    return _port_load_audit_events(path, source="edge_report")
 
 
 def build_report_from_audit(
