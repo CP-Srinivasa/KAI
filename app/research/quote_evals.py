@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from math import erf, fsum, sqrt
+from math import comb, erf, fsum, sqrt
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,10 @@ EXEC_TRANSLATION_PREREG_ID = "0c7ead764621dd17"  # 2026-08-08 CLOSED_UNMEASURABL
 # Nachfolger von H2, registriert 2026-08-08T10:41:26Z. Gate n>=30/p>=0.90,
 # Frist 2026-09-22 ⇒ INCONCLUSIVE_BY_TIMEOUT (der Vorgänger hatte keine).
 HIT_TO_WIN_V2_PREREG_ID = "26d3e0eb29f553f3"
+# Versiegelte Gate-Schwelle des v2-Claims. Steht hier NUR, damit die
+# nicht-gatende Robustheits-Diagnostik weiß, an welcher Kante sie vergleicht —
+# das gatende Urteil fällt unverändert in ``prereg_gate``.
+_HIT_TO_WIN_V2_P_MIN = 0.90
 
 _TECHNICAL_PAPER_PREFIX = "technical_paper"
 _CLOSE_EVENTS = ("position_closed", "position_partial_closed")
@@ -74,6 +78,56 @@ def normal_p_positive(xs: list[float]) -> float | None:
         return 1.0 if mean > 0 else (0.5 if mean == 0 else 0.0)
     z = mean / sqrt(var / n)
     return 0.5 * (1.0 + erf(z / sqrt(2.0)))
+
+
+def p_positive_robustness(xs: list[float]) -> dict[str, Any]:
+    """Nicht-gatende Gegenrechnung zur versiegelten Normal-Approximation.
+
+    Die Approximation IST das versiegelte Kriterium (``26d3e0eb29f553f3``:
+    "p_positive = normal approximation of P(mean>0)" … "no criterion change").
+    Sie wird hier deshalb NICHT ersetzt — sie wird nur eingeordnet.
+
+    Bei ±1-Kodierung ist die Größe eine Binomialrate, und die Normal-Näherung
+    ist bei n≈30 leicht optimistisch. Durchgerechnet über k=15..25 bei n=30
+    weichen die Verfahren an der Gate-Schwelle 0,90 an **genau einem** Ausgang
+    voneinander ab: k=19 (Wald 0,9319 · Posterior 0,9252 · exakter einseitiger
+    Binomialtest 0,8998). Genau dort — und nur dort — hängt das Verdikt an der
+    Wahl des Verfahrens statt an den Daten. Das Flag macht diesen Grenzfall im
+    Report sichtbar, ohne das Gate zu berühren.
+    """
+    n = len(xs)
+    gating = normal_p_positive(xs)
+    out: dict[str, Any] = {
+        "gating_wald": round(gating, 6) if gating is not None else None,
+        "gating_method": "normal approximation of P(mean>0) — sealed, authoritative",
+        "bayes_posterior_uniform": None,
+        "binomial_exact_onesided": None,
+        "gate_p_min": _HIT_TO_WIN_V2_P_MIN,
+        "methods_disagree_at_gate": False,
+        "note": (
+            "Nicht gatend. Weicht ein Verfahren am Gate ab, ist das Verdikt ein "
+            "Grenzfall der Methode — so und nicht als klares Ergebnis zitieren."
+        ),
+    }
+    # Exakte Verfahren setzen eine saubere 0/1-Zählung voraus. Alles andere als
+    # eine ±1-Kodierung wird nicht zurechtgebogen, sondern ausgelassen.
+    if gating is None or any(x not in (1.0, -1.0) for x in xs):
+        return out
+
+    k = sum(1 for x in xs if x > 0)
+    # P(theta>0.5) unter Beta(1,1)-Prior => Beta(k+1, n-k+1). Für ganzzahlige
+    # Parameter gilt P = sum_{j=0}^{k} C(n+1, j) * 0.5^(n+1).
+    posterior = fsum(comb(n + 1, j) for j in range(0, k + 1)) * 0.5 ** (n + 1)
+    # Einseitiger exakter Binomialtest gegen H0: theta=0.5; als 1-p berichtet,
+    # damit alle drei Zahlen dieselbe Richtung haben ("höher = stärker").
+    p_value = fsum(comb(n, j) for j in range(k, n + 1)) * 0.5**n
+    exact_test = 1.0 - p_value
+
+    out["bayes_posterior_uniform"] = round(posterior, 6)
+    out["binomial_exact_onesided"] = round(exact_test, 6)
+    bar = _HIT_TO_WIN_V2_P_MIN
+    out["methods_disagree_at_gate"] = len({gating >= bar, posterior >= bar, exact_test >= bar}) > 1
+    return out
 
 
 def _overall_block(xs: list[int], horizon_s: int) -> dict[str, Any]:
@@ -434,6 +488,8 @@ def evaluate_hit_to_win_conversion(
             "discrimination_pp": discrimination,
             "concordance_n": concordance_n,
             "concordance_rate": (round(concordant / concordance_n, 4) if concordance_n else None),
+            # Ordnet die versiegelte Approximation ein, ersetzt sie nicht.
+            "p_positive_robustness": p_positive_robustness([float(x) for x in xs]),
         },
         "overall": _overall_block(xs, horizon_s),
     }
@@ -447,5 +503,6 @@ __all__ = [
     "evaluate_hit_to_win_conversion",
     "evaluate_technical_paper_precision",
     "normal_p_positive",
+    "p_positive_robustness",
     "reconstruct_tv_signal_id",
 ]
