@@ -80,6 +80,24 @@ def test_wilson_lower_matches_known_value_for_25_of_100() -> None:
 
 # ── build_source_reliability_report ────────────────────────────────────────
 
+# Festes "Jetzt" nahe den Fixture-Daten. Die Fixtures sind auf 2026-05-15
+# datiert, das Auswertungsfenster ist 90 Tage (_DEFAULT_WINDOW_DAYS). Ohne
+# festes ``now_utc`` las der Report die Wanduhr: ab dem 2026-08-13 fielen ALLE
+# Fixtures aus dem Fenster, ``scores`` war leer und 13 Tests wurden rot — ohne
+# eine einzige Änderung am Produktionscode. Ein Test, der ein Datum überlebt,
+# muss sein Jetzt mitbringen.
+_TEST_NOW = datetime(2026, 5, 20, tzinfo=UTC)
+
+
+def _report(*args: object, **kwargs: object) -> dict:
+    """``build_source_reliability_report`` mit festem Jetzt (s. ``_TEST_NOW``).
+
+    Ein explizit übergebenes ``now_utc`` gewinnt — die Fenster-Cutoff-Tests
+    setzen es weiterhin selbst.
+    """
+    kwargs.setdefault("now_utc", _TEST_NOW)
+    return build_source_reliability_report(*args, **kwargs)  # type: ignore[arg-type]
+
 
 def _audit(
     doc_id: str,
@@ -116,7 +134,7 @@ def test_report_excludes_inconclusive_from_n() -> None:
         _ann("d2", "miss"),
         _ann("d3", "inconclusive"),  # excluded
     ]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={"d1": "CoinDesk", "d2": "CoinDesk", "d3": "CoinDesk"},
@@ -140,7 +158,7 @@ def test_report_window_cutoff_drops_old_alerts() -> None:
         "OldSource",
         dispatched_at=(now - timedelta(days=10)).isoformat(),
     )
-    report = build_source_reliability_report(
+    report = _report(
         [old_audit, fresh_audit],
         [_ann("d_old", "hit"), _ann("d_fresh", "miss")],
         source_by_doc={"d_old": "OldSource", "d_fresh": "OldSource"},
@@ -157,7 +175,7 @@ def test_report_excludes_alerts_without_source() -> None:
     """Documents with no source mapping cannot contribute to anyone."""
     audits = [_audit("d1", ""), _audit("d2", "Decrypt")]
     annotations = [_ann("d1", "hit"), _ann("d2", "hit")]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={"d2": "Decrypt"},  # d1 omitted
@@ -170,7 +188,7 @@ def test_report_falls_back_to_audit_source_name_when_source_map_missing() -> Non
     """Audit source_name is canonical enough when the source map has a gap."""
     audits = [_audit("d1", "CoinDesk")]
     annotations = [_ann("d1", "hit")]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={},
@@ -194,7 +212,7 @@ def test_report_falls_back_to_persisted_provenance_source() -> None:
         )
     ]
     annotations = [_ann("d1", "miss")]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={},
@@ -218,7 +236,7 @@ def test_report_prefers_source_map_over_audit_fallbacks() -> None:
         )
     ]
     annotations = [_ann("d1", "hit")]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={"d1": "MappedSource"},
@@ -232,7 +250,7 @@ def test_report_classifies_low_tier_for_consistent_misses() -> None:
     """A source with 0/25 hits over the window should land in `low` tier."""
     audits = [_audit(f"d{i}", "NoiseSource") for i in range(25)]
     annotations = [_ann(f"d{i}", "miss") for i in range(25)]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={f"d{i}": "NoiseSource" for i in range(25)},
@@ -248,7 +266,7 @@ def test_report_classifies_trusted_tier_for_strong_evidence() -> None:
     annotations = []
     for i in range(40):
         annotations.append(_ann(f"d{i}", "hit" if i < 35 else "miss"))  # 35/40 = 87.5%
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={f"d{i}": "TopSource" for i in range(40)},
@@ -268,7 +286,7 @@ def test_report_legacy_unknown_never_trusted_and_counts_separated() -> None:
     annotations += [_ann(f"u{i}", "hit" if i < 35 else "miss") for i in range(40)]
     source_by_doc = {f"a{i}": "ActiveSrc" for i in range(40)}
     source_by_doc.update({f"u{i}": "unknown" for i in range(40)})
-    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+    report = _report(audits, annotations, source_by_doc=source_by_doc)
 
     active = report["scores"]["ActiveSrc"]
     legacy = report["scores"]["unknown"]
@@ -288,7 +306,7 @@ def test_report_returns_insufficient_for_small_n() -> None:
     """A cold-start source with n<20 stays at modifier=0."""
     audits = [_audit(f"d{i}", "NewSource") for i in range(5)]
     annotations = [_ann(f"d{i}", "hit") for i in range(5)]
-    report = build_source_reliability_report(
+    report = _report(
         audits,
         annotations,
         source_by_doc={f"d{i}": "NewSource" for i in range(5)},
@@ -300,7 +318,7 @@ def test_report_returns_insufficient_for_small_n() -> None:
 
 def test_report_includes_thresholds_metadata() -> None:
     """The output records its thresholds so a reader knows what they bought."""
-    report = build_source_reliability_report([], [], {})
+    report = _report([], [], {})
     assert "thresholds" in report
     assert report["thresholds"]["min_n_for_demote"] == 20
 
@@ -316,7 +334,7 @@ def test_report_excludes_digest_audits() -> None:
         source_name="DigestSource",
     )
     regular = _audit("d1", "DigestSource")
-    report = build_source_reliability_report(
+    report = _report(
         [digest, regular],
         [_ann("digest-1", "hit"), _ann("d1", "miss")],
         source_by_doc={"digest-1": "DigestSource", "d1": "DigestSource"},
@@ -360,7 +378,7 @@ def test_ranked_array_sorted_by_wilson_then_n() -> None:
     annotations += [_ann(f"w{i}", "hit" if i < 5 else "miss") for i in range(25)]
     source_by_doc = {f"s{i}": "StrongSource" for i in range(25)}
     source_by_doc.update({f"w{i}": "WeakSource" for i in range(25)})
-    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+    report = _report(audits, annotations, source_by_doc=source_by_doc)
 
     ranked = report["ranked"]
     assert [e["source_name"] for e in ranked] == ["StrongSource", "WeakSource"]
@@ -378,7 +396,7 @@ def test_ranked_excludes_legacy_and_zero_n() -> None:
     annotations += [_ann(f"u{i}", "hit" if i < 20 else "miss") for i in range(25)]
     source_by_doc = {f"a{i}": "ActiveSrc" for i in range(25)}
     source_by_doc.update({f"u{i}": "unknown" for i in range(25)})
-    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+    report = _report(audits, annotations, source_by_doc=source_by_doc)
 
     names = [e["source_name"] for e in report["ranked"]]
     assert names == ["ActiveSrc"]
@@ -395,7 +413,7 @@ def test_ranked_flags_provisional_below_validated_floor() -> None:
     annotations += [_ann(f"v{i}", "hit" if i < 30 else "miss") for i in range(60)]
     source_by_doc = {f"p{i}": "SmallSrc" for i in range(25)}
     source_by_doc.update({f"v{i}": "BigSrc" for i in range(60)})
-    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+    report = _report(audits, annotations, source_by_doc=source_by_doc)
 
     by_name = {e["source_name"]: e for e in report["ranked"]}
     assert by_name["SmallSrc"]["n"] < _MIN_N_FOR_VALIDATED_RANK
@@ -430,7 +448,7 @@ def test_rank_to_lifecycle_tier_buckets() -> None:
 
 def test_ranked_empty_when_no_evidence() -> None:
     """Empty inputs → empty ranking, never a crash."""
-    report = build_source_reliability_report([], [], {})
+    report = _report([], [], {})
     assert report["ranked"] == []
 
 
