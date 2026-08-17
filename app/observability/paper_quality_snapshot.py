@@ -32,6 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.execution.open_fee_match import match_open_fees
 from app.research.decomposition import assess_group_table
 
 _DEFAULT_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
@@ -65,6 +66,11 @@ class PaperQualitySnapshot:
     # P0-Truth-Repair 2026-07-30 (alle additiv):
     pnl_basis: str = PNL_BASIS
     rows_missing_trade_pnl: int = 0
+    # Voll belastete Parallelgroessen (additiv, 2026-08-10). ``sum_trade_pnl_usd``
+    # traegt die Entry-Fee NICHT — der Name sagt das nicht, und genau deshalb
+    # las das Rotations-Verdikt jahrelang eine zu optimistische Zahl.
+    sum_net_pnl_usd: float = 0.0
+    sum_open_fee_usd: float = 0.0
     epoch_scoped: bool = False
     epoch_start_utc: str | None = None
     # Direktive 2026-08-08 „kein Aggregat ohne Zerlegung": ``by_symbol``
@@ -87,6 +93,12 @@ class _SymCounter:
     wins: int = 0
     losses: int = 0
     sum_pnl: float = 0.0
+    # Voll belastet: zusaetzlich abzueglich der FIFO-gematchten Entry-Fee.
+    # ``sum_pnl`` traegt sie NICHT (paper_engine zieht beim Close nur die
+    # Close-Fee ab) — am Pi-Buch sind das 43,5 % des ausgewiesenen Betrags.
+    sum_net_pnl: float = 0.0
+    net_wins: int = 0
+    open_fee: float = 0.0
 
 
 def build_paper_quality_snapshot(
@@ -99,7 +111,11 @@ def build_paper_quality_snapshot(
         raise ValueError("last_n must be >= 1")
 
     path = Path(audit_path)
-    closures: list[dict[str, object]] = []
+    # ALLE Events der laufenden Epoche, nicht nur die Closes: die FIFO-Zuordnung
+    # der Entry-Fee braucht die oeffnenden Fills. Der Epochen-Reset leert die
+    # Liste und damit auch die offenen Positionen — eine Fee aus dem
+    # archivierten Buch darf keinen Trade der neuen Epoche belasten.
+    epoch_records: list[dict[str, object]] = []
     epoch_start_utc: str | None = None
     if path.exists():
         for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -116,17 +132,26 @@ def build_paper_quality_snapshot(
             if epoch_scope and event_type == _EPOCH_RESET_EVENT:
                 # Neue Epoche: alles davor gehört zum archivierten Buch
                 # (INVALID_FOR_PERFORMANCE) und darf keine Quoten mehr speisen.
-                closures.clear()
+                epoch_records.clear()
                 epoch_start_utc = str(rec.get("timestamp_utc") or "") or None
                 continue
-            if event_type in _CLOSE_EVENTS:
-                closures.append(rec)
+            epoch_records.append(rec)
+
+    closures = [r for r in epoch_records if r.get("event_type") in _CLOSE_EVENTS]
+    # ``trade_pnl_usd`` traegt NUR die Close-Fee (paper_engine). Die Entry-Fee
+    # wurde beim Oeffnen vom Cash abgezogen und fehlt darin — am Pi-Buch sind
+    # das 43,5 % des ausgewiesenen Betrags. ``churn_report`` korrigierte das
+    # seit je nachtraeglich, dieser Pfad nicht, obwohl seine Ausgabe als
+    # „net-of-fee realized PnL" ins Rotations-Verdikt fliesst.
+    open_fee_by_record = {id(m.record): m.open_fee_usd for m in match_open_fees(epoch_records)}
 
     total = len(closures)
     window = closures[-last_n:]
     wins = 0
     losses = 0
     sum_pnl = 0.0
+    sum_net_pnl = 0.0
+    sum_open_fee = 0.0
     missing_pnl = 0
     latest_realized: float | None = None
     by_symbol: dict[str, _SymCounter] = defaultdict(_SymCounter)
@@ -144,10 +169,22 @@ def build_paper_quality_snapshot(
             wins += 1
         elif pnl < 0:
             losses += 1
+        # Voll belastete Parallelgroesse. ``net_wins`` zaehlt eigenstaendig:
+        # ein Trade knapp ueber Null ist nach Abzug der Entry-Fee ein Verlust,
+        # und der Wilson-Arm des Rotations-Verdikts haengt an genau dieser
+        # Zaehlung — beide Arme kippen also gemeinsam, nicht nur die Summe.
+        open_fee = open_fee_by_record.get(id(rec), 0.0)
+        net_pnl = pnl - open_fee
+        sum_net_pnl += net_pnl
+        sum_open_fee += open_fee
         symbol = str(rec.get("symbol", "?"))
         sc = by_symbol[symbol]
         sc.count += 1
         sc.sum_pnl += pnl
+        sc.sum_net_pnl += net_pnl
+        sc.open_fee += open_fee
+        if net_pnl > 0:
+            sc.net_wins += 1
         if pnl > 0:
             sc.wins += 1
         elif pnl < 0:
@@ -181,6 +218,8 @@ def build_paper_quality_snapshot(
         window_closures=tuple(dict(rec) for rec in window),
         win_rate=win_rate,
         sum_trade_pnl_usd=sum_pnl,
+        sum_net_pnl_usd=sum_net_pnl,
+        sum_open_fee_usd=sum_open_fee,
         avg_trade_pnl_usd=avg_pnl,
         latest_realized_pnl_usd=latest_realized,
         by_symbol={
@@ -189,6 +228,11 @@ def build_paper_quality_snapshot(
                 "wins": float(sc.wins),
                 "losses": float(sc.losses),
                 "sum_pnl_usd": sc.sum_pnl,
+                # Voll belastet (inkl. FIFO-gematchter Entry-Fee) — die Groesse,
+                # auf der das Rotations-Verdikt rechnen MUSS.
+                "sum_net_pnl_usd": sc.sum_net_pnl,
+                "net_wins": float(sc.net_wins),
+                "open_fee_usd": sc.open_fee,
             }
             for sym, sc in by_symbol.items()
         },

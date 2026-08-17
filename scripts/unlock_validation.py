@@ -114,7 +114,8 @@ async def run(horizon: int, lookback_days: int, events_path: Path) -> int:
     fetch = build_fetch(BinanceAdapter().get_ohlcv)
     fetch_funding = BinanceFuturesAdapter().get_funding_rate_history
     cost = _resolve_cost_bps()
-    trials = HypothesisLedger(LEDGER_PATH).tested_count()
+    # Suchbreite (Regel x Symbol) — s. HypothesisLedger.search_breadth_count.
+    trials = HypothesisLedger(LEDGER_PATH).search_breadth_count()
     logger.info("validation: horizon=%d bars, cost=%.1fbps, trials=%d", horizon, cost, trials)
 
     pooled_alpha: list[float] = []
