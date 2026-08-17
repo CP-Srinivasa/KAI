@@ -714,7 +714,11 @@ def trading_edge_validation(
     )
     from app.research.ledger import HypothesisLedger
 
-    ledger_count = HypothesisLedger(Path(ledger_path)).tested_count()
+    # Suchbreite (Regel x Symbol), nicht Konfigurationszahl: das Überleben wird
+    # je Symbol entschieden, der beste Kandidat stammt also aus der breiteren
+    # Menge. ``tested_count`` deflationierte gegen 12 statt 60 (Pi, 2026-08-17)
+    # und schmeichelte dem Gewinner um Faktor 5.
+    ledger_count = HypothesisLedger(Path(ledger_path)).search_breadth_count()
     try:
         resolved = resolve_trial_count(ledger_count, trials)
     except TrialCountUnavailableError as exc:
