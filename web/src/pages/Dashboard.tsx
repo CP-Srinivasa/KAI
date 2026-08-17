@@ -23,6 +23,7 @@ import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { AuditChainKpi } from "@/components/panels/AuditChainKpi";
 import { ReplayStatusKpi } from "@/components/panels/ReplayStatusKpi";
 import { TruthLayerKpi } from "@/components/panels/TruthLayerKpi";
+import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -196,6 +197,17 @@ export function Dashboard() {
           priorityGate={priorityGate}
           qualityState={q.state}
         />
+      </PanelErrorBoundary>
+
+      {/* Edge-Wahrheit (canonical vs. voller Stream, Quarantäne-Transparenz).
+          Stand bis 2026-08-17 unten auf /portfolio, obwohl der eigene Kommentar
+          dort "sicht- + nachvollziehbar im Dashboard" verlangte — die zentrale
+          Aussage des Systems (canonical-Edge = NO_GO) war damit erst nach
+          Seitenwechsel und langem Scrollen zu sehen.
+          Bewusst VOR dem Fokus-Umschalter: die Edge-Wahrheit ist Lage, nicht
+          Detail, und darf im Problem-Fokus nicht ausgeblendet werden. */}
+      <PanelErrorBoundary name="Edge-Wahrheit">
+        <EdgeTruthPanel />
       </PanelErrorBoundary>
 
       {/* WP-4: Fokus-Modus — Problem-Fokus blendet die Detail-Panels aus; Lage

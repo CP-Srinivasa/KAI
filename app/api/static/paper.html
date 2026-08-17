@@ -406,10 +406,11 @@
       <section class="sec measure">
         <h3>Verifiability &amp; the pre-sealed criterion</h3>
         <p>The data basis is sha256-sealed (append-only snapshot, 2026-07-02); the per-signal result table is deliberately <strong>not</strong> published — symbol-date pairs would re-identify the channel — but is contained in the sealed <code class="inline">k1_final.json</code> and can be verified on reasoned request.</p>
-        <div class="verdict pass">
-          <span class="chip pass">Pre-sealed :: seq 30</span>
+        <div class="verdict neutral">
+          <span class="chip neutral">Pre-sealed :: seq 30 :: window closed :: verdict outstanding</span>
           <p class="big">≥ 5 qualified inbound requests (written, each with a concrete audit wish for a nameable signal provider <em>or</em> a clear willingness-to-pay signal) within 30 days of this publication. If &lt; 5: <strong>kill</strong> for the "public single-channel audit" offering. Not counted: spam, self-promotion by signal providers without an audit mandate, internal requests.</p>
-          <p class="meta">prereg_id = 00c75a76a2b0e78b :: truth-ledger seq 30 :: chain <span class="ok">VERIFY OK records=30</span></p>
+          <p class="big">The criterion was registered 2026-07-04 with a 30-day horizon, so its window closed on <strong>2026-08-03</strong>. The verdict is <strong>not yet sealed</strong> — and this page will not imply otherwise. A criterion whose window has passed is neither met nor failed until it has been measured and sealed; saying so plainly is the point of the method described above.</p>
+          <p class="meta">prereg_id = 00c75a76a2b0e78b :: truth-ledger seq 30 :: chain <span class="ok">VERIFY OK records=30</span> :: status = window closed 2026-08-03, verdict outstanding</p>
         </div>
       </section>
 
