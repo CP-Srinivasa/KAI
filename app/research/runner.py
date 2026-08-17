@@ -475,6 +475,9 @@ async def main(
         "round_trip_cost_bps": cost_bps,
         "repeats_this_run": repeats,
         "hypotheses_tested_cumulative": ledger.tested_count(),
+        # Die Zahl, gegen die der DSR deflationiert: Selektionen, nicht
+        # Konfigurationen. Beide stehen im Report, damit die Lücke sichtbar ist.
+        "search_breadth_cumulative": ledger.search_breadth_count(),
         "symbols": [
             {"symbol": r.symbol, "n_candles": r.n_candles, "gap_bars": r.gap_bars} for r in results
         ],
