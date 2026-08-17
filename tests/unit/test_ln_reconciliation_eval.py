@@ -32,6 +32,10 @@ from scripts.ln_reconciliation_eval import (
 )
 
 T0 = datetime(2026, 8, 8, 10, 50, 9, tzinfo=UTC)
+# Festes "Jetzt" innerhalb des versiegelten 7d-Fensters. Tests, die Unreife
+# prüfen, müssen ihr Jetzt mitbringen — sonst prüfen sie ab Fristablauf etwas
+# anderes als sie behaupten.
+_WITHIN_WINDOW = T0 + timedelta(days=3)
 
 SEALED_CRITERIA = (
     "In the first 96 enabled shadow runs within 7d: all runs pass Truth-tip containment "
@@ -99,9 +103,24 @@ def test_positivkontrolle_sauberer_lauf_ergibt_pass() -> None:
 
 
 def test_zu_wenige_laeufe_sind_unreife_kein_verdikt() -> None:
-    """n < n_target ist Unreife — NICHT FAIL (Lehre aus ND-v2)."""
-    result = evaluate(prereg=_prereg(), runs=_leerlauf(40))
+    """n < n_target ist Unreife — NICHT FAIL (Lehre aus ND-v2).
+
+    ``now`` wird FEST auf einen Zeitpunkt INNERHALB des 7d-Fensters gesetzt.
+    Ohne das las der Test die Wanduhr: ab dem 2026-08-15 (T0+7d) lieferte er
+    INCONCLUSIVE_BY_TIMEOUT und war ab dem 2026-08-17 rot — obwohl die
+    Produktionslogik korrekt ist. Ein Test, der ein Datum überlebt, muss sein
+    Jetzt mitbringen.
+    """
+    result = evaluate(prereg=_prereg(), runs=_leerlauf(40), now=T0 + timedelta(days=3))
     assert result["verdict"] == "IMMATURE"
+    assert result["passed"] is False
+    assert result["runs_counted"] == 40
+
+
+def test_unreife_nach_fristablauf_ist_timeout_kein_sachverdikt() -> None:
+    """Dieselbe Unreife NACH Fensterende schließt terminal — ohne Sachverdikt."""
+    result = evaluate(prereg=_prereg(), runs=_leerlauf(40), now=T0 + timedelta(days=8))
+    assert result["verdict"] == "INCONCLUSIVE_BY_TIMEOUT"
     assert result["passed"] is False
     assert result["runs_counted"] == 40
 
@@ -307,9 +326,19 @@ def _fail_result() -> dict[str, Any]:
     return evaluate(prereg=_prereg(), runs=runs)
 
 
+def _immature_result(n: int = 10) -> dict[str, Any]:
+    """Unreifes Ergebnis mit FESTEM Jetzt innerhalb des 7d-Fensters.
+
+    Ohne festes ``now`` liest der Evaluator die Wanduhr und liefert ab
+    T0+7d (2026-08-15) INCONCLUSIVE_BY_TIMEOUT statt IMMATURE — die Tests
+    kippten dadurch am 2026-08-17 von selbst.
+    """
+    return evaluate(prereg=_prereg(), runs=_leerlauf(n), now=_WITHIN_WINDOW)
+
+
 def test_record_schreibt_den_ersten_stand(tmp_path: Path) -> None:
     ledger = tmp_path / "verdict.jsonl"
-    written = record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(10)), ledger)
+    written = record_verdict(_immature_result(), ledger)
     assert written is True
     assert len(ledger.read_text(encoding="utf-8").strip().splitlines()) == 1
 
@@ -317,7 +346,7 @@ def test_record_schreibt_den_ersten_stand(tmp_path: Path) -> None:
 def test_record_schweigt_bei_unveraendertem_verdikt(tmp_path: Path) -> None:
     """Stuendlich laufen, aber nicht stuendlich schreiben — sonst ist die Datei Rauschen."""
     ledger = tmp_path / "verdict.jsonl"
-    immature = evaluate(prereg=_prereg(), runs=_leerlauf(10))
+    immature = _immature_result()
     assert record_verdict(immature, ledger) is True
     assert record_verdict(immature, ledger) is False
     assert len(ledger.read_text(encoding="utf-8").strip().splitlines()) == 1
@@ -325,7 +354,7 @@ def test_record_schweigt_bei_unveraendertem_verdikt(tmp_path: Path) -> None:
 
 def test_record_schreibt_beim_wechsel(tmp_path: Path) -> None:
     ledger = tmp_path / "verdict.jsonl"
-    record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(10)), ledger)
+    record_verdict(_immature_result(), ledger)
     written = record_verdict(evaluate(prereg=_prereg(), runs=_leerlauf(96)), ledger)
     assert written is True
     zeilen = ledger.read_text(encoding="utf-8").strip().splitlines()
@@ -338,7 +367,7 @@ def test_alarm_nur_bei_fail_und_nur_beim_wechsel(tmp_path: Path) -> None:
 
     # IMMATURE und PASS alarmieren nicht.
     for result in (
-        evaluate(prereg=_prereg(), runs=_leerlauf(10)),
+        _immature_result(),
         evaluate(prereg=_prereg(), runs=_leerlauf(96)),
     ):
         neu = record_verdict(result, ledger)
@@ -361,6 +390,6 @@ def test_alarm_nur_bei_fail_und_nur_beim_wechsel(tmp_path: Path) -> None:
 def test_exit_code_trennt_fail_von_unreife() -> None:
     """Nur FAIL darf die Unit rot faerben — IMMATURE ist der Normalzustand."""
     assert exit_code(_fail_result(), exit_nonzero_on_fail=True) == 1
-    assert exit_code(evaluate(prereg=_prereg(), runs=_leerlauf(10)), exit_nonzero_on_fail=True) == 0
+    assert exit_code(_immature_result(), exit_nonzero_on_fail=True) == 0
     assert exit_code(evaluate(prereg=_prereg(), runs=_leerlauf(96)), exit_nonzero_on_fail=True) == 0
     assert exit_code(_fail_result(), exit_nonzero_on_fail=False) == 0

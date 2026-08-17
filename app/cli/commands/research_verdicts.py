@@ -27,6 +27,14 @@ def _render_maturity_state(row: dict[str, Any]) -> str:
         verdict_class = str(safe.get("verdict_class") or "TERMINAL")
         seq = safe.get("seq")
         seq_render = f", Truth-seq {seq}" if isinstance(seq, int) else ""
+        if verdict_class == "CLOSED_NO_VERDICT":
+            # Beendet ist nicht dasselbe wie beurteilt. Ohne diesen Zusatz liest
+            # sich ein Abschluss aus Unmessbarkeit oder Fristablauf wie ein
+            # Ergebnis — der Fehler, den die Prä-Reg-Doktrin gerade verhindert.
+            return (
+                f"[cyan]ABGESCHLOSSEN OHNE SACHVERDIKT{seq_render}; "
+                "weder bestanden noch widerlegt, keine neue Auswertung[/cyan]"
+            )
         return f"[cyan]ABGESCHLOSSEN — {verdict_class}{seq_render}; keine neue Auswertung[/cyan]"
     if raw == "RESOLUTION_HOLD":
         resolution = row.get("resolution")
@@ -214,6 +222,83 @@ def trading_prereg_maturity(
             f"{r['name']} ({pid}): {n_render} (seit {r['since_utc']}) {r['per_source']}"
             f" → {state}{note_render}"
         )
+
+
+@trading_app.command("alpha-budget")
+def trading_alpha_budget(
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+    ledger_path: str = typer.Option(
+        str(DEFAULT_PREREG_LEDGER_PATH), "--ledger-path", help="Pre-registration ledger JSONL"
+    ),
+) -> None:
+    """Familienweites alpha-Budget ueber alle registrierten Claims (NICHT gatend).
+
+    ``prereg-check`` urteilt je Claim isoliert gegen dessen versiegeltes
+    ``p_min`` - richtig, aber es beantwortet eine engere Frage als beim Lesen
+    entsteht. Laufen m Claims parallel, ist die Chance auf mindestens einen
+    Zufalls-PASS deutlich hoeher als das einzelne alpha. Diese Zahl stand
+    nirgends.
+
+    Aendert kein versiegeltes Kriterium und kippt kein Verdikt.
+    """
+    from app.research.alpha_budget import family_alpha_budget
+    from app.research.prereg_maturity import load_attested_resolutions
+
+    path = Path(ledger_path)
+    claims: list[dict[str, Any]] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except ValueError:
+                continue  # eine kaputte Zeile darf die Auskunft nie sprengen
+            if isinstance(parsed, dict):
+                claims.append(parsed)
+
+    # Terminal entschiedene Claims zählen in die Gesamtfamilie, nicht mehr ins
+    # offene Budget. Fehlt/bricht die Truth-Kette, wird fail-closed NICHTS als
+    # aufgelöst behandelt — das offene Budget ist dann die konservative Sicht.
+    resolutions, error = load_attested_resolutions(path.parent.parent)
+    resolved_ids = (
+        set()
+        if error
+        else {pid for pid, res in resolutions.items() if res.get("status") == "resolved"}
+    )
+
+    report = family_alpha_budget(claims, resolved_ids=resolved_ids)
+    if error:
+        report["truth_ledger_error"] = error.get("status")
+
+    if as_json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+
+    console.print(
+        f"registriert {report['m_registered']} · maschinell gatebar "
+        f"{report['m_machine_gated']} · offen {report['m_open']}"
+    )
+    console.print(
+        f"P(>=1 Falsch-PASS unter H0): gesamt "
+        f"[yellow]{report['familywise_error_upper_bound']:.1%}[/yellow] · "
+        f"offen [yellow]{report['familywise_error_open']:.1%}[/yellow]"
+    )
+    bar = report["bh_p_positive_for_next_pass"]
+    if bar is not None:
+        console.print(
+            f"BH-Schranke für den ERSTEN PASS: p_positive >= [cyan]{bar:.4f}[/cyan] "
+            f"(alpha {report['bh_threshold_for_next_pass']:.4f})"
+        )
+    if report["n_without_machine_gate"]:
+        console.print(
+            f"[dim]{report['n_without_machine_gate']} Claims ohne maschinelles p_min "
+            f"(nicht BH-fähig, getrennt geführt): "
+            f"{', '.join(report['claims_without_machine_gate'][:6])}"
+            f"{' …' if report['n_without_machine_gate'] > 6 else ''}[/dim]"
+        )
+    console.print(f"[dim]{report['note']}[/dim]")
 
 
 @trading_app.command("verdict-anchor")
