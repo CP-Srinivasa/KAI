@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Premium-Pipeline Latency Audit (P2 #11 trigger-watch)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

@@ -8,6 +8,7 @@ Description=Cloudflare Tunnel (kai-trader.org)
 # a tunnel drop. After= for boot ordering only (no restart propagation).
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=simple

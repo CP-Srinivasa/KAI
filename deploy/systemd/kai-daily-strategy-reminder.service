@@ -1,5 +1,6 @@
 [Unit]
 Description=KAI Daily Strategy Reminder (Telegram nudge if review is missing or stub-only)
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

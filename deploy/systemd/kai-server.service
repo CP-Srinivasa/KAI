@@ -2,6 +2,7 @@
 Description=KAI Pipeline Server (FastAPI + in-process schedulers)
 After=network-online.target postgresql.service
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=simple

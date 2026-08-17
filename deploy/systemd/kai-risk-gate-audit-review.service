@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Risk-Gate Audit-Window Review (read-only enforce-readiness; 2026-06-04 window)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

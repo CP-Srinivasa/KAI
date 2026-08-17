@@ -2,6 +2,7 @@
 Description=KAI kai-server Health Watchdog — restart on /health unresponsiveness (event-loop wedge recovery)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

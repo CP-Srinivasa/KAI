@@ -2,6 +2,7 @@
 Description=KAI notify operator on the FIRST technical_paper paper-fill (fire-once, read-only)
 After=kai-server.service
 Requires=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

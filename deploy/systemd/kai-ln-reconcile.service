@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Lightning money-journal reconciliation (read node, outcome-only)
 After=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

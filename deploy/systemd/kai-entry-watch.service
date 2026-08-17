@@ -10,6 +10,7 @@ Requires=kai-server.service
 # transiente Drifts überstehen, statt den Service permanent zu killen.
 StartLimitIntervalSec=300
 StartLimitBurst=10
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=simple

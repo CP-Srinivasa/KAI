@@ -7,6 +7,7 @@
 Description=KAI Shadow-Candidate resolver (Phase B, read-only diagnostics)
 After=kai-server.service
 Requires=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -21,6 +22,6 @@ ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trad
 # ADR 0010 / #318 Phase 1: Counterfactual Live∥Replay-Drift (read-only, flag-gated
 # via EXECUTION_DUAL_STREAM_DIAGNOSTICS, no-op when off). Same settled-kline
 # cadence as the resolver. "-" prefix: a failure never wedges the unit.
-ExecStart=-/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/counterfactual_replay.py
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/counterfactual_replay.py
 StandardOutput=journal
 StandardError=journal

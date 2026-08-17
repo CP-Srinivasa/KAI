@@ -9,6 +9,7 @@
 Description=KAI Real-Analysis Paper Feeder — inject real eligible analyses as paper trades (fail-closed, disarmed by default)
 After=network-online.target kai-server.service
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

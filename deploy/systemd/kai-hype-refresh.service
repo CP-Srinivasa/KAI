@@ -2,6 +2,7 @@
 Description=KAI Hype-Refresh — warm the decoupled sentiment-overheat snapshot (HYPE-S1)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -17,7 +18,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # "-" prefix: a failed refresh must not propagate; the loop keeps reading the
 # last known snapshot until it goes stale (then it simply skips hype
 # evidence — fail-safe, no dampening on dead hype data).
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/hype_snapshot_refresh.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/hype_snapshot_refresh.py
 
 StandardOutput=journal
 StandardError=journal

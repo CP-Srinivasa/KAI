@@ -2,6 +2,7 @@
 Description=KAI Momentum-Universe-Feed — feed universe symbols into PAPER (Goal G2)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
@@ -17,7 +18,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # PAPER only, NO capital. No-op unless MOMENTUM_UNIVERSE_FEED_ENABLED=true;
 # max_per_run bounds the per-tick burst. "-" prefix: a failed run must not
 # propagate (the feeder is fail-soft and skips a bad symbol).
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_feed.py
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_feed.py
 
 StandardOutput=journal
 StandardError=journal

@@ -3,6 +3,7 @@ Description=KAI Premium-Signal-Pipeline End-to-End Healthcheck (P0 #4)
 After=kai-server.service
 # Soft dependency — wir wollen alarmieren wenn kai-server tot ist, also
 # kein Requires=.
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI L3 OTS Proof Upgrade (pending -> Bitcoin-confirmed, default-off)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

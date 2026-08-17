@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI Premium-Channel Parser-Feedback Aggregator (P1 #10)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

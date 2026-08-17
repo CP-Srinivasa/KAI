@@ -2,6 +2,7 @@
 Description=KAI min_turnover Calibration Check — verify the eligibility turnover floor still fits the live Binance distribution (read-only)
 After=network-online.target
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

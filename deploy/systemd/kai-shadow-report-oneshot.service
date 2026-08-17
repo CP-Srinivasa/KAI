@@ -4,6 +4,7 @@
 Description=KAI Shadow-Report one-shot (Phase B T+48h evaluation)
 After=kai-server.service
 Requires=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

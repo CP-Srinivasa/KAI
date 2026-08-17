@@ -1,6 +1,7 @@
 [Unit]
 Description=KAI L3 Audit-Integrity Anchor (OpenTimestamps, default-off)
 After=kai-server.service
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot

@@ -11,6 +11,7 @@
 Description=KAI Shadow-Real Feed — replay real analyses through the shadow loop (flag-gated, off by default)
 After=network-online.target kai-server.service
 Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
 Type=oneshot
