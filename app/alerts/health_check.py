@@ -19,7 +19,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import os
 import socket
 import sqlite3
@@ -30,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
+from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.audit.stream_validation import AuditStreamName, load_audit_stream
 from app.orchestrator.trading_loop import load_trading_loop_cycles
 
@@ -136,55 +136,6 @@ _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 # alle 15 min -- ein Vollscan waere Verschwendung. 256 KB decken auf dem
 # realen Stream mehrere hundert Records ab.
 _INGRESS_TAIL_BYTES = 256 * 1024
-
-
-def last_accepted_ingress_event(path: Path) -> datetime | None:
-    """Zeitpunkt des letzten ANGENOMMENEN Webhook-Events, sonst ``None``.
-
-    Warum nicht die Datei-mtime: ein ABGELEHNTER Request schreibt ebenfalls in
-    dieses Audit. Am 2026-08-18 haben drei unsignierte Diagnose-Requests
-    (``outcome=rejected``, ``source_ip=127.0.0.1``) den Eingangs-Waechter
-    sofort gruen gefaerbt -- der Health-Check meldete danach 'All systems
-    healthy', obwohl das letzte akzeptierte Event vom 2026-08-02T17:23:45Z
-    stammte, also 16 Tage zurueck lag.
-
-    Damit kann JEDER Absender den Waechter beruhigen, auch ein Portscanner auf
-    der oeffentlichen Adresse. Ein Eingangs-Waechter, den Fremde stumm
-    schalten koennen, ist keiner -- und der TV-Ingest-Tod war ueberhaupt nur
-    deshalb 6 Tage unbemerkt, weil niemand auf den Eingang sah.
-
-    Fail-soft: unlesbare oder kaputte Zeilen werden uebersprungen, nicht
-    eskaliert. Findet sich im gelesenen Ende kein angenommenes Event, gilt der
-    Strom als nicht liefernd -- das ist die konservative Richtung.
-    """
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            if size > _INGRESS_TAIL_BYTES:
-                handle.seek(size - _INGRESS_TAIL_BYTES)
-                handle.readline()  # angeschnittene erste Zeile verwerfen
-            raw = handle.read().decode("utf-8", errors="replace")
-    except OSError:
-        return None
-    for line in reversed(raw.splitlines()):
-        line = line.strip()
-        if not line or '"accepted"' not in line:
-            continue
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(record, dict) or record.get("outcome") != "accepted":
-            continue
-        stamp = record.get("received_at")
-        if not isinstance(stamp, str):
-            continue
-        try:
-            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    return None
 
 
 # V5 loop-deadlock watchdog (DS-20260531-V5). The 2026-05-31 incident: the loop

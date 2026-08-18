@@ -30,7 +30,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.alerts.health_check import last_accepted_ingress_event
+from app.alerts.ingress_audit import last_accepted_ingress_event
 
 
 def _write(path: Path, rows: list[dict]) -> None:
