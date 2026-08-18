@@ -294,6 +294,13 @@ class PaperExecutionEngine:
         self._regime_max_hold: dict[str, int] = dict(regime_max_hold_seconds or {})
         self._portfolio = PaperPortfolio(initial_equity=initial_equity, cash=initial_equity)
         self._filled_keys: set[str] = set()
+        # Herkunft der Preise des laufenden Monitor-Ticks (Symbol -> Adapter).
+        # Bis 2026-08-18 ging sie in `run_position_monitor` verloren
+        # (`prices[symbol] = md.price` verwarf `md.source`). Wenn der
+        # Phantom-Breaker dann ausloeste, wusste niemand, WELCHER Anbieter
+        # den unmoeglichen Preis geliefert hatte -- genau deshalb blieb die
+        # Feed-Wurzel der beiden ETH-Closes vom 11./12.08. ungeklaert.
+        self._tick_price_sources: dict[str, str] = {}
         self._partial_fill_ratios: dict[str, float] = {}
         self._lifecycle_state_by_correlation_id: dict[str, OrderLifecycleState] = {}
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
@@ -1307,6 +1314,9 @@ class PaperExecutionEngine:
                     "implied_return_pct": implied * 100.0,
                     "max_close_return_pct": cap * 100.0,
                     "position_side": pos.position_side,
+                    # Ohne diese Zeile ist der Befund nicht zurueckverfolgbar:
+                    # man sieht, DASS ein unmoeglicher Preis kam, nie WOHER.
+                    "price_source": self._tick_price_sources.get(symbol, "unknown"),
                 },
             )
             logger.error(
@@ -1515,6 +1525,9 @@ class PaperExecutionEngine:
                     "implied_return_pct": implied * 100.0,
                     "max_close_return_pct": cap * 100.0,
                     "position_side": pos.position_side,
+                    # Ohne diese Zeile ist der Befund nicht zurueckverfolgbar:
+                    # man sieht, DASS ein unmoeglicher Preis kam, nie WOHER.
+                    "price_source": self._tick_price_sources.get(symbol, "unknown"),
                 },
             )
             logger.error(
@@ -1610,6 +1623,7 @@ class PaperExecutionEngine:
     def monitor_positions(
         self,
         prices_by_symbol: dict[str, float],
+        price_sources: dict[str, str] | None = None,
     ) -> list[PaperFill]:
         """Check SL/TP for all open positions, close those triggered.
 
@@ -1627,6 +1641,10 @@ class PaperExecutionEngine:
         — a stop hit closes the full residual position regardless of tiers.
         """
         fills: list[PaperFill] = []
+        # Optional und defaultet leer: alle 34 bestehenden Aufrufer bleiben
+        # unveraendert, sie verlieren nur die (bisher ohnehin fehlende)
+        # Herkunftsangabe.
+        self._tick_price_sources = dict(price_sources or {})
         if self._mutations_blocked_reason() is not None:
             logger.warning(
                 "[PAPER] monitor_positions refused (%s): auto-exits disabled",
