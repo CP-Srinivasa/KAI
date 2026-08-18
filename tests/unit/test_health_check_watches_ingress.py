@@ -13,6 +13,7 @@ Todeszeitpunkt.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime
@@ -27,7 +28,21 @@ def _artifacts_with_ingress(tmp_path: Path, *, age_seconds: float) -> Path:
     adir = tmp_path / "artifacts"
     adir.mkdir(parents=True, exist_ok=True)
     path = adir / INGRESS_FILE
-    path.write_text('{"event":"webhook"}\n', encoding="utf-8")
+    # 2026-08-18: ein ANGENOMMENER Record, nicht nur eine frische Datei.
+    # Der Waechter misst seit dem den letzten outcome=accepted -- eine blosse
+    # Datei-Beruehrung ist kein eingehender Verkehr, sonst koennte jede
+    # Abweisung (auch die eines Fremden) den Eingang gruen faerben.
+    stamp_for_record = time.time() - age_seconds
+    path.write_text(
+        json.dumps(
+            {
+                "outcome": "accepted",
+                "received_at": datetime.fromtimestamp(stamp_for_record, tz=UTC).isoformat(),
+            }
+        )
+        + chr(10),
+        encoding="utf-8",
+    )
     stamp = time.time() - age_seconds
     os.utime(path, (stamp, stamp))
     return adir
