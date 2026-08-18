@@ -1,11 +1,23 @@
 [Unit]
-Description=Trigger KAI Premium-Signal-Pipeline Healthcheck every 60s
+Description=Trigger KAI Premium-Signal-Pipeline Healthcheck every 5min
 
 [Timer]
-# 60-second cadence — Telethon heartbeat threshold is 90 s, so we want to
-# detect a stale heartbeat within one cycle (worst case 60+90 = 150 s).
+# Ursprünglich 60 s: der Telethon-Heartbeat hat eine 90-s-Schwelle, damit lag
+# die Worst-Case-Erkennung bei 60+90 = 150 s.
+#
+# KADENZ 2026-08-18 auf 300 s gesenkt, gemessen auf dem Pi:
+#   1111 Läufe an einem Tag × 3,215 s CPU = ~59 min Pi-CPU/Tag
+#   Premium-Bridge in derselben Zeit: 0 Events (seit 2026-08-02, 16 Tage)
+#   Lightning: DISARMED (APP_LN_PAY_ENABLED=false seit 2026-08-06)
+#
+# 300 s kostet ~48 min CPU/Tag weniger. Der Preis ist EHRLICH zu benennen: die
+# Worst-Case-Erkennung eines toten Listeners steigt von 150 s auf 390 s. Für
+# eine Bridge ohne Verkehr ist das verhältnismäßig — sobald Premium-Events
+# wieder fließen ODER Lightning re-armiert wird, gehört die Kadenz zurück auf
+# 60 s. Genau diese Bedingung prüft
+# tests/unit/test_premium_healthcheck_cadence.py.
 OnBootSec=120s
-OnUnitActiveSec=60s
+OnUnitActiveSec=300s
 AccuracySec=10s
 Unit=kai-premium-healthcheck.service
 
