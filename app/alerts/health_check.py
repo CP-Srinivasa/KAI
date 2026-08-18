@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -89,13 +90,26 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # 6 TAGE und blieb unbemerkt, weil dieser Strom in keiner Liste stand.
     # Bewusst grosszuegig: lieber spaet und verlaesslich als flatternd.
     "tradingview_webhook_audit.jsonl": 720,
+    # EINGANGSSTROM #2: Binance-Liquidations-Websocket. Der Stream schreibt den
+    # Heartbeat alle <=15 s, und zwar AUSDRUECKLICH um "ruhiger Markt" von
+    # "Feed tot" zu trennen (``binance_stream.write_heartbeat``) — nur schaute
+    # bis 2026-08-18 niemand hin. 30 min = 120 verpasste Ticks: bei einem
+    # Dauer-Websocket ist jede Stille jenseits weniger Minuten bereits ein
+    # Verbindungsabbruch, die Schwelle deckt Reconnect-Backoff (max 60 s) und
+    # einen Service-Restart bequem ab.
+    "liquidation_stream_heartbeat.txt": 30,
 }
 
-# Komponenten, die einen EINGANGSSTROM bewachen. Ihre Veralterung ist ein
-# Systembefund (die Quelle liefert nichts), keine Aussage ueber die
-# Verlaesslichkeit der Probe — sie duerfen deshalb `data_sources_stale` nicht
-# setzen und ueber --exit-on-stale keinen Abbruch ausloesen.
-_INGRESS_COMPONENTS: frozenset[str] = frozenset({"tradingview_ingress"})
+# Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
+# nach ``canonical_documents``. Die Datei-Wachliste oben konnte ihn deshalb nie
+# sehen — ein stillgelegter Ingest sah aus wie ein ruhiger Nachrichtentag.
+# Kadenz live gemessen (Pi, 18.08., 2 Tage, 337 Fetch-Minuten): groesster
+# Abstand 31 min. 240 min ist rund das Achtfache — spaet, aber nicht flatternd.
+DOCUMENT_INGEST_MAX_AGE_MIN = 240
+
+_INGRESS_COMPONENTS: frozenset[str] = frozenset(
+    {"tradingview_ingress", "liquidation_ingress", "document_ingest"}
+)
 
 # Komponenten, deren Veralterung NICHTS ueber die Verlaesslichkeit der Probe
 # aussagt und darum `data_sources_stale` (und damit --exit-on-stale) nicht
@@ -264,6 +278,15 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             "tradingview_ingress",
             False,
         ),
+        # EINGANGSSTROM #2 (2026-08-18): Binance-Liquidations-Websocket.
+        # required=False, weil ein frischer Checkout ihn legitim noch nicht hat;
+        # auf dem Pi laeuft kai-liquidation-stream.service dauerhaft.
+        (
+            adir / "liquidation_stream_heartbeat.txt",
+            "liquidation_stream_heartbeat.txt",
+            "liquidation_ingress",
+            False,
+        ),
     ]
     # Prä-Reg-Ledger (Blindstelle #5): NUR Existenz, keine mtime-Schwelle —
     # Prä-Regs dürfen Wochen legitim ruhen (Stille ≠ Defekt), aber ein
@@ -422,6 +445,64 @@ def run_health_check(
     ).issues
 
 
+def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
+    """EINGANGSSTROM #3: schreibt ueberhaupt noch jemand nach ``canonical_documents``?
+
+    RSS, OKX-Announcements und NewsData landen nicht in einer Datei, sondern in
+    der Tabelle — fuer die mtime-basierte Wachliste existierten sie nicht. Ein
+    toter Ingest war von einem ruhigen Nachrichtentag nicht zu unterscheiden.
+
+    Bewusst read-only und ohne Engine: ein ``sqlite3``-Zugriff im
+    ``mode=ro``-URI kostet nichts und kann den laufenden Schreiber nicht
+    stoeren. Nicht-SQLite-Deployments werden NICHT geraten — die Sonde
+    schweigt dort, statt etwas zu behaupten (dokumentierte Abdeckungsgrenze,
+    kein stiller Ausfall: auf dem Pi ist ``DB_URL`` sqlite).
+    """
+    prefix_pos = db_url.find(":///")
+    if "sqlite" not in db_url.split("://", 1)[0] or prefix_pos == -1:
+        return []
+    db_path = Path(db_url[prefix_pos + 4 :].split("?", 1)[0])
+    if not db_path.exists():
+        # Frischer Checkout: keine DB ist kein Systembefund.
+        return []
+
+    def _issue(message: str) -> list[HealthIssue]:
+        return [HealthIssue(severity="warning", component="document_ingest", message=message)]
+
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT MAX(fetched_at) FROM canonical_documents").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return _issue(
+            f"canonical_documents nicht lesbar ({db_path}): {exc} — Dokumenten-Eingang unbelegbar"
+        )
+
+    newest_raw = row[0] if row else None
+    if not newest_raw:
+        return _issue(
+            "canonical_documents ist leer — kein einziges Dokument eingegangen; "
+            "Quelle pruefen (RSS/OKX/NewsData), NICHT die Pi-Synchronisation"
+        )
+    try:
+        newest = datetime.fromisoformat(str(newest_raw).replace("Z", "+00:00"))
+    except ValueError:
+        return _issue(f"canonical_documents.fetched_at unlesbar: {newest_raw!r}")
+    if newest.tzinfo is None:
+        # Der Writer stempelt naiv in UTC (SQLite-Textspalte).
+        newest = newest.replace(tzinfo=UTC)
+    age_min = int((now - newest).total_seconds() // 60)
+    if age_min <= DOCUMENT_INGEST_MAX_AGE_MIN:
+        return []
+    return _issue(
+        f"juengstes Dokument ist {age_min}min alt "
+        f"(Schwelle {DOCUMENT_INGEST_MAX_AGE_MIN}min) — kein eingehender Verkehr, "
+        "Quelle pruefen (RSS/OKX/NewsData), NICHT die Pi-Synchronisation"
+    )
+
+
 def run_health_check_report(
     artifacts_dir: Path | None = None,
     lookback_hours: int = 24,
@@ -451,6 +532,15 @@ def run_health_check_report(
     report.issues.extend(freshness_issues)
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
+    # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
+    # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
+    # Verlaesslichkeit der Probe (Lehre #701).
+    from app.core.settings import DBSettings
+
+    try:
+        report.issues.extend(_check_document_ingest(DBSettings().url, now))
+    except Exception:  # pragma: no cover - Konfigurationsfehler darf die Probe nicht toeten
+        pass
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).
