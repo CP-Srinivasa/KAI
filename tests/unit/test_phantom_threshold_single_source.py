@@ -57,9 +57,17 @@ KNOWN_ARTIFACTS: tuple[tuple[str, float, float, str], ...] = (
     ("ETH 2026-08-12 +71,54 %", 1880.409735, 3225.6863500000004, "long"),
     ("ETH 2026-05-26 +55,21 %", 2100.0, 3259.9692, "long"),
     ("SOL 2026-08-12 -50,24 %", 100.0, 49.76, "long"),
-    ("CYS 2026-08-11 +38,82 %", 1.0, 1.3882, "long"),
-    ("SLX 2026-06-27 +28,19 %", 1.0, 1.2819, "long"),
-    ("VELVET 2026-06-29 -21,18 %", 1.0, 0.7882, "long"),
+)
+
+# 2026-08-18 widerlegt: diese drei galten bei der Kalibrierung als Artefakt, sind
+# aber BELEGT echt (Roh-Preis in der 1h-Kerze der Schliessungsstunde, Micro-Caps
+# mit 17-30 h Haltedauer). Sie stehen in bayes_quarantine.VERIFIED_REAL_CLOSES und
+# werden dort freigesprochen. Der Cap sieht sie weiterhin -- das ist Absicht:
+# er bleibt scharf, der Freispruch ist die belegte Ausnahme.
+VERIFIED_REAL_BUT_OVER_CAP: tuple[tuple[str, float, float, str], ...] = (
+    ("CYS 2026-08-11 +38,82 %", 1.0011002999999998, 1.3897048, "long"),
+    ("SLX 2026-06-27 +28,19 %", 0.38524252499999995, 0.49385295, "long"),
+    ("VELVET 2026-06-29 -21,18 %", 1.7780761336479318, 1.40139895, "long"),
 )
 
 # Gemessene Gegenseite: die groessten Closes, die KEIN Artefakt sind. Sie
@@ -186,3 +194,45 @@ def test_the_two_eth_artifacts_leave_realized_pnl(tmp_path: Path) -> None:
     # ... aber NICHT verschwunden: er steht offen in der Quarantaene.
     assert eth["quarantined_closes"] == 2
     assert eth["quarantined_pnl_usd"] == pytest.approx(1491.190919803811 + 764.39)
+
+
+@pytest.mark.parametrize(
+    ("name", "entry", "exit_", "side"),
+    VERIFIED_REAL_BUT_OVER_CAP,
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_verified_real_closes_are_acquitted(
+    name: str, entry: float, exit_: float, side: str
+) -> None:
+    """Der Cap sieht sie — das Gesamturteil spricht sie trotzdem frei.
+
+    Ohne diesen Freispruch quarantaeniert der Lesepfad drei belegte echte Trades
+    (netto +39,52 USD) und verzerrt damit genau die Buch-Wahrheit, die er
+    schuetzen soll. Stand 2026-08-18 sind das die EINZIGEN Closes, die der
+    generische Cap noch allein faengt.
+    """
+    from app.learning.bayes_quarantine import corruption_reason
+
+    row = {
+        "event_type": "position_closed",
+        "symbol": name.split()[0] + "/USDT",
+        "entry_price": entry,
+        "exit_price": exit_,
+        "position_side": side,
+    }
+    assert is_phantom_close(entry, exit_, side), f"{name}: Cap sollte ihn sehen"
+    assert corruption_reason(row) is None, f"{name}: belegt echt, darf nicht quarantaeniert werden"
+
+
+def test_acquittal_never_overrides_an_exact_signature() -> None:
+    """Ein Freispruch darf nur die Heuristik schlagen, nie einen benannten Vorfall."""
+    from app.learning.bayes_quarantine import corruption_reason
+
+    row = {
+        "event_type": "position_closed",
+        "symbol": "ETH/USDT",
+        "entry_price": 1874.24956227636,
+        "exit_price": 3225.6863500000004,
+        "position_side": "long",
+    }
+    assert corruption_reason(row) == "mock_synthetic_exit_price"

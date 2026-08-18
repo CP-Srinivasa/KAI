@@ -55,8 +55,8 @@ größter NICHT verdächtiger Close:  17,16 %
 kleinstes Artefakt:                21,18 %
 ```
 
-Oberhalb von 20 % liegen **20 von 617 Closes (3,2 %)** — und jeder einzelne ist ein
-bekanntes oder begründet vermutetes Artefakt:
+Oberhalb von 20 % liegen **20 von 617 Closes (3,2 %)**. Bei der Kalibrierung galten
+alle 20 als Artefakt — **für drei war das falsch** (→ §5c). Der geprüfte Bestand:
 
 | implied return | Symbol | Datum | PnL |
 |---|---|---|---|
@@ -68,9 +68,9 @@ bekanntes oder begründet vermutetes Artefakt:
 | **+71,54 %** | **ETH/USDT** | **2026-08-12** | **+764,39** |
 | +55,21 % | ETH/USDT | 2026-05-26 | +5.643,29 |
 | −50,24 % | SOL/USDT | 2026-08-12 | −585,55 |
-| +38,82 % | CYS/USDT | 2026-08-11 | +16,44 |
-| +28,19 % | SLX/USDT | 2026-06-27 | +152,04 |
-| −21,18 % | VELVET/USDT | 2026-06-29 | −128,96 |
+| ~~+38,82 %~~ | ~~CYS/USDT~~ | 2026-08-11 | **BELEGT ECHT** (§5c) |
+| ~~+28,19 %~~ | ~~SLX/USDT~~ | 2026-06-27 | **BELEGT ECHT** (§5c) |
+| ~~−21,18 %~~ | ~~VELVET/USDT~~ | 2026-06-29 | **BELEGT ECHT** (§5c) |
 
 Beachten: die Bereinigung entfernt Schein-**Gewinne** *und* Schein-**Verluste**
 (MKR −3.791,75). Sie schönt nicht, sie korrigiert.
@@ -174,6 +174,43 @@ in `app/execution/epoch_correction.py` hinterlegt und wird über
   dort fällt der Mock-Wert mit runden, legitim vorkommenden Zahlen zusammen
   (SOL 150,00; LTC 102,00), und Bit-Gleichheit beweist dann nichts.
 
+## 5c. Widerlegt: drei „Artefakte" waren echte Trades (2026-08-18)
+
+CYS, SLX und VELVET standen in §3 als Artefakt. Sie sind es **nicht**. Prüfung:
+Slippage aus dem gebuchten `exit_price` herausrechnen und den Roh-Preis gegen die
+1h-Kerze der Schließungsstunde halten.
+
+| Close | Roh-Preis | 1h-Kerze der Schließungsstunde | im Band? |
+|---|---|---|---|
+| CYS 2026-08-11 09:28Z, +38,82 %, 30 h Haltedauer | 1,3904 | low 1,3528 / high 1,4077 | **ja** |
+| SLX 2026-06-27 15:16Z, +28,19 %, 27 h Haltedauer | 0,4941 | low 0,477 / high 0,497 | **ja** |
+| VELVET 2026-06-29 04:49Z, −21,18 %, 17 h Haltedauer | 1,4021 | low 1,35538 / high 1,95335 | **ja** |
+
+Alle drei sind Micro-Caps mit Übernacht-Haltedauer; eine zweistellige Bewegung ist
+dort normal. Der Kontrast zu §5b ist scharf: ein Mock-Preis trägt **zwei**
+Dezimalstellen und passt nicht ins Symbol-Band des Fensters, diese drei tragen
+**vier** und liegen exakt in der Kerze, in der geschlossen wurde.
+
+**Warum das zählt.** Nach §5b werden alle bekannten Artefakt-Klassen exakt per
+Signatur gefangen. Damit fängt der generische 20-%-Cap **allein nur noch diese
+drei** — netto 0 Artefakte, 3 Falsch-Positive, −39,52 USD Verzerrung. Ein Wächter,
+der ausschließlich Unschuldige greift, ist kein Wächter.
+
+Sie stehen jetzt in `bayes_quarantine.VERIFIED_REAL_CLOSES` und werden
+freigesprochen. Der Freispruch überstimmt **nur** den generischen Cap, nie eine
+exakte Signatur (Reihenfolge in `corruption_reason`, per Test festgehalten).
+
+**Folge für die Schwelle — Operator-Entscheidung, nicht miterledigt:** die
+gemessene Lücke verschiebt sich. Größter *belegt* legitimer Close ist jetzt
++38,82 % (CYS), kleinstes verbleibendes Artefakt −50,24 % (SOL 2026-08-12). Die
+20 % liegen damit **unterhalb** des größten legitimen Closes — der Cap fängt
+strukturell echte Micro-Cap-Trades mit. Er bleibt trotzdem bei 20 %, weil er die
+Verteidigung gegen *noch unbekannte* Klassen ist. Ein Aufweiten auf ~45 % (Mitte
+der neuen Lücke) wäre eine bewusste Kalibrierungs-Entscheidung.
+
+**Regel daraus:** Wer einen Close als Artefakt einträgt, hält den Roh-Preis gegen
+die Kerze der Schließungsstunde. „Liegt über der Schwelle" ist kein Beleg.
+
 ## 6. Verweise
 
 - `app/execution/phantom_filter.py` — kanonische Schwelle + Kalibrierungs-Kommentar
@@ -186,3 +223,4 @@ in `app/execution/epoch_correction.py` hinterlegt und wird über
 - `app/market_data/service.py` — `synthetic_not_tradeable` (Quelle geschlossen)
 - `app/execution/epoch_correction.py` — Korrektur-Vermerk der Epoche
 - `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz
+- `bayes_quarantine.VERIFIED_REAL_CLOSES` — belegte Echt-Trades über dem Cap (§5c)
