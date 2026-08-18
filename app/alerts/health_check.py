@@ -44,7 +44,14 @@ _ARTIFACTS = Path("artifacts")
 #   indicates a real broken scheduler. Use a tight window.
 _FRESHNESS_DEFAULT_MIN = 120
 _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
-    "alert_audit.jsonl": 480,  # 8h — event-driven channel
+    # 1440min = 24h. Die alte 8h-Schwelle war gegen die REALE Verteilung
+    # unterdimensioniert: ueber 30 Tage (n=1370 Dispatch-Luecken) liegt der
+    # Median bei 1.3min, p99 bei 404min — der groesste LEGITIME Abstand aber
+    # bei 883min. 8 Luecken/30d rissen die 480er-Marke, ohne dass irgendetwas
+    # defekt war (ruhiger Markt: 6-12 Dispatches/24h). Ein ganzer Tag ohne
+    # einen einzigen Dispatch ist dagegen ein echter Befund — und der wird
+    # ohnehin praeziser vom Volumen-Check (recent_alerts) getragen.
+    "alert_audit.jsonl": 1440,  # 24h — event-driven channel
     "trading_loop_audit.jsonl": 30,  # 5min cycle → 30min is 6 missed runs
     # Recalc-cycle outputs (kai-recalc-cycle.timer, daily 04:00 Pi-local).
     # Threshold 1500min = 25h covers next-day-run + RandomizedDelaySec=120s
@@ -89,6 +96,23 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
 # Verlaesslichkeit der Probe — sie duerfen deshalb `data_sources_stale` nicht
 # setzen und ueber --exit-on-stale keinen Abbruch ausloesen.
 _INGRESS_COMPONENTS: frozenset[str] = frozenset({"tradingview_ingress"})
+
+# Komponenten, deren Veralterung NICHTS ueber die Verlaesslichkeit der Probe
+# aussagt und darum `data_sources_stale` (und damit --exit-on-stale) nicht
+# ausloesen darf. Zwei Faelle, ein Prinzip:
+#   * Eingangsstroeme  — die Quelle schweigt (Systembefund).
+#   * Ereignisgetriebene Ausgaenge — der Kanal hat nichts zu sagen gehabt.
+# `alert_audit` gehoerte bis 2026-08-18 faelschlich in die Abbruch-Kategorie.
+# Folge (Pi-Journal): 66 Abbrueche in 14 Tagen mit "stale data", WAEHREND im
+# selben Lauf cycles=1111..1117 standen und `trading_loop_audit` (30-min-
+# Schwelle, taktgetrieben) still blieb — die Probe las beweisbar Live-Daten.
+# Jeder Abbruch verschluckte den ganzen Report und loeste 5-Minuten-Watchdog-
+# Spam aus: der Waechter verstummte genau dann, wenn er melden sollte.
+#
+# Was den Abbruch WEITERHIN ausloest, ist der taktgetriebene Beweis: schreibt
+# `trading_loop_audit` (~1200 Zyklen/Tag) nicht mehr, liest die Probe wirklich
+# gespiegelte/veraltete Artefakte. Das ist die Frage, die das Flag beantwortet.
+_PROBE_RELIABILITY_EXEMPT: frozenset[str] = _INGRESS_COMPONENTS | frozenset({"alerts"})
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
 # V5 loop-deadlock watchdog (DS-20260531-V5). The 2026-05-31 incident: the loop
@@ -274,12 +298,23 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
         if mtime < mtime_cutoff:
             age_min = int((now - mtime).total_seconds() / 60)
             is_ingress = component in _INGRESS_COMPONENTS
-            hint = (
-                "kein eingehender Verkehr — Quelle pruefen (z. B. abgelaufene "
-                "TradingView-Alerts), NICHT die Pi-Synchronisation"
-                if is_ingress
-                else "probe may be running against stale data, check Pi sync"
-            )
+            if is_ingress:
+                hint = (
+                    "kein eingehender Verkehr — Quelle pruefen (z. B. "
+                    "abgelaufene TradingView-Alerts), NICHT die "
+                    "Pi-Synchronisation"
+                )
+            elif component in _PROBE_RELIABILITY_EXEMPT:
+                # Ereignisgetriebener Ausgang: Stille ist eine Aussage ueber
+                # den Kanal, nicht ueber die Probe. Den Operator hier auf
+                # Sync-Suche zu schicken, ist eine Fehldiagnose am gesunden
+                # Teil des Systems.
+                hint = (
+                    "keine Dispatches in diesem Fenster — ruhiger Kanal oder "
+                    "toter Dispatcher, NICHT die Pi-Synchronisation"
+                )
+            else:
+                hint = "probe may be running against stale data, check Pi sync"
             issues.append(
                 HealthIssue(
                     severity="warning",
@@ -297,7 +332,7 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             # Probe. Ohne diese Trennung waere die Unit dauerhaft `failed`,
             # solange die Quelle schweigt — mit der irrefuehrenden Begruendung
             # "check Pi sync" (beobachtet 09.08., TV-Ingress 10146 min alt).
-            if not is_ingress:
+            if component not in _PROBE_RELIABILITY_EXEMPT:
                 stale = True
     return issues, stale
 
