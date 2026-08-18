@@ -347,12 +347,32 @@ jobs:
     name: PR Completeness Check
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
+      # Der Body wird zur LAUFZEIT ueber die API geholt, nicht aus
+      # `github.event.pull_request.body` gelesen.
+      #
+      # Befund 2026-08-18 an PR #709 (Dependabot happy-dom): der Body trug alle
+      # fuenf Abschnitte, der Check blieb trotzdem rot. Ursache: das
+      # Event-Payload ist ein Schnappschuss vom Moment des Events. Ein spaeter
+      # nachgetragener Body erreicht ihn NIE -- und weder `gh run rerun` (spielt
+      # dasselbe Payload zurueck) noch close/reopen (loeste keinen neuen Lauf
+      # aus) helfen dagegen. Der PR haengt dann dauerhaft, obwohl inhaltlich
+      # alles erfuellt ist; #709 stand so einen Tag.
+      #
+      # Das trifft strukturell JEDEN Bot-PR: Dependabot schreibt die Abschnitte
+      # naturgemaess nicht, sie werden nachgetragen -- also immer NACH dem Event.
       - name: Check PR template fields filled
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
+          PR_BODY="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.body // ""')"
+          export PR_BODY
           python3 - <<'EOF'
           import os, sys
           body = os.environ.get("PR_BODY", "")
