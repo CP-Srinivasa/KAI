@@ -30,10 +30,22 @@ _BASELINE = _ROOT / "tests" / "fixtures" / "systemd_install_gap_baseline.json"
 
 
 def _listed_units() -> set[str]:
-    """Units aus dem ``UNITS=()``-Array des Install-Skripts."""
+    """Was das Install-Skript tatsaechlich kopieren wuerde.
+
+    Zwei Bauarten, beide muessen messbar bleiben — sonst ist der Ratchet nach
+    dem Umbau blind statt streng:
+
+    * **abgeleitet** (seit 2026-08-18): das Skript liest ``deploy/systemd/``
+      selbst; dann ist die Kopierliste per Konstruktion die Platte.
+    * **Handliste** (Altzustand): das ``UNITS=()``-Array wird geparst.
+    """
     text = _INSTALL_SH.read_text(encoding="utf-8")
     match = re.search(r"^UNITS=\((.*?)^\)", text, re.M | re.S)
-    assert match, "UNITS=() im Install-Skript nicht gefunden — Ratchet blind."
+    if match is None:
+        assert re.search(r"mapfile -t UNITS < <\(", text), (
+            "Weder ein UNITS=()-Array noch eine abgeleitete Kopierliste gefunden — Ratchet blind."
+        )
+        return _units_on_disk()
     body = match.group(1)
     # Kommentarzeilen raus: ein erklaerender Kommentar darf keine Unit sein.
     effective = "\n".join(line for line in body.splitlines() if not line.strip().startswith("#"))

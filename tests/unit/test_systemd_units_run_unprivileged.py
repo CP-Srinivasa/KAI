@@ -21,7 +21,22 @@ UNIT_DIR = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
 
 # Units, die begründet ohne User= laufen dürfen. Leer = keine.
 # Eintragen heißt: "läuft als root, und das ist hier nötig" — mit Begründung.
-ROOT_ALLOWED: frozenset[str] = frozenset()
+# Begruendete root-Ausnahmen. Jeder Eintrag braucht einen Grund, der aus dem
+# ExecStart nachpruefbar ist — sonst ist die Liste nur ein Ventil.
+#
+# Die beiden Cold-Standby-Tier laufen als root, weil sie genau das sichern, was
+# ``ubuntu`` nicht lesen kann: ``/etc/systemd/system`` + ``/etc/fstab`` (Tier
+# "system") und den root-eigenen exfat-Mount ``/mnt/kai-data`` als Ziel (beide
+# Tier). ``User=ubuntu`` wuerde die Sicherung still unvollstaendig machen —
+# schlimmer als der root-Lauf, denn ein unbrauchbares Backup faellt erst beim
+# Restore auf. Beide sind ``Type=oneshot``, schreiben ausschliesslich unter
+# ``/mnt/kai-data/kai-standby/`` und loeschen nur eigene Archive (Retention).
+ROOT_ALLOWED: frozenset[str] = frozenset(
+    {
+        "kai-standby-data.service",
+        "kai-standby-system.service",
+    }
+)
 
 
 def _service_files() -> list[Path]:

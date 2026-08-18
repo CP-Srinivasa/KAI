@@ -1,0 +1,17 @@
+# Quelle: bis 2026-08-18 existierte diese Unit AUSSCHLIESSLICH auf dem Pi
+# (/etc/systemd/system), in keinem Repository. Der Timer lief enabled+active und
+# sicherte die unersetzliche Forschungshistorie auf USB — waere die SD-Karte
+# gestorben, waere ausgerechnet der Wiederherstellungsweg unwiederherstellbar
+# gewesen. Byte-gleich uebernommen, nur um OnFailure= ergaenzt (#713).
+# ExecStart zeigt bewusst weiter auf /usr/local/bin/standby_to_usb.sh (Live-Pfad);
+# die kanonische Quelle des Skripts liegt jetzt unter scripts/standby_to_usb.sh.
+[Unit]
+Description=KAI cold-standby: system tier (code + .venv + etc) to USB
+After=mnt-kai\x2ddata.mount
+OnFailure=kai-unit-failure-notify@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/standby_to_usb.sh system
+Nice=15
+IOSchedulingClass=idle

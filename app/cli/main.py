@@ -2175,10 +2175,16 @@ def alerts_health_check(
         breakdown_str = ", ".join(f"{k}={v}" for k, v in sorted_items)
         console.print(f"[dim]Cycle breakdown: {breakdown_str}[/dim]")
     if report.data_sources_stale:
-        console.print(
-            "[yellow bold]⚠ Data sources are stale — probe may be reading "
-            "workstation-mirrored artifacts. Run on Pi for source-of-truth.[/yellow bold]"
-        )
+        if report.runs_on_pi:
+            console.print(
+                "[red bold]⚠ Data sources are stale on the AUTHORITATIVE host — "
+                "a writer has stopped. This is a finding, not a probe artifact.[/red bold]"
+            )
+        else:
+            console.print(
+                "[yellow bold]⚠ Data sources are stale — probe may be reading "
+                "workstation-mirrored artifacts. Run on Pi for source-of-truth.[/yellow bold]"
+            )
     # P2: exit semantic — non-authoritative means either stale mtime OR
     # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
     #
@@ -2189,10 +2195,18 @@ def alerts_health_check(
     # Das ist der Fall, fuer den er existiert. (Zweite Ursache des
     # TV-Ingest-Ausfalls 02.–08.08.: selbst mit dem Eingangsstrom in
     # files_to_check haette Staleness den Alarm unterdrueckt statt ausgeloest.)
-    stale_exit = bool(
-        exit_on_stale and not allow_stale and (report.data_sources_stale or not report.runs_on_pi)
-    )
-    stale_reason = "stale data" if report.data_sources_stale else "off-Pi host"
+    #
+    # Der Abbruch haengt an der NICHT-AUTORITAET der Quelle, nicht an der
+    # Staleness. Beide Bedingungen waren mit ``or`` verknuepft; damit brach der
+    # Dienst auch auf dem Pi ab, sobald ein Erzeuger starb — also genau dann,
+    # wenn er haette melden muessen (Journal 16.08., 5x status=2, und 17.08.
+    # 12:45). ``--exit-on-stale`` existiert gegen Workstation-Fehlalarme aus
+    # gespiegelten, womoeglich unvollstaendigen Artefakten (Vorfall
+    # 2026-05-23) — dieser Zweck ist mit ``not runs_on_pi`` vollstaendig
+    # abgedeckt. Auf dem autoritativen Host ist Staleness ein BEFUND: dort
+    # schreibt der Erzeuger lokal, und eine alternde Datei heisst, er ist tot.
+    stale_exit = bool(exit_on_stale and not allow_stale and not report.runs_on_pi)
+    stale_reason = "non-authoritative host"
 
     def _stale_exit_now() -> None:
         console.print(

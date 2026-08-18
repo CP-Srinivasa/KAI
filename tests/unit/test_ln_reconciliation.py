@@ -437,10 +437,11 @@ async def test_report_is_redacted_and_durably_appended(tmp_path: Path) -> None:
 def test_reconciliation_units_are_install_only_timer_decoupled_and_not_boot_path() -> None:
     root = Path(__file__).resolve().parents[2]
     installer = (root / "scripts/pi_install_systemd.sh").read_text(encoding="utf-8")
-    units = installer.split("UNITS=(", 1)[1].split(")", 1)[0]
     enabled = installer.split("ENABLE_ON_INSTALL=(", 1)[1].split(")", 1)[0]
     for name in ("kai-ln-reconcile.service", "kai-ln-reconcile.timer"):
-        assert name in units
+        # install-only: Datei vorhanden ⇒ wird kopiert (abgeleitete Kopierliste
+        # seit 2026-08-18), steht aber bewusst NICHT in ENABLE_ON_INSTALL.
+        assert (root / "deploy/systemd" / name).exists()
         assert name not in enabled
 
     service = (root / "deploy/systemd/kai-ln-reconcile.service").read_text(encoding="utf-8")
