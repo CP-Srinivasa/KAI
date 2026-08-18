@@ -32,6 +32,7 @@ from app.orchestrator.models import (
     _new_cycle_id,
     _now_utc,
 )
+from app.orchestrator.monitor_prices import collect_monitor_prices
 from app.orchestrator.signal_source import (
     SOURCE_CANARY_PROBE,
     derive_autonomous_signal_source,
@@ -826,20 +827,11 @@ class TradingLoop:
                 "closes": closes,
             }
 
-        prices: dict[str, float] = {}
-        for symbol in open_symbols:
-            try:
-                md = await self._market_data.get_market_data_point(symbol)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[LOOP] monitor: market data error for %s: %s", symbol, exc)
-                md = None
-            if md is None or md.is_stale:
-                no_market_data += 1
-                continue
-            prices[symbol] = md.price
-            checked += 1
+        collected = await collect_monitor_prices(self._market_data, open_symbols)
+        no_market_data += collected.no_market_data
+        checked += collected.checked
 
-        fills = self._exec.monitor_positions(prices)
+        fills = self._exec.monitor_positions(collected.by_symbol, collected.sources)
         for fill in fills:
             triggered += 1
             closes.append(

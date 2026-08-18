@@ -1,5 +1,5 @@
 [Unit]
-Description=KAI Oracle Earnings-Booking — scan settled oracle invoices every 10 min
+Description=KAI Oracle Earnings-Booking — scan settled oracle invoices hourly
 # Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
 # ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
@@ -9,8 +9,22 @@ Description=KAI Oracle Earnings-Booking — scan settled oracle invoices every 1
 # `systemctl enable --now kai-oracle-earnings-booking.timer` only after flipping
 # APP_LN_ENABLED=true at G0 go-live. Deliberately NO Requires=kai-server on the timer:
 # a kai-server stop must not strand this scheduler (lesson from #414).
+# KADENZ 2026-08-18 von 10 min auf 60 min, gemessen auf dem Pi:
+#   112 Laeufe an einem Tag x 2,6 s CPU = ~5 min Pi-CPU/Tag
+#   je Lauf ZWEI LND-Abfragen ueber num_max_invoices=1000
+#   Ergebnis jedes Laufes: booked={'oracle-l402': 0, 'lnurlp': 0}
+#   externe Einnahmen lifetime: 0 sat · APP_LN_PAY_ENABLED=false seit 06.08.
+#
+# Das ist Buchhaltung ueber BEREITS SETTLED Rechnungen, kein
+# Zahlungspfad -- eine Stunde Verzoegerung kostet nichts und niemand
+# wartet darauf. `Persistent=true` bleibt: ein verpasster Lauf wird
+# nachgeholt, es geht also auch nach einem Neustart nichts verloren.
+#
+# Zurueck auf 10 min, sobald tatsaechlich Einnahmen fliessen (erste
+# gebuchte Rechnung != 0) -- dann ist die zeitnahe Buchung wieder wert,
+# was sie kostet. Geprueft in tests/unit/test_oracle_booking_cadence.py.
 OnBootSec=3min
-OnUnitActiveSec=10min
+OnUnitActiveSec=60min
 Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=30s
