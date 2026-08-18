@@ -209,7 +209,14 @@ async def test_hard_invariant_exits_never_blocked_by_churn(tmp_path, monkeypatch
 
     # Price drops below the stop. monitor_positions must close it regardless of
     # any churn limit — the gate lives only in run_cycle (entry path).
-    fills = engine.monitor_positions({"ETH/USDT": 80.0})
+    #
+    # 89.0 statt 80.0: geprueft wird die Churn-Invariante, nicht die
+    # Preis-Plausibilitaet. 80.0 traf ab 2026-08-18 den geschaerften
+    # Phantom-Close-Breaker (Kappe 20 %) — ein synthetischer -20 %-Stop, den in
+    # 380 echten Stop-Closes KEINER je erreichte (schlimmster legitimer:
+    # -14,80 %). -11 % ist ein realistischer Stop und laesst die Aussage
+    # unveraendert.
+    fills = engine.monitor_positions({"ETH/USDT": 89.0})
     assert len(fills) == 1
     assert "ETH/USDT" not in engine.portfolio.positions
 

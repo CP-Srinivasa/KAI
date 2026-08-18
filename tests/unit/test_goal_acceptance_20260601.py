@@ -173,7 +173,14 @@ async def test_step2_churn_rejects_entry_while_exit_still_de_risks(tmp_path, mon
     fill = engine.fill_order(order, current_price=100.0)
     assert fill is not None
     assert "ETH/USDT" in engine.portfolio.positions
-    exits = engine.monitor_positions({"ETH/USDT": 80.0})  # price below stop
+    # 89.0 statt 80.0: der Test prueft die De-Risking-Invariante, nicht die
+    # Preis-Plausibilitaet. Mit 80.0 traf er ab 2026-08-18 den geschaerften
+    # Phantom-Close-Breaker (Kappe 20 %) — ein synthetischer -20 %-Stop, den
+    # in 380 echten Stop-Closes KEINER je erreichte (schlimmster legitimer:
+    # -14,80 %; nur MKR -92,11 / SOL -50,24 / VELVET -21,18 lagen darueber,
+    # alle drei bekannte Artefakte). -11 % ist ein realistischer Stop und
+    # laesst die Aussage des Tests unveraendert.
+    exits = engine.monitor_positions({"ETH/USDT": 89.0})  # price below stop
     assert len(exits) == 1
     assert "ETH/USDT" not in engine.portfolio.positions  # exit fired despite churn
 
