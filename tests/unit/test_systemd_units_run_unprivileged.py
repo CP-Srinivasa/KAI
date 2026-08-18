@@ -99,3 +99,61 @@ def test_sudoers_vorlage_ist_eng_gefasst() -> None:
     assert "systemctl start kai-*" in text
     # Keine Blankovollmacht in der Vorlage.
     assert "NOPASSWD: ALL" not in text
+
+
+# Praefixe, unter denen nur root schreiben kann. Ein ExecStart darunter kann von
+# `ubuntu` nicht ausgetauscht werden; alles unter /home/ oder im Arbeitsbaum kann es.
+_ROOT_OWNED_PREFIXES = (
+    "/usr/local/bin/",
+    "/usr/local/sbin/",
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/bin/",
+    "/sbin/",
+)
+
+
+@pytest.mark.parametrize("name", sorted(ROOT_ALLOWED))
+def test_root_ausnahme_fuehrt_nur_root_eigenen_code_aus(name: str) -> None:
+    """Eine root-Unit darf kein Skript starten, das ``ubuntu`` beschreiben kann.
+
+    Hierauf steht die sudo-Allowlist (``deploy/sudoers.d/kai-deploy``): sie laesst
+    ``systemctl start|stop|restart kai-*`` passwortfrei zu. Das ist nur so lange
+    kein Eskalationspfad, wie keine kai-Unit als root Code ausfuehrt, den
+    ``ubuntu`` austauschen kann. Waere der ExecStart einer root-Ausnahme ein
+    Skript im Arbeitsbaum (``/home/ubuntu/...``), koennte jeder kompromittierte
+    KAI-Dienst es umschreiben und per erlaubtem ``systemctl start`` als root
+    ausfuehren — die Allowlist waere dann exakt so viel wert wie NOPASSWD:ALL.
+    """
+    unit = UNIT_DIR / name
+    execs = [line for line in _directives(unit) if line.startswith("ExecStart=")]
+    assert execs, f"{name} hat keinen ExecStart"
+
+    for line in execs:
+        target = line.split("=", 1)[1].lstrip("-@+!").split()[0]
+        assert target.startswith(_ROOT_OWNED_PREFIXES), (
+            f"{name}: ExecStart {target!r} liegt nicht unter einem root-eigenen Praefix. "
+            "Eine root-Unit mit von `ubuntu` beschreibbarem ExecStart macht die "
+            "sudo-Allowlist wertlos (deploy/sudoers.d/kai-deploy)."
+        )
+        assert not target.startswith("/home/"), f"{name}: ExecStart unter /home/ ist beschreibbar"
+
+
+def test_deploy_sudoers_vorlage_ist_eng_gefasst() -> None:
+    """Die Vorlage, die NOPASSWD:ALL abgeloest hat (2026-08-18)."""
+    tpl = UNIT_DIR.parent / "sudoers.d" / "kai-deploy"
+    # NUR die wirksamen Zeilen: der Erklaertext nennt NOPASSWD:ALL mehrfach, weil
+    # er begruendet, warum es weg ist (memory feedback_structure_tests_must_strip_comments).
+    effective = "\n".join(
+        line
+        for line in tpl.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+    assert "NOPASSWD: KAI_SERVICE_CTL" in effective
+    assert "NOPASSWD" in effective and "ALL" not in effective.replace("ALL=(root)", "")
+    assert "systemctl restart kai-*" in effective
+    # Nur systemctl auf kai-Units — kein Install-Skript, kein Paketmanager,
+    # nichts, was `ubuntu` selbst beschreiben kann.
+    for verboten in ("apt-get", "pi_install_systemd.sh", "bash", "visudo", "install"):
+        assert verboten not in effective, f"{verboten} gehoert nicht in die Allowlist"
