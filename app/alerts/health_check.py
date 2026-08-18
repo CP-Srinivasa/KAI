@@ -26,6 +26,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.audit.stream_validation import AuditStreamName, load_audit_stream
@@ -445,6 +446,65 @@ def run_health_check(
     ).issues
 
 
+def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
+    """Abgewiesene Phantom-Closes sichtbar machen.
+
+    ``close_price_sanity_rejected`` wird seit DS-20260529-V1 geschrieben und
+    hatte bis 2026-08-18 **keinen einzigen** operativen Konsumenten — das
+    Ereignis lag im Stream und niemand schaute hin.
+
+    Es ist doppeldeutig, und beide Lesarten brauchen Augen: entweder liefert
+    der Preis-Feed Muell (der Fall, fuer den der Breaker gebaut ist), oder der
+    Breaker liegt falsch und eine echte Position kommt nicht mehr zu — sie
+    bleibt offen und wird bei jedem Tick erneut abgewiesen. Seit die Schwelle
+    von 200 % auf 20 % gesenkt wurde, ist die zweite Lesart nicht mehr
+    theoretisch.
+
+    Gelesen wird ueber den Port (#716), nicht mit einem eigenen ``open()``.
+    """
+    from app.execution.paper_audit_stream import iter_audit_events
+
+    path = adir / "paper_execution_audit.jsonl"
+    if not path.exists():
+        return []
+    cutoff = now - timedelta(hours=max(1, lookback_hours))
+    recent: list[dict[str, Any]] = []
+    for event in iter_audit_events(path):
+        if event.get("event_type") != "close_price_sanity_rejected":
+            continue
+        raw_ts = event.get("timestamp_utc")
+        try:
+            stamp = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+        except ValueError:
+            # Fail-closed: eine unlesbare Zeitangabe darf einen Befund nicht
+            # verschwinden lassen.
+            recent.append(event)
+            continue
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        if stamp >= cutoff:
+            recent.append(event)
+    if not recent:
+        return []
+
+    worst = max(recent, key=lambda e: abs(float(e.get("implied_return_pct") or 0.0)))
+    symbols = sorted({str(e.get("symbol") or "?") for e in recent})
+    return [
+        HealthIssue(
+            severity="warning",
+            component="close_price_sanity",
+            message=(
+                f"{len(recent)} Close(s) in {lookback_hours}h als Phantom abgewiesen "
+                f"({', '.join(symbols)}); groesste implizite Rendite "
+                f"{float(worst.get('implied_return_pct') or 0.0):.1f}% "
+                f"bei Kappe {float(worst.get('max_close_return_pct') or 0.0):.1f}% — "
+                "entweder liefert der Preis-Feed Muell ODER eine echte Position "
+                "kommt nicht mehr zu und bleibt offen"
+            ),
+        )
+    ]
+
+
 def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
     """EINGANGSSTROM #3: schreibt ueberhaupt noch jemand nach ``canonical_documents``?
 
@@ -541,6 +601,7 @@ def run_health_check_report(
         report.issues.extend(_check_document_ingest(DBSettings().url, now))
     except Exception:  # pragma: no cover - Konfigurationsfehler darf die Probe nicht toeten
         pass
+    report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

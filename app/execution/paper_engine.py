@@ -58,7 +58,30 @@ _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 # upstream fix; this is the engine-level backstop for single-provider symbols
 # the upstream guard cannot cross-check. Reject (leave the position open) rather
 # than book a phantom close. Env-tunable via MAX_CLOSE_RETURN_PCT (fraction).
-_DEFAULT_MAX_CLOSE_RETURN_PCT = 2.0
+#
+# KALIBRIERUNG 2026-08-18 (2.0 -> 0.20). Die 200 % waren gegen genau EINEN Fall
+# gesetzt — die MATIC-Serie mit +364 % — und damit knapp unter ihn. Alles
+# darunter passierte ungeprueft. Live gemessen ueber ALLE 549 Closes des
+# Audit-Streams:
+#
+#     Median 1,52 %   p90 4,92 %   p95 7,70 %
+#     groesster NICHT verdaechtiger Close:  17,16 %
+#     ---------------------- Luecke ----------------------
+#     naechster Wert:                       21,18 %
+#
+# Oberhalb von 20 % liegen 18 von 549 Closes, und jeder einzelne ist ein
+# bekanntes oder vermutetes Artefakt: MATIC 9x (+368..+361 %), SOL +96,85 %,
+# MKR -92,11 % (die -3792 USD aus EINEM Trade), ETH +72,11 % und +71,54 %
+# (byte-identischer Exit 3225.6863500000004 an zwei Tagen, zusammen +2255,58 USD
+# Scheingewinn — sie drehen das Buch der Epoche von +396,73 auf -1.853,45 USD),
+# ETH +55,21 %, SOL -50,24 %, CYS +38,82 %, SLX +28,19 %, VELVET -21,18 %.
+#
+# 20 % ist damit gemessen, nicht geraten: rund das 2,6-Fache des p95 und
+# oberhalb jedes plausiblen Closes im gesamten Bestand. Ein Fehlalarm kostet
+# keinen Trade — der Breaker weist den CLOSE ab und laesst die Position offen —
+# sondern erzeugt ein `close_price_sanity_rejected`, das seit dieser Aenderung
+# auch jemand sieht (health_check).
+_DEFAULT_MAX_CLOSE_RETURN_PCT = 0.20
 
 
 # ── Lifecycle-Emission-Idempotency (#314) ─────────────────────────────────────
