@@ -33,9 +33,25 @@ import os
 #     ---------------------- Luecke ----------------------
 #     naechster Wert:                       21,18 %
 #
-# Oberhalb von 20 % liegen 20 von 617 Closes (3,2 %), und jeder einzelne ist
-# ein bekanntes oder vermutetes Artefakt (MATIC 9x, SOL, MKR, ETH 3x, CYS,
-# SLX, VELVET). 20 % ist damit gemessen, nicht geraten.
+# Oberhalb von 20 % liegen 20 von 617 Closes (3,2 %). Bei der Kalibrierung galten
+# alle 20 als Artefakt -- das war fuer drei davon FALSCH:
+#
+#   KORREKTUR 2026-08-18: CYS (+38,82 %), SLX (+28,19 %) und VELVET (-21,18 %)
+#   sind BELEGT echte Trades. Roh-Preis aus dem gebuchten Exit zurueckgerechnet
+#   und gegen die 1h-Kerze der Schliessungsstunde gehalten: jeder liegt in
+#   [low, high] dieser Kerze. Es sind Micro-Caps mit 17-30 h Haltedauer -- eine
+#   zweistellige Uebernacht-Bewegung ist dort normal. Sie stehen jetzt in
+#   ``bayes_quarantine.VERIFIED_REAL_CLOSES`` und werden freigesprochen.
+#
+# Damit verschiebt sich die gemessene Luecke: groesster BELEGT legitimer Close
+# ist +38,82 % (CYS), kleinstes verbleibendes Artefakt -50,24 % (SOL 2026-08-12).
+# Die Schwelle 20 % liegt jetzt UNTERHALB des groessten legitimen Closes, faengt
+# also strukturell echte Micro-Cap-Trades mit. Sie bleibt trotzdem bei 20 %:
+# der Cap ist die Verteidigung gegen NOCH UNBEKANNTE Artefakt-Klassen, und alle
+# heute bekannten werden ohnehin exakt per Signatur gefangen (Stand 2026-08-18
+# faengt der Cap ALLEIN nur noch diese drei -- 0 echte Artefakte). Ein Aufweiten
+# auf ~45 % (Mitte der neuen Luecke) waere eine Kalibrierungs-Entscheidung des
+# Operators, keine Nebenwirkung eines Bugfixes.
 #
 # WICHTIG zur Wirkung auf diesem Pfad: die Lese-Seite LOESCHT nichts. Ein als
 # phantom erkannter Close wandert nach ``quarantined_pnl_usd`` und bleibt dem
