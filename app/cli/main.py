@@ -2185,8 +2185,8 @@ def alerts_health_check(
                 "[yellow bold]⚠ Data sources are stale — probe may be reading "
                 "workstation-mirrored artifacts. Run on Pi for source-of-truth.[/yellow bold]"
             )
-    # P2: exit semantic — non-authoritative means either stale mtime OR
-    # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
+    # P2: exit semantic — der Abbruch gilt der NICHT-AUTORITAET der Quelle
+    # (off-Pi hostname, partial-mirror risk). `--allow-stale` hebt ihn auf.
     #
     # Die Entscheidung wird hier nur VORGEMERKT und erst nach dem Versand
     # vollzogen. Vorher stand `raise typer.Exit(code=2)` an dieser Stelle —
