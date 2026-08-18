@@ -83,11 +83,11 @@ def test_missing_files_yield_critical_freshness_issues(tmp_path: Path) -> None:
 def test_stale_mtime_yields_freshness_warning(tmp_path: Path) -> None:
     """Files exist but mtime past per-file threshold -> warning + stale flag.
 
-    alert_audit threshold is 480min (event-driven), trading_loop is 30min.
-    10h-old mtime trips both.
+    alert_audit threshold is 1440min (event-driven), trading_loop is 30min.
+    26h-old mtime trips both.
     """
     _make_files_fresh(tmp_path)
-    old_ts = (datetime.now(UTC) - timedelta(hours=10)).timestamp()
+    old_ts = (datetime.now(UTC) - timedelta(hours=26)).timestamp()
     os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (old_ts, old_ts))
     os.utime(tmp_path / "trading_loop_audit.jsonl", (old_ts, old_ts))
 
@@ -401,4 +401,84 @@ def test_p2_no_probe_location_issue_when_runs_on_pi(
     # Still stale, but not flagged as wrong-location because we claim to be on Pi
     assert location_issues == []
     assert report.runs_on_pi is True
+    assert report.data_sources_stale is True
+
+
+def test_quiet_alert_channel_does_not_abort_probe(tmp_path: Path) -> None:
+    """Ein stiller Alarm-Kanal darf die Probe NICHT als unzuverlaessig abstempeln.
+
+    Realfall 2026-08-16 (Pi-Journal, 07:00-08:00Z): jeder Lauf meldete
+    ``alert_audit.jsonl mtime is 621min old`` und brach mit
+    ``Exit-on-stale: aborting with code 2`` ab — WAEHREND derselbe Lauf
+    ``cycles=1117`` auswies und ``trading_loop_audit`` (30-min-Schwelle,
+    taktgetrieben) keinerlei Frische-Warnung erzeugte. Die Probe las also
+    nachweislich Live-Daten vom Pi und behauptete trotzdem "stale data".
+
+    66 solcher Fehlabbrueche in 14 Tagen (gegen 1281 gruene Laeufe), jeder
+    verschluckte den kompletten Health-Report und loeste 5-Minuten-Watchdog-
+    Spam aus — der Waechter verstummte genau dann, wenn er haette melden
+    sollen.
+
+    Gemessene Realverteilung der Dispatch-Luecken (30 d, n=1370):
+    Median 1.3min, p99 404min, MAX 883min. Die alte 480-min-Schwelle wurde
+    also 8x/30d von legitimer Stille gerissen.
+    """
+    _make_files_fresh(tmp_path)
+    _write_cycle(tmp_path)  # taktgetriebener Strom lebt
+    quiet = (datetime.now(UTC) - timedelta(minutes=621)).timestamp()
+    os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (quiet, quiet))
+
+    report = run_health_check_report(tmp_path)
+
+    # 621min liegt unter der an der Realverteilung geeichten Schwelle:
+    # der Lauf vom 16.08. haette gar keinen Befund erzeugen duerfen.
+    assert [i for i in report.issues if i.component == "alerts_freshness"] == []
+    assert report.data_sources_stale is False
+
+
+def test_long_alert_silence_warns_but_never_aborts(tmp_path: Path) -> None:
+    """Jenseits der Schwelle: melden JA, Probe entwerten NEIN.
+
+    Ein toter Dispatcher muss sichtbar werden — aber als Systembefund im
+    Report, nicht als Abbruch, der genau diesen Report verschluckt.
+    """
+    _make_files_fresh(tmp_path)
+    _write_cycle(tmp_path)
+    silent = (datetime.now(UTC) - timedelta(minutes=1500)).timestamp()
+    os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (silent, silent))
+
+    report = run_health_check_report(tmp_path)
+
+    assert [i for i in report.issues if i.component == "alerts_freshness"]
+    assert report.data_sources_stale is False
+
+
+def test_quiet_alert_channel_hint_does_not_blame_pi_sync(tmp_path: Path) -> None:
+    """Die Begruendung muss ehrlich sein: stiller Kanal != Sync-Problem.
+
+    Der alte Text schickte den Operator mit "check Pi sync" auf eine
+    Fehlersuche am gesunden Teil des Systems — dieselbe Fehldiagnose, die
+    beim TV-Ingest schon einmal Tage gekostet hat.
+    """
+    _make_files_fresh(tmp_path)
+    _write_cycle(tmp_path)
+    quiet = (datetime.now(UTC) - timedelta(minutes=1500)).timestamp()
+    os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (quiet, quiet))
+
+    report = run_health_check_report(tmp_path)
+    msg = next(i.message for i in report.issues if i.component == "alerts_freshness")
+    assert "check Pi sync" not in msg
+
+
+def test_dead_trading_loop_still_aborts_probe(tmp_path: Path) -> None:
+    """Gegenprobe: der taktgetriebene Strom MUSS weiter abbrechen koennen.
+
+    Ohne diesen Test waere der Fix oben eine Abschaltung des Waechters statt
+    einer Praezisierung.
+    """
+    _make_files_fresh(tmp_path)
+    dead = (datetime.now(UTC) - timedelta(hours=6)).timestamp()
+    os.utime(tmp_path / "trading_loop_audit.jsonl", (dead, dead))
+
+    report = run_health_check_report(tmp_path)
     assert report.data_sources_stale is True

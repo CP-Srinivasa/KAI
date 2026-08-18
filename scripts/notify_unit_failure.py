@@ -34,14 +34,57 @@ _MAX_MESSAGE = 3900
 _MAX_JOURNAL = 2500
 
 
-def build_message(unit: str, *, exit_code: str, result: str, journal_tail: str) -> str:
-    """Operator-Text: WAS ist gescheitert, WIE, und was stand zuletzt im Log."""
+UNKNOWN_UNIT_MARK = "🟠"  # oranger Kreis: Befund unklar, nicht rot
+# Genau die Werte, die `systemctl show` fuer eine Unit erfindet, deren Zustand
+# es nicht (mehr) gibt. Sie beweisen keinen Erfolg, sie beweisen gar nichts.
+_UNINFORMATIVE_RESULTS = ("", "success")
+
+
+def build_message(
+    unit: str,
+    *,
+    exit_code: str,
+    result: str,
+    journal_tail: str,
+    load_state: str = "",
+) -> str:
+    """Operator-Text: WAS ist gescheitert, WIE, und was stand zuletzt im Log.
+
+    Der Notifier fragt systemd ERST beim Melden, nicht im Moment des
+    Scheiterns. Dazwischen kann die Unit bereits neu gelaufen sein (Zustand
+    zurueckgesetzt) oder ganz verschwunden (transiente Unit). ``systemctl
+    show`` meldet in BEIDEN Faellen keinen Fehler, sondern klaglos die
+    Defaults ``Result=success`` / ``ExecMainStatus=0``.
+
+    Ungefiltert entsteht daraus die Meldung vom 2026-08-17 10:39:
+    "systemd-Unit fehlgeschlagen: deploy-selftest (result=success, exit=0)"
+    — rote Ueberschrift, Erfolgswerte, leeres Journal. Auf dem Pi
+    nachgestellt: ``LoadState=not-found``, die Unit existiert dort nicht.
+
+    Eine Meldung, die sich selbst widerspricht, trainiert den Operator
+    darauf, dem Kanal nicht zu glauben — exakt der Schaden, gegen den dieser
+    Notifier gebaut wurde. Also wird benannt, was wirklich bekannt ist.
+    fail-open bleibt unangetastet: gemeldet wird in jedem Fall.
+    """
+    if load_state == "not-found":
+        return f"""{UNKNOWN_UNIT_MARK} systemd-Unit nicht auffindbar: {unit}
+(LoadState=not-found — systemd kennt diese Unit auf diesem Host nicht)
+
+Ein OnFailure= zeigt auf einen unbekannten Namen: transiente Unit bereits
+abgeraeumt, Unit umbenannt/entfernt, oder der Notifier von Hand aufgerufen.
+Ein Ausfall ist damit WEDER belegt NOCH ausgeschlossen — Aufrufer und
+Unit-Namen pruefen."""
     head = f"🔴 systemd-Unit fehlgeschlagen: {unit}"
     details = []
-    if result:
+    if result in _UNINFORMATIVE_RESULTS:
+        details.append(
+            "Zustand beim Melden nicht mehr lesbar (Unit inzwischen neu "
+            "gelaufen) — Ursache nur im Journal unten"
+        )
+    else:
         details.append(f"result={result}")
-    if exit_code:
-        details.append(f"exit={exit_code}")
+        if exit_code:
+            details.append(f"exit={exit_code}")
     if details:
         head += f"\n({', '.join(details)})"
 
@@ -136,6 +179,7 @@ def main(argv: list[str]) -> int:
         exit_code=_systemctl_show(unit, "ExecMainStatus"),
         result=_systemctl_show(unit, "Result"),
         journal_tail=_journal_tail(unit),
+        load_state=_systemctl_show(unit, "LoadState"),
     )
 
     import asyncio

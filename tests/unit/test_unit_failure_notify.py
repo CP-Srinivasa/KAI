@@ -93,3 +93,78 @@ def test_corrupt_state_file_fails_open(tmp_path: Path) -> None:
     state.write_text("{not json", encoding="utf-8")
 
     assert should_send("kai-x.service", state_path=state, now=datetime(2026, 8, 17, tzinfo=UTC))
+
+
+def test_unknown_unit_is_named_as_unknown_not_as_failure() -> None:
+    """``systemctl show`` erfindet fuer unbekannte Units Erfolgswerte.
+
+    Realfall 2026-08-17 10:39 (Telegram): "🔴 systemd-Unit fehlgeschlagen:
+    deploy-selftest (result=success, exit=0)" — ohne eine einzige Journal-
+    Zeile. Auf dem Pi verifiziert: ``LoadState=not-found``, und
+    ``systemctl show`` liefert fuer eine Phantom-Unit klaglos
+    ``Result=success`` / ``ExecMainStatus=0``.
+
+    Eine rote Ausfallmeldung mit Erfolgswerten im selben Atemzug ist
+    unglaubwuerdig — und ein Kanal, dem der Operator nicht glaubt, ist die
+    Krankheit, gegen die dieser Notifier ueberhaupt gebaut wurde. Er muss den
+    Unterschied zwischen "gescheitert" und "nicht auffindbar" benennen.
+    """
+    msg = build_message(
+        "deploy-selftest",
+        exit_code="0",
+        result="success",
+        journal_tail="",
+        load_state="not-found",
+    )
+
+    assert "deploy-selftest" in msg
+    # Nicht als Unit-Ausfall verkaufen ...
+    assert "fehlgeschlagen" not in msg
+    # ... sondern als das, was es ist.
+    assert "nicht auffindbar" in msg
+    # Und keine erfundenen Erfolgswerte unter roter Ueberschrift.
+    assert "result=success" not in msg
+
+
+def test_unknown_unit_still_reaches_the_operator() -> None:
+    """fail-open bleibt: ein unlesbarer Zustand wird gemeldet, nie verschluckt."""
+    msg = build_message(
+        "phantom.service", exit_code="", result="", journal_tail="", load_state="not-found"
+    )
+    assert msg.strip()
+    assert "phantom.service" in msg
+
+
+def test_reset_state_is_disclosed_instead_of_shown_as_success() -> None:
+    """Unit existiert, Zustand aber schon zurueckgesetzt (Re-Run nach OnFailure).
+
+    Dann sind ``result=success``/``exit=0`` kein Befund, sondern ein Artefakt
+    des Abfragezeitpunkts — das muss dastehen, statt sich selbst zu widersprechen.
+    """
+    msg = build_message(
+        "kai-paper-trading.service",
+        exit_code="0",
+        result="success",
+        journal_tail="Finished kai-paper-trading.service.",
+        load_state="loaded",
+    )
+
+    assert "kai-paper-trading.service" in msg
+    assert "result=success" not in msg
+    assert "nicht mehr lesbar" in msg
+
+
+def test_real_failure_message_is_unchanged() -> None:
+    """Gegenprobe: der echte Ausfall meldet weiter unveraendert rot."""
+    msg = build_message(
+        "kai-technical-screener.service",
+        exit_code="1",
+        result="exit-code",
+        journal_tail="ValueError: boom",
+        load_state="loaded",
+    )
+
+    assert msg.startswith("🔴 systemd-Unit fehlgeschlagen: kai-technical-screener.service")
+    assert "result=exit-code" in msg
+    assert "exit=1" in msg
+    assert "ValueError: boom" in msg
