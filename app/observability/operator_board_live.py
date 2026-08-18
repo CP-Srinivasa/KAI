@@ -225,6 +225,23 @@ def build_live_board(
             )
         elif state == STATE_JUDGEABLE:
             action = "urteilsfähig — die Zählung IST der exakte Evaluator, Verdikt möglich."
+        elif state == STATE_EVAL_CHECK and (mat or {}).get("kind") == "deadline":
+            # Ein Fenster-Claim hat KEINEN Zaehler. Der n-Text behauptete fuer
+            # ihn drei Dinge, die alle falsch sind: einen Proxy, ein erreichtes
+            # Ziel-n und einen fahrbaren Evaluator. Sichtbar geworden an
+            # k1_channel_audit_resonance (00c75a76a2b0e78b), dessen Reife das
+            # versiegelte Fensterende IST — auszuzaehlen ist der Posteingang,
+            # und das kann nur der Operator.
+            window = (mat or {}).get("window_end_utc") or (
+                (mat or {}).get("per_source", {}) or {}
+            ).get("window_end_utc")
+            note = str((mat or {}).get("note") or "").strip()
+            action = (
+                f"Fenster ist zu ({window}) — versiegelte Regel anwenden. "
+                "Kein Zaehler, kein Proxy, kein Ergebnis behauptet."
+            )
+            if note:
+                action = f"{action} Vermerk: {note}"
         elif state == STATE_EVAL_CHECK:
             action = (
                 "exakten Evaluator fahren — Ziel-n nur im Upper-Bound-Proxy erreicht, "
