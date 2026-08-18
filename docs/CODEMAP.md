@@ -18,6 +18,10 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/execution/entry_policy.py` → `EntryRoute`, `detect_contradictions`, Route-Verdicts (autonomous_loop/premium_paper/real_analysis_paper/fastlane/technical)
 - `app/risk/engine.py` → `RiskEngine` (Sizing/Drawdown/Veto) · `app/risk/promotion_gate.py` → Bleed-Breaker · `app/security/governance/gates.py` → `authorize_productive_decision`
 
+### Deploy / systemd
+- `scripts/lib/pi_unit_sync.sh` → `pi_unit_sync_diff` / `pi_unit_sync_apply`: gleicht `deploy/systemd/*` gegen `/etc/systemd/system` ab. Wird von `kai_deploy.sh` nach dem ff-Pull aufgerufen — **committet != live** galt bis 2026-08-18 fuer jede Unit-Datei. Timer werden neu gestartet (sonst uebernimmt systemd den Zeitplan nicht), `.service` NIE (SIGTERM-Fehlalarm 17.08.), eingefrorene Writer gar nicht angefasst, `/etc`-Waisen nur gemeldet. Enable/Start bleibt bei `scripts/pi_install_systemd.sh`.
+- `scripts/lib/paper_writer_freeze.sh` → `paper_writer_freeze_guard_restart`: fail-CLOSED Freeze-Semantik, von Installer, Deploy-Wrapper und Unit-Sync gemeinsam genutzt.
+
 ### Execution / Paper
 - `app/execution/paper_engine.py` → `PaperExecutionEngine` (Fills/Close/MTM/Slippage) · `app/execution/models.py` → `PaperFill/PaperOrder/PaperPortfolio`
 - `app/execution/audit_replay.py` → `replay_paper_audit`
