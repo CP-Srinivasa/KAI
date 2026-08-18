@@ -63,12 +63,22 @@ def test_phantom_close_excluded_from_realized(tmp_path: Path) -> None:
 
 
 def test_legit_close_below_cap_kept(tmp_path: Path) -> None:
+    """Ein Close innerhalb des gemessenen Bandes bleibt realisierter Gewinn.
+
+    PRAEMISSE KORRIGIERT 2026-08-18: dieser Fall stand bis dahin auf +50 %.
+    Die Zahl war geschaetzt, nicht gemessen. Live ueber alle 617 Closes des
+    Audit-Streams ist der groesste NICHT verdaechtige Close 17,16 %; ab
+    21,18 % ist jeder Eintrag ein bekanntes Artefakt. Ein +50-%-Close ist in
+    diesem System empirisch kein Gewinner, sondern eine Artefakt-Signatur
+    (SOL +96,85 %, ETH +72,11 %, ETH +55,21 %). Der legitime Fall wird
+    darum jetzt mit +15 % geprueft -- innerhalb des gemessenen Bandes.
+    """
     path = tmp_path / "audit.jsonl"
-    # +50% is a real winner, must NOT be quarantined.
-    _write(path, [_close("SOL/USDT", 100.0, 150.0, 50.0, "2026-05-29T10:00:00+00:00")])
+    # +15 % liegt unter dem groessten gemessenen legitimen Close (17,16 %).
+    _write(path, [_close("SOL/USDT", 100.0, 115.0, 15.0, "2026-05-29T10:00:00+00:00")])
     r = compute_realized_by_asset(path)
     by_sym = {b["symbol"]: b for b in r["by_asset"]}
-    assert by_sym["SOL/USDT"]["realized_pnl_usd"] == 50.0
+    assert by_sym["SOL/USDT"]["realized_pnl_usd"] == 15.0
     assert by_sym["SOL/USDT"]["quarantined_closes"] == 0
     assert r["totals"]["quarantined_pnl_usd"] == 0.0
 

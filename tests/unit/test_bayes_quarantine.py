@@ -86,13 +86,26 @@ def _eth_off_market_close() -> dict:
 
 
 def test_corrupt_close_catches_signature_below_phantom_cap() -> None:
-    """ETH off-market (+55%) is missed by the phantom guard but caught by signature."""
+    """Die exakte Signatur behaelt Vorrang vor dem generischen Waechter.
+
+    Bis 2026-08-18 pruefte dieser Test, dass die Kappe den ETH-Off-Market-Fall
+    (+55 %) VERFEHLT und nur die Signatur ihn faengt. Nach der Kalibrierung auf
+    gemessene 20 % faengt ihn auch die Kappe -- die alte Behauptung ist damit
+    gegenstandslos.
+
+    Wertvoll bleibt etwas anderes, und das wird hier gesichert: die Signatur
+    wird ZUERST befragt, sodass der Befund den konkreten Vorfall benennt
+    (``eth_off_market_close``) statt im generischen "phantom" zu verschwinden.
+    Ohne diesen Vorrang waere die Forensik durch die Schaerfung verloren
+    gegangen -- genau die Art Kollateralschaden, die eine Verscharfung nicht
+    anrichten darf.
+    """
     row = _eth_off_market_close()
-    # Generic phantom guard alone would MISS this (the leak we are closing):
     from app.execution.phantom_filter import is_phantom_close
 
-    assert is_phantom_close(row["entry_price"], row["exit_price"], row["position_side"]) is False
-    # Unified verdict catches it via the exact signature:
+    # Die Kappe greift jetzt ebenfalls ...
+    assert is_phantom_close(row["entry_price"], row["exit_price"], row["position_side"]) is True
+    # ... aber der Grund bleibt der praezise, nicht der generische.
     assert is_corrupt_close(row) is True
     assert corruption_reason(row) == "eth_off_market_close"
 
@@ -120,14 +133,23 @@ def test_corrupt_close_catches_matic_runaway() -> None:
 
 
 def test_corrupt_close_keeps_legit_winner_below_cap() -> None:
-    """A real +50% winner (no signature, under the cap) is NOT corrupt."""
+    """Ein Gewinner innerhalb des gemessenen Bandes ist NICHT korrupt.
+
+    PRAEMISSE KORRIGIERT 2026-08-18: dieser Fall stand bis dahin auf +50 %.
+    Die Zahl war geschaetzt, nicht gemessen. Live ueber alle 617 Closes des
+    Audit-Streams ist der groesste NICHT verdaechtige Close 17,16 %; ab
+    21,18 % ist jeder Eintrag ein bekanntes Artefakt. Ein +50-%-Close ist in
+    diesem System empirisch kein Gewinner, sondern eine Artefakt-Signatur
+    (SOL +96,85 %, ETH +72,11 %, ETH +55,21 %). Der legitime Fall wird
+    darum jetzt mit +15 % geprueft -- innerhalb des gemessenen Bandes.
+    """
     row = {
         "event_type": "position_closed",
         "symbol": "SOL/USDT",
         "entry_price": 100.0,
-        "exit_price": 150.0,
+        "exit_price": 115.0,
         "position_side": "long",
-        "trade_pnl_usd": 50.0,
+        "trade_pnl_usd": 15.0,
     }
     assert is_corrupt_close(row) is False
     assert corruption_reason(row) is None

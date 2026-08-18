@@ -34,6 +34,7 @@ from app.execution.models import (
 )
 from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.order_intent import ExecutableOrderIntent
+from app.execution.phantom_filter import _DEFAULT_MAX_CLOSE_RETURN_PCT
 from app.execution.rotation_gate import evaluate_rotation_gate
 from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
@@ -81,7 +82,11 @@ _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 # keinen Trade — der Breaker weist den CLOSE ab und laesst die Position offen —
 # sondern erzeugt ein `close_price_sanity_rejected`, das seit dieser Aenderung
 # auch jemand sieht (health_check).
-_DEFAULT_MAX_CLOSE_RETURN_PCT = 0.20
+#
+# 2026-08-18: die Zahl stand DOPPELT im Code. #722 kalibrierte nur diese Kopie;
+# die Lese-Seite (`phantom_filter`) blieb auf 2.0 und liess die ETH-Artefakte
+# als realisierten Gewinn stehen. Seither ist `phantom_filter` die einzige
+# Quelle und wird hier importiert -- keine zweite Zahl, die driften kann.
 
 
 # ── Lifecycle-Emission-Idempotency (#314) ─────────────────────────────────────

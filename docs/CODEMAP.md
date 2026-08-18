@@ -21,6 +21,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 ### Execution / Paper
 - `app/execution/paper_engine.py` → `PaperExecutionEngine` (Fills/Close/MTM/Slippage) · `app/execution/models.py` → `PaperFill/PaperOrder/PaperPortfolio`
 - `app/execution/audit_replay.py` → `replay_paper_audit`
+- **Phantom-Closes:** kanonische Schwelle in `app/execution/phantom_filter.py` (`paper_engine` importiert sie — NIE ein zweites Mal definieren). Schreibpfad weist ab + `close_price_sanity_rejected`; Lesepfad `portfolio_read` → `bayes_quarantine` → `phantom_filter` verschiebt nach `quarantined_pnl_usd` (löscht nichts). Bestand + Regeln: `docs/audit/phantom_close_artifact_register.md`
 
 ### Edge / Shadow / Resolver
 - `app/observability/shadow_candidate_ledger.py` → `build_shadow_report`, `_median`/`_split` (median-only, `fwd_*_bps`)
