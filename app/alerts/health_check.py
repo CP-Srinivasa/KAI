@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sqlite3
@@ -129,6 +130,62 @@ _INGRESS_COMPONENTS: frozenset[str] = frozenset(
 # gespiegelte/veraltete Artefakte. Das ist die Frage, die das Flag beantwortet.
 _PROBE_RELIABILITY_EXEMPT: frozenset[str] = _INGRESS_COMPONENTS | frozenset({"alerts"})
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
+
+# Wieviel vom Ende der Audit-Datei gelesen wird, um den letzten ANGENOMMENEN
+# Request zu finden. Die Datei ist auf dem Pi ~2,5 MB und der Waechter laeuft
+# alle 15 min -- ein Vollscan waere Verschwendung. 256 KB decken auf dem
+# realen Stream mehrere hundert Records ab.
+_INGRESS_TAIL_BYTES = 256 * 1024
+
+
+def last_accepted_ingress_event(path: Path) -> datetime | None:
+    """Zeitpunkt des letzten ANGENOMMENEN Webhook-Events, sonst ``None``.
+
+    Warum nicht die Datei-mtime: ein ABGELEHNTER Request schreibt ebenfalls in
+    dieses Audit. Am 2026-08-18 haben drei unsignierte Diagnose-Requests
+    (``outcome=rejected``, ``source_ip=127.0.0.1``) den Eingangs-Waechter
+    sofort gruen gefaerbt -- der Health-Check meldete danach 'All systems
+    healthy', obwohl das letzte akzeptierte Event vom 2026-08-02T17:23:45Z
+    stammte, also 16 Tage zurueck lag.
+
+    Damit kann JEDER Absender den Waechter beruhigen, auch ein Portscanner auf
+    der oeffentlichen Adresse. Ein Eingangs-Waechter, den Fremde stumm
+    schalten koennen, ist keiner -- und der TV-Ingest-Tod war ueberhaupt nur
+    deshalb 6 Tage unbemerkt, weil niemand auf den Eingang sah.
+
+    Fail-soft: unlesbare oder kaputte Zeilen werden uebersprungen, nicht
+    eskaliert. Findet sich im gelesenen Ende kein angenommenes Event, gilt der
+    Strom als nicht liefernd -- das ist die konservative Richtung.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size > _INGRESS_TAIL_BYTES:
+                handle.seek(size - _INGRESS_TAIL_BYTES)
+                handle.readline()  # angeschnittene erste Zeile verwerfen
+            raw = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in reversed(raw.splitlines()):
+        line = line.strip()
+        if not line or '"accepted"' not in line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict) or record.get("outcome") != "accepted":
+            continue
+        stamp = record.get("received_at")
+        if not isinstance(stamp, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
 
 # V5 loop-deadlock watchdog (DS-20260531-V5). The 2026-05-31 incident: the loop
 # ran ~24h of cycles (trading_loop_audit fresh, so the freshness + min-cycles
@@ -319,6 +376,15 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
         threshold_min = _FRESHNESS_PER_FILE_MIN.get(fname, _FRESHNESS_DEFAULT_MIN)
         mtime_cutoff = now - timedelta(minutes=threshold_min)
         mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        if component == "tradingview_ingress":
+            # Nicht die Datei-mtime, sondern der letzte ANGENOMMENE Request:
+            # eine Abweisung schreibt ebenfalls in dieses Audit und wuerde den
+            # Waechter sonst von aussen beruhigen (belegt am 2026-08-18 durch
+            # drei eigene Diagnose-Requests). Ohne angenommenes Event im
+            # gelesenen Ende gilt der Strom als nicht liefernd -- konservativ,
+            # und genau der Fall, den die Wache abdecken soll.
+            accepted_at = last_accepted_ingress_event(path)
+            mtime = accepted_at if accepted_at is not None else datetime.fromtimestamp(0, tz=UTC)
         if mtime < mtime_cutoff:
             age_min = int((now - mtime).total_seconds() / 60)
             is_ingress = component in _INGRESS_COMPONENTS

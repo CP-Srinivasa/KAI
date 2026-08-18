@@ -17,6 +17,7 @@ nur nicht mehr hinter einer falschen Ursache.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import UTC, datetime
@@ -28,7 +29,21 @@ from app.alerts.health_check import _check_data_freshness
 def _aged(adir: Path, name: str, *, age_seconds: float) -> Path:
     adir.mkdir(parents=True, exist_ok=True)
     p = adir / name
-    p.write_text('{"x":1}\n', encoding="utf-8")
+    # 2026-08-18: ein ANGENOMMENER Record, nicht nur eine frische Datei.
+    # Der Waechter misst seit dem den letzten outcome=accepted -- eine blosse
+    # Datei-Beruehrung ist kein eingehender Verkehr, sonst koennte jede
+    # Abweisung (auch die eines Fremden) den Eingang gruen faerben.
+    stamp_for_record = time.time() - age_seconds
+    if name == "tradingview_webhook_audit.jsonl":
+        body = json.dumps(
+            {
+                "outcome": "accepted",
+                "received_at": datetime.fromtimestamp(stamp_for_record, tz=UTC).isoformat(),
+            }
+        )
+    else:
+        body = json.dumps({"x": 1})
+    p.write_text(body + chr(10), encoding="utf-8")
     stamp = time.time() - age_seconds
     os.utime(p, (stamp, stamp))
     return p
