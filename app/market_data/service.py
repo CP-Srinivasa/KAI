@@ -165,6 +165,29 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
                     is_stale=True,
                     source=f"{chosen.source}|provider_disagreement:{lo:.6g}vs{hi:.6g}",
                 )
+
+        # DS-20260818-MOCK-EXIT: synthetic data must never drive an entry OR an
+        # exit. MockMarketDataAdapter hardcodes is_stale=False / freshness 0.0, so
+        # on a tick where EVERY real venue failed the position monitor received a
+        # fabricated price that sailed through its stale-guard and closed positions
+        # against it — 10 closes across 6 such ticks, bit-exactly reconstructible
+        # from the mock curve (app.market_data.mock_price_forensics). The chain
+        # keeps the mock as a last-resort *quote* (dashboards, symbol resolution),
+        # but tagging it stale makes entry and monitor SKIP: a position with no
+        # real quote stays open and is counted as no_market_data — visible —
+        # instead of being settled at an invented price.
+        if chosen.source == _MOCK_SOURCE:
+            logger.warning(
+                "[MARKET_DATA] only synthetic mock quote for %s (%.6g) — tagging stale "
+                "so entry/monitor skip; no real venue in the chain resolved it",
+                symbol,
+                chosen.price,
+            )
+            return replace(
+                chosen,
+                is_stale=True,
+                source=f"{chosen.source}|synthetic_not_tradeable",
+            )
         return chosen
 
 

@@ -103,9 +103,76 @@ Schreib- und Lesepfad nicht mehr auseinanderlaufen, auch nicht über
 4. **Neue Artefakte hier eintragen** — Zeile in der Tabelle unter §3 und, wenn die
    Signatur exakt ist, in `bayes_quarantine`. Die exakte Signatur behält Vorrang
    vor der generischen Kappe, damit der Befund den Vorfall benennt.
-5. **Offen ist die Feed-Wurzel.** `3225,68635 = 3227,30 × (1 − 0,0005)`; der
-   Roh-Feed lieferte 3227,30 zweimal auf den Cent. Woher der Wert kam, ist **nicht
-   belegt** — nicht behaupten. Die Kappe fängt die Wirkung, nicht die Ursache.
+5. **Die Feed-Wurzel ist belegt** (2026-08-18, siehe §5b). Der Roh-Feed lieferte
+   3227,30, weil kein echter Venue antwortete und die Kette auf den synthetischen
+   Mock-Adapter durchfiel. Die Kappe fängt die Wirkung; die Ursache ist jetzt
+   ebenfalls geschlossen.
+
+## 5b. Die Feed-Wurzel: der Mock-Adapter (DS-20260818-MOCK-EXIT)
+
+`MockMarketDataAdapter` ist das **letzte Glied der live-aktiven `fallback`-Kette**
+(`APP_MARKET_DATA_PROVIDER=fallback`). Er erzeugt deterministisch
+
+```
+round(base + base * (amplitude/100) * sin(phase / 1440 * 2π), 2)
+    base(ETH/USDT) = 3200,0   amplitude = 2 %   phase = hash(symbol) % 360
+```
+
+und setzt dabei **`is_stale=False`, `freshness_seconds=0.0` bedingungslos**. Auf
+einem Tick, an dem *kein* echter Venue auflöste, wählte
+`FallbackMarketDataAdapter.get_market_data_point` diesen Punkt
+(`chosen = fresh_real or real or fresh or resolved`), der Stale-Guard des
+Position-Monitors ließ ihn passieren, und jede Position, deren SL/TP der
+erfundene Preis kreuzte, wurde dagegen geschlossen.
+
+**Der Nachweis ist bit-exakt**, nicht plausibel:
+
+```
+mock(ETH/USDT, phase 101) = 3227,30  → × (1 − 0,0005) = 3225,6863500000004   ← 08-11/08-12
+mock(ETH/USDT, phase 297) = 3261,60  → × (1 − 0,0005) = 3259,9692            ← DS-20260601
+```
+
+Beide Werte reproduzieren einschließlich der Float-Artefakte. `hash()` auf Strings
+ist **pro Prozess randomisiert** — deshalb war der Preis am 11. und 12.08.
+byte-identisch (derselbe Server-Prozess) und beim älteren Vorfall ein anderer.
+
+**Zwei Pfade, ein Monitor-Code, unterschiedliche Immunität:** der Cron ruft
+`trading monitor-positions --provider coingecko` (Kette ohne Mock → `None` →
+Symbol wird übersprungen; im Log als `no_market_data=6` sichtbar). Der
+In-Prozess-`PositionMonitorScheduler` im `kai-server` ruft ohne Provider-Angabe
+→ `fallback` → **mit** Mock. Am 11.08. protokollierte der Cron um 23:01/23:11
+`no_market_data=6`, während der Scheduler um 23:09:58 gegen 3227,30 schloss.
+
+**Umfang (live gemessen, 617 Closes):** 12 Closes in 7 Ticks, netto
+**+8.945,47 USD**. In **jedem** dieser Ticks war *jede* Schließung mock-erzeugt —
+0 gemischte Ticks bei 514 Close-Sekunden, die Signatur eines einzigen
+Monitor-Durchlaufs auf einer vollständig synthetischen Preis-Karte. Der Mock
+erklärt **8 der 11** nicht-MATIC-Einträge aus der Tabelle in §3 und fördert
+**4 weitere BTC-Closes** zutage, die *unter* der 20-%-Kappe lagen (+2,8 %,
++6,5 %, −6,5 %, −14,8 %) und deshalb von keiner Größenordnungs-Schwelle je
+gefunden werden konnten. MATIC (§3, 9×) bleibt davon unberührt — das war das
+delistete BitMEX-Instrument, ein anderer Mechanismus.
+
+**Epoche `paper_v2_attested`** (Basis `trade_pnl_usd`, inkl. partial closes,
+Stand 2026-08-18, n=215): gebucht **+771,05 USD**, davon mock-erzeugt
+**+1.701,54 USD** (4 Closes, darunter ein Schein-*Verlust* von −585,55),
+bereinigt **−930,49 USD**. Das Vorzeichen kippt. Der Vermerk dazu ist kanonisch
+in `app/execution/epoch_correction.py` hinterlegt und wird über
+`/dashboard/api/*` und die Daily-Strategy-Zeile mitgeführt.
+
+**Gegenmaßnahmen.**
+- *Quelle geschlossen*: `FallbackMarketDataAdapter` markiert einen Punkt, der nur
+  vom Mock stammt, als `is_stale=True` (`source=…|synthetic_not_tradeable`).
+  Entry **und** Monitor überspringen ihn dann; eine Position ohne echte Quote
+  bleibt offen und zählt als `no_market_data` — sichtbar, statt zu einem
+  erfundenen Preis abgerechnet zu werden.
+- *Vergangenheit bereinigt*: `bayes_quarantine` trägt die Klasse als **exakte
+  Signatur** `mock_synthetic_exit_price` (nicht als Kappe — die kleinen Fälle
+  liegen unter jeder Schwelle). Das Audit bleibt unverändert.
+- *Erkennung*: `app/market_data/mock_price_forensics.py` rekonstruiert die Kurve.
+  Degenerierte Phasen (Basispreis selbst, Amplituden-Extrema) sind ausgenommen —
+  dort fällt der Mock-Wert mit runden, legitim vorkommenden Zahlen zusammen
+  (SOL 150,00; LTC 102,00), und Bit-Gleichheit beweist dann nichts.
 
 ## 6. Verweise
 
@@ -115,3 +182,7 @@ Schreib- und Lesepfad nicht mehr auseinanderlaufen, auch nicht über
 - `app/execution/portfolio_read.py` — `quarantined_pnl_usd` / `quarantined_closes`
 - `tests/unit/test_phantom_threshold_single_source.py` — Drift-Contract + Korpus
 - `tests/unit/test_phantom_close_breaker_calibration.py` — Schreibpfad-Kalibrierung
+- `app/market_data/mock_price_forensics.py` — Mock-Kurven-Rekonstruktion (§5b)
+- `app/market_data/service.py` — `synthetic_not_tradeable` (Quelle geschlossen)
+- `app/execution/epoch_correction.py` — Korrektur-Vermerk der Epoche
+- `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz

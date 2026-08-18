@@ -1,5 +1,5 @@
 {
-  "app/api/routers/dashboard.py": 3064,
+  "app/api/routers/dashboard.py": 3066,
   "app/cli/commands/trading.py": 3423,
   "app/cli/main.py": 2436,
   "app/core/settings.py": 1883,
