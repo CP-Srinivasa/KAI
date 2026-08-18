@@ -167,13 +167,17 @@ async def test_mock_does_not_corroborate_real_quote() -> None:
 
 @pytest.mark.asyncio
 async def test_mock_used_only_as_last_resort_when_no_real_provider() -> None:
+    """The mock still resolves last — but since DS-20260818-MOCK-EXIT it comes
+    back tagged stale, so entry and monitor skip it instead of trading against a
+    fabricated price (it used to pass the stale-guard with is_stale=False)."""
     chain = FallbackMarketDataAdapter(
         [_FakeAdapter("bybit", None), _FakeAdapter(_MOCK_SOURCE, _pt(_MOCK_SOURCE, 101.3))]
     )
     point = await chain.get_market_data_point("MATIC/USDT")
     assert point is not None
-    assert point.source == _MOCK_SOURCE
-    assert point.is_stale is False
+    assert point.source.startswith(_MOCK_SOURCE)
+    assert "synthetic_not_tradeable" in point.source
+    assert point.is_stale is True
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,8 @@ from pathlib import Path
 
 import typer
 
+from app.execution.epoch_correction import epoch_correction_notice
+
 daily_strategy_app = typer.Typer(
     name="daily-strategy",
     help="Daily strategy review skeleton + operator reminder.",
@@ -368,6 +370,11 @@ def _build_skeleton(
 
     if epoch_id is not None:
         paper_fills_line = f"{epoch_fills} (seit Epoche {epoch_id}, Reset {epoch_reset_date})"
+        # Operator-Entscheidung 2026-08-18: traegt die Epoche einen Korrektur-Vermerk,
+        # darf die Zahl nicht ohne ihn in der Tageslage stehen (DS-20260818-MOCK-EXIT).
+        notice = epoch_correction_notice(epoch_id)
+        if notice is not None:
+            paper_fills_line += f" ⚠ KORREKTUR-VERMERK {notice.incident_ref}"
     else:
         paper_fills_line = str(epoch_fills)
 

@@ -173,10 +173,13 @@ def test_bootstrap_paper_fills_scoped_to_current_epoch(runner: CliRunner, repo_c
     result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     assert result.exit_code == 0
     text = _today_path(repo_cwd).read_text(encoding="utf-8")
-    # display is epoch-scoped (2, not 14) and carries the epoch label
+    # display is epoch-scoped (2, not 14) and carries the epoch label. Since
+    # 2026-08-18 it also carries the epoch's correction notice: this epoch booked
+    # four closes against synthetic mock prices, so the count must never appear
+    # without that qualifier (DS-20260818-MOCK-EXIT).
     assert (
         "| Paper-Trading abgeschlossene Trades | 2 (seit Epoche paper_v2_attested,"
-        " Reset 2026-07-12) |" in text
+        " Reset 2026-07-12) ⚠ KORREKTUR-VERMERK DS-20260818-MOCK-EXIT |" in text
     )
     assert "| Paper-Trading abgeschlossene Trades | 14 |" not in text
     # the Re-Entry-Gate keeps counting cumulatively (14 >= 10) — the historical

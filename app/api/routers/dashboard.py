@@ -796,6 +796,7 @@ async def dashboard_quality_api() -> JSONResponse:
     # bleiben transparent in der Evidence — nichts verschwindet, es wird nur
     # nicht mehr als Performance ausgewiesen.
     from app.execution.audit_replay import last_epoch_reset_info
+    from app.execution.epoch_correction import epoch_correction_payload
 
     epoch_info = last_epoch_reset_info(_PAPER_EXECUTION_AUDIT)
     epoch_id: str | None = None
@@ -1138,6 +1139,7 @@ async def dashboard_quality_api() -> JSONResponse:
             ),
             "epoch_id": epoch_id,
             "epoch_started_at_utc": epoch_started_at_utc,
+            "epoch_correction": epoch_correction_payload(epoch_id),
             "pre_epoch_closes_excluded": pre_epoch_closes_excluded,
             "pre_epoch_fills_excluded": pre_epoch_fills_excluded,
             "closes_without_timestamp": closes_without_timestamp,

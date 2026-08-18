@@ -109,6 +109,17 @@ def quarantine_reason(close_row: dict[str, object]) -> str | None:
     for sig in QUARANTINE_SIGNATURES:
         if sig.symbol == symbol and abs(exit_price - sig.exit_price) <= _EXIT_PRICE_TOL:
             return sig.reason
+    # DS-20260818-MOCK-EXIT: the generic form of the two hand-transcribed ETH
+    # signatures above — a close booked against MockMarketDataAdapter's synthetic
+    # curve. Exact (bit-identical reconstruction incl. fill slippage), not a
+    # magnitude heuristic, so it belongs with the signatures and not with the
+    # phantom guard: it catches the small ones too (a mock BTC close came out at
+    # +2.8%, far under any implausibility cap). Lazy import mirrors the note at
+    # module top — keep the import graph of this module minimal.
+    from app.market_data.mock_price_forensics import match_mock_price
+
+    if match_mock_price(symbol, exit_price) is not None:
+        return "mock_synthetic_exit_price"
     return None
 
 
@@ -133,6 +144,12 @@ def corruption_reason(close_row: dict[str, object]) -> str | None:
          always corrupt (the position was never priceable on the canonical venue);
       3. the generic ``is_phantom_close`` return-magnitude guard (catches *new*,
          not-yet-signatured price-source disagreements, e.g. MATIC at +364%).
+
+    Layer 1 also covers the synthetic-mock class (``mock_synthetic_exit_price``,
+    DS-20260818-MOCK-EXIT) — closes priced off the mock adapter's deterministic
+    curve. That one is exact rather than magnitude-based on purpose: the same
+    ticks that produced a +72% ETH phantom also produced a +2.8% BTC one, which
+    no implausibility cap can separate from a real close.
 
     Returns the reason string (signature reason, else ``"phantom_implied_return"``)
     or ``None`` when the close is trustworthy. Conservative: a row with no usable

@@ -19,6 +19,14 @@ _BASE_PRICES: dict[str, float] = {
     "SPY": 520.0,
 }
 
+# Mock price-model parameters. NAMED because app.market_data.mock_price_forensics
+# reconstructs the exact same curve to identify closes that were booked against
+# synthetic data (DS-20260818-MOCK-EXIT). Duplicated literals there would drift.
+_DEFAULT_BASE_PRICE: float = 100.0
+_DEFAULT_AMPLITUDE_PCT: float = 2.0
+_SINE_PERIOD_MINUTES: float = 1440.0
+_PRICE_DECIMALS: int = 2
+
 _TIMEFRAME_MINUTES: dict[str, int] = {
     "1m": 1,
     "5m": 5,
@@ -29,15 +37,22 @@ _TIMEFRAME_MINUTES: dict[str, int] = {
 }
 
 
-def _mock_price(symbol: str, offset_minutes: float = 0.0, amplitude_pct: float = 2.0) -> float:
+def _mock_price(
+    symbol: str,
+    offset_minutes: float = 0.0,
+    amplitude_pct: float = _DEFAULT_AMPLITUDE_PCT,
+) -> float:
     """Generate deterministic sinusoidal price for testing."""
-    base = _BASE_PRICES.get(symbol, 100.0)
-    # Period: 24h = 1440 minutes; phase based on symbol hash
-    period = 1440.0
+    base = _BASE_PRICES.get(symbol, _DEFAULT_BASE_PRICE)
+    # Period: 24h = 1440 minutes; phase based on symbol hash. NOTE: str hashing is
+    # per-process randomized (PYTHONHASHSEED), so the phase — and with it the whole
+    # curve — is constant WITHIN a process and changes on restart. That is why two
+    # closes 26h apart carried a byte-identical price while an older incident on the
+    # same code path carried a different one (DS-20260818-MOCK-EXIT).
     phase = hash(symbol) % 360
-    t = (offset_minutes + phase) / period * 2 * math.pi
+    t = (offset_minutes + phase) / _SINE_PERIOD_MINUTES * 2 * math.pi
     variation = base * (amplitude_pct / 100) * math.sin(t)
-    return round(base + variation, 2)
+    return round(base + variation, _PRICE_DECIMALS)
 
 
 class MockMarketDataAdapter(BaseMarketDataAdapter):
@@ -52,7 +67,7 @@ class MockMarketDataAdapter(BaseMarketDataAdapter):
     def __init__(
         self,
         *,
-        amplitude_pct: float = 2.0,
+        amplitude_pct: float = _DEFAULT_AMPLITUDE_PCT,
         spread_pct: float = 0.1,
         volume_base: float = 1_000_000.0,
         freshness_threshold_seconds: float = 30.0,
