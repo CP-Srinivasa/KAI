@@ -9,15 +9,39 @@ aggregators (realized-by-asset, paper-quality) exclude the historical phantom
 closes that were booked before the guard existed, so dashboards show the real
 PnL instead of the phantom profit.
 
-The threshold mirrors the engine's MAX_CLOSE_RETURN_PCT so detection is
-consistent across the write path (rejection) and the read path (exclusion).
+Die Schwelle ist hier KANONISCH. Bis 2026-08-18 stand sie doppelt im Code --
+einmal hier (2.0) und einmal in ``paper_engine`` -- mit dem Kommentar, sie
+"mirrors the engine's MAX_CLOSE_RETURN_PCT". Als #722 den Motor auf 0.20
+kalibrierte, blieb diese Kopie auf 2.0 stehen. Genau die Lese-Seite, die die
+Vergangenheit bereinigen soll, lief damit weiter mit der alten 200-%-Marke:
+die beiden ETH-Closes bei +72 % blieben als realisierter Gewinn stehen und
+hielten das Buch der Epoche bei +396,73 statt -1.853,45 USD.
+
+Deshalb importiert ``paper_engine`` jetzt VON HIER. Ein Contract-Test
+(``test_phantom_threshold_single_source``) laesst Schreib- und Lesepfad nicht
+mehr auseinanderlaufen.
 """
 
 from __future__ import annotations
 
 import os
 
-_DEFAULT_MAX_CLOSE_RETURN_PCT = 2.0
+# KALIBRIERUNG 2026-08-18, gemessen ueber alle 617 Closes des Audit-Streams:
+#
+#     Median 1,52 %   p90 4,92 %   p95 7,70 %
+#     groesster NICHT verdaechtiger Close:  17,16 %
+#     ---------------------- Luecke ----------------------
+#     naechster Wert:                       21,18 %
+#
+# Oberhalb von 20 % liegen 20 von 617 Closes (3,2 %), und jeder einzelne ist
+# ein bekanntes oder vermutetes Artefakt (MATIC 9x, SOL, MKR, ETH 3x, CYS,
+# SLX, VELVET). 20 % ist damit gemessen, nicht geraten.
+#
+# WICHTIG zur Wirkung auf diesem Pfad: die Lese-Seite LOESCHT nichts. Ein als
+# phantom erkannter Close wandert nach ``quarantined_pnl_usd`` und bleibt dem
+# Operator sichtbar -- offenlegen, nicht verschweigen. Ein Fehlalarm kostet
+# hier also keine Information, nur eine Umbuchung in die Quarantaene-Spalte.
+_DEFAULT_MAX_CLOSE_RETURN_PCT = 0.20
 
 
 def phantom_return_threshold() -> float:
