@@ -31,7 +31,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pyotp
@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 # Hardcoded — siehe Modul-Docstring. Erhöhung = Code-Edit + Re-Deploy.
 MAX_ADVANCE_WINDOW: int = 3
 HOTP_DIGITS: int = 6  # RFC 4226 default; Authenticator-Apps zeigen 6-stellig.
+
+# Brute-Force-Bremse (Audit-Befund 2026-08-09, P1). Ein Fehlversuch war bis
+# dahin folgenlos: er schrieb eine Warnzeile und war vergessen. 6 Stellen mal
+# Toleranzfenster 3 heisst 4 gueltige Codes von 10^6, also ~1:250 000 je
+# Versuch — bei ~10 Anfragen/s ein Erwartungswert von rund 7 STUNDEN. Mit
+# 5 Versuchen je 15 min sind es 480/Tag und damit ~520 Tage.
+# Bewusst hartcodiert wie MAX_ADVANCE_WINDOW: eine per .env aufweichbare
+# Sicherheitsbremse ist keine.
+HOTP_MAX_FAILED_ATTEMPTS: int = 5
+HOTP_FAILURE_LOCKOUT_SECONDS: int = 900
 
 
 class HotpError(Exception):
@@ -67,6 +77,14 @@ class HotpVerificationFailed(HotpError):
     Caller MUSS dies wie eine Brute-Force-Indikation behandeln (Rate-Limit,
     Audit-Log). Niemals an Operator zurück propagieren, ob der Counter
     "knapp daneben" war — das wäre ein Side-Channel.
+    """
+
+
+class HotpLockedOut(HotpError):
+    """Zu viele Fehlversuche in Folge; der Verifier ist voruebergehend gesperrt.
+
+    Wird auch bei einem KORREKTEN Code geworfen — sonst waere die Sperre ein
+    Orakel dafuer, ob ein Code stimmt.
     """
 
 
@@ -190,9 +208,24 @@ class HotpVerifier:
         return cleaned
 
     def _read_last_counter_unlocked(self) -> int:
-        """Validiert das komplette Journal; Caller hält den strikten Lock."""
+        """Nur der Counter — Caller hält den strikten Lock."""
+        return self._read_journal_unlocked()[0]
+
+    def _read_journal_unlocked(self) -> tuple[int, list[str]]:
+        """Validiert das komplette Journal; Caller hält den strikten Lock.
+
+        Liefert ``(last_counter, failures_since_last_success)``. Die
+        Fehlversuchs-Liste ist die Brute-Force-Bremse: sie lebt im selben
+        append-only Journal wie der Counter, weil eine separate Datei geloescht
+        werden koennte, um die Sperre zurueckzusetzen — das Journal nicht, denn
+        sein Verlust bricht den Geldpfad fail-closed.
+        """
         last_counter = -1
         saw_record = False
+        # Fehlversuche SEIT dem letzten Erfolg. Ein Erfolg leert die Liste —
+        # sonst waere der Operator nach vier Vertippern ueber Wochen hinweg
+        # beim naechsten ausgesperrt.
+        failures: list[str] = []
         try:
             with self._journal_path.open("r", encoding="utf-8") as fh:
                 for line_number, raw_line in enumerate(fh, start=1):
@@ -213,6 +246,22 @@ class HotpVerifier:
                         )
 
                     schema = record.get("schema_version")
+                    if schema == "hotp-fail-v1":
+                        # Fehlversuch. Traegt KEINEN Counter und darf die
+                        # Monotonie nicht beruehren — sonst wuerde ein Vertipper
+                        # den Geldpfad-Counter bewegen. Muss dem strikten Parser
+                        # dennoch bekannt sein, sonst faellt das Journal nach dem
+                        # ersten Fehlversuch dauerhaft in HotpJournalCorrupt.
+                        if record.get("event") != "verify_failed" or not isinstance(
+                            record.get("failed_at_utc"), str
+                        ):
+                            raise HotpJournalCorrupt(
+                                f"invalid failure record at line {line_number}: "
+                                f"{self._journal_path}"
+                            )
+                        failures.append(str(record["failed_at_utc"]))
+                        saw_record = True
+                        continue
                     if schema == "hotp-bootstrap-v1":
                         bootstrap_last = record.get("last_used_counter")
                         if (
@@ -228,6 +277,7 @@ class HotpVerifier:
                                 f"{self._journal_path}"
                             )
                         last_counter = bootstrap_last
+                        failures.clear()
                     elif schema == "hotp-v1":
                         counter = record.get("counter")
                         advance = record.get("advance")
@@ -246,6 +296,7 @@ class HotpVerifier:
                                 f"{self._journal_path}"
                             )
                         last_counter = counter
+                        failures.clear()
                     else:
                         raise HotpJournalCorrupt(
                             f"unknown schema at line {line_number}: {self._journal_path}"
@@ -264,7 +315,7 @@ class HotpVerifier:
             raise HotpJournalNotInitialized(
                 f"journal empty; run explicit bootstrap: {self._journal_path}"
             )
-        return last_counter
+        return last_counter, failures
 
     def last_used_counter(self) -> int:
         """Höchster akzeptierter Counter; unbekannter Zustand wird nie zu ``-1``."""
@@ -297,6 +348,49 @@ class HotpVerifier:
         except OSError as exc:
             raise HotpJournalUnavailable(f"journal append failed: {exc}") from exc
         return timestamp
+
+    def _append_failure_unlocked(self) -> None:
+        """Fehlversuch dauerhaft vermerken; Caller hält den strikten Lock.
+
+        Kein Counter im Datensatz: ein abgewiesener Versuch darf den
+        Geldpfad-Counter nicht bewegen.
+        """
+        self._journal_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "event": "verify_failed",
+            "failed_at_utc": _utc_now(),
+            "schema_version": "hotp-fail-v1",
+        }
+        try:
+            with self._journal_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError as exc:
+            raise HotpJournalUnavailable(f"journal append failed: {exc}") from exc
+
+    @staticmethod
+    def _lockout_active(failures: list[str], now: datetime) -> bool:
+        """Sperrt die Zahl der Fehlversuche seit dem letzten Erfolg?
+
+        Gezaehlt wird nur, was innerhalb des Fensters liegt — eine unlesbare
+        Zeitangabe zaehlt fail-closed mit, nicht dagegen.
+        """
+        if len(failures) < HOTP_MAX_FAILED_ATTEMPTS:
+            return False
+        cutoff = now - timedelta(seconds=HOTP_FAILURE_LOCKOUT_SECONDS)
+        recent = 0
+        for raw in failures:
+            try:
+                stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                recent += 1
+                continue
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            if stamp >= cutoff:
+                recent += 1
+        return recent >= HOTP_MAX_FAILED_ATTEMPTS
 
     def verify(self, code: str) -> HotpVerifyResult:
         """Verifiziert einen HOTP-Code gegen seed + counter-Journal.
@@ -334,7 +428,20 @@ class HotpVerifier:
             # The money-path invariant is one critical section: a contender may
             # not read the old counter until the winner's durable append exists.
             with append_lock(self._journal_path, strict=True):
-                last = self._read_last_counter_unlocked()
+                last, failures = self._read_journal_unlocked()
+                # Brute-Force-Bremse VOR jedem Vergleich — auch ein korrekter
+                # Code prallt ab, sonst waere die Sperre ein Orakel dafuer, ob
+                # ein Code stimmt.
+                if self._lockout_active(failures, datetime.now(UTC)):
+                    logger.warning(
+                        "hotp_locked_out failures=%d window_s=%d",
+                        len(failures),
+                        HOTP_FAILURE_LOCKOUT_SECONDS,
+                    )
+                    raise HotpLockedOut(
+                        f"{len(failures)} failed attempts; locked for "
+                        f"{HOTP_FAILURE_LOCKOUT_SECONDS}s after the last one"
+                    )
                 next_counter = last + 1
 
                 # Tolerance-Loop: probiere [next, next+1, ..., next+allow_advance-1].
@@ -357,17 +464,23 @@ class HotpVerifier:
                             counter_advance=advance,
                             verified_at_utc=ts,
                         )
+                # Kein Match im Toleranzfenster — der Fehlversuch wird
+                # dauerhaft vermerkt, NOCH IM LOCK. Vorher war er folgenlos:
+                # eine Warnzeile, und der naechste Versuch startete bei null
+                # (Audit-Befund 2026-08-09, P1).
+                self._append_failure_unlocked()
+                failed_window = (next_counter, next_counter + self._allow_advance - 1)
         except FileLockError as exc:
             raise HotpJournalUnavailable(f"journal lock unavailable: {exc}") from exc
 
-        # Kein Match in der Tolerance-Window.
         logger.warning(
-            "hotp_verify_failed next_expected=%d window=%d",
+            "hotp_verify_failed next_expected=%d window=%d attempts_since_success=%d",
             next_counter,
             self._allow_advance,
+            len(failures) + 1,
         )
         raise HotpVerificationFailed(
-            f"code rejected (window {next_counter}…{next_counter + self._allow_advance - 1})"
+            f"code rejected (window {failed_window[0]}…{failed_window[1]})"
         )
 
 
