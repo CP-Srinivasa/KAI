@@ -10,11 +10,12 @@
 # beschreibbar ist. Sie laeuft jetzt als `ubuntu` und hebt sich nur fuer
 # `systemctl start` — den einzigen mutierenden Aufruf des Skripts.
 #
-# WICHTIG: Der Sicherheitsgewinn tritt erst vollstaendig ein, wenn `ubuntu`
-# KEIN uneingeschraenktes NOPASSWD-ALL mehr besitzt. Solange eine breite Regel
-# daneben steht, ist die Eskalation weiterhin trivial und diese Datei nur
-# Vorbereitung. Der Rueckbau der breiten Regel ist eine Operator-Entscheidung
-# (er trifft auch Deploy-Skripte) und deshalb NICHT Teil dieses Commits.
+# ERLEDIGT 2026-08-18: die breite Regel `ubuntu ALL=(ALL) NOPASSWD:ALL` ist auf
+# Operator-Entscheidung entfernt. `ubuntu` darf weiterhin alles — aber mit
+# Passwort; passwortfrei bleibt nur `systemctl start|stop|restart|reload kai-*`
+# (siehe `kai-deploy` daneben, das auch die Deploy-Skripte abdeckt). Diese Datei
+# ist damit fachlich eine Teilmenge von `kai-deploy` und bleibt nur bestehen,
+# weil sie den Watchdog-Pfad eigenstaendig dokumentiert.
 
 Cmnd_Alias KAI_WATCHDOG_START = /usr/bin/systemctl start kai-*
 
