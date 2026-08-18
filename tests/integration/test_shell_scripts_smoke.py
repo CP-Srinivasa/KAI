@@ -111,20 +111,35 @@ def test_pi_install_systemd_help_works() -> None:
     assert "--uninstall" in out
 
 
-def test_pi_install_systemd_installs_health_units() -> None:
+# Installierbarkeit haengt seit 2026-08-18 an der EXISTENZ der Unit-Datei statt
+# an einem Namenseintrag im Skript: die Kopierliste wird aus deploy/systemd/
+# abgeleitet, nachdem die Handliste 54 von 113 Units fuehrte. Ein Test, der auf
+# den Skript-Text prueft, wuerde die Frage "wird sie installiert?" ab jetzt
+# falsch beantworten — beide Richtungen.
+_UNIT_DIR = REPO_ROOT / "deploy" / "systemd"
+
+
+def _is_installable(name: str) -> bool:
+    """Wird ``name`` vom Install-Skript ausgerollt?"""
     text = (SCRIPTS / "pi_install_systemd.sh").read_text(encoding="utf-8")
-    assert '"kai-pi-health.service"' in text
-    assert '"kai-pi-health.timer"' in text
-    assert '"kai-service-watchdog.service"' in text
-    assert '"kai-service-watchdog.timer"' in text
-    assert "kai-service-watchdog.timer" in text
+    if "mapfile -t UNITS < <(" in text:
+        return (_UNIT_DIR / name).is_file()
+    return f'"{name}"' in text
+
+
+def test_pi_install_systemd_installs_health_units() -> None:
+    for name in (
+        "kai-pi-health.service",
+        "kai-pi-health.timer",
+        "kai-service-watchdog.service",
+        "kai-service-watchdog.timer",
+    ):
+        assert _is_installable(name), f"{name} wuerde nicht installiert"
 
 
 def test_pi_install_systemd_installs_blocked_auto_annotate_units() -> None:
-    text = (SCRIPTS / "pi_install_systemd.sh").read_text(encoding="utf-8")
-    assert '"kai-auto-annotate-blocked.service"' in text
-    assert '"kai-auto-annotate-blocked.timer"' in text
-    assert "kai-auto-annotate-blocked.timer" in text
+    for name in ("kai-auto-annotate-blocked.service", "kai-auto-annotate-blocked.timer"):
+        assert _is_installable(name), f"{name} wuerde nicht installiert"
 
 
 def test_pi_install_systemd_uses_external_install_command() -> None:

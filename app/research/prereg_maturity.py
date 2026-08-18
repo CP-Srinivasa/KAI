@@ -73,6 +73,17 @@ STATE_EVAL_CHECK_DUE = "EVAL_CHECK_DUE"
 STATE_JUDGEABLE = "JUDGEABLE"
 STATE_RESOLVED = "RESOLVED"
 STATE_RESOLUTION_HOLD = "RESOLUTION_HOLD"
+# Ein versiegelter Claim, den die Wachliste NICHT kennt und den die Truth-Kette
+# NICHT terminal entschieden hat. Kein Reifegrad, sondern eine Luecke in der
+# Aufsicht selbst — deshalb ein eigener Zustand und nicht "NOT_DUE".
+STATE_UNWATCHED = "UNWATCHED"
+PREREG_LEDGER_RELPATH = Path("research") / "prereg_ledger.jsonl"
+PREREG_VERDICTS_RELPATH = Path("research") / "prereg_verdicts.jsonl"
+# Nur diese Resolution-Status beenden einen Claim. `conflict`,
+# `untrusted_attestation`, `unclassified` und `invalid_ledger` sind
+# ausdruecklich KEIN Abschluss: sie heissen "die Evidenz traegt nicht", und ein
+# Claim ohne tragende Evidenz bleibt unter Aufsicht (fail-closed).
+_TERMINAL_RESOLUTION_STATUS = frozenset({"resolved"})
 
 # Eine exakte Messung altert: die Kohorte wächst weiter (~9 Stories/Tag bei
 # b20ef1487ccba99d). Drei Tage decken diesen Drift ab und erzwingen danach eine
@@ -195,6 +206,29 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
     # (die versiegelte Regel anwenden), niemals JUDGEABLE aus diesem Zähler.
     # Fenster + Vermerk aus artifacts/research/analyst_probe_evaluation_rule_20260805.json
     # (Pi, sealed 2026-08-05); Audit-Befund P0-3: lief sonst in KEINER Überwachung.
+    # K1-Kanal-Audit (gate=null, free-text-era). Fenster-Anker ist die
+    # Versiegelung 2026-07-04T12:51:11Z + horizon 30d ⇒ 2026-08-03T12:51:11Z.
+    # Der versiegelte Text ankert an "publishing the anonymized K1 pilot
+    # report" — nicht maschinenlesbar; #714 weist auf der oeffentlichen /paper
+    # bereits genau dieses Datum aus, der Spec schreibt es also nicht neu,
+    # sondern zieht es unter Aufsicht. Bis 2026-08-18 stand dieser Claim in
+    # KEINER Wachliste: Fenster seit 15 Tagen zu, kein Verdikt, kein Waechter.
+    {
+        "name": "k1_channel_audit_resonance",
+        "prereg_id": "00c75a76a2b0e78b",
+        "kind": "deadline",
+        "since_utc": "2026-07-04T12:51:11.469459+00:00",
+        "window_end_utc": "2026-08-03T12:51:11.469459+00:00",
+        "n_target": 5,
+        "note": (
+            "Zaehlung ist NICHT maschinell: >=5 qualifizierte schriftliche Anfragen "
+            "(je ein konkret benannter zu auditierender Signalanbieter ODER ein klares "
+            "Zahlungsbereitschafts-Signal) im Fenster; Spam, Selbstbewerbung ohne "
+            "Audit-Wunsch und interne Anfragen zaehlen nicht. Nur der Operator kann "
+            "den Posteingang auszaehlen. <5 ⇒ KILL des Angebots (keine weiteren "
+            "unaufgeforderten Kanal-Audits), Truth-Infra-Fokus unveraendert."
+        ),
+    },
     {
         "name": "analyst_prediction_ledger_demand_v1",
         "prereg_id": "f0e1a3a8073fd4c0",
@@ -567,6 +601,129 @@ def load_attested_resolutions(
     return resolutions, None
 
 
+def _offchain_verdict_ids(artifacts_dir: Path) -> set[str]:
+    """``prereg_id``s mit einem Verdikt-Datensatz ausserhalb der Truth-Kette.
+
+    Rein diagnostisch (siehe ``find_unwatched_preregs``): die Seitenablage ist
+    nicht signaturverkettet und kann einen Claim nicht terminal schliessen.
+    """
+    path = artifacts_dir / PREREG_VERDICTS_RELPATH
+    if not path.exists():
+        return set()
+    ids: set[str] = set()
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("prereg_id"), str):
+            ids.add(record["prereg_id"])
+    return ids
+
+
+def find_unwatched_preregs(
+    artifacts_dir: Path,
+    *,
+    specs: Any = MATURITY_SPECS,
+    resolutions: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Versiegelte Claims, die weder beobachtet noch terminal entschieden sind.
+
+    ``MATURITY_SPECS`` ist handgepflegt. Was niemand eintrug, existierte fuer
+    den Waechter nicht — und ein Claim kann so unbemerkt verrotten: sein
+    Fenster laeuft ab, niemand wendet die versiegelte Regel an, niemand merkt
+    es. Live gemessen am 2026-08-18: 19 versiegelte Prae-Regs, 6 in der
+    Wachliste, 9 terminal in der Truth-Kette -> **8 Claims ohne jede Aufsicht**,
+    darunter ``00c75a76a2b0e78b`` mit einem seit dem 03.08. geschlossenen
+    Fenster.
+
+    Der Abgleich fuehrt keine neue Wahrheitsquelle ein: Grundgesamtheit ist das
+    versiegelte Ledger, Ausnahmen sind nur Beobachtung (Spec) oder Abschluss
+    (terminale Resolution). Read-only und fail-soft — ein fehlendes oder
+    kaputtes Ledger liefert eine leere Liste statt eines Absturzes; die
+    Existenz des Ledgers wacht der Health-Check separat (``prereg_ledger_presence``).
+    """
+    path = artifacts_dir / PREREG_LEDGER_RELPATH
+    if not path.exists():
+        return []
+    watched = {
+        str(spec.get("prereg_id"))
+        for spec in specs
+        if isinstance(spec.get("prereg_id"), str) and spec.get("prereg_id")
+    }
+    # Diagnose, KEINE Ausnahme: ein Verdikt in der Seitenablage beendet den
+    # Claim nicht — terminal ist nur die verifizierte Truth-Kette. Der Marker
+    # trennt aber die zwei Operator-Handlungen: "Verdikt attestieren" ist
+    # etwas anderes als "versiegelte Regel ueberhaupt erst anwenden".
+    offchain = _offchain_verdict_ids(artifacts_dir)
+    closed = {
+        pid
+        for pid, res in (resolutions or {}).items()
+        if str(res.get("status")) in _TERMINAL_RESOLUTION_STATUS
+    }
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            # Eine kaputte Zeile darf den Abgleich nicht beenden — sonst
+            # verdeckt ein Schreibfehler alle nachfolgenden Claims.
+            continue
+        if not isinstance(record, dict):
+            continue
+        prereg_id = record.get("prereg_id")
+        if not isinstance(prereg_id, str) or not prereg_id:
+            continue
+        if prereg_id in seen or prereg_id in watched or prereg_id in closed:
+            seen.add(prereg_id)
+            continue
+        seen.add(prereg_id)
+        rows.append(
+            {
+                "name": str(record.get("name") or "?"),
+                "kind": "unwatched",
+                "note": (
+                    "Versiegelt, aber in keiner Wachliste und ohne terminales "
+                    "Verdikt in der verifizierten Truth-Kette. Entweder einen "
+                    "Spec eintragen oder die versiegelte Regel anwenden und das "
+                    "Verdikt attestieren — nicht liegen lassen."
+                ),
+                "prereg_id": prereg_id,
+                "since_utc": str(record.get("created_at_utc") or ""),
+                "n_target": record.get("sample_size_target"),
+                "n_proxy": None,
+                "n_exact": None,
+                "state_source": "prereg_ledger",
+                "per_source": {
+                    "sealed_at_utc": str(record.get("created_at_utc") or ""),
+                    "horizon": str(record.get("horizon") or ""),
+                    "offchain_verdict": prereg_id in offchain,
+                },
+                "state": STATE_UNWATCHED,
+                "window_end_utc": None,
+                "timed_out": False,
+                "resolution": (resolutions or {}).get(prereg_id),
+                "due": True,
+            }
+        )
+    return rows
+
+
 def _seals_hedged_construction(success_criteria: str) -> bool:
     """Verlangt der versiegelte Freitext eine BTC-gehedgte Konstruktion?
 
@@ -789,6 +946,11 @@ async def compute_maturity(
                 "due": state in {STATE_EVAL_CHECK_DUE, STATE_JUDGEABLE},
             }
         )
+    # Abgleich gegen die Grundgesamtheit: die Wachliste oben ist handgepflegt,
+    # das versiegelte Ledger ist es nicht. Ein Claim, der in keiner Zeile
+    # vorkommt und kein terminales Verdikt traegt, faellt sonst durch jede
+    # Ueberwachung (Befund 2026-08-18: 8 von 19 lagen so).
+    out.extend(find_unwatched_preregs(artifacts_dir, specs=specs, resolutions=resolutions))
     return out
 
 
@@ -807,16 +969,33 @@ def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
     if not due_rows:
         return None
 
+    unwatched = sum(1 for r in due_rows if r.get("state") == STATE_UNWATCHED)
     lines: list[str] = [
         f"KAI Prae-Reg faellig: {len(due_rows)} offene Auswertung(en) "
         "— versiegelte Regel jetzt anwenden, kein Ergebnis behauptet.",
     ]
+    if unwatched:
+        lines.append(
+            f"davon {unwatched} {STATE_UNWATCHED}: versiegelt, aber unbeobachtet "
+            "und unentschieden — Aufsichtsluecke, kein Reifegrad."
+        )
     for row in due_rows:
         pid = str(row.get("prereg_id") or "ohne-prereg-id")
         name = str(row.get("name") or "?")
         detail = row.get("per_source") or {}
         window_end = detail.get("window_end_utc") or row.get("window_end_utc")
-        if row.get("kind") == "deadline":
+        if row.get("kind") == "unwatched":
+            sealed = detail.get("sealed_at_utc") or row.get("since_utc") or "?"
+            where = (
+                "Verdikt liegt off-chain vor, aber NICHT attestiert"
+                if detail.get("offchain_verdict")
+                else "kein Verdikt in der verifizierten Truth-Kette"
+            )
+            evidence = (
+                f"versiegelt {sealed}, horizon {detail.get('horizon') or '?'} "
+                f"— in KEINER Wachliste, {where}"
+            )
+        elif row.get("kind") == "deadline":
             evidence = f"Fenster endete {window_end}"
         else:
             n_exact = row.get("n_exact")
@@ -838,9 +1017,13 @@ __all__ = [
     "STATE_NOT_DUE",
     "STATE_RESOLUTION_HOLD",
     "STATE_RESOLVED",
+    "STATE_UNWATCHED",
     "TRUTH_LEDGER_RELPATH",
+    "PREREG_LEDGER_RELPATH",
+    "PREREG_VERDICTS_RELPATH",
     "build_maturity_alert",
     "compute_maturity",
+    "find_unwatched_preregs",
     "load_attested_resolutions",
     "load_exact_observations",
     "record_exact_observation",

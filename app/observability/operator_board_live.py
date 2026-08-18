@@ -56,8 +56,15 @@ STATE_EVAL_CHECK = "eval_check"
 STATE_EVIDENCE_HOLD = "evidence_hold"
 STATE_MATURING = "maturing"
 STATE_NO_COUNTER = "no_counter"
+# Versiegelt, aber ausserhalb JEDER Aufsicht: kein Spec und kein terminales
+# Verdikt in der verifizierten Truth-Kette (siehe
+# ``prereg_maturity.find_unwatched_preregs``). Das ist kein Reifegrad,
+# sondern eine Luecke in der Ueberwachung selbst — und deshalb dringlicher
+# als jeder reifende Claim: er laeuft unbeobachtet aus.
+STATE_UNWATCHED = "unwatched"
 
 _STATE_RANK = {
+    STATE_UNWATCHED: 0,
     STATE_EVIDENCE_HOLD: 0,
     STATE_JUDGEABLE: 1,
     STATE_EVAL_CHECK: 2,
@@ -84,6 +91,8 @@ def _board_state(mat: dict[str, Any]) -> str:
     SCHWÄCHERE Zustand angenommen — nie der stärkere.
     """
     raw = mat.get("state")
+    if raw == "UNWATCHED":
+        return STATE_UNWATCHED
     if raw == "RESOLUTION_HOLD":
         return STATE_EVIDENCE_HOLD
     if raw == "JUDGEABLE":
@@ -201,7 +210,15 @@ def build_live_board(
                 progress = round(min(100.0, 100.0 * n_proxy / n_target), 1)
             state = _board_state(mat)
 
-        if state == STATE_EVIDENCE_HOLD:
+        if state == STATE_UNWATCHED:
+            offchain = bool((mat or {}).get("per_source", {}).get("offchain_verdict"))
+            action = "UNBEOBACHTET — versiegelt, aber in keiner Wachliste. " + (
+                "Verdikt liegt off-chain vor: attestieren."
+                if offchain
+                else "Versiegelte Regel anwenden und Verdikt attestieren, "
+                "oder einen Reife-Spec eintragen."
+            )
+        elif state == STATE_EVIDENCE_HOLD:
             action = (
                 "HOLD — Resolution-Evidenz ist beschädigt, widersprüchlich oder "
                 "unklar; Truth-Kette prüfen, keine neue Auswertung."
@@ -234,15 +251,17 @@ def build_live_board(
     judgeable = sum(1 for r in rows if r["state"] == STATE_JUDGEABLE)
     eval_check = sum(1 for r in rows if r["state"] == STATE_EVAL_CHECK)
     evidence_hold = sum(1 for r in rows if r["state"] == STATE_EVIDENCE_HOLD)
+    unwatched = sum(1 for r in rows if r["state"] == STATE_UNWATCHED)
     return {
         "open_preregs": rows,
         "open_count": len(rows),
         "judgeable_count": judgeable,
         "eval_check_count": eval_check,
         "evidence_hold_count": evidence_hold,
+        "unwatched_count": unwatched,
         # Kompat für bestehende Konsumenten: alles, was Handlung braucht.
         # Achtung — das ist NICHT „urteilbar" (s. _board_state).
-        "due_count": judgeable + eval_check,
+        "due_count": judgeable + eval_check + unwatched,
         "has_content": bool(rows),
         # Sprachregel: die Sektion ist live-berechnet, die Reife ist ein Proxy.
         "note": (
@@ -290,6 +309,7 @@ __all__ = [
     "STATE_JUDGEABLE",
     "STATE_MATURING",
     "STATE_NO_COUNTER",
+    "STATE_UNWATCHED",
     "CURATED_STALE_DAYS",
     "TERMINAL_VERDICTS",
     "build_live_board",

@@ -37,68 +37,35 @@ source "${REPO_ROOT}/scripts/lib/paper_writer_freeze.sh"
 PAPER_WRITER_FREEZE_STATE=0  # 0/10/20, je Lauf via _paper_freeze_preflight gesetzt
 UNIT_DST="/etc/systemd/system"
 TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
+# Helferskript, auf das kai-standby-{data,system}.service per absolutem
+# Pfad zeigen. Ohne diesen Schritt installiert ein frischer Host die Units,
+# aber nicht ihr ExecStart-Ziel — die Sicherung waere von Anfang an tot.
+HELPER_SRC="${REPO_ROOT}/scripts/standby_to_usb.sh"
+HELPER_DST="/usr/local/bin/standby_to_usb.sh"
 TMPFILES_DST="/etc/tmpfiles.d/kai.conf"
 
-UNITS=(
-    "kai-server.service"
-    "kai-agent-worker.service"
-    "kai-tg-listener.service"
-    "cloudflared.service"
-    "kai-paper-trading.service"
-    "kai-paper-trading.timer"
-    "kai-entry-watch.service"
-    "kai-regime-classify.service"
-    "kai-regime-classify.timer"
-    "kai-premium-healthcheck.service"
-    "kai-premium-healthcheck.timer"
-    "kai-health-check.service"
-    "kai-health-check.timer"
-    "kai-parser-feedback.service"
-    "kai-parser-feedback.timer"
-    "kai-premium-latency-audit.service"
-    "kai-premium-latency-audit.timer"
-    "kai-daily-strategy.service"
-    "kai-daily-strategy.timer"
-    "kai-daily-strategy-reminder.service"
-    "kai-daily-strategy-reminder.timer"
-    "kai-pi-health.service"
-    "kai-pi-health.timer"
-    "kai-service-watchdog.service"
-    "kai-service-watchdog.timer"
-    "kai-hold-report.service"
-    "kai-hold-report.timer"
-    "kai-auto-annotate.service"
-    "kai-auto-annotate.timer"
-    "kai-auto-annotate-blocked.service"
-    "kai-auto-annotate-blocked.timer"
-    "kai-recalc-cycle.service"
-    "kai-recalc-cycle.timer"
-    "kai-real-analysis-paper-feed.service"
-    "kai-real-analysis-paper-feed.timer"
-    "kai-funding-refresh.service"
-    "kai-funding-refresh.timer"
-    "kai-shadow-real-feed.service"
-    "kai-shadow-real-feed.timer"
-    "kai-audit-rotate.service"
-    "kai-audit-rotate.timer"
-    "kai-operator-digest.service"
-    "kai-operator-digest.timer"
-    "kai-ln-scb-monitor.service"
-    "kai-ln-scb-monitor.timer"
-    "kai-ln-reconcile.service"
-    "kai-ln-reconcile.timer"
-    "kai-ln-reconcile-verdict.service"
-    "kai-ln-reconcile-verdict.timer"
-    "kai-forecaster-issue.service"
-    "kai-forecaster-issue.timer"
-    "kai-forecaster-resolve.service"
-    "kai-forecaster-resolve.timer"
-    # Template-Unit hinter jedem OnFailure=. MUSS installiert sein, sonst zeigt
-    # die Fehlerbehandlung ALLER anderen Units ins Leere. Templates werden nie
-    # enabled — sie werden je Fehlschlag instanziiert und gehoeren deshalb
-    # NICHT in ENABLE_ON_INSTALL.
-    "kai-unit-failure-notify@.service"
+# Kopierliste: ABGELEITET aus deploy/systemd/, nicht handgepflegt.
+#
+# Bis 2026-08-18 stand hier eine Namensliste. Sie fuehrte 54 von 113 Units —
+# 59 waeren auf einem frischen Host NIE installiert worden, darunter die
+# Fristen-Uhr (kai-prereg-maturity), die Truth-Verankerung (kai-truth-anchor,
+# kai-integrity-anchor) und die Sicherung der Forschungshistorie
+# (kai-backup-artifacts). Beim 17.08.-Deploy fielen 15 der 17 zu entmaskierenden
+# Units in genau diese Luecke und mussten von Hand nachgezogen werden.
+#
+# Kopieren ist folgenlos: eine Unit-Datei in /etc/systemd/system tut nichts,
+# solange sie nicht enabled ist. Folgenreich ist allein ENABLE_ON_INSTALL
+# weiter unten — DIE Liste bleibt handkuratiert (Lehre #626/#627: neue Timer
+# nie blind mit-enablen). Template-Units (kai-unit-failure-notify@.service)
+# werden dadurch automatisch mitgenommen: sie haengen hinter jedem OnFailure=
+# und werden nie enabled, sondern je Fehlschlag instanziiert.
+mapfile -t UNITS < <(
+    find "$UNIT_SRC" -maxdepth 1 -type f \( -name "*.service" -o -name "*.timer" \) -printf "%f\n" | sort
 )
+if (( ${#UNITS[@]} == 0 )); then
+    echo "ERROR: keine Unit-Dateien in $UNIT_SRC gefunden" >&2
+    exit 1
+fi
 
 # NOTE 2026-08-06: kai-forecaster-issue.timer + kai-forecaster-resolve.timer
 # sind ABSICHTLICH nicht in ENABLE_ON_INSTALL (Lehre #626/#627: neue Timer nie
@@ -409,6 +376,14 @@ install() {
         fi
         run command install -m 0644 "$src" "$dst"
     done
+
+    if [[ -f "$HELPER_SRC" ]]; then
+        echo ""
+        echo "Installing standby helper (ExecStart-Ziel der Cold-Standby-Units)…"
+        run command install -m 0755 "$HELPER_SRC" "$HELPER_DST"
+    else
+        echo "WARNING: $HELPER_SRC fehlt — kai-standby-* wuerden ins Leere zeigen." >&2
+    fi
 
     # 2026-05-07 Cutover-Lehre B-3: kai-server-Erststart auf Blank-Slate
     # crashte mit `Failed to set up standard output: No such file or directory`

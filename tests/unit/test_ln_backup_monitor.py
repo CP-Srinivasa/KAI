@@ -144,12 +144,13 @@ def test_systemd_timer_is_installable_and_runs_hourly() -> None:
     root = Path(__file__).resolve().parents[2]
     service = (root / "deploy/systemd/kai-ln-scb-monitor.service").read_text(encoding="utf-8")
     timer = (root / "deploy/systemd/kai-ln-scb-monitor.timer").read_text(encoding="utf-8")
-    installer = (root / "scripts/pi_install_systemd.sh").read_text(encoding="utf-8")
-
     assert "python -m app.lightning.backup_monitor" in service
     assert "OnUnitActiveSec=1h" in timer
-    assert '"kai-ln-scb-monitor.service"' in installer
-    assert '"kai-ln-scb-monitor.timer"' in installer
+    # Installierbarkeit haengt seit 2026-08-18 an der EXISTENZ der Unit-Datei,
+    # nicht mehr an einem Namenseintrag im Skript: die Kopierliste wird aus
+    # deploy/systemd/ abgeleitet (vorher fehlten 59 von 113 Units).
+    for name in ("kai-ln-scb-monitor.service", "kai-ln-scb-monitor.timer"):
+        assert (root / "deploy/systemd" / name).exists()
 
 
 def _enable_on_install_block(installer: str) -> str:
