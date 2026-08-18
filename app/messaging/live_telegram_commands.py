@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from app.execution.exchanges.base import OrderRequest, OrderSide, OrderType
 from app.execution.live_engine import LiveExecutionEngine, LiveOrderOutcome
 from app.security.hotp_auth import (
+    HOTP_FAILURE_LOCKOUT_SECONDS,
+    HotpLockedOut,
     HotpReplayDetected,
     HotpSeedInvalid,
     HotpSeedMissing,
@@ -81,6 +83,17 @@ def handle_live_unlock(text: str, engine: LiveExecutionEngine) -> str:
     except HotpSeedInvalid as exc:
         logger.error("hotp_seed_invalid telegram_unlock_fail %s", exc)
         return "❌ HOTP-Seed-File ist korrupt (kein base32). Re-Initialisierung nötig."
+    except HotpLockedOut as exc:
+        # Die Sperre WIRD genannt: sie verraet nicht, ob der Code stimmte (sie
+        # greift vor jedem Vergleich), aber ohne sie haelt der Operator ein
+        # korrekt abgewiesenes Geraet fuer kaputt und rotiert womoeglich den
+        # Seed, waehrend gerade jemand durchprobiert.
+        logger.warning("hotp_locked_out telegram_unlock_attempt detail=%s", exc)
+        return (
+            f"⛔ Zu viele Fehlversuche — gesperrt fuer "
+            f"{HOTP_FAILURE_LOCKOUT_SECONDS // 60} min. "
+            "Wenn du das nicht warst: jemand probiert Codes durch."
+        )
     except (HotpVerificationFailed, HotpReplayDetected) as exc:
         # Keine Detail-Info an User — Side-Channel-Schutz (Spec §2).
         logger.warning("hotp_verify_fail telegram_unlock_attempt detail=%s", exc)
