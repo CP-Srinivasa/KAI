@@ -21,6 +21,12 @@ GLOB_LINE = "    (root) NOPASSWD: /usr/bin/systemctl restart kai-*"
 HEADER = "User ubuntu may run the following commands on kai-pi5:\n    (ALL : ALL) ALL\n"
 
 
+@pytest.fixture(autouse=True)
+def _probe_enabled(monkeypatch):
+    """Die conftest-Fixture schaltet die Probe global ab — hier wieder an."""
+    monkeypatch.delenv("KAI_SUDO_POLICY_PROBE", raising=False)
+
+
 @pytest.fixture
 def sudo_output(monkeypatch):
     """Ersetzt den `sudo -n -l`-Aufruf durch eine feste Ausgabe."""
@@ -72,6 +78,14 @@ def test_ausserhalb_des_pi_wird_nicht_geprueft(sudo_output) -> None:
 def test_unlesbare_policy_erzeugt_keinen_befund_und_keinen_abbruch(sudo_output) -> None:
     """Lehre #718: die Probe ist ein Befund-Kanal, kein Abbruchgrund."""
     sudo_output("", returncode=1)
+    assert _check_sudo_policy(runs_on_pi=True) == []
+
+
+def test_probe_kann_abgeschaltet_werden(monkeypatch, sudo_output) -> None:
+    """Der Schalter, den tests/conftest.py setzt — sonst wuerde die Probe in
+    jedem fremden Test einen echten `sudo -n -l` ausloesen."""
+    sudo_output(HEADER + GLOB_LINE + "\n")
+    monkeypatch.setenv("KAI_SUDO_POLICY_PROBE", "off")
     assert _check_sudo_policy(runs_on_pi=True) == []
 
 

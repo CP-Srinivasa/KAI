@@ -28,6 +28,12 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _host = _socket.gethostname() or "test-host"
     monkeypatch.setenv("KAI_PI_HOSTNAME_MARKER", _host.lower())
+    # Folge davon: `runs_on_pi` ist in JEDEM Test wahr. Die sudo-Policy-Probe
+    # ruft aber einen externen Prozess (`sudo -n -l`), und auf einem CI-Runner
+    # mit passwortlosem sudo erzeugte sie prompt einen Befund, der fremde
+    # Assertions umwarf (lokal blieb es unbemerkt, weil Windows kein sudo hat).
+    # Tests, die die Probe selbst pruefen, entfernen die Variable.
+    monkeypatch.setenv("KAI_SUDO_POLICY_PROBE", "off")
 
 
 @pytest.fixture(autouse=True)

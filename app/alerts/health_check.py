@@ -488,6 +488,11 @@ def _check_sudo_policy(*, runs_on_pi: bool) -> list[HealthIssue]:
     """
     if not runs_on_pi:
         return []
+    # Ausschliesslich fuer Testumgebungen: die Probe ruft einen externen Prozess,
+    # und die autouse-Fixture in tests/conftest.py laesst `runs_on_pi` ueberall
+    # wahr werden. In Produktion ist die Variable nicht gesetzt -> Probe aktiv.
+    if os.environ.get("KAI_SUDO_POLICY_PROBE", "").strip().lower() == "off":
+        return []
     try:
         proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
             ["sudo", "-n", "-l"],

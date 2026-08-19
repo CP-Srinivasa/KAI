@@ -162,7 +162,7 @@ def test_pi_service_watchdog_is_external_and_restart_capable() -> None:
     # wortwoertliche Aufruf.
     assert 'systemctl_start "$unit"' in text
     assert "systemctl_start()" in text
-    assert "sudo -n systemctl start" in text
+    assert "sudo -n /usr/local/sbin/kai-service-control start" in text
     assert "KAI_SERVICE_WATCHDOG_THROTTLE_SECONDS" in text
     assert "ALERT_TELEGRAM_TOKEN" in text
 
