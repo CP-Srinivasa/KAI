@@ -148,9 +148,10 @@ ssh -o BatchMode=yes "$REMOTE_HOST" "
 " || { echo "ERROR: remote extract failed" >&2; exit 2; }
 
 echo "=== restart kai-server (load new dist via StaticFiles mount) ==="
-ssh -o BatchMode=yes "$REMOTE_HOST" "sudo systemctl restart kai-server" || {
+ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "sudo -n /usr/local/sbin/kai-service-control restart kai-server.service" || {
     echo "WARNING: kai-server restart failed — invoke manually:" >&2
-    echo "  ssh $REMOTE_HOST 'sudo systemctl restart kai-server'" >&2
+    echo "  ssh $REMOTE_HOST 'sudo -n /usr/local/sbin/kai-service-control restart kai-server.service'" >&2
     exit 2
 }
 

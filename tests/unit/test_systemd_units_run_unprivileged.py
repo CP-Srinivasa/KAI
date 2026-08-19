@@ -86,19 +86,10 @@ def test_watchdog_skript_hebt_sich_nur_punktuell() -> None:
     text = script.read_text(encoding="utf-8")
 
     assert "systemctl_start()" in text
-    assert "sudo -n systemctl start" in text
+    assert "sudo -n /usr/local/sbin/kai-service-control start" in text
     # Lesende Aufrufe duerfen NIE ueber sudo laufen.
     assert "sudo -n systemctl is-active" not in text
     assert "sudo -n systemctl list-unit-files" not in text
-
-
-def test_sudoers_vorlage_ist_eng_gefasst() -> None:
-    tpl = UNIT_DIR.parent / "sudoers.d" / "kai-service-watchdog"
-    text = tpl.read_text(encoding="utf-8")
-
-    assert "systemctl start kai-*" in text
-    # Keine Blankovollmacht in der Vorlage.
-    assert "NOPASSWD: ALL" not in text
 
 
 # Praefixe, unter denen nur root schreiben kann. Ein ExecStart darunter kann von
@@ -113,47 +104,125 @@ _ROOT_OWNED_PREFIXES = (
 )
 
 
+# Interpreter: hier ist das ERSTE Token harmlos (/usr/bin/bash), entscheidend ist
+# das zweite — das Skript, das er ausfuehrt.
+_INTERPRETERS = frozenset({"bash", "sh", "dash", "zsh", "python", "python3", "perl", "ruby", "env"})
+
+# Direktiven, die als root Code ausfuehren oder Code-Herkunft bestimmen.
+_EXEC_DIRECTIVES = (
+    "ExecStart=",
+    "ExecStartPre=",
+    "ExecStartPost=",
+    "ExecReload=",
+    "ExecStop=",
+    "ExecStopPost=",
+    "ExecCondition=",
+)
+
+
+def _executed_paths(unit: Path) -> list[tuple[str, str]]:
+    """(Direktive, ausgefuehrter Pfad) — inkl. des Skripts hinter einem Interpreter."""
+    out: list[tuple[str, str]] = []
+    for line in _directives(unit):
+        if not line.startswith(_EXEC_DIRECTIVES):
+            continue
+        key, _, value = line.partition("=")
+        tokens = value.lstrip("-@+!:").split()
+        if not tokens:
+            continue
+        out.append((key, tokens[0]))
+        # Wrapper: `/usr/bin/bash /home/ubuntu/x.sh` besteht den reinen
+        # Prefix-Test, fuehrt als root aber ein beschreibbares Skript aus.
+        if Path(tokens[0]).name in _INTERPRETERS:
+            for tok in tokens[1:]:
+                if tok.startswith("-"):
+                    continue
+                out.append((f"{key} (via {Path(tokens[0]).name})", tok))
+                break
+    return out
+
+
 @pytest.mark.parametrize("name", sorted(ROOT_ALLOWED))
 def test_root_ausnahme_fuehrt_nur_root_eigenen_code_aus(name: str) -> None:
-    """Eine root-Unit darf kein Skript starten, das ``ubuntu`` beschreiben kann.
+    """Eine root-Unit darf keinen Code starten, den ``ubuntu`` austauschen kann.
 
-    Hierauf steht die sudo-Allowlist (``deploy/sudoers.d/kai-deploy``): sie laesst
-    ``systemctl start|stop|restart kai-*`` passwortfrei zu. Das ist nur so lange
-    kein Eskalationspfad, wie keine kai-Unit als root Code ausfuehrt, den
-    ``ubuntu`` austauschen kann. Waere der ExecStart einer root-Ausnahme ein
-    Skript im Arbeitsbaum (``/home/ubuntu/...``), koennte jeder kompromittierte
-    KAI-Dienst es umschreiben und per erlaubtem ``systemctl start`` als root
-    ausfuehren — die Allowlist waere dann exakt so viel wert wie NOPASSWD:ALL.
+    Geprueft wird JEDE Exec*-Direktive (nicht nur ExecStart) und bei einem
+    Interpreter-Aufruf zusaetzlich das Skript dahinter — `/usr/bin/bash
+    /home/ubuntu/mutable.sh` wuerde den reinen Prefix-Test sonst bestehen,
+    obwohl root anschliessend ein beschreibbares Skript ausfuehrt.
+
+    Seit dem Broker (2026-08-19) ist das nicht mehr die einzige Verteidigung:
+    `kai-service-control` weist Units ohne ``User=ubuntu`` grundsaetzlich ab, sie
+    sind also gar nicht passwortfrei steuerbar. Dieser Test bleibt die zweite
+    Linie fuer alles, was Root-Units sonst noch anstossen kann (Timer, Boot).
     """
     unit = UNIT_DIR / name
-    execs = [line for line in _directives(unit) if line.startswith("ExecStart=")]
-    assert execs, f"{name} hat keinen ExecStart"
+    executed = _executed_paths(unit)
+    assert executed, f"{name} hat keine Exec*-Direktive"
 
-    for line in execs:
-        target = line.split("=", 1)[1].lstrip("-@+!").split()[0]
+    for directive, target in executed:
         assert target.startswith(_ROOT_OWNED_PREFIXES), (
-            f"{name}: ExecStart {target!r} liegt nicht unter einem root-eigenen Praefix. "
-            "Eine root-Unit mit von `ubuntu` beschreibbarem ExecStart macht die "
-            "sudo-Allowlist wertlos (deploy/sudoers.d/kai-deploy)."
+            f"{name}: {directive} fuehrt {target!r} aus — nicht unter einem "
+            "root-eigenen Praefix. Eine root-Unit mit von `ubuntu` beschreibbarem "
+            "Code macht jede NOPASSWD-Regel darauf wertlos."
         )
-        assert not target.startswith("/home/"), f"{name}: ExecStart unter /home/ ist beschreibbar"
+        assert not target.startswith("/home/"), f"{name}: {directive} unter /home/ ist beschreibbar"
 
 
-def test_deploy_sudoers_vorlage_ist_eng_gefasst() -> None:
-    """Die Vorlage, die NOPASSWD:ALL abgeloest hat (2026-08-18)."""
+@pytest.mark.parametrize("name", sorted(ROOT_ALLOWED))
+def test_root_ausnahme_zieht_keine_beschreibbare_umgebung(name: str) -> None:
+    """EnvironmentFile/WorkingDirectory einer root-Unit duerfen nicht ubuntu gehoeren."""
+    unit = UNIT_DIR / name
+    for line in _directives(unit):
+        for key in ("EnvironmentFile=", "WorkingDirectory="):
+            if not line.startswith(key):
+                continue
+            value = line.partition("=")[2].lstrip("-").strip()
+            assert not value.startswith("/home/"), (
+                f"{name}: {key}{value} liegt unter /home/ und ist damit fuer "
+                "`ubuntu` beschreibbar — eine root-Unit darf das nicht laden."
+            )
+
+
+def test_deploy_sudoers_vorlage_hat_kein_argument_glob() -> None:
+    """P0 2026-08-19: ein Argument-Glob in sudoers ist umgehbar.
+
+    sudoers matcht Argumente als EINEN zusammenhaengenden String, und `*` matcht
+    auch Leerzeichen — `systemctl restart kai-x.service ssh.service` wurde von der
+    Vorgaengerregel autorisiert (live verifiziert). Die Vorlage darf deshalb nur
+    noch den Broker-Pfad nennen; was zulaessig ist, entscheidet das Skript.
+    """
     tpl = UNIT_DIR.parent / "sudoers.d" / "kai-deploy"
-    # NUR die wirksamen Zeilen: der Erklaertext nennt NOPASSWD:ALL mehrfach, weil
-    # er begruendet, warum es weg ist (memory feedback_structure_tests_must_strip_comments).
     effective = "\n".join(
         line
         for line in tpl.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
 
-    assert "NOPASSWD: KAI_SERVICE_CTL" in effective
-    assert "NOPASSWD" in effective and "ALL" not in effective.replace("ALL=(root)", "")
-    assert "systemctl restart kai-*" in effective
-    # Nur systemctl auf kai-Units — kein Install-Skript, kein Paketmanager,
-    # nichts, was `ubuntu` selbst beschreiben kann.
+    assert "/usr/local/sbin/kai-service-control" in effective
+    assert "NOPASSWD: KAI_SERVICE_BROKER" in effective
+    # Kein systemctl und kein Glob in einer wirksamen Zeile.
+    assert "systemctl" not in effective, "sudoers darf systemctl nicht mehr direkt freigeben"
+    assert "*" not in effective, "Argument-Wildcards in sudoers sind umgehbar"
     for verboten in ("apt-get", "pi_install_systemd.sh", "bash", "visudo", "install"):
         assert verboten not in effective, f"{verboten} gehoert nicht in die Allowlist"
+
+
+def test_broker_ist_der_einzige_passwortfreie_pfad() -> None:
+    """Nur EINE Vorlage, und die zeigt auf den Broker."""
+    tpl_dir = UNIT_DIR.parent / "sudoers.d"
+    vorlagen = sorted(p.name for p in tpl_dir.iterdir() if p.is_file())
+    assert vorlagen == ["kai-deploy"], (
+        f"unerwartete sudoers-Vorlagen: {vorlagen}. Die alte Glob-Regel "
+        "kai-service-watchdog trug denselben Bypass und wurde entfernt."
+    )
+
+
+def test_watchdog_ruft_den_broker_nicht_systemctl() -> None:
+    script = UNIT_DIR.parents[0].parent / "scripts" / "pi_service_watchdog.sh"
+    text = script.read_text(encoding="utf-8")
+    wirksam = "\n".join(
+        ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
+    )
+    assert "sudo -n /usr/local/sbin/kai-service-control start" in wirksam
+    assert "sudo -n systemctl" not in wirksam
