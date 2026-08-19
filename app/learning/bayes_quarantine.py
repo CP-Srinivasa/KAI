@@ -129,63 +129,29 @@ def is_quarantined(close_row: dict[str, object]) -> bool:
 
 
 def corruption_reason(close_row: dict[str, object]) -> str | None:
-    """Unified corruption verdict for read-side edge/PnL aggregators.
+    """Grund, warum ein Close nicht in Kennzahlen einfliessen darf — sonst None.
 
-    Layers the three defences so EVERY edge path excludes the SAME set of corrupt
-    closes (2026-06-23 edge-epoch forensic — read aggregators that used only the
-    generic phantom guard leaked the ETH off-market signature into realized PnL):
+    Duenner Adapter auf ``app.execution.close_classification.classify_close``.
+    Die Schichtung liegt dort; hier steht nur, wie die bestehenden Lese-Pfade das
+    Urteil sehen:
 
-      1. the exact forensic ``quarantine_reason`` signatures (deterministic;
-         catches known incidents that sit *under* the generic cap, e.g. the ETH
-         off-market close at +55%);
-      2. remediation-stamped closes: a ``reason`` field of
-         ``"quarantine_off_venue_unpriceable"`` indicates a flat-close written by
-         the ``quarantine_offvenue_positions.py`` remediation script — these are
-         always corrupt (the position was never priceable on the canonical venue);
-      3. the generic ``is_phantom_close`` return-magnitude guard (catches *new*,
-         not-yet-signatured price-source disagreements, e.g. MATIC at +364%).
+      * ``QUARANTINE``            -> Grund (bekanntes Artefakt / Remediation)
+      * ``REQUIRES_VERIFICATION`` -> Grund ``extreme_move_requires_verification``
+      * ``VERIFIED_MARKET_PLAUSIBLE`` / ``CLEAN`` -> None
 
-    Layer 1 also covers the synthetic-mock class (``mock_synthetic_exit_price``,
-    DS-20260818-MOCK-EXIT) — closes priced off the mock adapter's deterministic
-    curve. That one is exact rather than magnitude-based on purpose: the same
-    ticks that produced a +72% ETH phantom also produced a +2.8% BTC one, which
-    no implausibility cap can separate from a real close.
-
-    Returns the reason string (signature reason, else ``"phantom_implied_return"``)
-    or ``None`` when the close is trustworthy. Conservative: a row with no usable
-    prices and no signature is never dropped. Does NOT change the Bayes path,
-    which intentionally uses only the exact signatures via ``is_quarantined``.
+    Zum Uebergang bei ``REQUIRES_VERIFICATION``: der Cap behauptet seit 2026-08-19
+    NICHT mehr, ein Treffer sei korrupt (er fing zuletzt null Artefakte und drei
+    echte Trades). Bis der automatische Close-Verifier steht, halten die
+    Aggregatoren solche Closes aber weiterhin aus den Kennzahlen heraus — sie sind
+    ungeprueft, und ungeprueft in eine Buch-Zahl zu geben waere die schlechtere
+    Richtung. Neu ist das eigene Label: die Pruef-Schuld ist damit messbar, statt
+    als "Artefakt" mitgezaehlt zu werden.
     """
-    sig = quarantine_reason(close_row)
-    if sig is not None:
-        return sig
-    # Layer 2: remediation-stamped off-venue flat-closes (2026-06-29). The
-    # position_closed ``reason`` field signals these explicitly so the edge calc
-    # excludes them without relying on a price-magnitude heuristic (entry==exit
-    # → no phantom return → the generic guard would miss them). Checked before
-    # the phantom guard so the definitive label "quarantine_off_venue_unpriceable"
-    # is returned, not the fallback "phantom_implied_return".
-    if close_row.get("reason") == "quarantine_off_venue_unpriceable":
-        return "quarantine_off_venue_unpriceable"
-    # Belegt echte Closes, die der generische Cap sonst einfangen wuerde. Steht
-    # NACH den exakten Signaturen: ein Freispruch darf nie einen benannten Vorfall
-    # ueberstimmen, nur die Groessenordnungs-Heuristik. Identifiziert wird ueber die
-    # Ereignis-ID (fill_id) mit Symbol/Order/Zeit/Preis als Integritaetscheck —
-    # sonst koennte ein kuenftiger Trade mit aehnlichem Exit-Preis den historischen
-    # Freispruch erben.
-    from app.learning.verified_real_closes import verified_real_close
+    from app.execution.close_classification import classify_close
 
-    if verified_real_close(close_row) is not None:
-        return None
-    # Lazy import (see module-top note) — breaks the bayes_quarantine ↔ app.execution cycle.
-    from app.execution.phantom_filter import is_phantom_close
-
-    if is_phantom_close(
-        close_row.get("entry_price"),
-        close_row.get("exit_price"),
-        close_row.get("position_side"),
-    ):
-        return "phantom_implied_return"
+    result = classify_close(close_row)
+    if result.verdict.value in ("quarantine", "requires_verification"):
+        return result.reason
     return None
 
 

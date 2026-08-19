@@ -33,6 +33,14 @@ import os
 #     ---------------------- Luecke ----------------------
 #     naechster Wert:                       21,18 %
 #
+# ROLLENWECHSEL 2026-08-19: diese Schwelle klassifiziert NICHTS mehr. Sie loest
+# eine Pruefung aus. Das Urteil faellt app/execution/close_classification.py; ein
+# Treffer heisst dort ``REQUIRES_VERIFICATION`` — offene Pruef-Schuld, weder
+# Freispruch noch Schuldspruch. Grund: eine Groessenordnung ist kein
+# Korruptionsmerkmal, und live fing der Cap allein null Artefakte und drei echte
+# Trades (Register §5c). Er bleibt, weil er die einzige Verteidigung gegen NOCH
+# UNBEKANNTE Klassen ist.
+#
 # Oberhalb von 20 % liegen 20 von 617 Closes (3,2 %). Bei der Kalibrierung galten
 # alle 20 als Artefakt -- das war fuer drei davon FALSCH:
 #

@@ -235,7 +235,10 @@ def test_verified_real_closes_are_acquitted(record) -> None:
 
 
 def test_ohne_ereignis_id_kein_freispruch() -> None:
-    """Dieselben Preise, aber ohne Identitaet — der Cap greift wieder."""
+    """Dieselben Preise, aber ohne Identitaet — der Cap loest wieder aus.
+
+    Er urteilt dabei nicht mehr ("phantom"), sondern verlangt eine Pruefung.
+    """
     from app.learning.bayes_quarantine import corruption_reason
 
     record = VERIFIED_REAL_CLOSES[0]
@@ -246,7 +249,7 @@ def test_ohne_ereignis_id_kein_freispruch() -> None:
         "exit_price": record.exit_price,
         "position_side": "long",
     }
-    assert corruption_reason(row) == "phantom_implied_return"
+    assert corruption_reason(row) == "extreme_move_requires_verification"
 
 
 def test_acquittal_never_overrides_an_exact_signature() -> None:
