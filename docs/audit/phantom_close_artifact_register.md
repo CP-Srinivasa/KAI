@@ -227,6 +227,47 @@ der neuen Lücke) wäre eine bewusste Kalibrierungs-Entscheidung.
 **Regel daraus:** Wer einen Close als Artefakt einträgt, hält den Roh-Preis gegen
 die Kerze der Schließungsstunde. „Liegt über der Schwelle" ist kein Beleg.
 
+## 5d. Der Cap ist ein Sensor, kein Richter (2026-08-19)
+
+Aus §5c folgt eine Konsequenz für die Architektur: `|implied return| > 20 %` ist
+**kein Klassifikator für Korruption**. Der Cap fing über den gesamten Stream
+hinweg null Artefakte und drei echte Trades; jede bekannte Artefakt-Klasse hat
+inzwischen eine exakte Signatur.
+
+Die Kette lautet deshalb seit heute:
+
+```
+exakte Signatur?  ── ja ──►  QUARANTINE
+        │ nein
+        ▼
+belegt echt?      ── ja ──►  VERIFIED_MARKET_PLAUSIBLE
+        │ nein
+        ▼
+|return| > Cap?   ── nein ─►  CLEAN
+        │ ja
+        ▼
+          REQUIRES_VERIFICATION      (offene Prüf-Schuld, kein Urteil)
+```
+
+`REQUIRES_VERIFICATION` trägt das Label `extreme_move_requires_verification`.
+**Übergangsregel:** bis der automatische Close-Verifier steht, halten die
+Lese-Aggregatoren solche Closes weiterhin aus den Kennzahlen heraus — ungeprüft
+in eine Buch-Zahl zu geben wäre die schlechtere Richtung. Neu ist das eigene
+Label: die Prüf-Schuld ist damit **messbar**, statt als „Artefakt" mitgezählt zu
+werden.
+
+Was der Verifier können muss, damit dieser Zustand aufgelöst werden kann:
+Rohpreis im engen Venue-Zeitfenster (1m/5m statt ganzer Stunde), echte
+`price_source` (kein Mock-Fallback), vollständige Position-/Close-Kette,
+plausible Slippage-Rekonstruktion. Fehlt die Evidenz, lautet das Urteil
+`DATA_UNAVAILABLE` → weiterhin ungeprüft, **nicht** automatisch echt.
+
+Die Schwelle selbst bleibt bei 20 % und wird **nicht** aus derselben kleinen
+Stichprobe nachjustiert, aus der die Fehleinordnung stammte. Ob 20 %, 45 %,
+volatilitätsnormalisiert (`move/ATR`) oder gar keine feste Grenze richtig ist,
+entscheidet sich an prospektiv erfassten Triggern — präregistriert, nicht
+rückwirkend optimiert.
+
 ## 6. Verweise
 
 - `app/execution/phantom_filter.py` — kanonische Schwelle + Kalibrierungs-Kommentar
@@ -240,3 +281,4 @@ die Kerze der Schließungsstunde. „Liegt über der Schwelle" ist kein Beleg.
 - `app/execution/epoch_correction.py` — Korrektur-Vermerk der Epoche
 - `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz
 - `app/learning/verified_real_closes.py` — belegte Echt-Trades über dem Cap (§5c), Identität via `fill_id`
+- `app/execution/close_classification.py` — das vierstufige Urteil (§5d)

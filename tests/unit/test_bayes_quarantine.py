@@ -121,8 +121,19 @@ def test_corrupt_close_catches_generic_phantom_without_signature() -> None:
         "trade_pnl_usd": 9.0,
     }
     assert quarantine_reason(row) is None  # no exact signature
+    # Seit 2026-08-19 behauptet der Cap NICHT mehr "korrupt": er loest eine
+    # Pruefung aus. Die Aggregatoren halten den Close bis zur Verifikation
+    # weiterhin heraus, aber unter eigenem Label — die Pruef-Schuld ist damit
+    # messbar, statt als Artefakt mitgezaehlt zu werden.
     assert is_corrupt_close(row) is True
-    assert corruption_reason(row) == "phantom_implied_return"
+    assert corruption_reason(row) == "extreme_move_requires_verification"
+
+    from app.execution.close_classification import CloseVerdict, classify_close
+
+    verdict = classify_close(row)
+    assert verdict.verdict is CloseVerdict.REQUIRES_VERIFICATION
+    assert verdict.needs_verification is True
+    assert verdict.is_quarantined is False
 
 
 def test_corrupt_close_catches_matic_runaway() -> None:
