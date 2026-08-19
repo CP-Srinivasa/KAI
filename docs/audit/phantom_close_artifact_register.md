@@ -187,18 +187,34 @@ Slippage aus dem gebuchten `exit_price` herausrechnen und den Roh-Preis gegen di
 | VELVET 2026-06-29 04:49Z, −21,18 %, 17 h Haltedauer | 1,4021 | low 1,35538 / high 1,95335 | **ja** |
 
 Alle drei sind Micro-Caps mit Übernacht-Haltedauer; eine zweistellige Bewegung ist
-dort normal. Der Kontrast zu §5b ist scharf: ein Mock-Preis trägt **zwei**
-Dezimalstellen und passt nicht ins Symbol-Band des Fensters, diese drei tragen
-**vier** und liegen exakt in der Kerze, in der geschlossen wurde.
+dort normal.
+
+**Was diese Prüfung belegt — und was nicht.** Sie zeigt *Marktplausibilität*: der
+Preis existierte zur Schließungsstunde real am Markt. Sie belegt **nicht**, dass
+genau dieser Close aus der legitimen KAI-Ausführungskette stammt. Ebenso ist die
+Dezimalstellen-Beobachtung (Mock: zwei, diese drei: vier) ein forensisches
+*Indiz*, kein Beweis — ein künftiger synthetischer Fehler kann ebenso gut vier
+oder sechs Nachkommastellen erzeugen. Für einen vollwertigen Freispruch fehlen
+Venue, ursprüngliche `price_source`, Provenance der Kette und ein enges
+1m/5m-Fenster statt der ganzen Stunde 09:00–09:59. Der automatische
+Close-Verifier soll genau das leisten; bis dahin sind diese drei Einträge
+handgeprüfte Ausnahmen, keine Blaupause.
 
 **Warum das zählt.** Nach §5b werden alle bekannten Artefakt-Klassen exakt per
 Signatur gefangen. Damit fängt der generische 20-%-Cap **allein nur noch diese
 drei** — netto 0 Artefakte, 3 Falsch-Positive, −39,52 USD Verzerrung. Ein Wächter,
 der ausschließlich Unschuldige greift, ist kein Wächter.
 
-Sie stehen jetzt in `bayes_quarantine.VERIFIED_REAL_CLOSES` und werden
+Sie stehen jetzt in `app/learning/verified_real_closes.py` und werden
 freigesprochen. Der Freispruch überstimmt **nur** den generischen Cap, nie eine
 exakte Signatur (Reihenfolge in `corruption_reason`, per Test festgehalten).
+
+Identifiziert wird über die **Ereignis-ID** (`fill_id`), mit `order_id`, Symbol,
+Zeitstempel und Exit-Preis als Integritätsprüfung — weicht eines ab, gibt es
+keinen Freispruch. Sonst könnte dasselbe Symbol Monate später bei ähnlichem
+Exit-Preis den historischen Freispruch *erben*. Jeder Eintrag trägt zusätzlich
+einen SHA-256 über seinen Evidenztext, damit der Beleg nicht stillschweigend
+umgeschrieben werden kann.
 
 **Folge für die Schwelle — Operator-Entscheidung, nicht miterledigt:** die
 gemessene Lücke verschiebt sich. Größter *belegt* legitimer Close ist jetzt
@@ -223,4 +239,4 @@ die Kerze der Schließungsstunde. „Liegt über der Schwelle" ist kein Beleg.
 - `app/market_data/service.py` — `synthetic_not_tradeable` (Quelle geschlossen)
 - `app/execution/epoch_correction.py` — Korrektur-Vermerk der Epoche
 - `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz
-- `bayes_quarantine.VERIFIED_REAL_CLOSES` — belegte Echt-Trades über dem Cap (§5c)
+- `app/learning/verified_real_closes.py` — belegte Echt-Trades über dem Cap (§5c), Identität via `fill_id`

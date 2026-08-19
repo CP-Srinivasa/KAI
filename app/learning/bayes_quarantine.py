@@ -82,69 +82,6 @@ QUARANTINE_SIGNATURES: tuple[_QuarantineSignature, ...] = (
 )
 
 
-@dataclass(frozen=True)
-class _VerifiedRealClose:
-    """A close the generic cap flags, but which was PROVEN to be a real trade."""
-
-    symbol: str
-    exit_price: float
-    evidence: str
-
-
-# Closes, die der generische Return-Cap einfaengt, obwohl sie real sind
-# (2026-08-18 forensisch geprueft). Micro-Caps bewegen sich ueber Nacht zweistellig
-# — eine Groessenordnungs-Schwelle kann das nicht von einem Feed-Artefakt trennen,
-# ein Blick in die echten Kerzen schon.
-#
-# Verfahren fuer jeden Eintrag (NICHT abkuerzen): Slippage aus dem gebuchten
-# exit_price herausrechnen, den Roh-Preis gegen die 1h-Kerze der Schliessungs-
-# stunde auf der Venue halten, und pruefen, dass der Preis in [low, high] dieser
-# Kerze liegt. Erst dann ist der Close belegt echt und darf hier stehen.
-#
-# Diese Liste ueberstimmt AUSSCHLIESSLICH den generischen Cap, niemals eine exakte
-# Signatur — die Reihenfolge in corruption_reason() garantiert das.
-VERIFIED_REAL_CLOSES: tuple[_VerifiedRealClose, ...] = (
-    _VerifiedRealClose(
-        symbol="CYS/USDT",
-        exit_price=1.3897048,
-        evidence=(
-            "2026-08-11 09:28Z, +38,82 % nach 30 h Haltedauer. Roh 1,3904 "
-            "(= exit/0,9995); Bybit-1h-Kerze 09:00Z low 1,3528 high 1,4077."
-        ),
-    ),
-    _VerifiedRealClose(
-        symbol="SLX/USDT",
-        exit_price=0.49385295,
-        evidence=(
-            "2026-06-27 15:16Z, +28,19 % nach 27 h Haltedauer. Roh 0,4941; "
-            "Bybit-1h-Kerze 15:00Z low 0,477 high 0,497."
-        ),
-    ),
-    _VerifiedRealClose(
-        symbol="VELVET/USDT",
-        exit_price=1.40139895,
-        evidence=(
-            "2026-06-29 04:49Z, -21,18 % nach 17 h Haltedauer. Roh 1,4021; "
-            "Bybit-1h-Kerze 04:00Z low 1,35538 high 1,95335."
-        ),
-    ),
-)
-
-
-def verified_real_close(close_row: dict[str, object]) -> _VerifiedRealClose | None:
-    """The verification record when this close was proven real, else None."""
-    symbol = str(close_row.get("symbol", "")).strip()
-    if not symbol:
-        return None
-    exit_price = _isfinite_float(close_row.get("exit_price"))
-    if exit_price is None:
-        return None
-    for rec in VERIFIED_REAL_CLOSES:
-        if rec.symbol == symbol and abs(exit_price - rec.exit_price) <= _EXIT_PRICE_TOL:
-            return rec
-    return None
-
-
 def _isfinite_float(x: object) -> float | None:
     try:
         f = float(x)  # type: ignore[arg-type]
@@ -232,7 +169,12 @@ def corruption_reason(close_row: dict[str, object]) -> str | None:
         return "quarantine_off_venue_unpriceable"
     # Belegt echte Closes, die der generische Cap sonst einfangen wuerde. Steht
     # NACH den exakten Signaturen: ein Freispruch darf nie einen benannten Vorfall
-    # ueberstimmen, nur die Groessenordnungs-Heuristik.
+    # ueberstimmen, nur die Groessenordnungs-Heuristik. Identifiziert wird ueber die
+    # Ereignis-ID (fill_id) mit Symbol/Order/Zeit/Preis als Integritaetscheck —
+    # sonst koennte ein kuenftiger Trade mit aehnlichem Exit-Preis den historischen
+    # Freispruch erben.
+    from app.learning.verified_real_closes import verified_real_close
+
     if verified_real_close(close_row) is not None:
         return None
     # Lazy import (see module-top note) — breaks the bayes_quarantine ↔ app.execution cycle.
@@ -254,10 +196,8 @@ def is_corrupt_close(close_row: dict[str, object]) -> bool:
 
 __all__ = [
     "QUARANTINE_SIGNATURES",
-    "VERIFIED_REAL_CLOSES",
     "corruption_reason",
     "is_corrupt_close",
     "is_quarantined",
     "quarantine_reason",
-    "verified_real_close",
 ]

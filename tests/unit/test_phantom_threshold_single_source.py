@@ -40,6 +40,7 @@ import pytest
 
 from app.execution.paper_engine import _max_close_return_pct
 from app.execution.phantom_filter import is_phantom_close, phantom_return_threshold
+from app.learning.verified_real_closes import VERIFIED_REAL_CLOSES
 
 # Realvorfaelle aus artifacts/paper_execution_audit.jsonl (Pi, 2026-08-18).
 # (Name, entry, exit, side, gemessener implied return)
@@ -64,11 +65,14 @@ KNOWN_ARTIFACTS: tuple[tuple[str, float, float, str], ...] = (
 # mit 17-30 h Haltedauer). Sie stehen in bayes_quarantine.VERIFIED_REAL_CLOSES und
 # werden dort freigesprochen. Der Cap sieht sie weiterhin -- das ist Absicht:
 # er bleibt scharf, der Freispruch ist die belegte Ausnahme.
-VERIFIED_REAL_BUT_OVER_CAP: tuple[tuple[str, float, float, str], ...] = (
-    ("CYS 2026-08-11 +38,82 %", 1.0011002999999998, 1.3897048, "long"),
-    ("SLX 2026-06-27 +28,19 %", 0.38524252499999995, 0.49385295, "long"),
-    ("VELVET 2026-06-29 -21,18 %", 1.7780761336479318, 1.40139895, "long"),
-)
+# Die Entry-Preise der registrierten Ausnahmen (aus dem Audit-Stream). Alles
+# uebrige — Identitaet, Symbol, Zeit, Exit — kommt aus VERIFIED_REAL_CLOSES, damit
+# der Test nicht neben der Registrierung driftet.
+_ENTRY_BY_FILL_ID: dict[str, float] = {
+    "fill_fbd5580fab5c": 1.0011002999999998,  # CYS 2026-08-11 +38,82 %
+    "fill_f83be51981e1": 0.38524252499999995,  # SLX 2026-06-27 +28,19 %
+    "fill_446f84adb9e4": 1.7780761336479318,  # VELVET 2026-06-29 -21,18 %
+}
 
 # Gemessene Gegenseite: die groessten Closes, die KEIN Artefakt sind. Sie
 # beweisen, dass die Schaerfung nichts Legitimes einfaengt.
@@ -196,32 +200,53 @@ def test_the_two_eth_artifacts_leave_realized_pnl(tmp_path: Path) -> None:
     assert eth["quarantined_pnl_usd"] == pytest.approx(1491.190919803811 + 764.39)
 
 
-@pytest.mark.parametrize(
-    ("name", "entry", "exit_", "side"),
-    VERIFIED_REAL_BUT_OVER_CAP,
-    ids=lambda v: v if isinstance(v, str) else "",
-)
-def test_verified_real_closes_are_acquitted(
-    name: str, entry: float, exit_: float, side: str
-) -> None:
+@pytest.mark.parametrize("record", VERIFIED_REAL_CLOSES, ids=lambda r: r.symbol)
+def test_verified_real_closes_are_acquitted(record) -> None:
     """Der Cap sieht sie — das Gesamturteil spricht sie trotzdem frei.
 
     Ohne diesen Freispruch quarantaeniert der Lesepfad drei belegte echte Trades
     (netto +39,52 USD) und verzerrt damit genau die Buch-Wahrheit, die er
     schuetzen soll. Stand 2026-08-18 sind das die EINZIGEN Closes, die der
     generische Cap noch allein faengt.
+
+    Der Freispruch haengt seit 2026-08-19 an der Ereignis-ID: eine Zeile OHNE
+    ``fill_id`` wird nicht mehr erkannt, damit kein kuenftiger Trade mit
+    aehnlichem Exit-Preis den historischen Freispruch erbt.
     """
     from app.learning.bayes_quarantine import corruption_reason
 
+    entry = _ENTRY_BY_FILL_ID[record.fill_id]
     row = {
         "event_type": "position_closed",
-        "symbol": name.split()[0] + "/USDT",
+        "symbol": record.symbol,
+        "timestamp_utc": record.timestamp_utc,
+        "fill_id": record.fill_id,
+        "order_id": record.order_id,
         "entry_price": entry,
-        "exit_price": exit_,
-        "position_side": side,
+        "exit_price": record.exit_price,
+        "position_side": "long",
     }
-    assert is_phantom_close(entry, exit_, side), f"{name}: Cap sollte ihn sehen"
-    assert corruption_reason(row) is None, f"{name}: belegt echt, darf nicht quarantaeniert werden"
+    assert is_phantom_close(entry, record.exit_price, "long"), (
+        f"{record.symbol}: Cap sollte ihn sehen"
+    )
+    assert corruption_reason(row) is None, (
+        f"{record.symbol}: belegt echt, darf nicht quarantaeniert werden"
+    )
+
+
+def test_ohne_ereignis_id_kein_freispruch() -> None:
+    """Dieselben Preise, aber ohne Identitaet — der Cap greift wieder."""
+    from app.learning.bayes_quarantine import corruption_reason
+
+    record = VERIFIED_REAL_CLOSES[0]
+    row = {
+        "event_type": "position_closed",
+        "symbol": record.symbol,
+        "entry_price": _ENTRY_BY_FILL_ID[record.fill_id],
+        "exit_price": record.exit_price,
+        "position_side": "long",
+    }
+    assert corruption_reason(row) == "phantom_implied_return"
 
 
 def test_acquittal_never_overrides_an_exact_signature() -> None:
