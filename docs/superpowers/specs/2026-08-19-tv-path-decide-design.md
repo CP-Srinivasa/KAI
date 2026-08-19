@@ -1,7 +1,7 @@
 # TV-Pfad: reparieren, messbar machen, entscheiden
 
-Status: **Entwurf zur Freigabe (Rev. 3)** · Datum: 2026-08-19 ·
-Operator-Review 1–3 eingearbeitet · alle Code-Aussagen live gegengeprueft
+Status: **Entwurf zur Freigabe (Rev. 4)** · Datum: 2026-08-19 ·
+Operator-Review 1–4 eingearbeitet · alle Code-Aussagen live gegengeprueft
 
 ## Warum
 
@@ -219,9 +219,16 @@ statt eine zweite Z-Score-Konvention zu erfinden.
 
 Die Spike-Schwelle **2,0** ist neu festgelegt, weil die manuelle
 TradingView-Regel keine explizite Volumenschwelle mitliefert (die empfangenen
-Signale tragen nur `ticker` und `action`). Existiert operatorseitig doch eine
-ursprüngliche Schwelle, gilt **diese** — sie zu übernehmen ist besser, als eine
-zu erfinden.
+Signale tragen nur `ticker` und `action`).
+
+Existiert operatorseitig doch eine ursprüngliche Schwelle, darf sie `2.0` **nur
+dann** ersetzen, wenn ihre Existenz **und** ihr Wert durch **vor dieser
+Spezifikation entstandene, zeitgestempelte Evidenz** nachgewiesen werden. Ohne
+diesen Nachweis bleibt `2.0` bindend.
+
+Der Grund ist die sonst offene Hintertür: `2.0` versiegeln → Ergebnis gefällt
+nicht → „wir haben doch noch die alte Schwelle gefunden" → Definition geändert.
+Das wäre Nachoptimierung mit anderem Etikett.
 
 `log1p`, weil Volumen stark rechtsschief ist und einzelne Spikes Mittelwert und
 Standardabweichung sonst massiv verzerren. **Keine** nachträgliche Auswahl
@@ -257,8 +264,32 @@ Unvollständiges Intrabar-Volumen erzeugt sonst ein kaum reproduzierbares Featur
 
 ### B3 Fehlende Werte
 
-- Volumen fehlt → `NaN` / *unavailable*, **nicht** `0`
-- `std == 0` → *unavailable*, **nicht** künstlich `z=0`
+Der Feature-Vertrag lautet `float | None`; jedes Feld ist während Warm-up oder
+Nichtverfügbarkeit `None`, und der Runner sagt es ausdrücklich: *„None features
+(warm-up) map to 0 (no trade)"*. `volume_z_20` folgt dem **wörtlich**:
+
+| Fall | Wert |
+|---|---|
+| `volume` fehlt, ist nicht endlich oder ungültig | `None` |
+| weniger als 20 gültige Baseline-Werte | `None` |
+| `sigma_t <= 0` | `None` |
+| `volume_z_20 is None` | Hypothese liefert `0` / kein Trade |
+
+**`volume_z_20` darf niemals `NaN` oder ±`Infinity` enthalten.** Das ist kein
+Stil, sondern Korrektheit — am Code nachgewiesen: alle bestehenden Decider
+schützen sich mit `is not None`
+
+```python
+return 1 if (r.rsi_14 is not None and r.rsi_14 < 30.0) else 0
+```
+
+und `NaN is not None` ist **`True`**. Ein `NaN` passiert diesen Guard also
+ungehindert; alle folgenden Vergleiche liefern `False`, die Regel gibt scheinbar
+korrekt `0` zurück — zufällig richtig, nicht absichtlich. Schlimmer: `NaN`
+propagiert lautlos durch jede Aggregation (`fmean([1, 2, NaN]) → nan`). Ein
+explizites `None` ist in einer Truth-Infrastruktur immer besser als ein
+numerischer Sonderwert, der an jeder Stelle einzeln abgefangen werden müsste.
+
 - Venue und Timeframe müssen eindeutig sein
 
 ### B4 Tests
