@@ -1,7 +1,7 @@
 # TV-Pfad: reparieren, messbar machen, entscheiden
 
-Status: **Entwurf zur Freigabe (Rev. 2)** · Datum: 2026-08-19 ·
-Operator-Review 1 + 2 eingearbeitet · alle Code-Aussagen live gegengeprueft
+Status: **Entwurf zur Freigabe (Rev. 3)** · Datum: 2026-08-19 ·
+Operator-Review 1–3 eingearbeitet · alle Code-Aussagen live gegengeprueft
 
 ## Warum
 
@@ -333,45 +333,135 @@ Signal ist sie **nicht** übernehmbar: RSI und Volumen der Kerze `t` stehen erst
 **nach** deren Schluss fest — man kann nicht gleichzeitig behaupten, exakt zu
 `close(t)` eingestiegen zu sein.
 
-Verbindlich für dieses Experiment:
+Verbindlich für dieses Experiment — **Indexsemantik ausgeschrieben**, weil zwei
+gleich plausible Implementierungen sonst um eine volle Kerze auseinanderliegen:
 
 ```
-SIGNAL_OBSERVED_AT = close(t)
-ENTRY              = open(t+1)
-EXIT               = close(t + horizon)
+SIGNAL_BAR_INDEX = t                        # Signal steht mit close(t) fest
+ENTRY_BAR_INDEX  = t + 1                    # Einstieg zum OPEN dieser Kerze
+HOLDING_BARS     = h
+EXIT_BAR_INDEX   = ENTRY_BAR_INDEX + h - 1  = t + h
+
+label_bps[t] = 10000 * ( close[t + h] / open[t + 1] − 1 )
 ```
 
-Beispiel: die 1h-Kerze 12:00–12:59 schließt, RSI und Volumen stehen fest, das
-Signal gilt als festgestellt — frühester regelkonformer Einstieg ist das **Open
-der 13:00-Kerze**.
+Golden-Test mit genau diesem Fall (h = 4, 1h-Kerzen):
+
+| | Kerze | Bedeutung |
+|---|---|---|
+| Signal | 12:00–12:59 | RSI und Volumen stehen mit `close 12:59` fest |
+| Entry | 13:00–13:59 | Einstieg zum **Open 13:00** — Haltekerze 1 |
+| | 14:00 / 15:00 | Haltekerzen 2 und 3 |
+| Exit | 16:00–16:59 | Ausstieg zum **Close 16:59** — Haltekerze 4 |
+
+Die naheliegende Fehllesart wäre `EXIT = t + 1 + h` (also `close 17:59`) — eine
+Stunde zu spät. Der Golden-Test pinnt die richtige Variante an konkreten
+Zeitstempeln, nicht an einer Formel.
 
 Das verlangt eine **zusätzliche** Label-Funktion neben der bestehenden; die alte
 bleibt unangetastet, damit die zwölf bereits versiegelten Close-zu-Close-Verdikte
 gültig bleiben. Die Rohdaten liegen bereits vor: `build_feature_matrix` bekommt
 vollständige `OHLCV`-Kerzen und zieht schon `highs`/`lows`/`closes` heraus, der
-Runner hat `history.candles` in Reichweite. `opens` und `volumes` sind je eine
-Zeile Datenweg — kein neuer Pfad.
+Runner hat `history.candles` in Reichweite.
+
+**Integritätsgrenze — `open` gehört NICHT in `FeatureRow`:**
+
+```
+FEATURES  =  Wissen zum Signalzeitpunkt        (volume_z_20, rsi_14_prev, …)
+LABEL     =  danach realisierbare Entwicklung  (open[t+1], close[t+h])
+```
+
+```
+build_feature_matrix(candles)              → FeatureRow  (+ volume_z_20, rsi_14_prev)
+compute_next_open_forward_returns(candles) → Label
+```
+
+Der Einstiegs-Open ist **kein Merkmal der Entscheidung** — er liegt zeitlich hinter
+ihr. Wäre er dem Decider zugänglich, wäre die Lookahead-Grenze der Feature-Matrix
+(„Zeile `i` hängt nur von `candles[0..i]` ab") aufgeweicht. Der Runner trennt
+`FeatureRow` und Forward-Label bereits genau so; diese Trennung wird hier gepinnt,
+nicht gelockert. Nur `volume` wandert also in die Feature-Matrix.
 
 Ein konfirmatorischer `PASS`, der Signal-at-close mit Entry-at-same-close
 vermischt, wird **nicht** akzeptiert.
 
-### C3b Folge für die FDR-Familie — Entscheidung erbeten
+### C3b Primärtest und Benchmark-Familie
 
-Weil das Label wechselt, **kann** das neue Experiment die alte Familie gar nicht
-teilen: dieselbe Regel unter anderem Label ist eine andere Messung. Die
-Forderung „eigene eingefrorene Familie" ist damit nicht nur Vorsicht, sondern
-technisch erzwungen.
+**Verworfen: die 13er-Familie als Gate.** Sie würde die Forschungsfrage still
+verschieben — von *„hat `rsi_reentry_volume_confirmed` unter ausführbarer
+Next-Open-Semantik einen OOS-Edge?"* zu *„welche von dreizehn TA-Regeln überlebt
+unter Next-Open-Semantik?"*. Das Zweite ist ein Discovery-Experiment, nicht die
+Bestätigung dieser einen Hypothese.
 
-Offen ist die Größe der Familie:
+**Ebenso verworfen: `m=1` sei schwacher Schutz.** Steht vor T0 genau **eine**
+Primärhypothese fest und wird sie ausschließlich auf neuen, unabhängigen
+Forward-OOS-Daten beurteilt, existiert innerhalb dieses Experiments **kein**
+Multiple-Testing-Problem. BH-FDR mit `m=1` ist dann rechnerisch `p <= alpha` —
+und das ist kein Mangel, sondern das korrekte Verfahren für einen einzelnen
+präregistrierten konfirmatorischen Test. Das Selektionsproblem aus der
+Entstehungsgeschichte wird nicht durch eine künstliche Strafe entschärft, sondern
+dadurch, dass die Regel **vorher vollständig eingefroren** und **danach auf neuen
+Daten** geprüft wird.
 
-| Variante | Familie | Wirkung |
-|---|---|---|
-| **(a)** | nur `rsi_reentry_volume_confirmed` (n=1) | BH-FDR degeneriert zu blossem Alpha — schwächster Schutz |
-| **(b)** | alle 12 bestehenden Regeln **plus** die neue, sämtlich unter dem Next-Open-Label | ehrliche Mehrfachtest-Schranke; alte Close-zu-Close-Verdikte bleiben unberührt |
+#### PRIMARY CONFIRMATORY HYPOTHESIS
 
-**Empfehlung: (b).** Es kostet fast nichts (dieselbe Datenbasis, nur ein zweites
-Label), hebt die Schranke für die neue Regel statt sie zu senken, und lässt die
-versiegelte Vergangenheit unangetastet.
+`rsi_reentry_volume_confirmed` ist die **einzige** Hypothese, die aus diesem
+Präregistrierungsfenster ein konfirmatorisches `PASS` / `NOT_MET` /
+`INCONCLUSIVE` erhalten kann. Sie ist vor T0 vollständig spezifiziert und wird
+ausschließlich auf Daten nach T0 beurteilt. Sie allein entscheidet, ob das
+spätere operationale Shadow-Gate überhaupt eröffnet wird.
+
+#### SECONDARY BENCHMARK FAMILY
+
+Zusätzlich werden die zwölf bestehenden Regeln **plus** die neue unter derselben
+Next-Open-Ausführungskonvention als 13er-Familie ausgewertet und gemeinsam
+BH-FDR-korrigiert. Status dieser Auswertung:
+
+```
+SECONDARY_BENCHMARK · NON_GATING · NON_PROMOTIONAL
+```
+
+Sie beantwortet eine eigenständig wertvolle Frage: **Ist das neue Signal wirklich
+etwas Besonderes — oder verändert allein die realistischere Next-Open-Ausführung
+die gesamte bisherige TA-Familie?** Bei zwölf Regeln, die unter Close-zu-Close
+sämtlich negativ waren, ist das diagnostisch erstklassig.
+
+#### Die zwei Richtungen, in denen sie nichts darf
+
+**Sie darf einen gescheiterten Primärtest nicht retten.** Ist `PRIMARY` bei
+`p = 0.08` → `NOT_MET`, und überlebt stattdessen ADX die BH-Korrektur, dann folgt
+daraus **nicht** „dann bauen wir eben ADX". Das wäre Post-Selection auf denselben
+OOS-Daten. Korrekt ist:
+
+```
+PRIMARY:    NOT_MET
+SECONDARY:  interesting candidate detected
+ACTION:     neue Hypothese → neue Präregistrierung → neues zukünftiges OOS-Fenster
+```
+
+**Sie darf einen bestandenen Primärtest nicht nachträglich umetikettieren.** Ist
+`PRIMARY` bei `p = 0.012`, ökonomische Hürde bestanden, `n` ausreichend, überlebt
+die Regel aber in der 13er-Familie nicht, dann ist der präregistrierte Test
+**nicht** widerlegt — die anderen zwölf waren nie Teil seiner Forschungsfrage.
+Korrekt ist die Doppelaussage:
+
+```
+PRIMARY CONFIRMATORY:  PASS
+SECONDARY FAMILY:      no BH survivor
+```
+
+Das ist kein Widerspruch, sondern die ehrliche Lesart: der Einzeltest liefert
+Evidenz; im breiteren Discovery-Kontext ist sie noch nicht außergewöhnlich. Für
+eine spätere Kapitalfreigabe ist das eine wertvolle Zusatzwarnung — aber es
+ändert das definierte Verdikt nicht rückwirkend.
+
+#### Konservativ wird der Primärtest, nicht die Familie
+
+Wer maximal konservativ sein will, zieht **nicht** zwölf sachfremde Tests in das
+Gate, sondern härtet den Primärtest selbst: statistische Evidenz **und**
+ökonomische Mindesthürde **und** `n_min` **und** Kosten/Slippage **und** OOS
+**und** anschließend das operationale Shadow-Gate. Diese Kette ist bereits die
+KAI-Doktrin — ein statistischer Treffer ist noch keine Produktionsreife.
 
 ### C4 Was die Präregistrierung festnagelt
 
@@ -381,7 +471,8 @@ Ausführungskonvention `signal close(t) → entry open(t+1) → exit close(t+h)`
 Timeframe 1h · Venue/Quelle · Horizon · Forward-OOS-Startzeit T0 · T1 · T2 ·
 Sample Unit · `n_min` · Verlängerungsregel · Umgang mit missing/inconclusive ·
 Kostenmodell · Slippage · primäre Kennzahl · ökonomische Mindesthürde ·
-BH-FDR-Familie (Variante aus C3b) · Alpha/FDR-Level · Evaluator-Version ·
+Primärhypothese als einzige gatende Hypothese (C3b) · Alpha-Level ·
+Sekundär-Benchmark als non-gating deklariert · Evaluator-Version ·
 Code-SHA · Datenschnitt · keine Nachoptimierung.
 
 ### C5 Fristende ist kein FAIL
@@ -451,12 +542,13 @@ der nächste Truth-Drift („Research sagt A, Production rechnet A′").
    erwarteter Timer-Restart per #730 im Claim; danach Next-Elapse **und**
    mehrere reale Auslösungen beobachten.
 3. **Research-Definitionen einfrieren, bevor Resultate gesehen werden** —
-   RSI-Regel (**entschieden: Re-Entry-Crossover**), Volume-Regel, FDR-Familie
-   (offen: C3b), Kosten, OOS-Fenster T0/T1/T2, `n_min`, Ausführungskonvention.
-4. **B implementieren** — `volume` und `open` → `FeatureRow` bzw. Label;
-   `volume_z_20`; `rsi_14_prev`; Next-Open-Label als **zusätzliche** Funktion.
-   Während der Entwicklung ausschließlich synthetische/Unit-Tests, **kein**
-   echter Hypothesenlauf.
+   RSI-Regel (**Re-Entry-Crossover**), Volume-Regel, Primär-/Sekundär-Trennung
+   nach C3b, Kosten, OOS-Fenster T0/T1/T2, `n_min`, Ausführungskonvention samt
+   Exit-Indexing.
+4. **B implementieren** — `volume` → `FeatureRow` (`volume_z_20`, `rsi_14_prev`);
+   `open` **nur** in die zusätzliche Next-Open-Label-Funktion, nicht in
+   `FeatureRow`; Golden-Test für das Exit-Indexing. Während der Entwicklung
+   ausschließlich synthetische/Unit-Tests, **kein** echter Hypothesenlauf.
 5. **Präregistrierung versiegeln** — nach grünem Code Code-SHA und Evaluator-SHA
    eintragen; die OOS-Uhr startet erst danach.
 6. **Genau ein konfirmatorischer Forward-Lauf**, danach mechanisch:
@@ -472,7 +564,7 @@ der nächste Truth-Drift („Research sagt A, Production rechnet A′").
 | B — Volumen in die Research-Pipeline | **GO** |
 | C — Präregistrierung, forward/OOS | **GO** |
 | lokaler Generator | **NO-GO** bis C `PASS` **und** operationales Gate besteht |
-| FDR-Familiengröße (C3b) | **offen** — Empfehlung (b): 12 + 1 unter Next-Open-Label |
+| FDR-Design (C3b) | **entschieden**: Variante (c) — Primärtest gatet allein, 13er-Benchmark non-gating |
 | manuelle Alert-Pflege einstellen | erst bei sauberem `NOT_MET` **und** leerem Abhängigkeitsgraph |
 
 Kein Punkt berührt den Seed-Freeze (ADR-0012): es wird keine neue Quelle
