@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import socket
 import sqlite3
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -463,6 +464,81 @@ def run_health_check(
     ).issues
 
 
+# Erwarteter passwortfreier Pfad. Die Validierung liegt im Broker, nicht in
+# sudoers — siehe deploy/sudoers.d/kai-deploy.
+_EXPECTED_NOPASSWD_CMD = "/usr/local/sbin/kai-service-control"
+
+
+def _check_sudo_policy(*, runs_on_pi: bool) -> list[HealthIssue]:
+    """Die LIVE passwortfreie sudo-Policy gegen die Erwartung des Repos halten.
+
+    Ohne diese Probe meldet niemand, wenn ``/etc/sudoers.d`` und
+    ``deploy/sudoers.d`` auseinanderlaufen — dieselbe Klasse wie die Unit-Drift
+    aus #717, nur mit hoeherem Einsatz.
+
+    Der scharfe Teil ist die Wildcard-Pruefung. Ein Argument-Glob wie
+    ``systemctl restart kai-*`` sieht eng aus, ist es aber nicht: sudoers matcht
+    Argumente als EINEN String, und ``*`` matcht auch Leerzeichen. Live
+    verifiziert (2026-08-19): ``systemctl restart kai-x.service zzz.service``
+    wurde autorisiert. Jede NOPASSWD-Regel mit ``*`` in den Argumenten ist
+    deshalb ein Befund, kein Schoenheitsfehler.
+
+    Fail-soft: laesst sich die Policy nicht lesen, gibt es KEINEN Befund und
+    keinen Abbruch (Lehre #718 — die Probe ist kein Abbruchgrund).
+    """
+    if not runs_on_pi:
+        return []
+    # Ausschliesslich fuer Testumgebungen: die Probe ruft einen externen Prozess,
+    # und die autouse-Fixture in tests/conftest.py laesst `runs_on_pi` ueberall
+    # wahr werden. In Produktion ist die Variable nicht gesetzt -> Probe aktiv.
+    if os.environ.get("KAI_SUDO_POLICY_PROBE", "").strip().lower() == "off":
+        return []
+    try:
+        proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
+            ["sudo", "-n", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    nopasswd_lines = [line.strip() for line in proc.stdout.splitlines() if "NOPASSWD:" in line]
+    issues: list[HealthIssue] = []
+    if not nopasswd_lines:
+        return issues
+
+    for line in nopasswd_lines:
+        _, _, cmds = line.partition("NOPASSWD:")
+        cmds = cmds.strip()
+        if "*" in cmds:
+            issues.append(
+                HealthIssue(
+                    severity="critical",
+                    component="sudo_policy",
+                    message=(
+                        "passwortfreie sudo-Regel enthaelt ein Argument-Wildcard und ist "
+                        f"damit umgehbar (sudoers matcht Argumente als EINEN String): {cmds}"
+                    ),
+                )
+            )
+        elif _EXPECTED_NOPASSWD_CMD not in cmds:
+            issues.append(
+                HealthIssue(
+                    severity="warning",
+                    component="sudo_policy",
+                    message=(
+                        f"unerwartete passwortfreie sudo-Regel (erwartet nur "
+                        f"{_EXPECTED_NOPASSWD_CMD}): {cmds}"
+                    ),
+                )
+            )
+    return issues
+
+
 def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
     """Abgewiesene Phantom-Closes sichtbar machen.
 
@@ -619,6 +695,7 @@ def run_health_check_report(
     except Exception:  # pragma: no cover - Konfigurationsfehler darf die Probe nicht toeten
         pass
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
+    report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

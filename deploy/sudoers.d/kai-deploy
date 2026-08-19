@@ -1,36 +1,47 @@
 # Eingeschraenktes sudo fuer Deploy + Service-Watchdog (ersetzt NOPASSWD:ALL).
 #
 # Installation (als root):
+#   sudo install -m 0755 -o root -g root deploy/bin/kai-service-control /usr/local/sbin/
 #   sudo install -m 0440 -o root -g root deploy/sudoers.d/kai-deploy /etc/sudoers.d/kai-deploy
-#   sudo visudo -c        # Syntax pruefen, BEVOR die breite Regel entfernt wird
+#   sudo rm -f /etc/sudoers.d/kai-service-watchdog   # loest die alte Glob-Regel ab
+#   sudo visudo -c        # Syntax pruefen, BEVOR man sich darauf verlaesst
 #
-# Warum: `ubuntu ALL=(ALL) NOPASSWD:ALL` gab JEDEM der 59 als `ubuntu` laufenden
-# KAI-Dienste einen passwortfreien Weg nach root. Ein kompromittierter Dienst
-# (Ingest-Pfad, Python-Abhaengigkeit, Telegram-Bot) war damit sofort root — aus
-# "ein Dienst kaputt" wurde "der ganze Host". Diese Datei laesst genau die
-# Kommandos passwortfrei, die der automatisierte Betrieb braucht.
+# Warum ueberhaupt: `ubuntu ALL=(ALL) NOPASSWD:ALL` gab JEDEM der als `ubuntu`
+# laufenden KAI-Dienste einen passwortfreien Weg nach root. Ein kompromittierter
+# Dienst (Ingest-Pfad, Python-Abhaengigkeit, Telegram-Bot) war damit sofort root —
+# aus "ein Dienst kaputt" wurde "der ganze Host".
 #
-# Was NICHT hier steht, und warum:
-#   * `bash scripts/pi_install_systemd.sh` — das Skript gehoert `ubuntu` und ist
-#     von `ubuntu` beschreibbar. NOPASSWD darauf waere exakt so viel wert wie
-#     NOPASSWD:ALL. Unit-Installation ist selten genug, um sie mit Passwort zu
-#     fahren.
-#   * `apt-get`, `install`, `ln -s`, Datei-Kopien nach /etc — bewusste, seltene
-#     Eingriffe.
-#   * `daemon-reload` — braucht nur, wer Unit-Dateien aendert; das ist derselbe
-#     seltene, passwortpflichtige Vorgang.
+# WARUM HIER KEIN ARGUMENT-GLOB STEHT (P0-Korrektur 2026-08-19)
+# --------------------------------------------------------------
+# Die erste Fassung dieser Datei lautete:
 #
-# Warum die `kai-*`-Wildcard sicher ist (geprueft 2026-08-18): von 61 kai-Units
-# laufen genau zwei ohne `User=` und damit als root — kai-standby-data und
-# kai-standby-system. Beide fuehren /usr/local/bin/standby_to_usb.sh aus, das
-# root:root 0755 gehoert und fuer `ubuntu` NICHT beschreibbar ist. Es gibt damit
-# keine kai-Unit, ueber die `ubuntu` eigenen Code als root ausfuehren koennte.
-# Diese Annahme haelt der Repo-Test test_systemd_units_run_unprivileged.py fest —
-# wer eine root-Unit mit beschreibbarem ExecStart ergaenzt, bricht ihn.
+#     Cmnd_Alias KAI_SERVICE_CTL = /usr/bin/systemctl restart kai-*, ...
+#
+# Das war unsicher. sudoers matcht Argumente als EINEN zusammenhaengenden String,
+# und `*` matcht auch Leerzeichen — live verifiziert:
+#
+#     sudo -n systemctl restart kai-health-check.service zzz1.service zzz2.service
+#       -> autorisiert (systemctl meldete "Unit not found", NICHT sudo "password required")
+#
+# Es genuegte, dass das erste Argument mit `kai-` begann; danach war jede weitere
+# Unit und jede Option passwortfrei. sudoers(5) warnt ausdruecklich davor und
+# empfiehlt fuer Argumente Regex oder externe Validierung.
+#
+# Deshalb steht hier NUR noch der Pfad des Brokers, bewusst OHNE Argumentmuster:
+# was zulaessig ist, entscheidet `/usr/local/sbin/kai-service-control` (root:root
+# 0755) — ein winziges, testbares Skript statt einer wachsenden Glob-Sammlung.
+# Es laesst genau ein Verb und genau eine `kai-*.service`-Unit zu und weist jede
+# Unit ab, die nicht als `ubuntu` laeuft. Root-Units bleiben damit
+# passwortpflichtig, und es muss nicht bewiesen werden, dass jede Root-Unit heute
+# und kuenftig sicher konfiguriert ist (ExecStartPre/Post, ExecReload, ExecStop,
+# EnvironmentFile, WorkingDirectory, Drop-ins, Symlinks, Wrapper-Aufrufe der Form
+# `/usr/bin/bash /home/ubuntu/...`).
+#
+# Was bewusst NICHT passwortfrei ist: `pi_install_systemd.sh` (gehoert `ubuntu`
+# und ist von ihm beschreibbar — NOPASSWD darauf waere gleichbedeutend mit
+# NOPASSWD:ALL), `apt-get`, `install`, `daemon-reload`, `visudo`, jede Datei-
+# operation unter /etc.
 
-Cmnd_Alias KAI_SERVICE_CTL = /usr/bin/systemctl start kai-*, \
-                             /usr/bin/systemctl stop kai-*, \
-                             /usr/bin/systemctl restart kai-*, \
-                             /usr/bin/systemctl reload kai-*
+Cmnd_Alias KAI_SERVICE_BROKER = /usr/local/sbin/kai-service-control
 
-ubuntu ALL=(root) NOPASSWD: KAI_SERVICE_CTL
+ubuntu ALL=(root) NOPASSWD: KAI_SERVICE_BROKER

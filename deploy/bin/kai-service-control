@@ -1,0 +1,85 @@
+#!/bin/bash
+# KAI Service-Broker — der EINZIGE passwortfreie Root-Pfad fuer Service-Steuerung.
+#
+# Installation (als root):
+#   sudo install -m 0755 -o root -g root \
+#     deploy/bin/kai-service-control /usr/local/sbin/kai-service-control
+#
+# WARUM ES DIESES SKRIPT GIBT (P0, 2026-08-19)
+# --------------------------------------------
+# Die Vorgaenger-Regel lautete:
+#
+#     ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart kai-*
+#
+# Das ist unsicher. sudoers matcht Kommando-Argumente als EINEN
+# zusammenhaengenden String, und `*` matcht dabei auch Leerzeichen. Live auf dem
+# Pi verifiziert (2026-08-19, read-only Probe mit nicht-existenten Zielen):
+#
+#     sudo -n systemctl restart kai-health-check.service zzz.service
+#       -> von sudo AUTORISIERT (systemctl meldete "Unit not found",
+#          nicht sudo "a password is required")
+#     sudo -n systemctl restart kai-health-check.service zzz1.service zzz2.service
+#       -> ebenfalls autorisiert; die Anzahl ist unbegrenzt
+#     sudo -n systemctl restart kai-health-check.service --no-block
+#       -> ebenfalls autorisiert
+#
+# Es genuegte also, dass das ERSTE Argument mit `kai-` beginnt — danach war jede
+# Unit und jede Option passwortfrei steuerbar. Die frueher als Beleg gefuehrte
+# Gegenprobe `sudo -n systemctl restart ssh` zeigte nur, dass ssh ALLEIN nicht
+# erlaubt ist; sie sagte nichts ueber Mehrfach-Argumente. sudoers(5) warnt genau
+# davor und empfiehlt fuer Argumente Regex oder externe Validierung.
+#
+# Konsequenz: die Validierung gehoert NICHT in ein sudoers-Glob, sondern in einen
+# winzigen, root-eigenen, testbaren Broker. sudoers erlaubt nur noch diesen Pfad
+# (ohne Argumentmuster); was zulaessig ist, entscheidet ausschliesslich dieses
+# Skript.
+#
+# INVARIANTEN (jede einzeln getestet in tests/unit/test_kai_service_control.py)
+#   1. exakt zwei Argumente — kein drittes, kein leeres
+#   2. verb aus {start, stop, restart, reload}
+#   3. genau EIN Unit-Name, streng verankert auf ^kai-...\.service$
+#      => keine Optionen (`--no-block`, `--machine=`), keine Pfade, keine
+#         Leerzeichen, kein Glob, kein `..`
+#   4. die Unit muss existieren UND als `ubuntu` laufen. Root-Units bleiben
+#      passwortpflichtig — damit muss NICHT bewiesen werden, dass jede Root-Unit
+#      heute und in Zukunft sicher konfiguriert ist (ExecStartPre/Post, Reload,
+#      EnvironmentFile, Drop-ins, Symlinks, Wrapper wie `/usr/bin/bash /home/...`).
+#
+# Dieses Skript muss root:root 0755 gehoeren. Waere es fuer `ubuntu` beschreibbar,
+# waere die NOPASSWD-Regel darauf wieder gleichbedeutend mit NOPASSWD:ALL.
+
+set -euo pipefail
+
+readonly PROG="kai-service-control"
+
+die() {
+    printf '%s: %s\n' "$PROG" "$*" >&2
+    exit 64
+}
+
+[ "$#" -eq 2 ] || die "genau 2 Argumente erwartet: <start|stop|restart|reload> <kai-unit.service> (bekam $#)"
+
+verb=$1
+unit=$2
+
+case "$verb" in
+    start | stop | restart | reload) ;;
+    *) die "verb nicht erlaubt: '$verb'" ;;
+esac
+
+# Streng verankert. Erlaubt sind einfache und Instanz-Units
+# (z. B. kai-unit-failure-notify@kai-server.service.service).
+if ! printf '%s' "$unit" | grep -qE '^kai-[A-Za-z0-9_.-]+(@[A-Za-z0-9_.-]+)?\.service$'; then
+    die "unit-Name nicht erlaubt: '$unit'"
+fi
+
+# `systemctl show -p User --value` liefert bei einer Unit ohne User= einen leeren
+# String und bei einer unbekannten Unit ebenfalls nichts Brauchbares. Beides wird
+# abgelehnt: fail-closed. Die Unit-Dateien liegen unter /etc/systemd/system und
+# gehoeren root — `ubuntu` kann diese Antwort nicht faelschen.
+run_as=$(systemctl show -p User --value "$unit" 2>/dev/null || true)
+
+[ -n "$run_as" ] || die "unit unbekannt oder ohne User= (laeuft als root): '$unit'"
+[ "$run_as" = "ubuntu" ] || die "unit laeuft als '$run_as', nicht als ubuntu — passwortpflichtig"
+
+exec systemctl "$verb" "$unit"

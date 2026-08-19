@@ -90,12 +90,15 @@ send_telegram() {
 # dieses Skript aus — das fuer den unprivilegierten Service-User schreibbar ist
 # (Audit 2026-08-09). Wer `ubuntu` kompromittiert, haette beim naechsten Tick
 # root gehabt. Jetzt laeuft die Unit als `ubuntu` und hebt sich punktuell per
-# NOPASSWD-sudo, statt durchgehend root zu sein.
+# NOPASSWD-sudo auf den Broker /usr/local/sbin/kai-service-control, statt
+# durchgehend root zu sein. Der Broker (nicht sudoers) validiert Verb + Unit:
+# ein sudoers-Argument-Glob wie `systemctl start kai-*` matcht auch
+# Mehrfach-Argumente und war deshalb umgehbar (P0, 2026-08-19).
 systemctl_start() {
     if [[ "$(id -u)" == "0" ]]; then
         systemctl start "$1" >/dev/null 2>&1
     else
-        sudo -n systemctl start "$1" >/dev/null 2>&1
+        sudo -n /usr/local/sbin/kai-service-control start "$1" >/dev/null 2>&1
     fi
 }
 
