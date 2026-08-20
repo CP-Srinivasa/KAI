@@ -34,6 +34,7 @@ from app.analysis.indicators.realized_volatility import (
     compute_realized_volatility,
 )
 from app.analysis.indicators.rsi import RSI_DEFAULT_PERIOD, compute_rsi
+from app.analysis.indicators.volume_z import VOLUME_Z_WINDOW, compute_volume_z
 from app.market_data.models import OHLCV
 
 # MACD-style fast/slow EMA periods (standard 12/26).
@@ -97,6 +98,17 @@ class FeatureRow:
     # given, else None (OHLCV-only callers unaffected).
     unlock_frac_fwd: float | None = None  # fraction of max supply unlocking in next horizon
     unlock_frac_fwd_z: float | None = None  # rolling z-score of unlock pressure
+    # Volume spike, z-scored against the 20 PREVIOUS completed bars on log1p
+    # volume (see indicators.volume_z). The bar never enters its own baseline.
+    # Note what is NOT here: the raw ``open``. Features are what is known at
+    # signal time; the entry open lies after the decision and belongs to the
+    # label (forward_returns.compute_next_open_forward_return_bps).
+    volume_z_20: float | None = None
+    # RSI of the PREVIOUS bar. The decider contract is ``FeatureRow -> {-1,0,+1}``,
+    # so a decider sees one row and cannot look back — a crossover would be
+    # inexpressible. Carrying t-1 in the row keeps every rule a plain decider
+    # instead of rewriting the interface to (rows, index) for all hypotheses.
+    rsi_14_prev: float | None = None
 
 
 def build_feature_matrix(
@@ -146,6 +158,9 @@ def build_feature_matrix(
     ema_slow = compute_ema(closes, period=EMA_SLOW_PERIOD)
     boll = compute_bollinger_z(closes, window=BOLLINGER_DEFAULT_WINDOW)
     trail_ret = compute_trailing_returns(closes, TRAIL_RETURN_WINDOW)
+    vol_z = compute_volume_z([c.volume for c in candles], VOLUME_Z_WINDOW)
+    # Shift by one bar; index 0 has no predecessor and stays None.
+    rsi_prev: list[float | None] = [None, *rsi[:-1]]
     if funding:
         funding_rate, funding_rate_z = align_funding_to_bars(bar_ts, funding)
     else:
@@ -195,6 +210,8 @@ def build_feature_matrix(
                 stable_netflow_z=stable_netflow_z[i],
                 unlock_frac_fwd=unlock_frac[i],
                 unlock_frac_fwd_z=unlock_frac_z[i],
+                volume_z_20=vol_z[i],
+                rsi_14_prev=rsi_prev[i],
             )
         )
     return rows
