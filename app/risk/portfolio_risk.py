@@ -44,6 +44,7 @@ import statistics
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from app.analysis.student_t import regularized_incomplete_beta, student_t_cdf
 from app.risk.portfolio_risk_models import (
     ALL_STRESS_SCENARIOS,
     STRESS_CORRELATION_BREAKDOWN,
@@ -213,72 +214,16 @@ def _cholesky(matrix: list[list[float]], jitter: float = 1e-10) -> list[list[flo
     return chol
 
 
-# --- Regularized incomplete beta + Student-t quantile ----------------------
+# --- Student-t quantile (Numerik liegt in app/analysis/student_t.py) -------
+#
+# Die unvollstaendige Betafunktion und die t-CDF standen frueher hier als
+# privater Block. Der cluster-robuste Primaertest braucht dieselbe Verteilung;
+# zwei Implementierungen derselben Mathematik waeren genau der Truth-Drift,
+# den KAI andernorts schon teuer bezahlt hat. Verhalten unveraendert — nur der
+# Ort hat sich geaendert.
 
-
-def _betacf(a: float, b: float, x: float) -> float:
-    """Continued-fraction representation of the incomplete beta function.
-    Numerical Recipes-style; ~30 terms is enough for double precision."""
-    eps = 3e-12
-    qab = a + b
-    qap = a + 1.0
-    qam = a - 1.0
-    c = 1.0
-    d = 1.0 - qab * x / qap
-    if abs(d) < 1e-30:
-        d = 1e-30
-    d = 1.0 / d
-    h = d
-    for m in range(1, 200):
-        m2 = 2 * m
-        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
-        d = 1.0 + aa * d
-        if abs(d) < 1e-30:
-            d = 1e-30
-        c = 1.0 + aa / c
-        if abs(c) < 1e-30:
-            c = 1e-30
-        d = 1.0 / d
-        h *= d * c
-        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
-        d = 1.0 + aa * d
-        if abs(d) < 1e-30:
-            d = 1e-30
-        c = 1.0 + aa / c
-        if abs(c) < 1e-30:
-            c = 1e-30
-        d = 1.0 / d
-        delta = d * c
-        h *= delta
-        if abs(delta - 1.0) < eps:
-            break
-    return h
-
-
-def _betai(a: float, b: float, x: float) -> float:
-    """Regularized incomplete beta I_x(a, b)."""
-    if x <= 0.0:
-        return 0.0
-    if x >= 1.0:
-        return 1.0
-    log_bt = (
-        math.lgamma(a + b)
-        - math.lgamma(a)
-        - math.lgamma(b)
-        + a * math.log(x)
-        + b * math.log(1.0 - x)
-    )
-    bt = math.exp(log_bt)
-    if x < (a + 1.0) / (a + b + 2.0):
-        return bt * _betacf(a, b, x) / a
-    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
-
-
-def _student_t_cdf_raw(t: float, df: float) -> float:
-    """CDF of *unstandardized* Student-t (variance df/(df-2))."""
-    x = df / (df + t * t)
-    half = 0.5 * _betai(df / 2.0, 0.5, x)
-    return 1.0 - half if t > 0 else half
+_betai = regularized_incomplete_beta
+_student_t_cdf_raw = student_t_cdf
 
 
 def _student_t_quantile_raw(p: float, df: float) -> float:
