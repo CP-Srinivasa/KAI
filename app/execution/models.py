@@ -92,6 +92,15 @@ class PaperFill:
     # 2026-06-13: regime-at-entry carried onto the fill so the order_filled audit
     # row (and audit_replay reconstruction) preserves it across restarts.
     regime: str = ""
+    # 2026-08-20: Provenienz des PREISES (nicht des Signals). Bis hierher hielt der
+    # Erfolgs-Pfad die Herkunft NICHT fest — nur der Reject-Pfad
+    # (close_price_sanity_rejected) trug sie. Genau die durchgelassenen Closes sind
+    # aber die, die spaeter forensisch geprueft werden muessen: beim Mock-Vorfall
+    # vom 11./12.08. liess sich nicht BELEGEN, dass der synthetische Fallback
+    # gegriffen hatte, es blieb die Rekonstruktion der Mock-Kurve. Leer heisst
+    # "nicht erfasst" — der Verifier wertet das als fehlende Evidenz, NICHT als
+    # unverdaechtig.
+    price_source: str = ""
 
 
 @dataclass
