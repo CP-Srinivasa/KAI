@@ -634,7 +634,13 @@ class PaperExecutionEngine:
             )
         return order
 
-    def fill_order(self, order: PaperOrder, current_price: float) -> PaperFill | None:
+    def fill_order(
+        self,
+        order: PaperOrder,
+        current_price: float,
+        *,
+        price_source: str = "",
+    ) -> PaperFill | None:
         """
         Execute a paper fill for an order.
         Returns None if: duplicate (idempotency), insufficient cash, or invalid price.
@@ -1074,6 +1080,7 @@ class PaperExecutionEngine:
             fee_usd=fee,
             filled_at=_now_utc(),
             slippage_pct=self._slippage_pct * 100,
+            price_source=price_source,
             pnl_usd=trade_pnl_for_fill,
             position_side=order.position_side,
             fee_venue=fee_meta[0],
@@ -1258,6 +1265,7 @@ class PaperExecutionEngine:
         self,
         symbol: str,
         current_price: float,
+        price_source: str = "",
     ) -> PaperFill | None:
         """Close the tier-share of the position at current_price, advance tiers.
 
@@ -1342,7 +1350,7 @@ class PaperExecutionEngine:
             document_id=pos.document_id,
             regime=pos.regime,
         )
-        fill = self.fill_order(order, current_price)
+        fill = self.fill_order(order, current_price, price_source=price_source)
         if fill is None:
             return None
 
@@ -1370,6 +1378,10 @@ class PaperExecutionEngine:
                 "quantity_closed": close_qty,
                 "entry_price": entry_price,
                 "exit_price": fill.fill_price,
+                # Provenienz des Preises auch im ERFOLGS-Pfad — bis 2026-08-20
+                # trug sie nur der Reject-Pfad, also nie die Zeilen, die spaeter
+                # forensisch geprueft werden muessen.
+                "price_source": fill.price_source,
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 "remaining_quantity": residual.quantity if residual else 0.0,
@@ -1474,6 +1486,8 @@ class PaperExecutionEngine:
         symbol: str,
         current_price: float,
         reason: str = "manual",
+        *,
+        price_source: str = "",
     ) -> PaperFill | None:
         """Close a full open position at current_price.
 
@@ -1554,7 +1568,7 @@ class PaperExecutionEngine:
             document_id=pos.document_id,
             regime=pos.regime,
         )
-        fill = self.fill_order(order, current_price)
+        fill = self.fill_order(order, current_price, price_source=price_source)
         if fill is None:
             return None
 
@@ -1572,6 +1586,10 @@ class PaperExecutionEngine:
                 "quantity": quantity,
                 "entry_price": entry_price,
                 "exit_price": fill.fill_price,
+                # Provenienz des Preises auch im ERFOLGS-Pfad — bis 2026-08-20
+                # trug sie nur der Reject-Pfad, also nie die Zeilen, die spaeter
+                # forensisch geprueft werden muessen.
+                "price_source": fill.price_source,
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 # NEO-P-101-r2: KEEP realized_pnl_usd KUMULATIV (legacy alias).
@@ -1655,6 +1673,7 @@ class PaperExecutionEngine:
             price = prices_by_symbol.get(symbol)
             if price is None or price <= 0:
                 continue
+            src = self._tick_price_sources.get(symbol, "")
             pos = self._portfolio.positions.get(symbol)
             # A-Fix 2026-06-13: liquidation has the HIGHEST priority — a leveraged
             # position whose margin is wiped out is force-closed at the liquidation
@@ -1667,7 +1686,7 @@ class PaperExecutionEngine:
                     (pos.position_side == "short" and price >= liq)
                     or (pos.position_side != "short" and price <= liq)
                 ):
-                    fill = self.close_position(symbol, liq, reason="liquidation")
+                    fill = self.close_position(symbol, liq, reason="liquidation", price_source=src)
                     if fill:
                         fills.append(fill)
                     continue
@@ -1682,18 +1701,20 @@ class PaperExecutionEngine:
                 if _max_hold is not None:
                     _age = _position_age_seconds(pos.opened_at)
                     if _age is not None and _age >= _max_hold:
-                        fill = self.close_position(symbol, price, reason="time_stop")
+                        fill = self.close_position(
+                            symbol, price, reason="time_stop", price_source=src
+                        )
                         if fill:
                             fills.append(fill)
                         continue
             # Stop-loss has priority over tiers — it kills the whole residual.
             if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
-                fill = self.close_position(symbol, price, reason="stop")
+                fill = self.close_position(symbol, price, reason="stop", price_source=src)
                 if fill:
                     fills.append(fill)
                 continue
             if pos and pos.position_side != "short" and pos.stop_loss and price <= pos.stop_loss:
-                fill = self.close_position(symbol, price, reason="stop")
+                fill = self.close_position(symbol, price, reason="stop", price_source=src)
                 if fill:
                     fills.append(fill)
                 continue
@@ -1710,7 +1731,7 @@ class PaperExecutionEngine:
                         break
                 elif price < tier_price:
                     break
-                fill = self._consume_first_tier(symbol, price)
+                fill = self._consume_first_tier(symbol, price, price_source=src)
                 if fill is None:
                     break
                 fills.append(fill)
@@ -1724,7 +1745,7 @@ class PaperExecutionEngine:
             trigger = self.check_stop_take(symbol, price)
             if trigger is None:
                 continue
-            fill = self.close_position(symbol, price, reason=trigger)
+            fill = self.close_position(symbol, price, reason=trigger, price_source=src)
             if fill:
                 fills.append(fill)
         return fills
