@@ -16,7 +16,9 @@ Description=Trigger KAI Premium-Signal-Pipeline Healthcheck every 5min
 # wieder fließen ODER Lightning re-armiert wird, gehört die Kadenz zurück auf
 # 60 s. Genau diese Bedingung prüft
 # tests/unit/test_premium_healthcheck_cadence.py.
-OnBootSec=120s
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=120s
 OnUnitActiveSec=300s
 AccuracySec=10s
 Unit=kai-premium-healthcheck.service

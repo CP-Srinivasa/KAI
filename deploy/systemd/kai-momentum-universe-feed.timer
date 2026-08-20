@@ -9,9 +9,10 @@ Description=KAI Momentum-Universe-Feed — feed universe symbols into PAPER (hou
 # Requires cascade lesson #414). NOT enabled by default: the operator runs
 # `systemctl enable --now kai-momentum-universe-feed.timer` after flipping
 # MOMENTUM_UNIVERSE_FEED_ENABLED=true.
-OnBootSec=20min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=20min
 OnUnitActiveSec=1h
-Persistent=true
 AccuracySec=2min
 RandomizedDelaySec=3min
 

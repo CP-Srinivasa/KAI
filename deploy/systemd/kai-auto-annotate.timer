@@ -10,7 +10,9 @@ Description=Trigger KAI Auto-Annotate every 6 hours (V-DB4d)
 # 30 min nach Boot first-run, dann alle 6h.
 # 6h-Cadenz reicht: auto_annotate.min_age=4h heisst nichts unter 4h dispatchat.
 # Bei 6h-Tick werden alerts in Bucket [4h, 10h] erstmals annotiert.
-OnBootSec=30min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=30min
 OnUnitActiveSec=6h
 AccuracySec=2min
 Unit=kai-auto-annotate.service

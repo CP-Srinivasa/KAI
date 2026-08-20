@@ -55,9 +55,57 @@ def test_cadence_names_the_condition_for_going_back() -> None:
     assert "Einnahmen" in text, "Rueckkehr-Bedingung nicht genannt"
 
 
-def test_missed_runs_are_still_caught_up() -> None:
-    """`Persistent=true` ist der Grund, warum die Senkung nichts verliert."""
-    assert re.search(r"^Persistent=true$", _text(), re.MULTILINE), (
-        "ohne Persistent= wuerde eine seltenere Kadenz nach einem Neustart "
-        "tatsaechlich Laeufe verlieren"
+def test_persistent_is_absent_because_it_would_be_a_no_op() -> None:
+    """`Persistent=` wirkt laut systemd ausschliesslich bei `OnCalendar=`.
+
+    In #729 stand es hier — und wurde sogar als BEGRUENDUNG dafuer benutzt, dass
+    die Kadenz-Senkung nichts verliert. Das war falsch: an einem rein monotonen
+    Timer sichert die Angabe nichts zu. Eine falsche Zusicherung im Repo ist
+    schlimmer als gar keine, weil sie beim naechsten Mal geglaubt wird.
+    """
+    text = _text()
+    assert not re.search(r"^\s*OnCalendar=", text, re.MULTILINE), (
+        "Unit ist absichtlich monoton — wird das geaendert, muss auch diese "
+        "Begruendung neu geprueft werden"
+    )
+    assert not re.search(r"^\s*Persistent=", text, re.MULTILINE), (
+        "Persistent= ohne OnCalendar ist wirkungslos und darf hier nicht stehen"
+    )
+
+
+def test_cadence_safety_rests_on_idempotent_booking() -> None:
+    """Der ECHTE Grund, warum eine seltenere Kadenz nichts verliert.
+
+    Nicht `Persistent`, sondern Idempotenz: jeder Lauf listet die settled
+    Invoices und bucht die noch ungebuchten. Belegt ist das nicht durch diesen
+    Kommentar, sondern durch bestehende Tests —
+    `test_ln_earnings_booking.py::test_second_run_is_idempotent`,
+    `test_ln_earnings_ledger.py::test_append_is_idempotent_per_payment_hash`
+    und `::test_record_settled_invoices_filters_and_dedups`.
+
+    Die Unit muss diesen Grund nennen UND seine Grenze: die Nachholbarkeit endet
+    am Listing-Fenster `num_max_invoices=1000`. Ohne die Grenze waere es wieder
+    eine unbedingte Behauptung.
+    """
+    text = _text()
+    assert "idempotent" in text.lower(), "der tragende Grund fehlt in der Unit"
+    assert "num_max_invoices=1000" in text, (
+        "die ehrliche Grenze der Nachholbarkeit fehlt — sonst behauptet die Unit "
+        "mehr, als der Code hergibt"
+    )
+
+
+def test_initial_trigger_survives_a_restart() -> None:
+    """Der Grund, warum diese Unit ueberhaupt angefasst wurde.
+
+    `OnBootSec` ist nach dem Boot verbraucht; `OnUnitActiveSec` verankert sich am
+    Service. `kai-tv-auto-promote` hatte genau diese Kombination und lag nach
+    einem Restart fuenf Wochen ohne Termin. `OnActiveSec` verankert sich am Timer
+    selbst und ueberlebt jeden Neustart.
+    """
+    text = _text()
+    assert re.search(r"^\s*OnActiveSec=60min$", text, re.MULTILINE)
+    assert not re.search(r"^\s*OnBootSec=", text, re.MULTILINE), (
+        "OnBootSec ersetzt, nicht ergaenzt — sonst bleibt der irrefuehrende "
+        "Eindruck bestehen, es liefere einen Restart-Anker"
     )

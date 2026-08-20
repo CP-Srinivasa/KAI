@@ -2,9 +2,10 @@
 Description=KAI Technical Screener — run hourly (shadow measurement)
 
 [Timer]
-OnBootSec=5min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=5min
 OnUnitActiveSec=1h
-Persistent=true
 
 [Install]
 WantedBy=timers.target

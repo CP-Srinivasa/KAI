@@ -6,9 +6,10 @@ Description=KAI Momentum-Crosscheck — rebuild the cross-check snapshot (daily 
 # The same-named .service is auto-activated when the timer fires — deliberately
 # NO `Requires=` (Timer-Requires cascade lesson #414). NOT enabled by default:
 # the operator runs `systemctl enable --now kai-momentum-crosscheck.timer`.
-OnBootSec=12min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=12min
 OnUnitActiveSec=12h
-Persistent=true
 AccuracySec=5min
 RandomizedDelaySec=2min
 

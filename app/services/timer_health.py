@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,9 +49,37 @@ def classify_timer_schedule(
         # Named/relative calendar without wildcard (e.g. "weekly") — recurring.
         return "recurring_required"
     if (onboot or "").strip() or (onactive or "").strip():
-        # Relative timers re-arm on boot / after activation → treat as recurring.
+        # Relative timers are recurring in INTENT. Note what this does NOT say:
+        # that they reliably re-arm. The earlier comment here claimed exactly
+        # that ("re-arm on boot / after activation") and it is false —
+        # ``OnBootSec`` fires once per boot, ``OnUnitActiveSec`` anchors on the
+        # SERVICE's last activation. A timer restarted long after boot whose
+        # service has not run gets NO next elapse at all
+        # (kai-tv-auto-promote, 2026-07-12 → 2026-08-19, five weeks silent).
+        # Restart-safety is a separate property — see
+        # ``has_restart_safe_initial_trigger``.
         return "recurring_required"
     return "disabled_by_design"
+
+
+def has_restart_safe_initial_trigger(
+    oncalendar: str | None,
+    onactive_sec: str | None,
+) -> bool:
+    """Pure: does this timer get a fresh elapse whenever it is (re)started?
+
+    Only two trigger kinds survive a restart:
+
+    * ``OnCalendar=`` — wall-clock, independent of activation history.
+    * ``OnActiveSec=`` — relative to the TIMER's own activation.
+
+    ``OnBootSec=`` is anchored to boot and is spent afterwards; a timer restarted
+    later never sees it again. ``OnUnitActiveSec=`` is anchored to the triggered
+    SERVICE, so it provides nothing while that service is not running. A unit
+    carrying only those two can end up ``enabled`` + ``active`` + never firing —
+    the exact state that hid a dead promotion path for five weeks.
+    """
+    return bool((oncalendar or "").strip() or (onactive_sec or "").strip())
 
 
 def _find_timer_file(base: str) -> Path | None:
@@ -85,6 +115,12 @@ def _read_timer_schedule(unit: str) -> tuple[str | None, str | None, str | None]
     cal = re.search(r"^\s*OnCalendar=(.+)$", text, re.MULTILINE)
     boot = re.search(r"^\s*OnBootSec=(.+)$", text, re.MULTILINE)
     active = re.search(r"^\s*OnUnitActiveSec=(.+)$", text, re.MULTILINE)
+    # OnActiveSec is deliberately folded into the "boot" slot for classification:
+    # both are initial triggers, and the taxonomy only asks "is this recurring".
+    # The restart-safety question is answered separately by
+    # ``has_restart_safe_initial_trigger``, which needs OnActiveSec distinctly.
+    if not boot:
+        boot = re.search(r"^\s*OnActiveSec=(.+)$", text, re.MULTILINE)
     return (
         cal.group(1).strip() if cal else None,
         boot.group(1).strip() if boot else None,
@@ -312,3 +348,144 @@ def timers_warranting_alert(result: dict[str, Any]) -> list[str]:
             if isinstance(unit, str) and unit:
                 out.append(unit)
     return out
+
+
+@dataclass(frozen=True)
+class TimerRuntimeFacts:
+    """Was systemd ueber einen Timer sagt — roh, ohne Deutung.
+
+    Getrennte Next-Elapse-Felder, weil systemd fuer kalender- und monotone Timer
+    getrennt rechnet: ein Kalender-Timer traegt ``NextElapseUSecRealtime``, ein
+    monotoner ``NextElapseUSecMonotonic``. Ein Waechter, der nur eines davon
+    liest, haelt die jeweils andere Haelfte des Bestands fuer terminlos.
+    """
+
+    unit: str
+    enabled: bool
+    active: bool
+    next_elapse_realtime: str
+    next_elapse_monotonic: str
+    last_trigger_utc: datetime | None = None
+
+
+def has_future_trigger(facts: TimerRuntimeFacts) -> bool:
+    """Besitzt der Timer ueberhaupt einen naechsten Termin?
+
+    systemd meldet Terminlosigkeit auf zwei Arten: leeres Realtime-Feld und
+    ``infinity`` im Monotonic-Feld. Beide muessen zutreffen, damit der Timer
+    wirklich keinen Termin hat — sonst wuerde jeder monotone Timer (leeres
+    Realtime-Feld) faelschlich als tot gelten.
+    """
+    realtime = (facts.next_elapse_realtime or "").strip()
+    monotonic = (facts.next_elapse_monotonic or "").strip().lower()
+    has_realtime = bool(realtime) and realtime.lower() not in {"0", "infinity", "n/a"}
+    has_monotonic = bool(monotonic) and monotonic not in {"0", "infinity", "n/a"}
+    return has_realtime or has_monotonic
+
+
+def find_unscheduled_recurring_timers(
+    facts: Sequence[TimerRuntimeFacts],
+    *,
+    category_of: Callable[[str], str] = timer_category,
+) -> list[str]:
+    """INVARIANTE 1 (Scheduleability): laeuft wiederkehrend, hat aber keinen Termin.
+
+    Genau der Zustand von ``kai-tv-auto-promote`` am 2026-08-19: ``enabled``,
+    ``active``, ``NextElapseUSecMonotonic=infinity``, letzter Lauf fuenf Wochen
+    zuvor. ``systemctl --failed`` zeigt ihn nicht (nichts ist gescheitert), und
+    die Timer-Probe sammelt ``NON_ACTIVE`` (er WAR aktiv) — er faellt durch
+    beide bestehenden Netze.
+
+    Nur ``recurring_required`` wird geprueft: ein One-Shot nach seinem Termin
+    besitzt legitim keinen naechsten, und ein Daueralarm darauf wuerde den Kanal
+    entwerten.
+    """
+    return [
+        f.unit
+        for f in facts
+        if f.enabled
+        and f.active
+        and category_of(f.unit) == "recurring_required"
+        and not has_future_trigger(f)
+    ]
+
+
+def find_stalled_recurring_timers(
+    facts: Sequence[TimerRuntimeFacts],
+    *,
+    now: datetime,
+    expected_interval_s: Mapping[str, float],
+    grace_factor: float = 3.0,
+) -> list[str]:
+    """INVARIANTE 2 (Cadence): Termin vorhanden, trotzdem laeuft nichts.
+
+    Die erste Invariante faengt den terminlosen Timer. Sie faengt NICHT den Fall,
+    in dem formal ein Termin existiert, der Lauf aber trotzdem ausbleibt — etwa
+    weil die Unit dauerhaft scheitert und sofort neu terminiert wird, oder weil
+    ein Zeitsprung die Rechnung verschoben hat.
+
+    ``grace_factor`` ist bewusst grosszuegig: gemeldet wird erst, wenn das
+    Dreifache der erwarteten Kadenz verstrichen ist. Ein flatternder Waechter
+    wird ignoriert, und dann faellt der echte Befund mit durch.
+
+    Timer ohne bekannte Erwartung und Timer ohne je erfolgten Lauf werden NICHT
+    gemeldet — fuer sie ist die Frage unbeantwortbar, und Raten waere schlimmer
+    als Schweigen.
+    """
+    stalled: list[str] = []
+    for f in facts:
+        interval = expected_interval_s.get(f.unit)
+        if interval is None or interval <= 0 or f.last_trigger_utc is None:
+            continue
+        age_s = (now - f.last_trigger_utc).total_seconds()
+        if age_s > interval * grace_factor:
+            stalled.append(f.unit)
+    return stalled
+
+
+def parse_systemctl_show(output: str) -> list[TimerRuntimeFacts]:
+    """``systemctl show <units> -p Id -p ...`` in Fakten uebersetzen — rein.
+
+    ``systemctl show`` haengt die Property-Bloecke mehrerer Units aneinander.
+    ``Id=`` beginnt jeweils einen neuen Block; ohne dieses Feld waere die
+    Zuordnung geraten. Unvollstaendige Bloecke werden uebersprungen statt
+    halb interpretiert.
+    """
+    facts: list[TimerRuntimeFacts] = []
+    current: dict[str, str] = {}
+
+    def flush() -> None:
+        unit = current.get("Id", "").strip()
+        if not unit:
+            return
+        raw_last = current.get("LastTriggerUSec", "").strip()
+        last: datetime | None = None
+        if raw_last and raw_last.lower() not in {"n/a", "0"}:
+            for fmt in ("%a %Y-%m-%d %H:%M:%S %Z", "%a %Y-%m-%d %H:%M:%S"):
+                try:
+                    last = datetime.strptime(raw_last, fmt).replace(tzinfo=UTC)
+                    break
+                except ValueError:
+                    continue
+        facts.append(
+            TimerRuntimeFacts(
+                unit=unit,
+                enabled=current.get("UnitFileState", "").strip() == "enabled",
+                active=current.get("ActiveState", "").strip() == "active",
+                next_elapse_realtime=current.get("NextElapseUSecRealtime", ""),
+                next_elapse_monotonic=current.get("NextElapseUSecMonotonic", ""),
+                last_trigger_utc=last,
+            )
+        )
+
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key == "Id" and current:
+            flush()
+            current = {}
+        current[key] = value
+    if current:
+        flush()
+    return facts

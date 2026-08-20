@@ -9,7 +9,9 @@ Description=KAI Shadow-Real Feed — fire every 30 min (flag-gated, off by defau
 # ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
-OnBootSec=12min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=12min
 OnUnitActiveSec=30min
 AccuracySec=1min
 RandomizedDelaySec=60s
