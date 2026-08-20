@@ -64,6 +64,30 @@ class PaperOrder:
 
 
 @dataclass(frozen=True)
+class PriceEvidence:
+    """Was ueber die Quote bekannt ist, gegen die gefuellt wurde.
+
+    Stufe 2 der Provenienz (2026-08-20). Stufe 1 (#737) hielt nur fest, WOHER
+    ein Preis kam. Das beweist noch nicht, WELCHER Snapshot es war, WANN er
+    beobachtet wurde und WIE ALT er beim Fuellen war — genau die Angaben, die
+    ein Close-Verifier braucht, um ein enges Venue-Zeitfenster zu pruefen statt
+    einer ganzen Stunde.
+
+    Alle Felder sind optional: fehlende Evidenz wird als fehlend ausgewiesen und
+    NIE geraten.
+    """
+
+    source: str = ""
+    observed_at_utc: str = ""
+    """Zeitstempel der Quote beim Anbieter — nicht der des Fuellens."""
+
+    age_ms: float | None = None
+    """Alter der Quote beim Fuellen. None = nicht ermittelbar."""
+
+    is_stale: bool | None = None
+
+
+@dataclass(frozen=True)
 class PaperFill:
     """Immutable fill record."""
 
@@ -101,6 +125,17 @@ class PaperFill:
     # "nicht erfasst" — der Verifier wertet das als fehlende Evidenz, NICHT als
     # unverdaechtig.
     price_source: str = ""
+    # Stufe 2 (2026-08-20): welcher Snapshot, wann beobachtet, wie alt beim
+    # Fuellen — und der ROHPREIS vor Slippage, an dem sich die Rekonstruktion
+    # ``fill_price == raw * (1 ± slippage)`` ohne Ruecklaufrechnung pruefen laesst.
+    # ``monitor_tick_id`` klammert alle Closes EINES Monitor-Laufs zusammen: beim
+    # Mock-Vorfall war genau das die Signatur (in jedem betroffenen Tick war JEDE
+    # Schliessung synthetisch), sie musste aber ueber Sekunden-Zeitstempel
+    # rekonstruiert werden.
+    price_observed_at_utc: str = ""
+    market_data_age_ms: float | None = None
+    raw_market_price: float | None = None
+    monitor_tick_id: str = ""
 
 
 @dataclass
@@ -226,6 +261,16 @@ class PaperPortfolio:
 
 def _new_order_id() -> str:
     return f"ord_{uuid.uuid4().hex[:12]}"
+
+
+def _new_tick_id() -> str:
+    """Klammert alle Fills EINES Monitor-Laufs.
+
+    Beim Mock-Vorfall war genau das die entscheidende Signatur — in jedem
+    betroffenen Tick war JEDE Schliessung synthetisch. Sie musste damals ueber
+    Sekunden-Zeitstempel rekonstruiert werden.
+    """
+    return f"tick_{uuid.uuid4().hex[:12]}"
 
 
 def _new_fill_id() -> str:

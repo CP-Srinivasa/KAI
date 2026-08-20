@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
+from app.execution.models import PriceEvidence
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["MonitorPrices", "collect_monitor_prices"]
@@ -33,17 +35,22 @@ class _MarketData(Protocol):
 class MonitorPrices:
     """Preise, ihre Herkunft und die Zahl der übersprungenen Symbole."""
 
-    __slots__ = ("by_symbol", "no_market_data", "sources")
+    __slots__ = ("by_symbol", "evidence", "no_market_data", "sources")
 
     def __init__(
         self,
         by_symbol: dict[str, float],
         sources: dict[str, str],
         no_market_data: int,
+        evidence: dict[str, PriceEvidence] | None = None,
     ) -> None:
         self.by_symbol = by_symbol
         self.sources = sources
         self.no_market_data = no_market_data
+        # Stufe 2 (2026-08-20): nicht nur WOHER, sondern auch WELCHER Snapshot,
+        # WANN beobachtet und WIE ALT beim Fuellen. Der Close-Verifier braucht
+        # das, um ein enges Venue-Zeitfenster zu pruefen statt einer Stunde.
+        self.evidence: dict[str, PriceEvidence] = evidence or {}
 
     @property
     def checked(self) -> int:
@@ -64,6 +71,7 @@ async def collect_monitor_prices(
     """
     by_symbol: dict[str, float] = {}
     sources: dict[str, str] = {}
+    evidence: dict[str, PriceEvidence] = {}
     no_market_data = 0
 
     for symbol in symbols:
@@ -77,5 +85,14 @@ async def collect_monitor_prices(
             continue
         by_symbol[symbol] = point.price
         sources[symbol] = point.source
+        # ``freshness_seconds`` ist das Alter der Quote beim Abruf. Fehlt es,
+        # bleibt age_ms None — fehlende Evidenz wird ausgewiesen, nicht geraten.
+        age_s = getattr(point, "freshness_seconds", None)
+        evidence[symbol] = PriceEvidence(
+            source=point.source,
+            observed_at_utc=str(getattr(point, "timestamp_utc", "") or ""),
+            age_ms=(float(age_s) * 1000.0 if isinstance(age_s, (int, float)) else None),
+            is_stale=bool(point.is_stale),
+        )
 
-    return MonitorPrices(by_symbol, sources, no_market_data)
+    return MonitorPrices(by_symbol, sources, no_market_data, evidence)

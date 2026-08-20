@@ -27,8 +27,10 @@ from app.execution.models import (
     PaperOrder,
     PaperPortfolio,
     PaperPosition,
+    PriceEvidence,
     _new_fill_id,
     _new_order_id,
+    _new_tick_id,
     _now_utc,
     make_lifecycle_transition,
 )
@@ -301,6 +303,10 @@ class PaperExecutionEngine:
         # den unmoeglichen Preis geliefert hatte -- genau deshalb blieb die
         # Feed-Wurzel der beiden ETH-Closes vom 11./12.08. ungeklaert.
         self._tick_price_sources: dict[str, str] = {}
+        self._tick_price_evidence: dict[str, PriceEvidence] = {}
+        # Klammert alle Fills EINES Monitor-Laufs. Leer ausserhalb des Monitors —
+        # ein Entry darf nie die Tick-Id eines fremden Laufs erben.
+        self._tick_id: str = ""
         self._partial_fill_ratios: dict[str, float] = {}
         self._lifecycle_state_by_correlation_id: dict[str, OrderLifecycleState] = {}
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
@@ -640,6 +646,7 @@ class PaperExecutionEngine:
         current_price: float,
         *,
         price_source: str = "",
+        price_evidence: PriceEvidence | None = None,
     ) -> PaperFill | None:
         """
         Execute a paper fill for an order.
@@ -1080,7 +1087,15 @@ class PaperExecutionEngine:
             fee_usd=fee,
             filled_at=_now_utc(),
             slippage_pct=self._slippage_pct * 100,
-            price_source=price_source,
+            price_source=(
+                price_evidence.source if price_evidence and price_evidence.source else price_source
+            ),
+            price_observed_at_utc=(price_evidence.observed_at_utc if price_evidence else ""),
+            market_data_age_ms=(price_evidence.age_ms if price_evidence else None),
+            # Rohpreis VOR Slippage: macht `fill_price == raw * (1 ± slip)` direkt
+            # pruefbar, statt ihn spaeter zurueckrechnen zu muessen.
+            raw_market_price=current_price,
+            monitor_tick_id=self._tick_id,
             pnl_usd=trade_pnl_for_fill,
             position_side=order.position_side,
             fee_venue=fee_meta[0],
@@ -1266,6 +1281,7 @@ class PaperExecutionEngine:
         symbol: str,
         current_price: float,
         price_source: str = "",
+        price_evidence: PriceEvidence | None = None,
     ) -> PaperFill | None:
         """Close the tier-share of the position at current_price, advance tiers.
 
@@ -1350,7 +1366,9 @@ class PaperExecutionEngine:
             document_id=pos.document_id,
             regime=pos.regime,
         )
-        fill = self.fill_order(order, current_price, price_source=price_source)
+        fill = self.fill_order(
+            order, current_price, price_source=price_source, price_evidence=price_evidence
+        )
         if fill is None:
             return None
 
@@ -1382,6 +1400,10 @@ class PaperExecutionEngine:
                 # trug sie nur der Reject-Pfad, also nie die Zeilen, die spaeter
                 # forensisch geprueft werden muessen.
                 "price_source": fill.price_source,
+                "price_observed_at_utc": fill.price_observed_at_utc,
+                "market_data_age_ms": fill.market_data_age_ms,
+                "raw_market_price": fill.raw_market_price,
+                "monitor_tick_id": fill.monitor_tick_id,
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 "remaining_quantity": residual.quantity if residual else 0.0,
@@ -1488,6 +1510,7 @@ class PaperExecutionEngine:
         reason: str = "manual",
         *,
         price_source: str = "",
+        price_evidence: PriceEvidence | None = None,
     ) -> PaperFill | None:
         """Close a full open position at current_price.
 
@@ -1568,7 +1591,9 @@ class PaperExecutionEngine:
             document_id=pos.document_id,
             regime=pos.regime,
         )
-        fill = self.fill_order(order, current_price, price_source=price_source)
+        fill = self.fill_order(
+            order, current_price, price_source=price_source, price_evidence=price_evidence
+        )
         if fill is None:
             return None
 
@@ -1590,6 +1615,10 @@ class PaperExecutionEngine:
                 # trug sie nur der Reject-Pfad, also nie die Zeilen, die spaeter
                 # forensisch geprueft werden muessen.
                 "price_source": fill.price_source,
+                "price_observed_at_utc": fill.price_observed_at_utc,
+                "market_data_age_ms": fill.market_data_age_ms,
+                "raw_market_price": fill.raw_market_price,
+                "monitor_tick_id": fill.monitor_tick_id,
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 # NEO-P-101-r2: KEEP realized_pnl_usd KUMULATIV (legacy alias).
@@ -1642,6 +1671,8 @@ class PaperExecutionEngine:
         self,
         prices_by_symbol: dict[str, float],
         price_sources: dict[str, str] | None = None,
+        *,
+        price_evidence: dict[str, PriceEvidence] | None = None,
     ) -> list[PaperFill]:
         """Check SL/TP for all open positions, close those triggered.
 
@@ -1663,6 +1694,10 @@ class PaperExecutionEngine:
         # unveraendert, sie verlieren nur die (bisher ohnehin fehlende)
         # Herkunftsangabe.
         self._tick_price_sources = dict(price_sources or {})
+        self._tick_price_evidence = dict(price_evidence or {})
+        # Neue Klammer je Lauf. Ausserhalb des Monitors leer, damit ein Entry-Fill
+        # nie die Id eines fremden Ticks traegt.
+        self._tick_id = _new_tick_id()
         if self._mutations_blocked_reason() is not None:
             logger.warning(
                 "[PAPER] monitor_positions refused (%s): auto-exits disabled",
@@ -1674,6 +1709,7 @@ class PaperExecutionEngine:
             if price is None or price <= 0:
                 continue
             src = self._tick_price_sources.get(symbol, "")
+            ev = self._tick_price_evidence.get(symbol)
             pos = self._portfolio.positions.get(symbol)
             # A-Fix 2026-06-13: liquidation has the HIGHEST priority — a leveraged
             # position whose margin is wiped out is force-closed at the liquidation
@@ -1686,7 +1722,9 @@ class PaperExecutionEngine:
                     (pos.position_side == "short" and price >= liq)
                     or (pos.position_side != "short" and price <= liq)
                 ):
-                    fill = self.close_position(symbol, liq, reason="liquidation", price_source=src)
+                    fill = self.close_position(
+                        symbol, liq, reason="liquidation", price_source=src, price_evidence=ev
+                    )
                     if fill:
                         fills.append(fill)
                     continue
@@ -1702,19 +1740,27 @@ class PaperExecutionEngine:
                     _age = _position_age_seconds(pos.opened_at)
                     if _age is not None and _age >= _max_hold:
                         fill = self.close_position(
-                            symbol, price, reason="time_stop", price_source=src
+                            symbol,
+                            price,
+                            reason="time_stop",
+                            price_source=src,
+                            price_evidence=ev,
                         )
                         if fill:
                             fills.append(fill)
                         continue
             # Stop-loss has priority over tiers — it kills the whole residual.
             if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
-                fill = self.close_position(symbol, price, reason="stop", price_source=src)
+                fill = self.close_position(
+                    symbol, price, reason="stop", price_source=src, price_evidence=ev
+                )
                 if fill:
                     fills.append(fill)
                 continue
             if pos and pos.position_side != "short" and pos.stop_loss and price <= pos.stop_loss:
-                fill = self.close_position(symbol, price, reason="stop", price_source=src)
+                fill = self.close_position(
+                    symbol, price, reason="stop", price_source=src, price_evidence=ev
+                )
                 if fill:
                     fills.append(fill)
                 continue
@@ -1731,7 +1777,7 @@ class PaperExecutionEngine:
                         break
                 elif price < tier_price:
                     break
-                fill = self._consume_first_tier(symbol, price, price_source=src)
+                fill = self._consume_first_tier(symbol, price, price_source=src, price_evidence=ev)
                 if fill is None:
                     break
                 fills.append(fill)
@@ -1745,9 +1791,16 @@ class PaperExecutionEngine:
             trigger = self.check_stop_take(symbol, price)
             if trigger is None:
                 continue
-            fill = self.close_position(symbol, price, reason=trigger, price_source=src)
+            fill = self.close_position(
+                symbol, price, reason=trigger, price_source=src, price_evidence=ev
+            )
             if fill:
                 fills.append(fill)
+        # Klammer schliessen: ausserhalb des Monitors gibt es keinen Tick, und ein
+        # Entry-Fill darf die Id eines fremden Laufs nicht erben (dieselbe Falle
+        # wie beim Tick-Cache der Preisquelle).
+        self._tick_id = ""
+        self._tick_price_evidence = {}
         return fills
 
     def _append_audit(self, event_type: str, data: Mapping[str, object]) -> None:
