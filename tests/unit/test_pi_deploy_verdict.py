@@ -161,7 +161,15 @@ def _code_without_comments(path: Path) -> str:
     return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
 
 
-@pytest.mark.parametrize("path", [STEP, LIB, REPO / "scripts" / "lib" / "pi_unit_sync.sh"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        STEP,
+        LIB,
+        REPO / "scripts" / "lib" / "pi_unit_sync.sh",
+        REPO / "scripts" / "pi_apply_systemd_units.sh",
+    ],
+)
 def test_no_blanket_swallowing_of_exit_codes(path: Path) -> None:
     """Ein KOMMANDO-Fehlschlag darf nicht zu einer Notiz werden.
 
