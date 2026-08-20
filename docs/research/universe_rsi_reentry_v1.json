@@ -1,0 +1,391 @@
+{
+  "blocking": [],
+  "canonical_universe": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "BNB/USDT",
+    "ADA/USDT",
+    "AVAX/USDT",
+    "LINK/USDT",
+    "POL/USDT",
+    "DOT/USDT",
+    "ATOM/USDT",
+    "UNI/USDT",
+    "LTC/USDT",
+    "ETC/USDT",
+    "XLM/USDT",
+    "NEAR/USDT",
+    "APT/USDT",
+    "ARB/USDT",
+    "OP/USDT",
+    "INJ/USDT",
+    "SUI/USDT",
+    "SEI/USDT",
+    "TIA/USDT",
+    "RENDER/USDT",
+    "FIL/USDT",
+    "AAVE/USDT",
+    "SKY/USDT",
+    "LDO/USDT",
+    "ALGO/USDT",
+    "HBAR/USDT",
+    "IMX/USDT",
+    "GRT/USDT",
+    "FET/USDT",
+    "DOGE/USDT"
+  ],
+  "n_symbols": 34,
+  "ok": true,
+  "spec_version": "kai/universe/v1",
+  "symbols": [
+    {
+      "bars": 4321,
+      "canonical_symbol": "BTC/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "BTCUSDT",
+      "research_symbol": "BTC/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ETH/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ETHUSDT",
+      "research_symbol": "ETH/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "SOL/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "SOLUSDT",
+      "research_symbol": "SOL/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "XRP/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "XRPUSDT",
+      "research_symbol": "XRP/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "BNB/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "BNBUSDT",
+      "research_symbol": "BNB/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ADA/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ADAUSDT",
+      "research_symbol": "ADA/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "AVAX/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "AVAXUSDT",
+      "research_symbol": "AVAX/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "LINK/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "LINKUSDT",
+      "research_symbol": "LINK/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "POL/USDT",
+      "gap_bars": 0,
+      "issues": [
+        "renamed"
+      ],
+      "positive_volume_bars": 4321,
+      "provider_pair": "POLUSDT",
+      "research_symbol": "MATIC/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "DOT/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "DOTUSDT",
+      "research_symbol": "DOT/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ATOM/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ATOMUSDT",
+      "research_symbol": "ATOM/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "UNI/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "UNIUSDT",
+      "research_symbol": "UNI/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "LTC/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "LTCUSDT",
+      "research_symbol": "LTC/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ETC/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ETCUSDT",
+      "research_symbol": "ETC/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "XLM/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "XLMUSDT",
+      "research_symbol": "XLM/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "NEAR/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "NEARUSDT",
+      "research_symbol": "NEAR/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "APT/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "APTUSDT",
+      "research_symbol": "APT/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ARB/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ARBUSDT",
+      "research_symbol": "ARB/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "OP/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "OPUSDT",
+      "research_symbol": "OP/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "INJ/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "INJUSDT",
+      "research_symbol": "INJ/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "SUI/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "SUIUSDT",
+      "research_symbol": "SUI/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "SEI/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "SEIUSDT",
+      "research_symbol": "SEI/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "TIA/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "TIAUSDT",
+      "research_symbol": "TIA/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "RENDER/USDT",
+      "gap_bars": 0,
+      "issues": [
+        "renamed"
+      ],
+      "positive_volume_bars": 4321,
+      "provider_pair": "RENDERUSDT",
+      "research_symbol": "RNDR/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "FIL/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "FILUSDT",
+      "research_symbol": "FIL/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "AAVE/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "AAVEUSDT",
+      "research_symbol": "AAVE/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "SKY/USDT",
+      "gap_bars": 0,
+      "issues": [
+        "renamed"
+      ],
+      "positive_volume_bars": 4321,
+      "provider_pair": "SKYUSDT",
+      "research_symbol": "MKR/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "LDO/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "LDOUSDT",
+      "research_symbol": "LDO/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "ALGO/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "ALGOUSDT",
+      "research_symbol": "ALGO/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "HBAR/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "HBARUSDT",
+      "research_symbol": "HBAR/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "IMX/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "IMXUSDT",
+      "research_symbol": "IMX/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "GRT/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "GRTUSDT",
+      "research_symbol": "GRT/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "FET/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "FETUSDT",
+      "research_symbol": "FET/USDT",
+      "status": "TRADING"
+    },
+    {
+      "bars": 4321,
+      "canonical_symbol": "DOGE/USDT",
+      "gap_bars": 0,
+      "issues": [],
+      "positive_volume_bars": 4321,
+      "provider_pair": "DOGEUSDT",
+      "research_symbol": "DOGE/USDT",
+      "status": "TRADING"
+    }
+  ],
+  "universe_sha256": "d28e10d5ba2e11b1f541c9d2cd17e1219b92107c1b307441e5353ea05ac3f03e"
+}
