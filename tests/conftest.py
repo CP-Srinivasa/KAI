@@ -34,6 +34,15 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     # Assertions umwarf (lokal blieb es unbemerkt, weil Windows kein sudo hat).
     # Tests, die die Probe selbst pruefen, entfernen die Variable.
     monkeypatch.setenv("KAI_SUDO_POLICY_PROBE", "off")
+    # Gleiche Klasse, gleiche Falle: die Broker-Probe fragt, ob
+    # /usr/local/sbin/kai-service-control existiert. Auf JEDER Maschine ausser
+    # der Pi existiert es nicht — die Probe meldete daraufhin in jedem Test
+    # einen kritischen Befund und warf fremde Assertions um
+    # (test_daily_briefing, test_notify). Die Timer-Probe kommt vorsorglich
+    # mit: sie ueberlebte bisher nur zufaellig, weil `systemctl` auf der
+    # Workstation fehlt und der Aufruf in einen OSError lief.
+    monkeypatch.setenv("KAI_BROKER_PROBE", "off")
+    monkeypatch.setenv("KAI_TIMER_SCHEDULE_PROBE", "off")
 
 
 @pytest.fixture(autouse=True)
