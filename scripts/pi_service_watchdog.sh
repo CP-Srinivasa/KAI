@@ -15,6 +15,23 @@ cd "$ROOT"
 
 UNITS_DEFAULT="kai-server kai-agent-worker kai-tg-listener cloudflared"
 UNITS=(${KAI_SERVICE_WATCHDOG_UNITS:-$UNITS_DEFAULT})
+
+# Units, die der Broker NICHT starten kann und die deshalb ausschliesslich
+# ueberwacht werden (Contract 2026-08-20). Der Broker verankert
+# `^kai-...\.service$` und verlangt ein nichtleeres `User=`.
+#
+# `cloudflared` erfuellt das Praefix nicht — und `User=ubuntu` allein hiesse
+# ohnehin nicht "sicher passwortfrei startbar": die Unit traegt ein
+# `ExecStartPre=+`, und das `+` laesst diesen Schritt mit erhoehten
+# systemd-Rechten laufen. Sie in die Broker-Ausnahme zu heben, waere also
+# ein neuer Root-Pfad. Sie hat ohnehin `Restart=always` und heilt sich selbst;
+# was fehlt, ist nur die Sichtbarkeit — und die liefert der Alarm.
+#
+# Wollen wir spaeter passwortfreie Recovery dafuer, wird ZUERST das
+# privilegierte ExecStartPre=+ herausgezogen (Log-Verzeichnis via tmpfiles),
+# und DANN cloudflared.service als exakte Broker-Ausnahme evaluiert. Nicht
+# andersherum.
+ALERT_ONLY_UNITS="${KAI_SERVICE_WATCHDOG_ALERT_ONLY:-cloudflared}"
 THROTTLE_SECONDS="${KAI_SERVICE_WATCHDOG_THROTTLE_SECONDS:-3600}"
 AUTO_RESTART="${KAI_SERVICE_WATCHDOG_AUTO_RESTART:-1}"
 STATE_DIR="${KAI_SERVICE_WATCHDOG_STATE_DIR:-artifacts/pi_service_watchdog}"
@@ -31,6 +48,16 @@ STATE_DIR="${KAI_SERVICE_WATCHDOG_STATE_DIR:-artifacts/pi_service_watchdog}"
 #     it restart the server mid-maintenance (3-failure hysteresis), fighting the
 #     operator. Its own recovery is by design, not via this generic reconciler.
 RECONCILE_TIMERS="${KAI_WATCHDOG_RECONCILE_TIMERS:-1}"
+
+# Timer-Reconcile ist ALERT-ONLY (Contract 2026-08-20). Der Broker akzeptiert
+# ausschliesslich `.service`-Units; jeder Timer-Start ueber ihn wird
+# abgewiesen. Das aufzuloesen, indem der Broker Timer akzeptiert, hiesse
+# einen Root-Pfad fuer eine Unit-Klasse zu oeffnen, die dafuer nie geprueft
+# wurde — der Gewinn waere gering, das Risiko neu.
+#
+# Erkennen genuegt hier: seit #738 findet der Scheduleability-Waechter auch
+# den Fall, den dieser Reconcile gar nicht sah (aktiv, aber ohne Termin).
+TIMER_RECONCILE_ALERT_ONLY="${KAI_WATCHDOG_TIMER_ALERT_ONLY:-1}"
 TIMER_EXCLUDE="${KAI_WATCHDOG_TIMER_EXCLUDE:-kai-technical-paper-first-fill.timer kai-server-health-watchdog.timer}"
 
 # Failed-units-Sweep (Voll-Audit 2026-08-06, Befund P0-2): ein .timer bleibt
@@ -119,6 +146,14 @@ for unit in "${UNITS[@]}"; do
     fi
 
     restart_result="not_attempted"
+    case " $ALERT_ONLY_UNITS " in
+        *" $unit "*)
+            # Kein Broker-Versuch: er wuerde abgewiesen und `start_failed`
+            # melden — ein Fehlschlag, der wie ein Defekt aussieht, obwohl die
+            # Operation nie erlaubt war. Ehrlicher ist der explizite Zustand.
+            restart_result="alert_only"
+            ;;
+        *)
     if [[ "$AUTO_RESTART" == "1" ]]; then
         if systemctl_start "$unit"; then
             sleep 2
@@ -128,6 +163,8 @@ for unit in "${UNITS[@]}"; do
             restart_result="start_failed"
         fi
     fi
+            ;;
+    esac
 
     ALARMS+=("[svc] ${unit}=${state}; restart=${restart_result}")
 done
@@ -142,7 +179,9 @@ if [[ "$RECONCILE_TIMERS" == "1" ]]; then
             continue
         fi
         restart_result="not_attempted"
-        if [[ "$AUTO_RESTART" == "1" ]]; then
+        if [[ "$TIMER_RECONCILE_ALERT_ONLY" == "1" ]]; then
+            restart_result="alert_only"
+        elif [[ "$AUTO_RESTART" == "1" ]]; then
             if systemctl_start "$timer"; then
                 sleep 1
                 restart_result="start_ok:$(systemctl is-active "$timer" 2>&1 || true)"

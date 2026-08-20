@@ -539,6 +539,63 @@ def _check_sudo_policy(*, runs_on_pi: bool) -> list[HealthIssue]:
     return issues
 
 
+def _check_privilege_broker(*, runs_on_pi: bool) -> list[HealthIssue]:
+    """Existiert das Ziel der NOPASSWD-Policy, gehoert es root und ist es unveraendert?
+
+    Am 2026-08-20 verwies die Policy auf einen Broker, den niemand installiert
+    hatte. Der Fehler blieb unbemerkt, weil er sich erst zeigt, wenn Recovery
+    GEBRAUCHT wird — bis dahin sieht ein toter Privilegienpfad aus wie ein
+    ruhiges System.
+
+    Fail-soft: laesst sich der Zustand nicht ermitteln, gibt es keinen Befund.
+    """
+    if not runs_on_pi:
+        return []
+    if os.environ.get("KAI_BROKER_PROBE", "").strip().lower() == "off":
+        return []
+
+    from app.services.timer_health import BrokerState, evaluate_privilege_broker
+
+    repo_artifact = Path(__file__).resolve().parents[2] / "deploy" / "bin" / "kai-service-control"
+    target = Path("/usr/local/sbin/kai-service-control")
+    if not target.exists():
+        state = BrokerState(path=str(target), exists=False)
+    else:
+        # `stat -c` statt pwd/grp: dieselbe Konvention wie die Nachbedingung im
+        # Installer, und ohne POSIX-only Importe, die den Type-Check auf einer
+        # Nicht-Linux-Workstation brechen.
+        try:
+            proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
+                ["stat", "-c", "%U:%G:%a", str(target)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        parts = proc.stdout.strip().split(":") if proc.returncode == 0 else []
+        if len(parts) != 3:
+            return []
+        try:
+            same = repo_artifact.is_file() and repo_artifact.read_bytes() == target.read_bytes()
+        except OSError:
+            return []
+        state = BrokerState(
+            path=str(target),
+            exists=True,
+            owner=parts[0],
+            group=parts[1],
+            mode=parts[2],
+            matches_repo_artifact=same,
+        )
+
+    finding = evaluate_privilege_broker(state)
+    if finding is None:
+        return []
+    return [HealthIssue(severity="critical", component="privilege_broker", message=finding)]
+
+
 def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
 
@@ -772,6 +829,7 @@ def run_health_check_report(
         pass
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
     report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data

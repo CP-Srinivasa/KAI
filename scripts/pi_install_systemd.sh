@@ -41,6 +41,15 @@ TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
 # Pfad zeigen. Ohne diesen Schritt installiert ein frischer Host die Units,
 # aber nicht ihr ExecStart-Ziel — die Sicherung waere von Anfang an tot.
 HELPER_SRC="${REPO_ROOT}/scripts/standby_to_usb.sh"
+# Privilegien-Broker (#734). Die sudoers-Policy erlaubt passwortfrei GENAU
+# diesen Pfad — er MUSS deshalb existieren, bevor die Policy gilt. Am
+# 2026-08-20 war er es nicht: sudoers verwies auf /usr/local/sbin/
+# kai-service-control, die Datei fehlte, und damit war JEDER passwortfreie
+# privilegierte Pfad tot — inklusive der Auto-Recovery des Service-Watchdogs.
+# Eine Policy ohne installiertes Ziel ist keine Sicherheit, sondern ein
+# toter Pfad, der als vorhandene Faehigkeit dokumentiert bleibt.
+BROKER_SRC="${REPO_ROOT}/deploy/bin/kai-service-control"
+BROKER_DST="/usr/local/sbin/kai-service-control"
 HELPER_DST="/usr/local/bin/standby_to_usb.sh"
 TMPFILES_DST="/etc/tmpfiles.d/kai.conf"
 
@@ -383,6 +392,32 @@ install() {
         run command install -m 0755 "$HELPER_SRC" "$HELPER_DST"
     else
         echo "WARNING: $HELPER_SRC fehlt — kai-standby-* wuerden ins Leere zeigen." >&2
+    fi
+
+    # Privilegien-Broker: root:root 0755. Bewusst NICHT `ubuntu`-schreibbar —
+    # der Inhalt ist das Privileg, nicht der Dateiname. Ein von `ubuntu`
+    # beschreibbares NOPASSWD-Ziel waere exakt so viel wert wie NOPASSWD:ALL.
+    if [[ -f "$BROKER_SRC" ]]; then
+        echo ""
+        echo "Installing privilege broker (Ziel der NOPASSWD-Policy)…"
+        run command install -m 0755 -o root -g root "$BROKER_SRC" "$BROKER_DST"
+        # Nachbedingungen BEWEISEN, nicht annehmen: ohne diese Pruefung faellt
+        # ein stiller Fehlschlag erst auf, wenn die Recovery gebraucht wird.
+        if [[ "${DRY_RUN:-0}" != "1" ]]; then
+            actual="$(stat -c '%U:%G:%a' "$BROKER_DST" 2>/dev/null || echo 'MISSING')"
+            if [[ "$actual" != "root:root:755" ]]; then
+                echo "FATAL: $BROKER_DST hat '$actual', erwartet 'root:root:755'." >&2
+                exit 1
+            fi
+            if ! cmp -s "$BROKER_SRC" "$BROKER_DST"; then
+                echo "FATAL: $BROKER_DST weicht vom Repo-Artefakt ab." >&2
+                exit 1
+            fi
+            echo "  broker ok: root:root 0755, inhaltsgleich mit dem Repo"
+        fi
+    else
+        echo "FATAL: $BROKER_SRC fehlt — die NOPASSWD-Policy zeigt dann ins Leere." >&2
+        exit 1
     fi
 
     # 2026-05-07 Cutover-Lehre B-3: kai-server-Erststart auf Blank-Slate

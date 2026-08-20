@@ -489,3 +489,56 @@ def parse_systemctl_show(output: str) -> list[TimerRuntimeFacts]:
     if current:
         flush()
     return facts
+
+
+@dataclass(frozen=True)
+class BrokerState:
+    """Was ueber das NOPASSWD-Ziel bekannt ist — roh, ohne Deutung."""
+
+    path: str
+    exists: bool
+    owner: str = ""
+    group: str = ""
+    mode: str = ""
+    matches_repo_artifact: bool = False
+
+
+def evaluate_privilege_broker(state: BrokerState) -> str | None:
+    """Befundtext, wenn das privilegierte Ziel nicht vertrauenswuerdig ist.
+
+    Vorfall 2026-08-20: die sudoers-Policy erlaubte passwortfrei genau
+    ``/usr/local/sbin/kai-service-control`` — und die Datei existierte nicht.
+    Damit war jeder passwortfreie privilegierte Pfad tot, inklusive der
+    Auto-Recovery des Service-Watchdogs. Die Sicherheit ist dabei in die richtige
+    Richtung gescheitert (fail-closed), aber KAI dokumentierte wochenlang eine
+    Faehigkeit, die live nicht existierte.
+
+    Drei Zustaende sind gleichermassen ein Befund:
+
+    * **fehlt** — die Policy zeigt ins Leere.
+    * **falscher Eigentuemer/Mode** — ist das Ziel fuer ``ubuntu`` schreibbar,
+      ist NOPASSWD darauf exakt so viel wert wie ``NOPASSWD:ALL``. Der INHALT
+      ist das Privileg, nicht der Dateiname.
+    * **Drift zum Repo-Artefakt** — installiert laeuft etwas anderes als das,
+      was geprueft und freigegeben wurde.
+    """
+    if not state.exists:
+        return (
+            f"Privilegien-Broker {state.path} FEHLT, aber die sudoers-Policy erlaubt "
+            "ihn passwortfrei. Jeder passwortfreie privilegierte Pfad ist damit tot — "
+            "inklusive der Auto-Recovery des Service-Watchdogs. Installieren via "
+            "`sudo bash scripts/pi_install_systemd.sh`."
+        )
+    if (state.owner, state.group, state.mode) != ("root", "root", "755"):
+        return (
+            f"Privilegien-Broker {state.path} hat "
+            f"{state.owner}:{state.group} {state.mode}, erwartet root:root 755. "
+            "Ein fuer den Service-User schreibbares NOPASSWD-Ziel ist gleichbedeutend "
+            "mit NOPASSWD:ALL."
+        )
+    if not state.matches_repo_artifact:
+        return (
+            f"Privilegien-Broker {state.path} weicht vom Repo-Artefakt ab. "
+            "Installiert laeuft damit anderer Code als der gepruefte."
+        )
+    return None
