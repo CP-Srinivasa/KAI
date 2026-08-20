@@ -12,7 +12,9 @@ Description=Trigger KAI Shadow-Candidate resolver every 30 min (Phase B)
 [Timer]
 # The MAE/MFE window is 60 min; a 30-min cadence resolves each candidate on the
 # first tick after its window completes. Read-only — no execution side effects.
-OnBootSec=35min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=35min
 OnUnitActiveSec=30min
 AccuracySec=2min
 Unit=kai-shadow-resolver.service

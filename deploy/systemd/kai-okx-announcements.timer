@@ -4,9 +4,10 @@ Description=KAI OKX-Announcements — poll every 30 min
 # ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
-OnBootSec=5min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=5min
 OnUnitActiveSec=30min
-Persistent=true
 AccuracySec=1min
 RandomizedDelaySec=2min
 

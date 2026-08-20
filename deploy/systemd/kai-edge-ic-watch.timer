@@ -2,9 +2,10 @@
 Description=KAI Edge-IC watch — hourly movement check
 
 [Timer]
-OnBootSec=10min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=10min
 OnUnitActiveSec=1h
-Persistent=true
 AccuracySec=2min
 RandomizedDelaySec=30s
 

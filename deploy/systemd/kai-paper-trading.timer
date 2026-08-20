@@ -7,7 +7,9 @@ Description=Trigger KAI Paper-Trading every 10 min
 # gates the actual work. Do not re-add Requires= here.
 
 [Timer]
-OnBootSec=2min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=2min
 OnUnitActiveSec=10min
 AccuracySec=30s
 Unit=kai-paper-trading.service

@@ -9,11 +9,12 @@ Description=KAI Hype-Refresh — warm sentiment-overheat snapshot every 15 min
 # hype_evidence.ttl_seconds gate (default 2h). NOT enabled by default —
 # the operator runs `systemctl enable --now kai-hype-refresh.timer` only
 # after flipping hype_evidence.enabled=true.
-OnBootSec=3min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=3min
 OnUnitActiveSec=15min
 # Persistent: if the Pi was down during a slot, run once on next boot rather
 # than waiting a full interval.
-Persistent=true
 AccuracySec=1min
 RandomizedDelaySec=1min
 

@@ -7,9 +7,10 @@ Description=KAI CoinGecko-Overview-Refresh — warm overview snapshot every 15 m
 # market_cap_rank/market_cap move slowly; 15 min is ample vs the 15-min TTL.
 # NOT enabled by default — operator runs `systemctl enable --now
 # kai-coingecko-overview-refresh.timer` only after APP_COINGECKO_OVERVIEW_ENABLED=true.
-OnBootSec=3min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=3min
 OnUnitActiveSec=15min
-Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=30s
 

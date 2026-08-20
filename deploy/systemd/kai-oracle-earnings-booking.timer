@@ -15,17 +15,35 @@ Description=KAI Oracle Earnings-Booking — scan settled oracle invoices hourly
 #   Ergebnis jedes Laufes: booked={'oracle-l402': 0, 'lnurlp': 0}
 #   externe Einnahmen lifetime: 0 sat · APP_LN_PAY_ENABLED=false seit 06.08.
 #
-# Das ist Buchhaltung ueber BEREITS SETTLED Rechnungen, kein
-# Zahlungspfad -- eine Stunde Verzoegerung kostet nichts und niemand
-# wartet darauf. `Persistent=true` bleibt: ein verpasster Lauf wird
-# nachgeholt, es geht also auch nach einem Neustart nichts verloren.
+# Das ist Buchhaltung ueber BEREITS SETTLED Rechnungen, kein Zahlungspfad --
+# eine Stunde Verzoegerung kostet nichts und niemand wartet darauf.
+#
+# KORREKTUR zu #729: dort stand hier `Persistent=true bleibt: ein verpasster
+# Lauf wird nachgeholt`. Das ist FALSCH. systemd wertet Persistent=
+# ausschliesslich bei OnCalendar= aus; an diesem rein monotonen Timer war die
+# Angabe wirkungslos -- eine Zusicherung, die nichts zusichert. Sie ist
+# entfernt.
+#
+# Der TATSAECHLICHE Grund, warum eine seltenere Kadenz nichts verliert, ist
+# Idempotenz: jeder Lauf listet die settled Invoices und bucht die noch
+# ungebuchten. Belegt durch bestehende Tests, nicht durch diesen Kommentar --
+# test_ln_earnings_booking.py::test_second_run_is_idempotent sowie
+# test_ln_earnings_ledger.py::test_append_is_idempotent_per_payment_hash.
+# Ehrliche Grenze: die Nachholbarkeit endet am Listing-Fenster
+# num_max_invoices=1000 -- mehr settled Invoices zwischen zwei Laeufen als
+# das Fenster fasst, und aeltere fielen heraus. Bei lifetime 0 sat ist das
+# theoretisch, aber es wird hier genannt statt verschwiegen.
 #
 # Zurueck auf 10 min, sobald tatsaechlich Einnahmen fliessen (erste
 # gebuchte Rechnung != 0) -- dann ist die zeitnahe Buchung wieder wert,
 # was sie kostet. Geprueft in tests/unit/test_oracle_booking_cadence.py.
-OnBootSec=3min
+# Bleibt bewusst MONOTON. Produktionsverhalten zu aendern, nur damit ein
+# frueherer Kommentar wieder wahr wird, waere die falsche Richtung — die
+# Bedeutung `rund 60 min zwischen Aktivierungen` bleibt erhalten.
+# OnActiveSec liefert den restart-sicheren Initialanker, den OnBootSec nicht
+# geben kann. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=60min
 OnUnitActiveSec=60min
-Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=30s
 

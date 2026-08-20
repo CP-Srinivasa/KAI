@@ -539,6 +539,82 @@ def _check_sudo_policy(*, runs_on_pi: bool) -> list[HealthIssue]:
     return issues
 
 
+def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
+    """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
+
+    Vorfall 2026-08-19: ``kai-tv-auto-promote.timer`` stand auf ``enabled`` +
+    ``active`` mit ``NextElapseUSecMonotonic=infinity`` und hatte zuletzt am
+    2026-07-12 gefeuert — fuenf Wochen tot. Er fiel durch BEIDE bestehenden
+    Netze: ``systemctl --failed`` zeigt nichts (nichts ist gescheitert), und
+    ``pi_timer_health_probe.sh`` sammelt ``NON_ACTIVE`` (er war aktiv).
+
+    Die Deutung liegt in reinen, getesteten Funktionen
+    (``app/services/timer_health``); hier steht nur das Einsammeln.
+
+    Fail-soft: laesst sich systemd nicht befragen, gibt es KEINEN Befund — die
+    Probe ist kein Abbruchgrund (Lehre #718).
+    """
+    if not runs_on_pi:
+        return []
+    if os.environ.get("KAI_TIMER_SCHEDULE_PROBE", "").strip().lower() == "off":
+        return []
+
+    from app.services.timer_health import (
+        find_unscheduled_recurring_timers,
+        parse_systemctl_show,
+    )
+
+    timer_dir = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
+    units = sorted(f.name for f in timer_dir.glob("kai-*.timer"))
+    if not units:
+        return []
+    try:
+        proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
+            [
+                "systemctl",
+                "show",
+                *units,
+                "-p",
+                "Id",
+                "-p",
+                "UnitFileState",
+                "-p",
+                "ActiveState",
+                "-p",
+                "NextElapseUSecRealtime",
+                "-p",
+                "NextElapseUSecMonotonic",
+                "-p",
+                "LastTriggerUSec",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+
+    stuck = find_unscheduled_recurring_timers(parse_systemctl_show(proc.stdout))
+    if not stuck:
+        return []
+    return [
+        HealthIssue(
+            severity="critical",
+            component="timer_scheduleability",
+            message=(
+                f"{len(stuck)} wiederkehrende Timer laufen ohne naechsten Termin "
+                f"(enabled+active, aber kein NextElapse): {', '.join(sorted(stuck))} "
+                "— sie feuern nie wieder. Reparatur: Unit neu starten, nachdem der "
+                "zugehoerige Service einmal gelaufen ist, und auf einen "
+                "restart-sicheren Trigger umstellen (OnCalendar oder OnActiveSec)."
+            ),
+        )
+    ]
+
+
 def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
     """Abgewiesene Phantom-Closes sichtbar machen.
 
@@ -696,6 +772,7 @@ def run_health_check_report(
         pass
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
     report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

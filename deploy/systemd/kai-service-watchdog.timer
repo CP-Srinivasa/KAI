@@ -2,10 +2,11 @@
 Description=KAI Pi External Service Watchdog — every 5 minutes
 
 [Timer]
-OnBootSec=2min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=2min
 OnUnitActiveSec=5min
 Unit=kai-service-watchdog.service
-Persistent=true
 
 [Install]
 WantedBy=timers.target

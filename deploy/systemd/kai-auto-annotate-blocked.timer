@@ -9,7 +9,9 @@ Description=Trigger KAI Auto-Annotate Blocked every 6 hours (D-227)
 [Timer]
 # 45 min after boot first-run, then every 6h. Offset from kai-auto-annotate.timer
 # so CoinGecko calls do not stack immediately after boot.
-OnBootSec=45min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=45min
 OnUnitActiveSec=6h
 AccuracySec=2min
 Unit=kai-auto-annotate-blocked.service

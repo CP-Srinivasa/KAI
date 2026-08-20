@@ -9,10 +9,11 @@ Description=KAI Unlock-Refresh — rebuild the unlock calendar weekly
 # keeps the calendar current with huge headroom under the 14-day stale threshold
 # (endpoint flags stale beyond that). OnBootSec also refreshes shortly after a
 # reboot so a Pi that was down over a slot is not left stale.
-OnBootSec=10min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=10min
 OnUnitActiveSec=1w
 # Persistent: if the Pi was off during the weekly slot, run once on next boot.
-Persistent=true
 AccuracySec=1h
 RandomizedDelaySec=5min
 

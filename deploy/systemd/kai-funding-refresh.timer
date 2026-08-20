@@ -9,11 +9,12 @@ Description=KAI Funding-Refresh — warm funding snapshot every 5 min
 # funding_evidence.ttl_seconds gate (default 1h). NOT enabled by default —
 # the operator runs `systemctl enable --now kai-funding-refresh.timer` only
 # after flipping funding_evidence.enabled=true.
-OnBootSec=2min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=2min
 OnUnitActiveSec=5min
 # Persistent: if the Pi was down during a slot, run once on next boot rather
 # than waiting a full interval.
-Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=30s
 

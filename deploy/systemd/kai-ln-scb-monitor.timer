@@ -3,9 +3,10 @@ Description=Run KAI Lightning SCB monitor hourly
 
 [Timer]
 # No Requires= dependency: a failed one-shot must not strand the timer.
-OnBootSec=5min
+# OnActiveSec statt OnBootSec: verankert sich am TIMER, nicht am Boot, und
+# ueberlebt damit jeden Restart. Contract: tests/unit/test_timer_recurring_contract.py
+OnActiveSec=5min
 OnUnitActiveSec=1h
-Persistent=true
 AccuracySec=5min
 RandomizedDelaySec=5min
 Unit=kai-ln-scb-monitor.service

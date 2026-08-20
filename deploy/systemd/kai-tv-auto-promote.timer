@@ -2,8 +2,19 @@
 Description=KAI TradingView Auto-Promote — run every 5 min
 
 [Timer]
-OnBootSec=3min
-OnUnitActiveSec=5min
+# VORFALL 2026-08-19: diese Unit meldete `enabled` UND `active`, hatte aber
+# NextElapseUSecMonotonic=infinity und feuerte zuletzt am 2026-07-12 12:39:45
+# — fuenf Wochen tot, von `systemctl --failed` nicht gezeigt und von der
+# Timer-Probe nicht gesehen (die sammelt NON_ACTIVE; dieser Timer WAR aktiv).
+#
+# Ursache: nur monotone Trigger. OnBootSec feuert einmal nach dem Boot,
+# OnUnitActiveSec verankert sich an der letzten SERVICE-Aktivierung. Wird der
+# Timer lange nach dem Boot neu gestartet, waehrend der Service seit Wochen
+# nicht lief, existiert kein Anker — und es entsteht nie wieder ein Termin.
+#
+# Die Aufgabe soll schlicht kontinuierlich laufen; die Wanduhr-Kadenz ist hier
+# die klarste Loesung, und erst mit OnCalendar wirkt Persistent= ueberhaupt.
+OnCalendar=*:0/5
 Persistent=true
 
 [Install]
