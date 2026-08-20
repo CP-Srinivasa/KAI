@@ -831,7 +831,9 @@ class TradingLoop:
         no_market_data += collected.no_market_data
         checked += collected.checked
 
-        fills = self._exec.monitor_positions(collected.by_symbol, collected.sources)
+        fills = self._exec.monitor_positions(
+            collected.by_symbol, collected.sources, price_evidence=collected.evidence
+        )
         for fill in fills:
             triggered += 1
             closes.append(
