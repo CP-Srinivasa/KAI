@@ -91,7 +91,16 @@ class PriceEvidence:
     """
 
     age_ms: float | None = None
-    """Alter der Quote beim Fuellen. None = nicht ermittelbar."""
+    """Vom Datenadapter beim ABRUF gemeldetes Alter der Quote.
+
+    NICHT das Alter beim Fuellen: das wird aus ``filled_at - observed_at_utc``
+    berechnet und liegt als ``PaperFill.market_data_age_ms`` vor, waehrend dieser
+    Wert daneben als ``market_data_age_ms_at_collection`` persistiert wird.
+    Zwischen Abruf und Fuellen vergeht Zeit — beides unter einer Bedeutung zu
+    fuehren war genau die Scheingenauigkeit, die dieser Stand beseitigt.
+
+    None = nicht ermittelbar.
+    """
 
     is_stale: bool | None = None
 
