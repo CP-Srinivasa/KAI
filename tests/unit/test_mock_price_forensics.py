@@ -107,9 +107,16 @@ def test_symbol_outside_base_prices_uses_the_100_default() -> None:
 
 
 def test_short_close_buy_side_slippage_is_matched() -> None:
-    """A short close fills at price*(1+s); the detector must cover that sign."""
-    raw = _mock_price("SOL/USDT")
-    assert match_mock_price("SOL/USDT", raw * 1.0005) is not None
+    """A short close fills at price*(1+s); the detector must cover that sign.
+
+    Der Rohwert wird NICHT ueber ``_mock_price`` geholt: dessen Phase haengt an
+    ``hash(symbol)`` und ist pro Prozess zufaellig. Faellt sie auf eine
+    degenerierte Phase (Basispreis, Amplituden-Extremum), die der Detektor
+    bewusst ausschliesst, war der Test zufaellig rot — ~0,8 % je Lauf. Statt
+    dessen ein bekannt nicht-degenerierter Wert.
+    """
+    raw = 3227.3  # mock(ETH/USDT, phase 101), forensisch belegt
+    assert match_mock_price("ETH/USDT", raw * 1.0005) is not None
 
 
 def test_raw_mock_quote_is_not_matched() -> None:
@@ -118,8 +125,7 @@ def test_raw_mock_quote_is_not_matched() -> None:
     Accepting it flagged round placeholder prices (FB/USDT 101.00) that merely
     sit in the mock's default 98..102 band.
     """
-    raw = _mock_price("SOL/USDT")
-    assert match_mock_price("SOL/USDT", raw) is None
+    assert match_mock_price("ETH/USDT", 3227.3) is None
     assert not is_mock_derived_price("FB/USDT", 101.0)
 
 

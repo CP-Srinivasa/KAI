@@ -73,7 +73,11 @@ def test_close_traegt_snapshot_zeit_und_alter(engine: PaperExecutionEngine) -> N
     closed = _events(engine, "position_closed")[-1]
     assert closed["price_source"] == "bybit"
     assert closed["price_observed_at_utc"] == "2026-08-20T09:15:00+00:00"
-    assert closed["market_data_age_ms"] == 1400.0
+    # Seit Stage 2.1 trennt der Fill die beiden Groessen: `market_data_age_ms` ist
+    # der Abstand Beobachtung -> FUELLEN, der vom Adapter beim Abruf gemeldete
+    # Wert steht daneben. Vorher trug ein Feld beide Bedeutungen.
+    assert closed["market_data_age_ms_at_collection"] == 1400.0
+    assert closed["market_data_age_ms"] > 1400.0
 
 
 def test_rohpreis_macht_die_slippage_direkt_pruefbar(engine: PaperExecutionEngine) -> None:
