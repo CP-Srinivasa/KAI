@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -182,6 +183,48 @@ def activation_sha256(activation: PreRegActivation) -> str:
     ).hexdigest()
 
 
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _require_git_sha(value: str) -> str:
+    """Ein Commit-Verweis oder gar nichts.
+
+    ``"abc"`` erfuellte die alte Pruefung ("nicht leer") und sah im
+    Activation-Record aus wie eine Beweiskette. Ein Verdikt, das sich darauf
+    beruft, waere nicht nachpruefbar — und das faellt erst auf, wenn jemand es
+    nachrechnen will.
+    """
+    normalised = (value or "").strip().lower()
+    if not _GIT_SHA_RE.match(normalised):
+        raise ValueError(f"research_code_sha must be a full 40-hex git commit sha, got {value!r}")
+    return normalised
+
+
+def _require_sha256(value: str, field_name: str) -> str:
+    normalised = (value or "").strip().lower()
+    if not _SHA256_RE.match(normalised):
+        raise ValueError(f"{field_name} must be 64 hex characters, got {value!r}")
+    return normalised
+
+
+def _require_utc(t0_utc: str) -> datetime:
+    """Timezone-aware verlangen, dann nach UTC kanonisieren.
+
+    Ein naives ``t0_utc`` bekam bisher einfach ``tzinfo=UTC`` angeheftet. Gibt
+    der Operator lokale Zeit ein, verschiebt das die gesamte OOS-Epoche um
+    Stunden, ohne dass irgendwo etwas auffaellt — und ein Signal knapp vor T0
+    landet auf der falschen Seite der Grenze. Ein Offset wie ``+02:00`` blieb
+    zudem im Feld stehen, dessen Name UTC behauptet.
+    """
+    parsed = datetime.fromisoformat(t0_utc)
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"t0_utc must carry a timezone (naive input is not silently UTC), got {t0_utc!r}"
+        )
+    return parsed.astimezone(UTC)
+
+
 def activate(
     candidate: PreRegCandidate,
     *,
@@ -189,6 +232,7 @@ def activate(
     research_code_sha: str,
     evaluator_sha256: str,
     operator_approved: bool,
+    expected_universe_sha256: str | None = None,
 ) -> PreRegActivation:
     """Erzeuge das Activation-Record. T1/T2 folgen aus den Offsets, nicht aus Eingabe.
 
@@ -210,16 +254,27 @@ def activate(
         raise ValueError("activation requires explicit operator approval")
     if not research_code_sha or not evaluator_sha256:
         raise ValueError("research_code_sha and evaluator_sha256 are mandatory")
+    code_sha = _require_git_sha(research_code_sha)
+    eval_sha = _require_sha256(evaluator_sha256, "evaluator_sha256")
 
-    start = datetime.fromisoformat(t0_utc)
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=UTC)
+    # Der Universe-Hash im Candidate wird nachgerechnet, nicht geglaubt — sonst
+    # traegt die Activation eine Population, die nie geprueft wurde.
+    if (
+        expected_universe_sha256 is not None
+        and candidate.universe_sha256 != expected_universe_sha256
+    ):
+        raise ValueError(
+            "candidate universe_sha256 does not match the sealed universe: "
+            f"{candidate.universe_sha256!r} != {expected_universe_sha256!r}"
+        )
+
+    start = _require_utc(t0_utc)
 
     return PreRegActivation(
         candidate_sha256=candidate_sha256(candidate),
         universe_sha256=candidate.universe_sha256,
-        research_code_sha=research_code_sha,
-        evaluator_sha256=evaluator_sha256,
+        research_code_sha=code_sha,
+        evaluator_sha256=eval_sha,
         t0_utc=start.isoformat(),
         t1_utc=(start + timedelta(days=candidate.t1_offset_days)).isoformat(),
         t2_utc=(start + timedelta(days=candidate.t2_offset_days)).isoformat(),

@@ -47,6 +47,10 @@ from app.research.prereg_window import (
 
 _UNIVERSE_SHA = "d28e10d5ba2e11b1f541c9d2cd17e1219b92107c1b307441e5353ea05ac3f03e"
 _START = "2026-09-01T00:00:00+00:00"
+# Formatgueltige Platzhalter: ``activate`` verlangt einen 40-Hex-Commit und
+# einen 64-Hex-Evaluator-Hash, damit im Record keine Schein-Beweiskette steht.
+_CODE_SHA = "9d1502dc7c6f4f2b1a3e5c7d9b0f2a4c6e8d0b2f"
+_EVALUATOR_SHA = "a" * 64
 _T1 = "2026-11-30T00:00:00+00:00"  # +90d
 _T2 = "2027-02-28T00:00:00+00:00"  # +180d
 
@@ -167,8 +171,8 @@ def test_activation_derives_t1_and_t2_from_the_sealed_offsets() -> None:
     activation = activate(
         _candidate(),
         t0_utc=_START,
-        research_code_sha="abc123",
-        evaluator_sha256="def456",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVALUATOR_SHA,
         operator_approved=True,
     )
 
@@ -185,8 +189,8 @@ def test_activation_links_to_the_candidate_hash() -> None:
     activation = activate(
         candidate,
         t0_utc=_START,
-        research_code_sha="abc123",
-        evaluator_sha256="def456",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVALUATOR_SHA,
         operator_approved=True,
     )
 
@@ -240,8 +244,8 @@ def test_activation_does_not_mutate_the_candidate() -> None:
     activate(
         candidate,
         t0_utc=_START,
-        research_code_sha="abc",
-        evaluator_sha256="def",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVALUATOR_SHA,
         operator_approved=True,
     )
 
