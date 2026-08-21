@@ -27,6 +27,7 @@ from app.research.prereg_window import (
     ACTION_EVALUATE,
     ACTION_EXTEND_TO_T2,
     ACTION_INCONCLUSIVE,
+    ACTION_RESUME_EVALUATION,
     ACTION_WAIT,
     CHECKPOINT_T1,
     MaturityCounts,
@@ -208,7 +209,13 @@ def test_an_extension_at_t1_survives_and_holds_until_t2(tmp_path: Path) -> None:
     assert not second.may_evaluate
 
 
-def test_a_verdict_at_t1_closes_the_experiment_across_restarts(tmp_path: Path) -> None:
+def test_an_evaluate_without_a_verdict_resumes_instead_of_closing(tmp_path: Path) -> None:
+    """Ein Absturz zwischen Entschluss und p-Wert darf das Ergebnis nicht verschlucken.
+
+    Frueher galt hier ``CLOSED`` — der Entschluss stand, das Verdikt fehlte, und
+    das Experiment war zu Ende, ohne je ein Ergebnis gehabt zu haben. Jetzt wird
+    wiederaufgenommen, aber ausschliesslich auf dem eingefrorenen Datenschnitt.
+    """
     path = tmp_path / "checkpoints.jsonl"
 
     first = _resolve(path, _T1, _counts(146, 75))
@@ -216,8 +223,30 @@ def test_a_verdict_at_t1_closes_the_experiment_across_restarts(tmp_path: Path) -
 
     second = _resolve(path, _T2, _counts(300, 150))
 
-    assert second.action == ACTION_CLOSED
-    assert not second.may_evaluate
+    assert second.action == ACTION_RESUME_EVALUATION
+    assert second.may_evaluate
+    assert second.must_use_frozen_input, "keine aktuellen Daten, nur das Artefakt"
+
+
+def test_only_a_recorded_verdict_closes_the_experiment(tmp_path: Path) -> None:
+    """Erst ``VERDICT_RECORDED`` schliesst — nicht schon der Entschluss."""
+    path = tmp_path / "checkpoints.jsonl"
+    _resolve(path, _T1, _counts(146, 75))
+
+    closed = resolve_window(
+        now_utc=_T2,
+        t1_utc=_T1,
+        t2_utc=_T2,
+        counts=_counts(300, 150),
+        n_valid_min=100,
+        cluster_min=50,
+        activation_sha256=_ACT,
+        state_path=path,
+        verdict_recorded=True,
+    )
+
+    assert closed.action == ACTION_CLOSED
+    assert not closed.may_evaluate
 
 
 def test_the_decision_is_recorded_before_it_is_returned(tmp_path: Path) -> None:
