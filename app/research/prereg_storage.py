@@ -200,3 +200,75 @@ def load_activation(root: Path, sha: str) -> dict[str, object]:
             f"(erwartet {sha[:12]}…, berechnet {recomputed[:12]}…)"
         )
     return body
+
+
+def verify_prereg_tree(root: Path, sha: str) -> dict[str, int]:
+    """Die ganze Beweiskette eines wiederhergestellten Baums nachrechnen.
+
+    Ein Backup ist erst dann ein Rueckweg, wenn das Zurueckgeholte auch haelt.
+    Geprueft wird deshalb nicht "die Dateien sind da", sondern::
+
+        activation.json      -> activation_sha256 aus dem Inhalt
+        checkpoints.jsonl    -> decision_fingerprint je Zeile
+        verdicts.jsonl       -> result_sha256 je Zeile
+        frozen/<T>/…         -> evaluation_input_sha256 und dataset_sha256
+
+    Ein Artefakt OHNE Journaleintrag ist kein Fehler, sondern eine Waise: es
+    entsteht, wenn ein Absturz zwischen Schreiben und Journalisieren liegt. Es
+    wird gezaehlt und gemeldet, nicht beanstandet — Autoritaet hat nur, was im
+    Journal steht.
+
+    Returns:
+        Zaehlungen (Checkpoints, Verdikte, gepruefte Artefakte, Waisen).
+
+    Raises:
+        PreRegStorageError: irgendein Glied der Kette haelt nicht.
+    """
+    from app.research.frozen_input import FrozenInputError, read_frozen_artifact
+    from app.research.prereg_evaluation import load_verdicts
+    from app.research.prereg_window_state import CheckpointJournalError, load_checkpoints
+
+    validate_layout(root, sha)
+    load_activation(root, sha)
+
+    try:
+        checkpoints = load_checkpoints(checkpoint_journal_path(root, sha), activation_sha256=sha)
+        verdicts = load_verdicts(verdict_journal_path(root, sha), activation_sha256_value=sha)
+    except CheckpointJournalError as exc:
+        raise PreRegStorageError(f"Journal haelt nicht: {exc}") from exc
+
+    referenced: set[tuple[str, str]] = set()
+    for record in checkpoints:
+        if not record.evaluation_input_sha256:
+            continue
+        referenced.add((record.checkpoint, record.evaluation_input_sha256))
+        try:
+            read_frozen_artifact(
+                frozen_dir(root, sha, record.checkpoint), record.evaluation_input_sha256
+            )
+        except FrozenInputError as exc:
+            raise PreRegStorageError(
+                f"{record.checkpoint}: das journalisierte Artefakt haelt nicht — {exc}"
+            ) from exc
+
+    for verdict in verdicts:
+        key = (verdict.checkpoint, verdict.evaluation_input_sha256)
+        if key not in referenced:
+            raise PreRegStorageError(
+                f"{verdict.checkpoint}: das Verdikt verweist auf "
+                f"{verdict.evaluation_input_sha256[:12]}…, das kein Journaleintrag nennt."
+            )
+
+    orphans = 0
+    for checkpoint in CHECKPOINTS:
+        for path in sorted(frozen_dir(root, sha, checkpoint).glob("evaluation_input_*.json")):
+            digest = path.stem.removeprefix("evaluation_input_")
+            if (checkpoint, digest) not in referenced:
+                orphans += 1
+
+    return {
+        "checkpoints": len(checkpoints),
+        "verdicts": len(verdicts),
+        "verified_artifacts": len(referenced),
+        "orphan_artifacts": orphans,
+    }
