@@ -44,6 +44,7 @@
     "app/execution/backtest_engine.py::_build_risk_limits",
     "app/execution/backtest_engine.py::run",
     "app/execution/backtest_engine.py::to_json_dict",
+    "app/execution/close_verifier.py::verify_close",
     "app/execution/cost_model.py::round_trip",
     "app/execution/cost_model.py::summarize_fees",
     "app/execution/entry_watcher.py::__init__",
@@ -172,5 +173,8 @@
     "app/research/stats.py::summarize_net_bps",
     "app/research/verdict_bundle.py::evaluate_bundle"
   ],
-  "_extended_2026_08_17": "AGG_TOKENS um Geld-/Risiko-Kennzahlen erweitert (pnl, bps, sharpe, drawdown, fee, drag, edge, equity, mu, ...) und app/execution in SCAN_ROOTS aufgenommen. Die zwoelf urspruenglichen Tokens trafen KEINE einzige Geld-Kennzahl - genau die Zahlen, fuer die die Direktive geschrieben wurde, liefen am Ratchet vorbei. Der Zuwachs ist kein Regress, sondern vorher unsichtbare Schuld."
+  "_extended_2026_08_17": "AGG_TOKENS um Geld-/Risiko-Kennzahlen erweitert (pnl, bps, sharpe, drawdown, fee, drag, edge, equity, mu, ...) und app/execution in SCAN_ROOTS aufgenommen. Die zwoelf urspruenglichen Tokens trafen KEINE einzige Geld-Kennzahl - genau die Zahlen, fuer die die Direktive geschrieben wurde, liefen am Ratchet vorbei. Der Zuwachs ist kein Regress, sondern vorher unsichtbare Schuld.",
+  "_notes": {
+    "app/execution/close_verifier.py::verify_close": "Kein Aggregat: urteilt ueber GENAU EINEN Close (eine Audit-Zeile, ein Evidenz-Artefakt, ein Urteil) — es gibt keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das Kwarg `tolerance_pct` (Token 'pct'), eine Toleranzschwelle beim Kerzen-Vergleich. Bewusst hier eingetragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl."
+  }
 }
