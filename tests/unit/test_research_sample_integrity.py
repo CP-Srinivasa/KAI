@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -91,18 +92,50 @@ def test_boolean_decider_outputs_are_rejected(boolean_side: bool) -> None:
         )
 
 
+@pytest.mark.parametrize("float_side", [1.0, 0.0, -1.0])
+def test_float_decider_outputs_are_rejected(float_side: float) -> None:
+    with pytest.raises(ValueError, match="decider must return integer -1, 0, or 1"):
+        decisions_to_trades_with_counts(
+            [_row(0)],
+            [25.0],
+            lambda _row_in: cast(int, float_side),
+            round_trip_cost_bps=5.0,
+        )
+
+
 @pytest.mark.parametrize(
     "non_finite_cost",
     [float("nan"), float("inf"), float("-inf")],
     ids=["nan", "positive-infinity", "negative-infinity"],
 )
 def test_non_finite_round_trip_cost_is_rejected(non_finite_cost: float) -> None:
-    with pytest.raises(ValueError, match="round_trip_cost_bps must be finite and >= 0"):
+    with pytest.raises(ValueError, match="round_trip_cost_bps must be numeric, finite, and >= 0"):
         decisions_to_trades_with_counts(
             [_row(0)],
             [25.0],
             lambda _row_in: 1,
             round_trip_cost_bps=non_finite_cost,
+        )
+
+
+@pytest.mark.parametrize("boolean_cost", [True, False])
+def test_boolean_round_trip_cost_is_rejected(boolean_cost: bool) -> None:
+    with pytest.raises(ValueError, match="round_trip_cost_bps must be numeric, finite, and >= 0"):
+        decisions_to_trades_with_counts(
+            [_row(0)],
+            [25.0],
+            lambda _row_in: 1,
+            round_trip_cost_bps=boolean_cost,
+        )
+
+
+def test_non_numeric_round_trip_cost_is_rejected() -> None:
+    with pytest.raises(ValueError, match="round_trip_cost_bps must be numeric, finite, and >= 0"):
+        decisions_to_trades_with_counts(
+            [_row(0)],
+            [25.0],
+            lambda _row_in: 1,
+            round_trip_cost_bps=cast(float, "5.0"),
         )
 
 

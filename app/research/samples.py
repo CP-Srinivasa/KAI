@@ -101,7 +101,7 @@ def decisions_to_trades(
         rows: causal feature rows (oldest first).
         forward_bps: forward-return labels aligned to ``rows`` (non-finite = unavailable).
         decide: hypothesis mapping a row to side in {-1, 0, +1}.
-        round_trip_cost_bps: total cost charged per taken trade. Must be finite and >= 0.
+        round_trip_cost_bps: total cost charged per taken trade. Must be numeric, finite, and >= 0.
 
     Returns:
         One TradeSample per row where side != 0 and a finite label exists.
@@ -122,13 +122,18 @@ def _emit_trades(
     """Evaluate each row once and retain the result used by every downstream view."""
     if len(rows) != len(forward_bps):
         raise ValueError("rows and forward_bps must have equal length")
-    if not isfinite(round_trip_cost_bps) or round_trip_cost_bps < 0:
-        raise ValueError("round_trip_cost_bps must be finite and >= 0")
+    if (
+        isinstance(round_trip_cost_bps, bool)
+        or not isinstance(round_trip_cost_bps, (int, float))
+        or not isfinite(round_trip_cost_bps)
+        or round_trip_cost_bps < 0
+    ):
+        raise ValueError("round_trip_cost_bps must be numeric, finite, and >= 0")
 
     outcomes: list[_RowDecision] = []
     for row, label in zip(rows, forward_bps, strict=True):
         side = decide(row)
-        if isinstance(side, bool) or side not in (-1, 0, 1):
+        if isinstance(side, bool) or not isinstance(side, int) or side not in (-1, 0, 1):
             raise ValueError(f"decider must return integer -1, 0, or 1; got {side!r}")
 
         finite_label = label if label is not None and isfinite(label) else None
