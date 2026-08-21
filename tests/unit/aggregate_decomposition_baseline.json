@@ -165,7 +165,7 @@
     "app/research/runner.py::aggregates_to_ledger_entries",
     "app/research/runner.py::main",
     "app/research/runner.py::summarize_universe",
-    "app/research/samples.py::decisions_to_trades",
+    "app/research/samples.py::_emit_trades",
     "app/research/shadow_evidence_eval.py::evaluate_signal",
     "app/research/shadow_outcomes.py::load_canonical_outcomes",
     "app/research/shadow_outcomes.py::to_feature_outcomes",
