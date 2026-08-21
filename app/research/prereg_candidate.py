@@ -28,12 +28,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 PREREG_SPEC_VERSION = "kai/prereg/v2"
+
+# Ein Git-SHA-1 ist 40 Hex-Zeichen, ein SHA-256 sind 64. Beides klein
+# geschrieben, damit derselbe Wert nicht in zwei Schreibweisen existiert.
+# Frueher genuegte hier ein nichtleerer String — 'abc' waere durchgegangen,
+# und hinterher waere nicht mehr feststellbar, WAS gemessen hat.
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 STATUS_CANDIDATE = "CANDIDATE_LOCKED_NOT_ACTIVE"
 STATUS_ACTIVE = "ACTIVE"
@@ -208,12 +216,28 @@ def activate(
         raise ValueError(f"candidate has status {candidate.status!r}, expected CANDIDATE")
     if not operator_approved:
         raise ValueError("activation requires explicit operator approval")
-    if not research_code_sha or not evaluator_sha256:
-        raise ValueError("research_code_sha and evaluator_sha256 are mandatory")
+    if not _GIT_SHA_RE.match(research_code_sha or ""):
+        raise ValueError(
+            f"research_code_sha {research_code_sha!r} ist kein vollstaendiger "
+            "Git-SHA-1 (40 Hex, klein geschrieben)"
+        )
+    if not _SHA256_RE.match(evaluator_sha256 or ""):
+        raise ValueError(f"evaluator_sha256 {evaluator_sha256!r} ist kein SHA-256 (64 Hex, klein)")
 
-    start = datetime.fromisoformat(t0_utc)
+    try:
+        start = datetime.fromisoformat(t0_utc)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"t0_utc {t0_utc!r} ist kein ISO-8601") from exc
     if start.tzinfo is None:
-        start = start.replace(tzinfo=UTC)
+        # Frueher wurde hier still UTC angenommen. Das ist genau die Art
+        # Annahme, die nur dann falsch ist, wenn sie teuer wird: ein um zwei
+        # Stunden verschobenes T0 verschiebt T1, T2 und die Menge der Signale,
+        # die ueberhaupt ins Fenster fallen.
+        raise ValueError(
+            f"t0_utc {t0_utc!r} ist zeitzonenlos — UTC wird nicht geraten. "
+            "Zeitzone ausdruecklich angeben."
+        )
+    start = start.astimezone(UTC)
 
     return PreRegActivation(
         candidate_sha256=candidate_sha256(candidate),

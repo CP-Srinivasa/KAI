@@ -101,6 +101,10 @@ class CheckpointRecord:
     mature: bool
     recorded_at_utc: str
     counts: dict[str, int] = field(default_factory=dict)
+    # Nur bei EVALUATE gesetzt: der Hash des eingefrorenen Datenschnitts, auf
+    # dem gewertet werden DARF. Steht er im Journal, MUSS das Artefakt bereits
+    # existieren — es wird vor diesem Eintrag geschrieben.
+    evaluation_input_sha256: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -137,6 +141,7 @@ def decision_fingerprint(record: CheckpointRecord) -> str:
         "action": record.action,
         "mature": record.mature,
         "counts": dict(sorted(record.counts.items())),
+        "evaluation_input_sha256": record.evaluation_input_sha256,
     }
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
@@ -170,6 +175,22 @@ def _validate_counts(value: object, where: str) -> dict[str, int]:
             raise CheckpointJournalError(f"{where}: counts[{key!r}] ist negativ")
         out[key] = raw
     return out
+
+
+def _validate_optional_hash(value: object, where: str) -> str:
+    """Leer oder ein SHA-256 — nichts dazwischen.
+
+    Der Wert liegt im Fingerabdruck; ein nachtraegliches Entfernen faellt
+    deshalb ohnehin auf. Die Formpruefung fuegt hinzu, dass auch ein
+    *vorhandener* Wert kein Zufallstext sein kann.
+    """
+    if value == "":
+        return ""
+    if not _is_hex64(value):
+        raise CheckpointJournalError(
+            f"{where}: 'evaluation_input_sha256' ist weder leer noch ein SHA-256"
+        )
+    return str(value)
 
 
 def _parse_record(payload: Any, where: str, activation_sha256: str) -> CheckpointRecord:
@@ -221,6 +242,9 @@ def _parse_record(payload: Any, where: str, activation_sha256: str) -> Checkpoin
         mature=payload["mature"],
         recorded_at_utc=recorded_at,
         counts=_validate_counts(payload["counts"], where),
+        evaluation_input_sha256=_validate_optional_hash(
+            payload.get("evaluation_input_sha256", ""), where
+        ),
     )
 
     stored = payload["decision_fingerprint"]
@@ -345,6 +369,7 @@ def resolve_window(
     cluster_min: int,
     activation_sha256: str,
     state_path: Path,
+    verdict_recorded: bool = False,
 ) -> WindowDecision:
     """Entscheiden UND die Entscheidung festhalten — in dieser Reihenfolge.
 
@@ -361,6 +386,7 @@ def resolve_window(
         n_valid_min=n_valid_min,
         cluster_min=cluster_min,
         t1_outcome=t1_outcome,
+        verdict_recorded=verdict_recorded,
     )
 
     if decision.action in RECORDABLE_ACTIONS and decision.checkpoint in RECORDABLE_CHECKPOINTS:

@@ -49,6 +49,10 @@ ACTION_EVALUATE = "EVALUATE"
 ACTION_EXTEND_TO_T2 = "EXTEND_TO_T2"
 ACTION_INCONCLUSIVE = "INCONCLUSIVE_NOT_MATURE"
 ACTION_CLOSED = "CLOSED_VERDICT_ALREADY_ISSUED"
+# Der Entschluss zu werten steht, das Verdikt fehlt. NICHT geschlossen und
+# ausdruecklich KEINE neue Datenaufnahme: es wird exakt der eingefrorene
+# Datenschnitt erneut ausgewertet.
+ACTION_RESUME_EVALUATION = "RESUME_EVALUATION"
 
 CHECKPOINT_PRE_T1 = "PRE_T1"
 CHECKPOINT_T1 = "T1"
@@ -88,7 +92,17 @@ class WindowDecision:
 
     @property
     def may_evaluate(self) -> bool:
-        return self.action == ACTION_EVALUATE
+        return self.action in (ACTION_EVALUATE, ACTION_RESUME_EVALUATION)
+
+    @property
+    def must_use_frozen_input(self) -> bool:
+        """Bei einer Wiederaufnahme sind aktuelle Daten verboten.
+
+        Zwischen dem Entschluss und dem Neustart kann der Provider eine
+        nachgelieferte Kerze oder ein korrigiertes Volumen liefern. Wer dann neu
+        laedt, wertet nicht dieselbe Auswertung erneut aus, sondern eine zweite.
+        """
+        return self.action == ACTION_RESUME_EVALUATION
 
 
 def _parse(timestamp_utc: str) -> datetime:
@@ -105,6 +119,7 @@ def decide_window_action(
     n_valid_min: int,
     cluster_min: int,
     t1_outcome: str | None = None,
+    verdict_recorded: bool = False,
 ) -> WindowDecision:
     """Rein und zustandslos. Der T1-Ausgang wird vom Aufrufer mitgegeben.
 
@@ -133,12 +148,26 @@ def decide_window_action(
     mature = not reasons
 
     if t1_outcome == ACTION_EVALUATE:
+        if verdict_recorded:
+            return WindowDecision(
+                action=ACTION_CLOSED,
+                checkpoint=CHECKPOINT_T1,
+                mature=mature,
+                counts=counts,
+                reasons=("Verdikt wurde an T1 bereits gefaellt — genau einmal.",),
+            )
+        # Entschluss steht, Verdikt fehlt: ein Absturz zwischen beidem darf das
+        # Ergebnis nicht verschlucken. Wiederaufnehmen — aber ausschliesslich auf
+        # dem eingefrorenen Datenschnitt, nie auf aktuellen Daten.
         return WindowDecision(
-            action=ACTION_CLOSED,
+            action=ACTION_RESUME_EVALUATION,
             checkpoint=CHECKPOINT_T1,
             mature=mature,
             counts=counts,
-            reasons=("Verdikt wurde an T1 bereits gefaellt — genau einmal.",),
+            reasons=(
+                "EVALUATE steht im Journal, ein Verdikt nicht — "
+                "exakt den eingefrorenen Datenschnitt erneut auswerten.",
+            ),
         )
 
     if now < t1:
