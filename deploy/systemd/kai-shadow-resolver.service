@@ -6,7 +6,13 @@
 # it never touches paper_engine / orders / positions.
 Description=KAI Shadow-Candidate resolver (Phase B, read-only diagnostics)
 After=kai-server.service
-Requires=kai-server.service
+# Wants=, NICHT Requires=: ``Requires=`` propagiert den Stop. Jeder Neustart von
+# kai-server erschlaegt damit einen gerade LAUFENDEN Lauf per SIGTERM, die Unit
+# endet als ``failed (result=signal)`` und der OnFailure-Notifier meldet einen
+# Defekt, den es nicht gibt (07.-21.08.2026: 9 solcher Meldungen, 6 davon
+# kai-paper-trading — mitten in der Order-Buchung abgeschnitten).
+# ``After=`` bleibt: die Startreihenfolge ist davon unberuehrt.
+Wants=kai-server.service
 OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
@@ -21,7 +27,15 @@ Environment=PYTHONIOENCODING=utf-8
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading shadow-resolve
 # ADR 0010 / #318 Phase 1: Counterfactual Live∥Replay-Drift (read-only, flag-gated
 # via EXECUTION_DUAL_STREAM_DIAGNOSTICS, no-op when off). Same settled-kline
-# cadence as the resolver. "-" prefix: a failure never wedges the unit.
+# cadence as the resolver. NOTE: this line carried a "-" prefix until 2026-08-17,
+# when all 17 fleet-wide "ExecStart=-" were removed — a swallowed failure is
+# invisible. A failure here now fails the unit, which is the point.
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/counterfactual_replay.py
+# Obergrenze, damit ein haengender Lauf den Timer nicht unbegrenzt blockiert:
+# ``OnUnitActiveSec=30min`` ankert auf der Aktivierung, ein nie endender Lauf
+# bedeutet also NIE wieder ein Tick — und ``systemctl --failed`` zeigt dabei
+# nichts. Gemessen ueber 692 Laeufe (07.-21.08.2026): p50 12,9 min, p90 13,5 min,
+# max 16,1 min. 25 min = 1,55x das gemessene Maximum und noch unter der Kadenz.
+TimeoutStartSec=25min
 StandardOutput=journal
 StandardError=journal

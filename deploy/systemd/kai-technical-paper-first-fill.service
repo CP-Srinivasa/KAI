@@ -1,7 +1,13 @@
 [Unit]
 Description=KAI notify operator on the FIRST technical_paper paper-fill (fire-once, read-only)
 After=kai-server.service
-Requires=kai-server.service
+# Wants=, NICHT Requires=: ``Requires=`` propagiert den Stop. Jeder Neustart von
+# kai-server erschlaegt damit einen gerade LAUFENDEN Lauf per SIGTERM, die Unit
+# endet als ``failed (result=signal)`` und der OnFailure-Notifier meldet einen
+# Defekt, den es nicht gibt (07.-21.08.2026: 9 solcher Meldungen, 6 davon
+# kai-paper-trading — mitten in der Order-Buchung abgeschnitten).
+# ``After=`` bleibt: die Startreihenfolge ist davon unberuehrt.
+Wants=kai-server.service
 OnFailure=kai-unit-failure-notify@%n.service
 
 [Service]
