@@ -78,10 +78,17 @@ Unabhaengig nach dem Apply gemessen:
   `TimeoutStartSec=25min` auf `kai-shadow-resolver`
 * Deploy-Urteil: `DEPLOY_SUCCESS`
 
-## 5. Offen
+## 5. Praeventive Kontrolle — geschlossen
 
-`scripts/pi_install_systemd.sh` kann weiterhin beim Broker-Einbau divergente
-Units nach `/etc` kopieren — ohne Sicherung, Freeze-Guard, Beweis und Rueckweg.
-Dieser Pfad wurde am 2026-08-21 **nicht** benutzt, existiert aber. Die
-praeventive Kontrolle ist **PR #749** (`--broker-only` plus Divergenz-Gate) und
-sollte vor T0 geschlossen sein.
+`scripts/pi_install_systemd.sh` konnte beim Broker-Einbau divergente Units nach
+`/etc` kopieren, ohne Sicherung, Freeze-Guard, Beweis und Rueckweg. Dieser Pfad
+wurde am 2026-08-21 **nicht** benutzt (siehe §2), existierte aber.
+
+**Geschlossen durch #749**, gemerged am 2026-08-21 um 09:10:36Z als
+`52145cc19f125451acd573550c450cc801723e63` und seither auf dem Pi live: das
+Skript hat `--broker-only`, und ein Divergenz-Gate sitzt **vor** der
+Massenkopie. Ein frischer Host darf weiterhin provisioniert werden; weicht auch
+nur eine Unit im Ziel ab, verweigert der Installer mit rc=10 und nennt den
+sicheren Pfad (`pi_apply_systemd_units.sh`, `--broker-only`, `--force-units`).
+Abgesichert durch `tests/unit/test_pi_install_guard.py`, unter anderem
+`test_the_bulk_copy_sits_behind_the_gate`.
