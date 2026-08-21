@@ -618,6 +618,7 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
 
     from app.services.timer_health import (
         find_unscheduled_recurring_timers,
+        parse_active_units,
         parse_systemctl_show,
     )
 
@@ -643,18 +644,51 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
                 "NextElapseUSecMonotonic",
                 "-p",
                 "LastTriggerUSec",
+                "-p",
+                "Unit",
             ],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
+            # systemctl rendert Zeitstempel in der Zone des Aufrufers; ``CEST``
+            # ist nicht zurueckparsbar und wuerde jeden LastTrigger als "nie
+            # gelaufen" erscheinen lassen.
+            env={**os.environ, "TZ": "UTC"},
         )
     except (OSError, subprocess.SubprocessError):
         return []
     if proc.returncode != 0 or not proc.stdout.strip():
         return []
 
-    stuck = find_unscheduled_recurring_timers(parse_systemctl_show(proc.stdout))
+    facts = parse_systemctl_show(proc.stdout)
+
+    # Zweite Frage: laeuft der ausgeloeste Service gerade? Waehrend ein
+    # ``Type=oneshot`` laeuft, hat ``OnUnitActiveSec`` nichts zum Ankern und
+    # systemd meldet ``infinity`` — ohne diese Runde wuerde jeder laufende
+    # Timer als tot gemeldet (kai-shadow-resolver: 13-14 min von je 30).
+    # Fail-soft wie oben: laesst sich das nicht klaeren, gibt es KEINEN Befund
+    # statt eines geratenen.
+    services = sorted({f.triggered_unit for f in facts if f.triggered_unit})
+    if not services:
+        return []
+    try:
+        svc_proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
+            ["systemctl", "show", *services, "-p", "Id", "-p", "ActiveState"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env={**os.environ, "TZ": "UTC"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if svc_proc.returncode != 0 or not svc_proc.stdout.strip():
+        return []
+    running = parse_active_units(svc_proc.stdout)
+    facts = [f.with_triggered_state(running) for f in facts]
+
+    stuck = find_unscheduled_recurring_timers(facts)
     if not stuck:
         return []
     return [

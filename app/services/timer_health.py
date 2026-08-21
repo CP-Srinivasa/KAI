@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import Callable, Container, Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -366,6 +366,12 @@ class TimerRuntimeFacts:
     next_elapse_realtime: str
     next_elapse_monotonic: str
     last_trigger_utc: datetime | None = None
+    triggered_unit: str = ""
+    triggered_unit_active: bool = False
+
+    def with_triggered_state(self, running_units: Container[str]) -> TimerRuntimeFacts:
+        """Kopie, die weiss, ob der ausgeloeste Service gerade laeuft."""
+        return replace(self, triggered_unit_active=self.triggered_unit in running_units)
 
 
 def has_future_trigger(facts: TimerRuntimeFacts) -> bool:
@@ -399,12 +405,19 @@ def find_unscheduled_recurring_timers(
     Nur ``recurring_required`` wird geprueft: ein One-Shot nach seinem Termin
     besitzt legitim keinen naechsten, und ein Daueralarm darauf wuerde den Kanal
     entwerten.
+
+    Ebenso uebergangen wird ein Timer, dessen Service GERADE laeuft:
+    ``OnUnitActiveSec`` ankert auf der Aktivierung dieses Services und hat
+    waehrenddessen nichts zu rechnen — systemd meldet ``infinity``, obwohl
+    nichts kaputt ist. ``kai-shadow-resolver`` laeuft 13-14 min von je 30, ist
+    also fast die halbe Zeit regulaer ohne Termin.
     """
     return [
         f.unit
         for f in facts
         if f.enabled
         and f.active
+        and not f.triggered_unit_active
         and category_of(f.unit) == "recurring_required"
         and not has_future_trigger(f)
     ]
@@ -443,51 +456,107 @@ def find_stalled_recurring_timers(
     return stalled
 
 
-def parse_systemctl_show(output: str) -> list[TimerRuntimeFacts]:
-    """``systemctl show <units> -p Id -p ...`` in Fakten uebersetzen — rein.
+# ``systemctl show`` rendert Zeitstempel in der Zone des AUFRUFERS, nicht in
+# UTC — auf kai-pi5 also ``CEST``. ``%Z`` parst das nicht (Python akzeptiert dort
+# faktisch nur UTC/GMT/lokale Namen), und ein stillschweigend gescheiterter
+# Zeitstempel ist als ``None`` von "nie gelaufen" nicht zu unterscheiden. Der
+# Collector erzwingt darum ``TZ=UTC``; diese Tabelle deckt zusaetzlich den Fall
+# ab, dass jemand die Ausgabe ohne dieses Env von Hand hereinreicht.
+_ZONE_OFFSET_HOURS = {"UTC": 0, "GMT": 0, "CET": 1, "CEST": 2}
 
-    ``systemctl show`` haengt die Property-Bloecke mehrerer Units aneinander.
-    ``Id=`` beginnt jeweils einen neuen Block; ohne dieses Feld waere die
-    Zuordnung geraten. Unvollstaendige Bloecke werden uebersprungen statt
-    halb interpretiert.
+
+def parse_systemd_timestamp(raw: str) -> datetime | None:
+    """``Fri 2026-08-21 04:40:00 CEST`` -> aware ``datetime`` in UTC.
+
+    Gibt ``None`` zurueck, wenn der Wert fehlt (``n/a``/``0``) ODER die Zone
+    unbekannt ist. Raten waere hier schlimmer als Schweigen: ein um eine Stunde
+    verschobener Zeitstempel wuerde eine Kadenz-Aussage falsch machen, ohne dass
+    es jemand sieht.
     """
-    facts: list[TimerRuntimeFacts] = []
+    value = (raw or "").strip()
+    if not value or value.lower() in {"n/a", "0"}:
+        return None
+    head, _, zone = value.rpartition(" ")
+    offset = _ZONE_OFFSET_HOURS.get(zone.upper())
+    if offset is None:
+        head, offset = value, None
+    for fmt in ("%a %Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            naive = datetime.strptime(head.strip(), fmt)
+        except ValueError:
+            continue
+        if offset is None:
+            return None
+        return (naive - timedelta(hours=offset)).replace(tzinfo=UTC)
+    return None
+
+
+def _show_blocks(output: str) -> list[dict[str, str]]:
+    """``systemctl show`` in Property-Bloecke schneiden — rein.
+
+    Die Grenze ist die LEERZEILE zwischen den Units, nicht ``Id=``. systemd
+    gibt die Properties in seiner eigenen Reihenfolge aus, und ``Id`` steht
+    dort real an vierter Stelle — hinter den NextElapse-Feldern. Wer an ``Id``
+    schneidet, verwirft die Werte der ersten Unit und schiebt jeder weiteren
+    die Werte ihres Nachfolgers unter (2026-08-21: 55 von 55 Fakten falsch).
+
+    Ein wiederholter Schluessel ohne vorangegangene Leerzeile gilt als
+    Notgrenze — lieber ein Block zu viel als zwei Units in einem.
+    """
+    blocks: list[dict[str, str]] = []
     current: dict[str, str] = {}
-
-    def flush() -> None:
-        unit = current.get("Id", "").strip()
-        if not unit:
-            return
-        raw_last = current.get("LastTriggerUSec", "").strip()
-        last: datetime | None = None
-        if raw_last and raw_last.lower() not in {"n/a", "0"}:
-            for fmt in ("%a %Y-%m-%d %H:%M:%S %Z", "%a %Y-%m-%d %H:%M:%S"):
-                try:
-                    last = datetime.strptime(raw_last, fmt).replace(tzinfo=UTC)
-                    break
-                except ValueError:
-                    continue
-        facts.append(
-            TimerRuntimeFacts(
-                unit=unit,
-                enabled=current.get("UnitFileState", "").strip() == "enabled",
-                active=current.get("ActiveState", "").strip() == "active",
-                next_elapse_realtime=current.get("NextElapseUSecRealtime", ""),
-                next_elapse_monotonic=current.get("NextElapseUSecMonotonic", ""),
-                last_trigger_utc=last,
-            )
-        )
-
     for line in output.splitlines():
         if "=" not in line:
+            if current:
+                blocks.append(current)
+                current = {}
             continue
         key, _, value = line.partition("=")
-        if key == "Id" and current:
-            flush()
+        if key in current:
+            blocks.append(current)
             current = {}
         current[key] = value
     if current:
-        flush()
+        blocks.append(current)
+    return blocks
+
+
+def parse_active_units(output: str) -> set[str]:
+    """Welche Units laufen gerade? — aus ``systemctl show -p Id -p ActiveState``.
+
+    ``activating`` zaehlt mit: ein laufender ``Type=oneshot`` steht waehrend
+    seines ExecStart genau dort und nie in ``active``.
+    """
+    running = {"active", "activating", "reloading", "deactivating"}
+    return {
+        b["Id"].strip()
+        for b in _show_blocks(output)
+        if b.get("Id", "").strip() and b.get("ActiveState", "").strip() in running
+    }
+
+
+def parse_systemctl_show(output: str) -> list[TimerRuntimeFacts]:
+    """``systemctl show <units> -p Id -p ...`` in Fakten uebersetzen — rein.
+
+    Bloecke ohne ``Id`` werden uebersprungen statt halb interpretiert.
+    """
+    facts: list[TimerRuntimeFacts] = []
+    for block in _show_blocks(output):
+        unit = block.get("Id", "").strip()
+        if not unit:
+            continue
+        last = parse_systemd_timestamp(block.get("LastTriggerUSec", ""))
+        facts.append(
+            TimerRuntimeFacts(
+                unit=unit,
+                enabled=block.get("UnitFileState", "").strip() == "enabled",
+                active=block.get("ActiveState", "").strip() == "active",
+                next_elapse_realtime=block.get("NextElapseUSecRealtime", ""),
+                next_elapse_monotonic=block.get("NextElapseUSecMonotonic", ""),
+                last_trigger_utc=last,
+                triggered_unit=block.get("Unit", "").strip(),
+            )
+        )
     return facts
 
 
