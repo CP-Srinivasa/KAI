@@ -147,14 +147,31 @@ def test_alle_identitaeten_landen_im_artefakt() -> None:
 # --- Fenster: fest, nicht konfigurierbar ----------------------------------------
 
 
-def test_primaerfenster_ist_fest_und_eng() -> None:
+def test_primaerfenster_haengt_an_candle_buckets() -> None:
+    """Grenzen exakt gepinnt — nicht "ungefaehr um den Close herum".
+
+    Viele Kline-APIs filtern nach Candle-OPEN-Zeit. Ein Fenster
+    08:59:30..09:01:30 laesst die 08:59-Kerze deshalb je nach Anbieter heraus,
+    obwohl "eine davor" behauptet wird. Gerechnet wird deshalb ueber den Bucket.
+    """
     calls: list[dict] = []
     build_close_evidence(_close(), venue="bybit", fetch=_fetcher(record=calls), now_utc=NOW)
     assert len(calls) == 1
     call = calls[0]
     assert call["interval"] == PRIMARY_INTERVAL == "1m"
-    assert call["end_ms"] - call["start_ms"] == 2 * PRIMARY_WINDOW_RADIUS_MINUTES * MINUTE
+    # Close 09:00:30 -> Bucket 09:00:00; davor 08:59:00, danach bis 09:02:00.
+    assert call["start_ms"] == M_PREV
+    assert call["end_ms"] == M0 + 2 * MINUTE
     assert call["start_ms"] < CLOSE_MS < call["end_ms"]
+    assert call["end_ms"] - call["start_ms"] == 3 * MINUTE
+
+
+def test_fenstergrenzen_liegen_auf_minutengrenzen() -> None:
+    calls: list[dict] = []
+    build_close_evidence(_close(), venue="bybit", fetch=_fetcher(record=calls), now_utc=NOW)
+    call = calls[0]
+    assert call["start_ms"] % MINUTE == 0
+    assert call["end_ms"] % MINUTE == 0
 
 
 def test_das_fenster_laesst_sich_vom_aufrufer_nicht_verbreitern() -> None:
@@ -336,8 +353,13 @@ def test_unlesbares_manifest_ist_ein_konflikt(tmp_path: Path) -> None:
     assert r.status is CollectionStatus.EVIDENCE_CONFLICT
 
 
-def test_paralleler_schreiber_wird_abgewiesen(tmp_path: Path) -> None:
-    """Zwei Sammler duerfen nicht beide 'kein Manifest' sehen und losschreiben."""
+def test_liegendes_lock_haelt_fail_closed(tmp_path: Path) -> None:
+    """Der Status behauptet nur, was bekannt ist: ein Lock LIEGT.
+
+    Ob dahinter ein lebender Schreiber steht oder ein verwaistes Lock nach
+    Stromausfall, ist nicht beweisbar — deshalb PUBLISH_LOCK_PRESENT und
+    ausdruecklich keine "stale lock nach X Minuten loeschen"-Heuristik.
+    """
     built = build_close_evidence(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW)
     assert built.evidence is not None
 
@@ -345,10 +367,27 @@ def test_paralleler_schreiber_wird_abgewiesen(tmp_path: Path) -> None:
 
     folder = tmp_path / _folder_key("fill_abc")
     folder.mkdir(parents=True)
-    (folder / ".publish.lock").touch()  # ein anderer Sammler haelt den Platz
+    (folder / ".publish.lock").touch()
 
     r = publish_evidence(built.evidence, tmp_path)
-    assert r.status is CollectionStatus.CONCURRENT_WRITER
+    assert r.status is CollectionStatus.PUBLISH_LOCK_PRESENT
+    assert "verwaistes" in r.detail
+
+
+def test_orchestrator_ruft_hinter_dem_lock_gar_nicht_erst_ab(tmp_path: Path) -> None:
+    """Sonst starten zwei Laeufe beide einen Netzabruf und kollidieren danach."""
+    from app.execution.close_evidence_collector import _folder_key
+
+    folder = tmp_path / _folder_key("fill_abc")
+    folder.mkdir(parents=True)
+    (folder / ".publish.lock").touch()
+
+    calls: list[dict] = []
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(record=calls), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.PUBLISH_LOCK_PRESENT
+    assert calls == []
 
 
 def test_keine_temporaerdateien_und_kein_lock_bleiben_zurueck(tmp_path: Path) -> None:
@@ -445,3 +484,163 @@ def test_der_verifier_akzeptiert_das_veroeffentlichte_artefakt(tmp_path: Path) -
         ReasonCode.EVIDENCE_CLOSE_TIME_MISMATCH,
     ):
         assert code not in result.reasons
+
+
+# --- Venue gehoert zur Identitaet ------------------------------------------------
+
+
+def test_retry_mit_anderer_venue_bekommt_keine_fremde_evidenz(tmp_path: Path) -> None:
+    """Sonst laege Bybit-Evidenz als Antwort auf eine Binance-Anfrage vor."""
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert first.status is CollectionStatus.COLLECTED
+
+    r = collect_and_publish(
+        _close(), venue="binance", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+
+
+def test_retry_ohne_venue_bekommt_keine_evidenz(tmp_path: Path) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    r = collect_and_publish(_close(), venue="", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    assert r.status is CollectionStatus.CLOSE_IDENTITY_INCOMPLETE
+    assert "venue" in r.detail
+
+
+def test_venue_wird_kanonisiert(tmp_path: Path) -> None:
+    """`Bybit `, `BYBIT` und `bybit` meinen dieselbe Venue — auch beim Retry."""
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    second = collect_and_publish(
+        _close(), venue="  BYBIT ", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert second.status is CollectionStatus.IDEMPOTENT_NOOP
+    assert second.payload_sha256 == first.payload_sha256
+
+
+# --- Der Anker wird geprueft, nicht geglaubt -------------------------------------
+
+
+def _corrupt_manifest(tmp_path: Path, **changes: object) -> None:
+    folder = _the_folder(tmp_path)
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    manifest.update(changes)
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_manifest_mit_unbrauchbarem_hash_wird_abgewiesen(tmp_path: Path) -> None:
+    """Der Wert bildet einen Dateinamen — ein manipuliertes Manifest darf keinen
+    Pfad beeinflussen."""
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, payload_sha256="../../etc/passwd")
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert "64" in r.detail
+
+
+@pytest.mark.parametrize("feld", ["fill_id", "order_id", "symbol", "venue", "schema_version"])
+def test_unvollstaendiges_manifest_wird_abgewiesen(tmp_path: Path, feld: str) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, **{feld: ""})
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert feld in r.detail
+
+
+def test_veraenderte_artefakt_bytes_werden_erkannt(tmp_path: Path) -> None:
+    """Der Hash wird ueber die TATSAECHLICHEN Bytes nachgerechnet."""
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    Path(first.path).write_text('{"manipuliert":true}', encoding="utf-8")
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert "Bytes" in r.detail
+
+
+def test_manifest_und_artefakt_muessen_denselben_close_meinen(tmp_path: Path) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, order_id="ord_fremd")
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+
+
+def test_publish_repariert_ein_fehlendes_artefakt_nicht_still(tmp_path: Path) -> None:
+    """Auch der Low-Level-Pfad: Manifest ohne Artefakt ist ein Befund."""
+    built = build_close_evidence(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW)
+    assert built.evidence is not None
+    first = publish_evidence(built.evidence, tmp_path)
+    Path(first.path).unlink()
+
+    again = publish_evidence(built.evidence, tmp_path)
+    assert again.status is CollectionStatus.UNANCHORED_ARTIFACT_PRESENT
+
+
+# --- Kerzen-Typen sind fail-closed ----------------------------------------------
+
+
+def test_bool_ist_kein_gueltiger_ohlc_wert() -> None:
+    """bool ist eine int-Unterklasse — dieselbe Falle wie im Verifier.
+
+    Die Werte sind bewusst so gewaehlt, dass ``True`` (== 1) die
+    OHLC-Konsistenz NICHT verletzt: low 0.5 <= 1 <= high 2.0. Sonst faenge der
+    Test ueber den Konsistenzpfad und der bool-Ausschluss bliebe ungeprueft —
+    die Mutations-Gegenprobe hat genau das gezeigt.
+    """
+    r = build_close_evidence(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher([VenueCandle(M0, True, 2.0, 0.5, 1.5)]),
+        now_utc=NOW,
+    )
+    assert r.status is CollectionStatus.INVALID_CANDLE_DATA
+    assert "OHLC-Werte" in r.detail
+
+
+@pytest.mark.parametrize("bad_time", [True, -1, "1000", 1.5, None])
+def test_unbrauchbare_kerzenzeit_wird_gemeldet(bad_time: object) -> None:
+    """Kein TypeError aus der Validierung — ein kaputter Datensatz ist ein Status."""
+    r = build_close_evidence(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher([VenueCandle(bad_time, 100.0, 101.0, 99.5, 100.8)]),
+        now_utc=NOW,
+    )
+    assert r.status is CollectionStatus.INVALID_CANDLE_DATA
+
+
+def test_neuer_close_ordner_wird_im_parent_haltbar_gemacht(tmp_path: Path, monkeypatch) -> None:
+    """Ohne Parent-fsync ueberlebt der Verzeichniseintrag keinen Stromausfall.
+
+    Der Effekt ist nicht beobachtbar, der Aufruf schon — und ohne diesen Test
+    ueberlebt das Entfernen des fsync die Suite unbemerkt.
+    """
+    import app.execution.close_evidence_collector as mod
+
+    gefsynct: list[str] = []
+    echt = mod._fsync_dir
+    monkeypatch.setattr(
+        mod, "_fsync_dir", lambda folder: (gefsynct.append(str(folder)), echt(folder))[1]
+    )
+
+    built = build_close_evidence(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW)
+    assert built.evidence is not None
+    publish_evidence(built.evidence, tmp_path)
+
+    assert str(tmp_path) in gefsynct, "der Parent des neuen Close-Ordners wurde nicht gefsynct"
+    assert any(str(_the_folder(tmp_path)) == p for p in gefsynct), "Close-Ordner nicht gefsynct"

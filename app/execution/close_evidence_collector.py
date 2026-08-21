@@ -47,6 +47,7 @@ import inspect
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -100,7 +101,10 @@ class CollectionStatus(StrEnum):
     IDEMPOTENT_NOOP = "idempotent_noop"
     EVIDENCE_CONFLICT = "evidence_conflict"
     UNANCHORED_ARTIFACT_PRESENT = "unanchored_artifact_present"
-    CONCURRENT_WRITER = "concurrent_writer"
+    PUBLISH_LOCK_PRESENT = "publish_lock_present"
+    """Ein Lock liegt. Das kann ein lebender Schreiber ODER ein verwaistes Lock
+    nach Strom-/Prozessausfall sein — beweisbar ist nur, DASS es liegt. Fail
+    closed; bewusst KEINE "stale lock nach X Minuten loeschen"-Heuristik."""
     WINDOW_UNAVAILABLE = "window_unavailable"
     FETCH_FAILED = "fetch_failed"
     CLOSE_IDENTITY_INCOMPLETE = "close_identity_incomplete"
@@ -150,6 +154,11 @@ def _parse_utc(value: object) -> datetime | None:
     return None if stamp.tzinfo is None else stamp
 
 
+def _canonical_venue(raw: object) -> str:
+    """Die eine Schreibweise einer Venue."""
+    return str(raw or "").strip().lower()
+
+
 def _folder_key(fill_id: str) -> str:
     """Verzeichnisname aus dem Hash der fill_id.
 
@@ -161,6 +170,19 @@ def _folder_key(fill_id: str) -> str:
     return hashlib.sha256(fill_id.encode("utf-8")).hexdigest()
 
 
+def _is_positive_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _validate_candles(
     candles: list[VenueCandle], *, collected_at_ms: int
 ) -> tuple[CollectionStatus, str] | None:
@@ -169,10 +191,17 @@ def _validate_candles(
     interval_ms = _INTERVAL_MS[PRIMARY_INTERVAL]
     for c in candles:
         values = (c.open, c.high, c.low, c.close)
-        if not all(isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in values):
-            return (CollectionStatus.INVALID_CANDLE_DATA, f"unbrauchbare OHLC-Werte: {values}")
+        # bool ist eine int-Unterklasse: ohne diesen Ausschluss waere True ein
+        # gueltiger OHLC-Wert (dieselbe Falle wie im Verifier und im Detektor).
+        if not all(_is_positive_number(v) for v in values):
+            return (CollectionStatus.INVALID_CANDLE_DATA, f"unbrauchbare OHLC-Werte: {values!r}")
         if not (c.low <= c.open <= c.high and c.low <= c.close <= c.high):
-            return (CollectionStatus.INVALID_CANDLE_DATA, f"OHLC nicht konsistent: {values}")
+            return (CollectionStatus.INVALID_CANDLE_DATA, f"OHLC nicht konsistent: {values!r}")
+        if not _is_nonnegative_int(c.open_time_ms):
+            return (
+                CollectionStatus.INVALID_CANDLE_DATA,
+                f"unbrauchbare Kerzenzeit: {c.open_time_ms!r}",
+            )
         if c.open_time_ms in seen:
             return (CollectionStatus.INVALID_CANDLE_DATA, f"doppelte Kerzenzeit {c.open_time_ms}")
         seen.add(c.open_time_ms)
@@ -205,7 +234,9 @@ def build_close_evidence(
     order_id = str(close_row.get("order_id", "") or "").strip()
     symbol = str(close_row.get("symbol", "") or "").strip()
     close_ts_raw = str(close_row.get("timestamp_utc", "") or "").strip()
-    venue = str(venue or "").strip()
+    # Einmal kanonisieren und GENAU diese Form ueberall verwenden — Fetch,
+    # Evidenz, Manifest und Retry-Abgleich muessen dieselbe Venue meinen.
+    venue = _canonical_venue(venue)
 
     missing = [
         name
@@ -237,10 +268,15 @@ def build_close_evidence(
             detail=f"unlesbar oder ohne Zeitzone: {close_ts_raw!r}",
         )
 
+    # Bucket-genau statt um den Close herum: viele Kline-APIs filtern nach
+    # Candle-OPEN-Zeit. Ein Fenster 08:59:30..09:01:30 laesst die 08:59-Kerze
+    # deshalb je nach Anbieter heraus, obwohl "eine davor" behauptet wird.
     close_ms = int(close_at.timestamp() * 1000)
-    radius_ms = PRIMARY_WINDOW_RADIUS_MINUTES * 60_000
-    start_ms = close_ms - radius_ms
-    end_ms = close_ms + radius_ms
+    bucket_ms = _INTERVAL_MS[PRIMARY_INTERVAL]
+    bucket_open = (close_ms // bucket_ms) * bucket_ms
+    radius = PRIMARY_WINDOW_RADIUS_MINUTES
+    start_ms = bucket_open - radius * bucket_ms
+    end_ms = bucket_open + (radius + 1) * bucket_ms
 
     try:
         candles = list(
@@ -324,21 +360,146 @@ def _atomic_write(path: Path, payload: bytes) -> None:
         raise
 
 
-def _read_manifest(folder: Path) -> dict[str, object] | None:
-    path = folder / _MANIFEST_NAME
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"__unreadable__": True}
-    return data if isinstance(data, dict) else {"__unreadable__": True}
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _close_identity(close_row: dict[str, object], venue: str) -> dict[str, str]:
+    return {
+        "fill_id": str(close_row.get("fill_id", "") or "").strip(),
+        "order_id": str(close_row.get("order_id", "") or "").strip(),
+        "symbol": str(close_row.get("symbol", "") or "").strip(),
+        "venue": _canonical_venue(venue),
+        "close_timestamp_utc": str(close_row.get("timestamp_utc", "") or "").strip(),
+    }
+
+
+def _evidence_identity(evidence: CloseEvidence) -> dict[str, str]:
+    return {
+        "fill_id": evidence.close_fill_id,
+        "order_id": evidence.close_order_id,
+        "symbol": evidence.symbol,
+        "venue": _canonical_venue(evidence.venue),
+        "close_timestamp_utc": evidence.close_timestamp_utc,
+    }
 
 
 def _artifact_files(folder: Path) -> list[Path]:
     if not folder.exists():
         return []
     return [p for p in folder.glob("*.json") if p.name != _MANIFEST_NAME]
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    """Was der verankerte Zustand eines Close-Ordners hergibt."""
+
+    problem: CollectionStatus | None = None
+    detail: str = ""
+    sha: str = ""
+    path: Path | None = None
+
+    @property
+    def committed(self) -> bool:
+        return self.problem is None and bool(self.sha)
+
+
+def _identity_of(payload: dict[str, object], *, artifact: bool) -> dict[str, str]:
+    fill_key = "close_fill_id" if artifact else "fill_id"
+    order_key = "close_order_id" if artifact else "order_id"
+    return {
+        "fill_id": str(payload.get(fill_key, "")),
+        "order_id": str(payload.get(order_key, "")),
+        "symbol": str(payload.get("symbol", "")),
+        "venue": _canonical_venue(payload.get("venue")),
+        "close_timestamp_utc": str(payload.get("close_timestamp_utc", "")),
+    }
+
+
+def _inspect_anchor(folder: Path, identity: dict[str, str]) -> _Anchor:
+    """Streng pruefen, was bereits verankert ist — nichts davon wird geglaubt.
+
+    Ein Manifest ist ein Wahrheitsanker; ihm zu vertrauen, weil eine Datei mit dem
+    genannten Namen existiert, reicht nicht. Geprueft werden Schema, die FORM des
+    Hashes, die Existenz, der Hash ueber die TATSAECHLICHEN Bytes und die
+    Identitaeten von Manifest, Artefakt und Anfrage.
+    """
+    manifest_path = folder / _MANIFEST_NAME
+    if not manifest_path.exists():
+        if _artifact_files(folder):
+            # Der Prozess ist zwischen Artefakt und Commit-Marker gestorben.
+            return _Anchor(
+                problem=CollectionStatus.UNANCHORED_ARTIFACT_PRESENT,
+                detail="Artefakt ohne Commit-Marker gefunden",
+                path=folder,
+            )
+        return _Anchor()
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT, detail=f"Manifest unlesbar: {exc}"
+        )
+    if not isinstance(manifest, dict):
+        return _Anchor(problem=CollectionStatus.EVIDENCE_CONFLICT, detail="Manifest kein Objekt")
+
+    sha = str(manifest.get("payload_sha256", ""))
+    # Sicherheitsrelevant: dieser Wert bildet gleich einen Dateinamen. Ein
+    # manipuliertes Manifest darf ueber ihn keinen Pfad beeinflussen.
+    if not _HEX64.match(sha):
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail=f"payload_sha256 ist kein 64-stelliger Hex-Wert: {sha!r}",
+        )
+    for feld in ("fill_id", "order_id", "symbol", "venue", "close_timestamp_utc", "schema_version"):
+        if not str(manifest.get(feld, "") or "").strip():
+            return _Anchor(
+                problem=CollectionStatus.EVIDENCE_CONFLICT, detail=f"Manifest ohne {feld}"
+            )
+
+    artifact = folder / f"{sha}.json"
+    if not artifact.exists():
+        return _Anchor(
+            problem=CollectionStatus.UNANCHORED_ARTIFACT_PRESENT,
+            detail="Manifest verweist auf ein fehlendes Artefakt",
+            sha=sha,
+            path=folder,
+        )
+
+    raw = artifact.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != sha:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail="Artefakt-Bytes passen nicht zum verankerten Hash",
+            sha=sha,
+            path=artifact,
+        )
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT, detail=f"Artefakt unlesbar: {exc}", sha=sha
+        )
+    if not isinstance(payload, dict):
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT, detail="Artefakt kein Objekt", sha=sha
+        )
+
+    manifest_identity = _identity_of(manifest, artifact=False)
+    artifact_identity = _identity_of(payload, artifact=True)
+    if manifest_identity != artifact_identity:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail="Manifest und Artefakt beschreiben verschiedene Closes",
+            sha=sha,
+        )
+    if manifest_identity != identity:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail="verankerte Evidenz gehoert zu einer anderen Close-Identitaet",
+            sha=sha,
+        )
+    return _Anchor(sha=sha, path=artifact)
 
 
 def _manifest_payload(evidence: CloseEvidence, sha: str) -> dict[str, object]:
@@ -355,6 +516,65 @@ def _manifest_payload(evidence: CloseEvidence, sha: str) -> dict[str, object]:
     }
 
 
+def _ensure_folder(folder: Path) -> None:
+    """Ordner anlegen und den Verzeichniseintrag im Parent haltbar machen.
+
+    Ohne den Parent-fsync ueberlebt ein neu angelegter Ordner einen Stromausfall
+    nicht zwingend — auf der SD-Karte des Pi ist das kein theoretischer Rand.
+    """
+    existed = folder.exists()
+    folder.mkdir(parents=True, exist_ok=True)
+    if not existed:
+        _fsync_dir(folder.parent)
+
+
+def _acquire_lock(folder: Path) -> int | None:
+    try:
+        return os.open(str(folder / _LOCK_NAME), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return None
+
+
+def _release_lock(folder: Path, fd: int) -> None:
+    try:
+        os.close(fd)
+    finally:
+        (folder / _LOCK_NAME).unlink(missing_ok=True)
+
+
+def _lock_present(evidence: CloseEvidence | None = None, sha: str = "") -> CollectionResult:
+    return CollectionResult(
+        status=CollectionStatus.PUBLISH_LOCK_PRESENT,
+        evidence=evidence,
+        payload_sha256=sha,
+        detail="Publish-Lock liegt (lebender Schreiber oder verwaistes Lock)",
+    )
+
+
+def _anchor_to_result(anchor: _Anchor, evidence: CloseEvidence | None = None) -> CollectionResult:
+    return CollectionResult(
+        status=anchor.problem or CollectionStatus.EVIDENCE_CONFLICT,
+        evidence=evidence,
+        payload_sha256=anchor.sha,
+        path=str(anchor.path) if anchor.path else "",
+        detail=anchor.detail,
+    )
+
+
+def _publish_locked(evidence: CloseEvidence, folder: Path) -> CollectionResult:
+    """Schreibt Artefakt und danach den Commit-Marker. Erwartet den Lock."""
+    sha = evidence.payload_sha256()
+    artifact = folder / f"{sha}.json"
+    _atomic_write(artifact, canonical_bytes(evidence.as_payload()))
+    _atomic_write(folder / _MANIFEST_NAME, canonical_bytes(_manifest_payload(evidence, sha)))
+    return CollectionResult(
+        status=CollectionStatus.COLLECTED,
+        evidence=evidence,
+        payload_sha256=sha,
+        path=str(artifact),
+    )
+
+
 def publish_evidence(evidence: CloseEvidence, base_dir: str | Path) -> CollectionResult:
     """Veroeffentlicht das Artefakt unter seiner Identitaet — atomar und idempotent.
 
@@ -363,78 +583,41 @@ def publish_evidence(evidence: CloseEvidence, base_dir: str | Path) -> Collectio
         <base>/<sha256(fill_id)>/<payload_sha256>.json
         <base>/<sha256(fill_id)>/manifest.json      <- COMMIT MARKER
 
-    Das Manifest ist der Commit-Marker: ein Artefakt ohne Manifest gilt als NICHT
-    veroeffentlicht. Fuer dieselbe Close-Identitaet gilt fail-closed — ein
-    abweichender Hash ueberschreibt nichts.
+    Der Zustand wird UNTER DEM LOCK gelesen. Ohne dieses Lesen im Lock koennten
+    zwei Sammler beide "nichts verankert" sehen, nacheinander den Lock bekommen
+    und nacheinander schreiben — dann gewaenne wieder der Letzte, genau was
+    verboten sein soll.
     """
-    sha = evidence.payload_sha256()
     folder = Path(base_dir) / _folder_key(evidence.close_fill_id)
-    artifact = folder / f"{sha}.json"
+    identity = _evidence_identity(evidence)
+    sha = evidence.payload_sha256()
 
-    manifest = _read_manifest(folder)
-    if manifest is not None:
-        if manifest.get("__unreadable__"):
-            return CollectionResult(
-                status=CollectionStatus.EVIDENCE_CONFLICT,
-                payload_sha256=sha,
-                detail="Manifest unlesbar",
-            )
-        previous = str(manifest.get("payload_sha256", ""))
-        if previous and previous != sha:
+    _ensure_folder(folder)
+    lock_fd = _acquire_lock(folder)
+    if lock_fd is None:
+        return _lock_present(evidence, sha)
+    try:
+        anchor = _inspect_anchor(folder, identity)
+        if anchor.problem is not None:
+            return _anchor_to_result(anchor, evidence)
+        if anchor.committed:
+            if anchor.sha == sha:
+                return CollectionResult(
+                    status=CollectionStatus.IDEMPOTENT_NOOP,
+                    evidence=evidence,
+                    payload_sha256=sha,
+                    path=str(anchor.path) if anchor.path else "",
+                )
             return CollectionResult(
                 status=CollectionStatus.EVIDENCE_CONFLICT,
                 evidence=evidence,
                 payload_sha256=sha,
-                path=str(artifact),
-                detail=f"bereits verankert mit {previous}",
+                path=str(anchor.path) if anchor.path else "",
+                detail=f"bereits verankert mit {anchor.sha}",
             )
-        if previous == sha and artifact.exists():
-            return CollectionResult(
-                status=CollectionStatus.IDEMPOTENT_NOOP,
-                evidence=evidence,
-                payload_sha256=sha,
-                path=str(artifact),
-            )
-    elif _artifact_files(folder):
-        # Artefakt ohne Manifest: der Prozess ist zwischen den beiden Schreib-
-        # vorgaengen gestorben. Das ist ein Befund, keine Einladung zum stillen
-        # Neuanlegen.
-        return CollectionResult(
-            status=CollectionStatus.UNANCHORED_ARTIFACT_PRESENT,
-            evidence=evidence,
-            payload_sha256=sha,
-            path=str(folder),
-            detail="Artefakt ohne Commit-Marker gefunden",
-        )
-
-    # Ein Schreiber je Close. Ohne das koennten zwei Sammler beide "kein Manifest"
-    # sehen und anschliessend unterschiedliche Artefakte plus zuletzt-schreibendes
-    # Manifest erzeugen — dann gilt "abweichende Evidenz ueberschreibt nie" unter
-    # Parallelitaet nicht mehr.
-    folder.mkdir(parents=True, exist_ok=True)
-    lock = folder / _LOCK_NAME
-    try:
-        lock_fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return CollectionResult(
-            status=CollectionStatus.CONCURRENT_WRITER,
-            evidence=evidence,
-            payload_sha256=sha,
-            detail="ein anderer Sammler veroeffentlicht gerade diesen Close",
-        )
-    try:
-        os.close(lock_fd)
-        _atomic_write(artifact, canonical_bytes(evidence.as_payload()))
-        _atomic_write(folder / _MANIFEST_NAME, canonical_bytes(_manifest_payload(evidence, sha)))
+        return _publish_locked(evidence, folder)
     finally:
-        lock.unlink(missing_ok=True)
-
-    return CollectionResult(
-        status=CollectionStatus.COLLECTED,
-        evidence=evidence,
-        payload_sha256=sha,
-        path=str(artifact),
-    )
+        _release_lock(folder, lock_fd)
 
 
 def collect_and_publish(
@@ -447,53 +630,64 @@ def collect_and_publish(
 ) -> CollectionResult:
     """Der orchestrierende Pfad — und der einzige mit echter Retry-Idempotenz.
 
-    Zuerst wird das verankerte Manifest gelesen. Passt die Close-Identitaet und
-    liegt das Artefakt vollstaendig vor, wird GENAU DIESES zurueckgegeben, ohne
-    erneuten Netzabruf. Andernfalls entstuende bei jedem Retry ein neues
-    ``collected_at_utc`` — und damit ein neuer Hash, obwohl sich an den Kerzen
-    nichts geaendert hat.
+    Ablauf::
+
+        schnelles Lesen: schon vollstaendig verankert?  -> IDEMPOTENT_NOOP
+        sonst: Lock nehmen -> Zustand ERNEUT lesen -> erst DANN abrufen
+               -> bauen -> Artefakt -> Commit-Marker -> Lock freigeben
+
+    Der Abruf liegt bewusst hinter dem Lock: sonst starten zwei gleichzeitige
+    Laeufe beide einen Netzabruf und konkurrieren anschliessend mit
+    verschiedenen ``collected_at_utc`` um denselben Close.
     """
-    fill_id = str(close_row.get("fill_id", "") or "").strip()
-    if not fill_id:
+    identity = _close_identity(close_row, venue)
+    if not identity["fill_id"]:
         return CollectionResult(
             status=CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, detail="fehlend: fill_id"
         )
-
-    folder = Path(base_dir) / _folder_key(fill_id)
-    manifest = _read_manifest(folder)
-    if manifest is not None and not manifest.get("__unreadable__"):
-        previous = str(manifest.get("payload_sha256", ""))
-        artifact = folder / f"{previous}.json"
-        identity_ok = (
-            str(manifest.get("fill_id", "")) == fill_id
-            and str(manifest.get("order_id", ""))
-            == str(close_row.get("order_id", "") or "").strip()
-            and str(manifest.get("symbol", "")) == str(close_row.get("symbol", "") or "").strip()
-            and str(manifest.get("close_timestamp_utc", ""))
-            == str(close_row.get("timestamp_utc", "") or "").strip()
+    if not identity["venue"]:
+        # Ohne Venue bekaeme ein Retry sonst fremde Evidenz zurueck.
+        return CollectionResult(
+            status=CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, detail="fehlend: venue"
         )
-        if not identity_ok:
-            return CollectionResult(
-                status=CollectionStatus.EVIDENCE_CONFLICT,
-                payload_sha256=previous,
-                path=str(folder),
-                detail="verankertes Manifest gehoert zu einer anderen Close-Identitaet",
-            )
-        if previous and artifact.exists():
+
+    folder = Path(base_dir) / _folder_key(identity["fill_id"])
+
+    # Schnelles Lesen ohne Lock: der haeufige Fall ist "laengst verankert".
+    anchor = _inspect_anchor(folder, identity)
+    if anchor.problem is not None:
+        return _anchor_to_result(anchor)
+    if anchor.committed:
+        return CollectionResult(
+            status=CollectionStatus.IDEMPOTENT_NOOP,
+            payload_sha256=anchor.sha,
+            path=str(anchor.path) if anchor.path else "",
+            detail="bereits verankert — kein erneuter Abruf",
+        )
+
+    _ensure_folder(folder)
+    lock_fd = _acquire_lock(folder)
+    if lock_fd is None:
+        return _lock_present()
+    try:
+        # Zustand ERNEUT lesen: zwischen dem schnellen Lesen und dem Lock kann ein
+        # anderer Lauf fertig geworden sein.
+        anchor = _inspect_anchor(folder, identity)
+        if anchor.problem is not None:
+            return _anchor_to_result(anchor)
+        if anchor.committed:
             return CollectionResult(
                 status=CollectionStatus.IDEMPOTENT_NOOP,
-                payload_sha256=previous,
-                path=str(artifact),
-                detail="bereits verankert — kein erneuter Abruf",
+                payload_sha256=anchor.sha,
+                path=str(anchor.path) if anchor.path else "",
+                detail="waehrend des Wartens verankert worden",
             )
-        return CollectionResult(
-            status=CollectionStatus.UNANCHORED_ARTIFACT_PRESENT,
-            payload_sha256=previous,
-            path=str(folder),
-            detail="Manifest verweist auf ein fehlendes Artefakt",
-        )
 
-    built = build_close_evidence(close_row, venue=venue, fetch=fetch, now_utc=now_utc)
-    if built.evidence is None:
-        return built
-    return publish_evidence(built.evidence, base_dir)
+        built = build_close_evidence(
+            close_row, venue=identity["venue"], fetch=fetch, now_utc=now_utc
+        )
+        if built.evidence is None:
+            return built
+        return _publish_locked(built.evidence, folder)
+    finally:
+        _release_lock(folder, lock_fd)
