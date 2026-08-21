@@ -91,6 +91,7 @@ async def collect_monitor_prices(
         evidence[symbol] = PriceEvidence(
             source=point.source,
             observed_at_utc=str(getattr(point, "timestamp_utc", "") or ""),
+            observed_price=point.price,
             age_ms=(float(age_s) * 1000.0 if isinstance(age_s, (int, float)) else None),
             is_stale=bool(point.is_stale),
         )

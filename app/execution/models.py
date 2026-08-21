@@ -81,8 +81,26 @@ class PriceEvidence:
     observed_at_utc: str = ""
     """Zeitstempel der Quote beim Anbieter — nicht der des Fuellens."""
 
+    observed_price: float | None = None
+    """Der TATSAECHLICH beobachtete Venue-Preis.
+
+    Nicht zwingend der Preis, gegen den gefuellt wird: bei einer Liquidation
+    fuellt die Engine gegen den berechneten Liquidationspreis. Beide unter einem
+    Namen zu fuehren, wuerde dem Verifier zwei verschiedene Preise als denselben
+    verkaufen.
+    """
+
     age_ms: float | None = None
-    """Alter der Quote beim Fuellen. None = nicht ermittelbar."""
+    """Vom Datenadapter beim ABRUF gemeldetes Alter der Quote.
+
+    NICHT das Alter beim Fuellen: das wird aus ``filled_at - observed_at_utc``
+    berechnet und liegt als ``PaperFill.market_data_age_ms`` vor, waehrend dieser
+    Wert daneben als ``market_data_age_ms_at_collection`` persistiert wird.
+    Zwischen Abruf und Fuellen vergeht Zeit — beides unter einer Bedeutung zu
+    fuehren war genau die Scheingenauigkeit, die dieser Stand beseitigt.
+
+    None = nicht ermittelbar.
+    """
 
     is_stale: bool | None = None
 
@@ -133,8 +151,29 @@ class PaperFill:
     # Schliessung synthetisch), sie musste aber ueber Sekunden-Zeitstempel
     # rekonstruiert werden.
     price_observed_at_utc: str = ""
+    market_data_is_stale: bool | None = None
+    """``is_stale`` der Quote. None = nicht erfasst — fuer den Verifier eine
+    ANDERE Lage als ein erfasstes False, deshalb eigenes Feld statt Default."""
+
     market_data_age_ms: float | None = None
+    """Alter der Quote BEIM FUELLEN, aus ``filled_at - price_observed_at_utc``.
+    None, wenn die Beobachtungszeit fehlt oder unlesbar ist — nie geschaetzt."""
+
+    market_data_age_ms_at_collection: float | None = None
+    """Was der Adapter beim ABRUF meldete. Zwischen Abruf und Fuellen vergeht
+    Zeit; die beiden Groessen sind nicht dasselbe und stehen deshalb getrennt."""
+
+    observed_market_price: float | None = None
+    """Der beobachtete Venue-Preis (aus der Evidenz)."""
+
+    execution_reference_price: float | None = None
+    """Der Preis, den die Engine VOR Slippage verwendet hat. Im Normalfall gleich
+    ``observed_market_price``; bei einer Liquidation der berechnete Liq-Preis."""
+
     raw_market_price: float | None = None
+    """Alias von ``execution_reference_price`` (Kompatibilitaet seit #743).
+    NICHT als "Venue-Rohpreis" lesen — der steht in ``observed_market_price``."""
+
     monitor_tick_id: str = ""
 
 
@@ -270,7 +309,10 @@ def _new_tick_id() -> str:
     betroffenen Tick war JEDE Schliessung synthetisch. Sie musste damals ueber
     Sekunden-Zeitstempel rekonstruiert werden.
     """
-    return f"tick_{uuid.uuid4().hex[:12]}"
+    # Volle UUID: fuer eine dauerhafte Audit-Identitaet sind 48 Bit zu knapp.
+    # (fill_id/order_id sind ebenfalls gekuerzt — dort braucht es aber eine
+    # eigene Migration, weil bestehende Identitaeten darauf beruhen.)
+    return f"tick_{uuid.uuid4().hex}"
 
 
 def _new_fill_id() -> str:

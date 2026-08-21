@@ -37,6 +37,7 @@ from app.execution.models import (
 from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.phantom_filter import _DEFAULT_MAX_CLOSE_RETURN_PCT
+from app.execution.price_evidence import _age_ms_at_fill, _finite_or_none
 from app.execution.rotation_gate import evaluate_rotation_gate
 from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
@@ -1077,6 +1078,7 @@ class PaperExecutionEngine:
         )
         trade_pnl_for_fill = pnl if is_closing_fill else 0.0
 
+        filled_at_stamp = _now_utc()
         fill = PaperFill(
             fill_id=_new_fill_id(),
             order_id=order.order_id,
@@ -1085,15 +1087,26 @@ class PaperExecutionEngine:
             quantity=fill_quantity,
             fill_price=fill_price,
             fee_usd=fee,
-            filled_at=_now_utc(),
+            filled_at=filled_at_stamp,
             slippage_pct=self._slippage_pct * 100,
             price_source=(
                 price_evidence.source if price_evidence and price_evidence.source else price_source
             ),
             price_observed_at_utc=(price_evidence.observed_at_utc if price_evidence else ""),
-            market_data_age_ms=(price_evidence.age_ms if price_evidence else None),
-            # Rohpreis VOR Slippage: macht `fill_price == raw * (1 ± slip)` direkt
-            # pruefbar, statt ihn spaeter zurueckrechnen zu muessen.
+            market_data_is_stale=(price_evidence.is_stale if price_evidence else None),
+            # Ehrliche Groesse: Abstand zwischen Beobachtung und FUELLEN. Der vom
+            # Adapter beim Abruf gemeldete Wert steht daneben, nicht statt dessen.
+            market_data_age_ms=_age_ms_at_fill(
+                price_evidence.observed_at_utc if price_evidence else "", filled_at_stamp
+            ),
+            market_data_age_ms_at_collection=_finite_or_none(
+                price_evidence.age_ms if price_evidence else None
+            ),
+            observed_market_price=_finite_or_none(
+                price_evidence.observed_price if price_evidence else None
+            ),
+            execution_reference_price=current_price,
+            # Alias von execution_reference_price (Kompatibilitaet seit #743).
             raw_market_price=current_price,
             monitor_tick_id=self._tick_id,
             pnl_usd=trade_pnl_for_fill,
@@ -1401,7 +1414,11 @@ class PaperExecutionEngine:
                 # forensisch geprueft werden muessen.
                 "price_source": fill.price_source,
                 "price_observed_at_utc": fill.price_observed_at_utc,
+                "market_data_is_stale": fill.market_data_is_stale,
                 "market_data_age_ms": fill.market_data_age_ms,
+                "market_data_age_ms_at_collection": fill.market_data_age_ms_at_collection,
+                "observed_market_price": fill.observed_market_price,
+                "execution_reference_price": fill.execution_reference_price,
                 "raw_market_price": fill.raw_market_price,
                 "monitor_tick_id": fill.monitor_tick_id,
                 "fill_id": fill.fill_id,
@@ -1616,7 +1633,11 @@ class PaperExecutionEngine:
                 # forensisch geprueft werden muessen.
                 "price_source": fill.price_source,
                 "price_observed_at_utc": fill.price_observed_at_utc,
+                "market_data_is_stale": fill.market_data_is_stale,
                 "market_data_age_ms": fill.market_data_age_ms,
+                "market_data_age_ms_at_collection": fill.market_data_age_ms_at_collection,
+                "observed_market_price": fill.observed_market_price,
+                "execution_reference_price": fill.execution_reference_price,
                 "raw_market_price": fill.raw_market_price,
                 "monitor_tick_id": fill.monitor_tick_id,
                 "fill_id": fill.fill_id,
@@ -1698,6 +1719,22 @@ class PaperExecutionEngine:
         # Neue Klammer je Lauf. Ausserhalb des Monitors leer, damit ein Entry-Fill
         # nie die Id eines fremden Ticks traegt.
         self._tick_id = _new_tick_id()
+        try:
+            return self._monitor_positions_inner(prices_by_symbol, fills)
+        finally:
+            # Bei JEDEM Ausgang loesen — normales Ende, Early Return, Exception.
+            # Zuvor stand die Bereinigung am Funktionsende und wurde vom
+            # mutations-blocked-Return uebersprungen; ein spaeterer Entry-Fill
+            # erbte dann die Tick-Id eines fremden Laufs.
+            self._tick_id = ""
+            self._tick_price_sources = {}
+            self._tick_price_evidence = {}
+
+    def _monitor_positions_inner(
+        self,
+        prices_by_symbol: dict[str, float],
+        fills: list[PaperFill],
+    ) -> list[PaperFill]:
         if self._mutations_blocked_reason() is not None:
             logger.warning(
                 "[PAPER] monitor_positions refused (%s): auto-exits disabled",
@@ -1796,11 +1833,6 @@ class PaperExecutionEngine:
             )
             if fill:
                 fills.append(fill)
-        # Klammer schliessen: ausserhalb des Monitors gibt es keinen Tick, und ein
-        # Entry-Fill darf die Id eines fremden Laufs nicht erben (dieselbe Falle
-        # wie beim Tick-Cache der Preisquelle).
-        self._tick_id = ""
-        self._tick_price_evidence = {}
         return fills
 
     def _append_audit(self, event_type: str, data: Mapping[str, object]) -> None:
