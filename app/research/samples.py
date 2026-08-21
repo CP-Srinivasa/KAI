@@ -76,7 +76,7 @@ def decisions_to_trades_with_counts(
     unberuehrt bleiben. Der Decider und die Kostenarithmetik laufen pro Zeile
     genau einmal; Trades und Counts werden aus demselben Zwischenergebnis erzeugt.
     """
-    outcomes = _evaluate_rows(rows, forward_bps, decide, round_trip_cost_bps)
+    outcomes = _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
     trades = [outcome.trade_sample for outcome in outcomes if outcome.trade_sample is not None]
     raw = sum(outcome.decision != 0 for outcome in outcomes)
     unavailable = sum(
@@ -109,11 +109,11 @@ def decisions_to_trades(
     Raises:
         ValueError: length mismatch, invalid cost, or a side not in {-1,0,1}.
     """
-    outcomes = _evaluate_rows(rows, forward_bps, decide, round_trip_cost_bps)
+    outcomes = _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
     return [outcome.trade_sample for outcome in outcomes if outcome.trade_sample is not None]
 
 
-def _evaluate_rows(
+def _emit_trades(
     rows: list[FeatureRow],
     forward_bps: list[float | None],
     decide: Decider,
