@@ -8,16 +8,19 @@ taken trade:
     gross_bps = side * forward_return_bps
     net_bps   = gross_bps - round_trip_cost_bps
 
-Rows where the decider says 0, or where the forward label is None (warm-up tail,
-no future bar), produce no trade. The decider reads only the FeatureRow (which is
-causal by construction); the label is consumed here, never exposed to the
-decider — preserving the feature/label separation that keeps the backtest honest.
+Rows where the decider says 0, or where the forward label is unavailable
+(``None``, NaN, or either infinity), produce no trade. The decider reads only the
+FeatureRow (which is causal by construction); the label is consumed here, never
+exposed to the decider — preserving the feature/label separation that keeps the
+backtest honest.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from math import isfinite
+from typing import Literal
 
 from app.analysis.features.feature_matrix import FeatureRow
 
@@ -49,6 +52,18 @@ class DecisionCounts:
     data_unavailable: int
 
 
+_LabelStatus = Literal["VALID", "DATA_UNAVAILABLE"]
+
+
+@dataclass(frozen=True)
+class _RowDecision:
+    """One immutable per-row result shared by trade emission and disclosure."""
+
+    decision: int
+    label_status: _LabelStatus
+    trade_sample: TradeSample | None
+
+
 def decisions_to_trades_with_counts(
     rows: list[FeatureRow],
     forward_bps: list[float | None],
@@ -58,17 +73,19 @@ def decisions_to_trades_with_counts(
     """Wie ``decisions_to_trades``, plus die Zaehlung der nicht auswertbaren Feuerungen.
 
     Getrennte Funktion statt geaenderter Signatur, damit die bestehenden Aufrufer
-    unberuehrt bleiben — und **eine** Kostenarithmetik, statt sie fuer die
-    Praeregistrierung ein zweites Mal zu schreiben.
+    unberuehrt bleiben. Der Decider und die Kostenarithmetik laufen pro Zeile
+    genau einmal; Trades und Counts werden aus demselben Zwischenergebnis erzeugt.
     """
-    trades = _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
-    # Die Feuerungen ZAEHLEN, unabhaengig davon, ob ein Label existierte.
-    # Genau diese Differenz ist ``data_unavailable``.
-    raw = sum(1 for row in rows if decide(row) != 0)
+    outcomes = _evaluate_rows(rows, forward_bps, decide, round_trip_cost_bps)
+    trades = [outcome.trade_sample for outcome in outcomes if outcome.trade_sample is not None]
+    raw = sum(outcome.decision != 0 for outcome in outcomes)
+    unavailable = sum(
+        outcome.decision != 0 and outcome.label_status == "DATA_UNAVAILABLE" for outcome in outcomes
+    )
     return trades, DecisionCounts(
         raw_fires=raw,
         label_capable_fires=len(trades),
-        data_unavailable=raw - len(trades),
+        data_unavailable=unavailable,
     )
 
 
@@ -82,45 +99,55 @@ def decisions_to_trades(
 
     Args:
         rows: causal feature rows (oldest first).
-        forward_bps: forward-return labels aligned to ``rows`` (None = no label).
+        forward_bps: forward-return labels aligned to ``rows`` (non-finite = unavailable).
         decide: hypothesis mapping a row to side in {-1, 0, +1}.
-        round_trip_cost_bps: total cost charged per taken trade. Must be >= 0.
+        round_trip_cost_bps: total cost charged per taken trade. Must be finite and >= 0.
 
     Returns:
-        One TradeSample per row where side != 0 and a label exists.
+        One TradeSample per row where side != 0 and a finite label exists.
 
     Raises:
-        ValueError: length mismatch, negative cost, or a side not in {-1,0,1}.
+        ValueError: length mismatch, invalid cost, or a side not in {-1,0,1}.
     """
-    return _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
+    outcomes = _evaluate_rows(rows, forward_bps, decide, round_trip_cost_bps)
+    return [outcome.trade_sample for outcome in outcomes if outcome.trade_sample is not None]
 
 
-def _emit_trades(
+def _evaluate_rows(
     rows: list[FeatureRow],
     forward_bps: list[float | None],
     decide: Decider,
     round_trip_cost_bps: float,
-) -> list[TradeSample]:
-    """Die einzige Stelle, an der Kosten auf einen Trade angewendet werden."""
+) -> list[_RowDecision]:
+    """Evaluate each row once and retain the result used by every downstream view."""
     if len(rows) != len(forward_bps):
         raise ValueError("rows and forward_bps must have equal length")
-    if round_trip_cost_bps < 0:
-        raise ValueError("round_trip_cost_bps must be >= 0")
+    if not isfinite(round_trip_cost_bps) or round_trip_cost_bps < 0:
+        raise ValueError("round_trip_cost_bps must be finite and >= 0")
 
-    trades: list[TradeSample] = []
+    outcomes: list[_RowDecision] = []
     for row, label in zip(rows, forward_bps, strict=True):
         side = decide(row)
-        if side not in (-1, 0, 1):
-            raise ValueError(f"decider must return -1, 0, or 1; got {side!r}")
-        if side == 0 or label is None:
-            continue
-        gross = side * label
-        trades.append(
-            TradeSample(
+        if isinstance(side, bool) or side not in (-1, 0, 1):
+            raise ValueError(f"decider must return integer -1, 0, or 1; got {side!r}")
+
+        finite_label = label if label is not None and isfinite(label) else None
+        label_status: _LabelStatus = "VALID" if finite_label is not None else "DATA_UNAVAILABLE"
+        trade: TradeSample | None = None
+        if side != 0 and finite_label is not None:
+            gross = side * finite_label
+            trade = TradeSample(
                 timestamp_utc=row.timestamp_utc,
                 side=side,
                 gross_bps=gross,
                 net_bps=gross - round_trip_cost_bps,
             )
+
+        outcomes.append(
+            _RowDecision(
+                decision=side,
+                label_status=label_status,
+                trade_sample=trade,
+            )
         )
-    return trades
+    return outcomes
