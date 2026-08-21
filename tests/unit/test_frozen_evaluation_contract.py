@@ -1,23 +1,28 @@
 r"""Aus einer versiegelten Absicht eine EINMALIGE, reproduzierbare Auswertung machen.
 
-Bis hierher war die Kette an einer Stelle offen: ``EVALUATE`` stand im Journal,
-das Verdikt fehlte, und der Checkpoint galt als ``CLOSED``. Ein Absturz zwischen
-Entschluss und p-Wert haette das Ergebnis also verschluckt — das Experiment waere
-beendet gewesen, ohne je eines gehabt zu haben.
+Die vollstaendige Tabelle, ausschliesslich aus dem Journal::
 
-Die zweite, groessere Luecke lag daneben: ``run_confirmatory`` nahm **beliebige**
-Panels, eine **freie** Hypothese und einen **mitgelieferten** ``universe_sha256``
-entgegen und schrieb Letzteren unbesehen ins Ergebnis. Ein korrekter Hash neben
-33 Symbolen waere nicht aufgefallen.
+    T2 EVALUATE + Verdikt    -> CLOSED       T1 EVALUATE + Verdikt  -> CLOSED
+    T2 EVALUATE ohne Verdikt -> RESUME T2    T1 EVALUATE ohne V.    -> RESUME T1
+    T2 INCONCLUSIVE          -> CLOSED       T1 EXTEND, < T2        -> WAIT
+    nichts, < T1             -> WAIT         T1 EXTEND, >= T2       -> UNDECIDED(T2)
 
-Beides schliesst der Vertrag hier::
+Vier Zusicherungen, die ueber "der Ausgang stimmt" hinausgehen:
 
-    CHECKPOINT_DECIDED -> EVALUATION_INPUT_FROZEN -> EVALUATION_RUNNING
-                       -> VERDICT_RECORDED        -> CLOSED
+**Der Plan entsteht ohne Daten.** ``rows_loader`` wird auf CLOSED, WAIT und
+RESUME nicht aufgerufen — ein Loader, der wirft, beweist das.
 
-mit der Reihenfolge als eigentlichem Gewinn: das Artefakt liegt auf der Platte,
-BEVOR ``EVALUATE`` journalisiert wird. Damit gilt "Journal sagt EVALUATE ⇒ das
-Artefakt existiert" — und nicht umgekehrt.
+**Die Frozen-Grenze liegt VOR der Signalauswahl.** Eingefroren wird der
+vollstaendige OOS-Schnitt; der Decider laeuft danach aus dem Artefakt. Sonst
+koennte das Artefakt zwar zeigen, welche Feuerungen gewertet wurden, aber nicht,
+ob die richtigen ausgewaehlt wurden.
+
+**Das Universum wird geladen, nicht uebergeben.** Der staerkere Angriff ist
+nicht "33 statt 34", sondern *irgendeine* andere 34er-Liste neben dem korrekten
+offiziellen Hash als getrennt uebergebenem String.
+
+**Der laufende Code wird bewiesen.** Ein wohlgeformter Hash im Artefakt ist
+keine Aussage darueber, welche Implementierung gerade rechnet.
 """
 
 from __future__ import annotations
@@ -29,52 +34,65 @@ from pathlib import Path
 import pytest
 
 from app.analysis.features.feature_matrix import FeatureRow
+from app.research.evaluator_identity import (
+    EvaluatorIdentityError,
+    assert_runtime_matches,
+    evaluator_bundle_sha256,
+)
 from app.research.frozen_dataset import (
     FrozenDatasetError,
     FrozenRow,
     build_frozen_dataset,
     canonical_bytes,
-    dataset_sha256,
     dataset_to_dict,
 )
 from app.research.frozen_input import (
     FrozenInputError,
     build_frozen_input,
     evaluation_input_sha256,
-    read_frozen_artifact,
+    load_sealed_universe,
     write_frozen_artifact,
 )
-from app.research.prereg_candidate import (
-    activate,
-    build_rsi_reentry_volume_candidate,
-    candidate_sha256,
-)
+from app.research.prereg_candidate import activate, build_rsi_reentry_volume_candidate
 from app.research.prereg_evaluation import (
+    PLAN_CLOSED,
+    PLAN_RESUME,
+    PLAN_UNDECIDED,
+    PLAN_WAIT,
+    CheckpointPlan,
     SealedEvaluationError,
     decide_and_freeze,
+    frozen_rows_from_panel,
     load_verdicts,
-    resume_evaluation_input_sha256,
+    plan_checkpoint,
+    resolve_decider,
     run_sealed_evaluation,
 )
-from app.research.prereg_window import (
-    ACTION_CLOSED,
-    ACTION_EVALUATE,
-    ACTION_EXTEND_TO_T2,
-    ACTION_RESUME_EVALUATION,
+from app.research.prereg_storage import (
+    PreRegStorageError,
+    initialise_activation,
+    read_active,
+    verdict_journal_path,
 )
 
-_UNIVERSE_SHA = "f" * 64
-_SYMBOLS = ("BTC/USDT", "ETH/USDT", "SOL/USDT")
+REPO = Path(__file__).resolve().parents[2]
+_UNIVERSE_ARTIFACT = json.loads(
+    (REPO / "docs" / "research" / "universe_rsi_reentry_v1.json").read_text(encoding="utf-8")
+)
+_UNIVERSE_SHA = _UNIVERSE_ARTIFACT["universe_sha256"]
+_SYMBOLS = tuple(_UNIVERSE_ARTIFACT["canonical_universe"])
+
 _CODE_SHA = "c" * 40
 _EVAL_SHA = "e" * 64
-
 _T0 = "2026-09-01T00:00:00+00:00"
 _T1 = "2026-11-30T00:00:00+00:00"
 _T2 = "2027-02-28T00:00:00+00:00"
+_AFTER_T2 = "2027-03-05T00:00:00+00:00"
+_BETWEEN = "2026-12-20T00:00:00+00:00"
 
 
 def _candidate(**overrides):
-    """Ein Test-Candidate: echte Struktur, aber Schranken, die ein 6-Zeilen-Sample erreicht."""
+    """Echte Struktur, aber Schranken, die ein kleines Sample erreichen kann."""
     base = build_rsi_reentry_volume_candidate(_UNIVERSE_SHA, len(_SYMBOLS))
     values = {"n_valid_min": 1, "cluster_min": 1}
     values.update(overrides)
@@ -91,13 +109,12 @@ def _activation(candidate=None):
     )
 
 
-def _feature_row(hour: int) -> FeatureRow:
-    """Eine Zeile, auf der ``rsi_reentry_volume_confirmed`` feuert."""
+def _feature_row(hour: int, *, fires: bool) -> FeatureRow:
     return FeatureRow(
         timestamp_utc=f"2026-10-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
         close=100.0,
         log_return=None,
-        rsi_14=31.0,
+        rsi_14=31.0 if fires else 50.0,
         adx_14=None,
         plus_di_14=None,
         minus_di_14=None,
@@ -106,13 +123,13 @@ def _feature_row(hour: int) -> FeatureRow:
         ema_26=None,
         macd=None,
         bollinger_z_20=None,
-        rsi_14_prev=28.0,
-        volume_z_20=3.0,
+        rsi_14_prev=28.0 if fires else 50.0,
+        volume_z_20=3.0 if fires else 0.0,
     )
 
 
-def _frozen_row(hour: int, *, label: float | None = 50.0) -> FrozenRow:
-    row = _feature_row(hour)
+def _row(hour: int, *, fires: bool = True, label: float | None = 50.0) -> FrozenRow:
+    row = _feature_row(hour, fires=fires)
     exit_hour = hour + 4
     return FrozenRow(
         signal_timestamp_utc=row.timestamp_utc,
@@ -122,71 +139,151 @@ def _frozen_row(hour: int, *, label: float | None = 50.0) -> FrozenRow:
     )
 
 
-def _rows(counts: dict[str, int], *, missing: int = 0) -> dict[str, list[FrozenRow]]:
-    out: dict[str, list[FrozenRow]] = {}
+def _rows(fires: int = 3, *, quiet: int = 2, missing: int = 0):
+    """Ein vollstaendiger Schnitt: feuernde UND stille Zeilen."""
+    out: dict[str, list[FrozenRow]] = {symbol: [] for symbol in _SYMBOLS}
     hour = 0
-    for symbol, n in counts.items():
-        rows = []
-        for i in range(n):
-            rows.append(_frozen_row(hour, label=None if i < missing else 50.0 + i * 3.0))
-            hour += 40
-        out[symbol] = rows
+    for index in range(fires):
+        out[_SYMBOLS[index % 3]].append(
+            _row(hour, label=None if index < missing else 50.0 + index * 3.0)
+        )
+        hour += 40
+    for _ in range(quiet):
+        out[_SYMBOLS[0]].append(_row(hour, fires=False))
+        hour += 40
     return out
 
 
-def _dataset(counts: dict[str, int] | None = None, *, checkpoint: str = "T1", **kw):
-    return build_frozen_dataset(
-        checkpoint=checkpoint,
-        t0_utc=kw.get("t0_utc", _T0),
-        cutoff_utc=kw.get("cutoff_utc", _T1 if checkpoint == "T1" else _T2),
-        sealed_symbols=kw.get("sealed_symbols", _SYMBOLS),
-        rows_by_symbol=_rows(counts or {"BTC/USDT": 3, "ETH/USDT": 2, "SOL/USDT": 1}),
+def _tree(tmp_path: Path, activation) -> Path:
+    root = tmp_path / "prereg"
+    initialise_activation(root, activation)
+    return root
+
+
+# ── Ablagestruktur ──────────────────────────────────────────────────────────
+
+
+def test_activation_creates_the_complete_tree(tmp_path: Path) -> None:
+    """Nach T0 steht alles — ein fehlendes Verzeichnis darf nicht erst am
+    Checkpoint auffallen."""
+    activation = _activation()
+    root = _tree(tmp_path, activation)
+    sha = read_active(root)
+
+    directory = root / sha
+    assert (directory / "activation.json").exists()
+    assert (directory / "checkpoints.jsonl").read_text(encoding="utf-8") == ""
+    assert (directory / "verdicts.jsonl").read_text(encoding="utf-8") == ""
+    assert (directory / "frozen" / "T1").is_dir()
+    assert (directory / "frozen" / "T2").is_dir()
+
+
+def test_the_active_pointer_is_validated_not_trusted(tmp_path: Path) -> None:
+    """Ein Zeiger auf eine unvollstaendige Ablage ist schlimmer als keiner."""
+    root = tmp_path / "prereg"
+    root.mkdir()
+    (root / "ACTIVE").write_text("nicht-hex\n", encoding="utf-8")
+
+    with pytest.raises(PreRegStorageError, match="erwartet 64 Hex"):
+        read_active(root)
+
+    (root / "ACTIVE").write_text("a" * 64 + "\n", encoding="utf-8")
+    with pytest.raises(PreRegStorageError, match="unvollstaendig"):
+        read_active(root)
+
+
+def test_an_activation_is_never_overwritten(tmp_path: Path) -> None:
+    activation = _activation()
+    root = _tree(tmp_path, activation)
+    initialise_activation(root, activation)  # identisch -> No-Op
+
+    sha = read_active(root)
+    (root / sha / "activation.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(PreRegStorageError, match="ANDEREM Inhalt"):
+        initialise_activation(root, activation)
+
+
+def test_the_backup_covers_the_runtime_tree() -> None:
+    """Nicht in Git ⇒ das Backup ist der EINZIGE Rueckweg."""
+    script = (REPO / "scripts" / "kai_backup_artifacts.sh").read_text(encoding="utf-8")
+
+    assert '"artifacts/research/prereg"' in script
+
+
+# ── Das Universum wird geladen, nicht uebergeben ────────────────────────────
+
+
+def test_the_universe_comes_from_the_repo_artifact() -> None:
+    sha, symbols = load_sealed_universe(REPO, expected_sha256=_UNIVERSE_SHA)
+
+    assert sha == _UNIVERSE_SHA
+    assert len(symbols) == 34
+    assert symbols == _SYMBOLS
+
+
+def test_a_candidate_pointing_elsewhere_is_refused() -> None:
+    with pytest.raises(FrozenInputError, match="verschiedene Populationen"):
+        load_sealed_universe(REPO, expected_sha256="d" * 64)
+
+
+def test_a_forged_symbol_list_cannot_pass_with_the_official_hash(tmp_path: Path) -> None:
+    """DER staerkere Angriff: andere 34 Symbole, korrekter offizieller Hash.
+
+    Frueher haette der Aufrufer beide Wahrheiten mitgebracht. Jetzt wird der
+    Hash aus dem INHALT nachgerechnet — die Faelschung faellt auf.
+    """
+    forged = dict(_UNIVERSE_ARTIFACT)
+    forged["canonical_universe"] = [*list(_SYMBOLS)[:33], "SCAM/USDT"]
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "docs" / "research").mkdir(parents=True)
+    (fake_repo / "docs" / "research" / "universe_rsi_reentry_v1.json").write_text(
+        json.dumps(forged), encoding="utf-8"
     )
 
-
-# ── A. Der eingefrorene Datenschnitt ────────────────────────────────────────
-
-
-def test_a_symbol_without_signals_stays_a_member() -> None:
-    """``DATA_UNAVAILABLE`` ist NICHT ``asset removed``.
-
-    Wer ein stummes Symbol weglaesst, veraendert still die Population — und der
-    naechste Leser haelt 33 fuer 34.
-    """
-    dataset = _dataset({"BTC/USDT": 2})
-
-    assert dataset.symbols == _SYMBOLS
-    assert [p.symbol for p in dataset.panels] == list(_SYMBOLS)
-    assert len(dataset.panels[2].rows) == 0
+    with pytest.raises(FrozenInputError, match="passt nicht zur Liste"):
+        load_sealed_universe(fake_repo, expected_sha256=_UNIVERSE_SHA)
 
 
-def test_a_symbol_outside_the_sealed_universe_is_refused() -> None:
-    with pytest.raises(FrozenDatasetError, match="ausserhalb des versiegelten"):
-        build_frozen_dataset(
-            checkpoint="T1",
-            t0_utc=_T0,
-            cutoff_utc=_T1,
-            sealed_symbols=_SYMBOLS,
-            rows_by_symbol=_rows({"DOGE/USDT": 1}),
-        )
+def test_a_blocked_universe_is_not_used(tmp_path: Path) -> None:
+    blocked = dict(_UNIVERSE_ARTIFACT)
+    blocked["ok"] = False
+    fake_repo = tmp_path / "repo"
+    (fake_repo / "docs" / "research").mkdir(parents=True)
+    (fake_repo / "docs" / "research" / "universe_rsi_reentry_v1.json").write_text(
+        json.dumps(blocked), encoding="utf-8"
+    )
+
+    with pytest.raises(FrozenInputError, match="ok=false"):
+        load_sealed_universe(fake_repo, expected_sha256=_UNIVERSE_SHA)
 
 
-def test_none_and_zero_are_different_things() -> None:
-    """``0.0`` ist eine Beobachtung, ``None`` ist ihre Abwesenheit.
+# ── Der eingefrorene Datenschnitt ───────────────────────────────────────────
 
-    Wer beides zusammenwirft, faelscht den Mittelwert nach unten und
-    ``n_valid`` nach oben.
-    """
+
+def test_all_thirty_four_symbols_stay_members(tmp_path: Path) -> None:
+    """``DATA_UNAVAILABLE`` ist NICHT ``asset removed``."""
     dataset = build_frozen_dataset(
         checkpoint="T1",
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
-        rows_by_symbol={"BTC/USDT": [_frozen_row(0, label=0.0), _frozen_row(40, label=None)]},
+        rows_by_symbol=_rows(),
     )
 
-    labels = [row.label_bps for row in dataset.panels[0].rows]
-    assert labels == [0.0, None]
+    assert len(dataset.panels) == 34
+    assert tuple(p.symbol for p in dataset.panels) == _SYMBOLS
+
+
+def test_none_and_zero_stay_different() -> None:
+    dataset = build_frozen_dataset(
+        checkpoint="T1",
+        t0_utc=_T0,
+        cutoff_utc=_T1,
+        sealed_symbols=_SYMBOLS,
+        rows_by_symbol={_SYMBOLS[0]: [_row(0, label=0.0), _row(40, label=None)]},
+    )
+
     payload = dataset_to_dict(dataset)
     assert payload["panels"][0]["rows"][0]["label_bps"] == 0.0
     assert payload["panels"][0]["rows"][1]["label_bps"] is None
@@ -194,60 +291,33 @@ def test_none_and_zero_are_different_things() -> None:
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
 def test_non_finite_values_cannot_be_frozen(bad: float) -> None:
-    """``NaN`` passiert jeden ``is not None``-Guard und propagiert lautlos."""
     with pytest.raises(FrozenDatasetError, match="nicht endlich"):
         build_frozen_dataset(
             checkpoint="T1",
             t0_utc=_T0,
             cutoff_utc=_T1,
             sealed_symbols=_SYMBOLS,
-            rows_by_symbol={"BTC/USDT": [_frozen_row(0, label=bad)]},
+            rows_by_symbol={_SYMBOLS[0]: [_row(0, label=bad)]},
         )
 
 
 def test_canonical_bytes_refuse_nan() -> None:
-    """``json.dumps`` schriebe sonst ``NaN`` — kein gueltiges JSON, still fehlerhaft."""
     with pytest.raises(ValueError, match="Out of range"):
         canonical_bytes({"x": float("nan")})
 
 
-def test_a_naive_timestamp_is_refused() -> None:
-    row = _frozen_row(0)
-    naive = replace(row, signal_timestamp_utc="2026-10-01T00:00:00")
-
-    with pytest.raises(FrozenDatasetError, match="zeitzonenlos"):
-        build_frozen_dataset(
-            checkpoint="T1",
-            t0_utc=_T0,
-            cutoff_utc=_T1,
-            sealed_symbols=_SYMBOLS,
-            rows_by_symbol={"BTC/USDT": [naive]},
-        )
-
-
-def test_the_window_is_about_observability_not_the_signal_time() -> None:
-    """Ein Label zaehlt nur, wenn es bis zum Checkpoint VOLLSTAENDIG vorlag.
-
-    Ein Signal kurz vor dem Cutoff, dessen Ausstieg danach liegt, war am
-    Checkpoint noch nicht beobachtbar — es gehoert nicht hinein.
-    """
+def test_the_window_is_about_observability() -> None:
+    """Ein Label zaehlt nur, wenn es bis zum Checkpoint VOLLSTAENDIG vorlag."""
     inside = FrozenRow(
         signal_timestamp_utc="2026-11-29T00:00:00+00:00",
         label_exit_utc="2026-11-29T04:00:00+00:00",
-        features=_frozen_row(0).features,
+        features=_row(0).features,
         label_bps=10.0,
     )
-    exits_after_cutoff = FrozenRow(
+    exits_after = replace(
+        inside,
         signal_timestamp_utc="2026-11-29T23:00:00+00:00",
         label_exit_utc="2026-11-30T03:00:00+00:00",
-        features=_frozen_row(0).features,
-        label_bps=10.0,
-    )
-    before_t0 = FrozenRow(
-        signal_timestamp_utc="2026-08-30T00:00:00+00:00",
-        label_exit_utc="2026-08-30T04:00:00+00:00",
-        features=_frozen_row(0).features,
-        label_bps=10.0,
     )
 
     dataset = build_frozen_dataset(
@@ -255,298 +325,229 @@ def test_the_window_is_about_observability_not_the_signal_time() -> None:
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
-        rows_by_symbol={"BTC/USDT": [inside, exits_after_cutoff, before_t0]},
+        rows_by_symbol={_SYMBOLS[0]: [inside, exits_after]},
     )
 
-    kept = [row.signal_timestamp_utc for row in dataset.panels[0].rows]
-    assert kept == ["2026-11-29T00:00:00+00:00"]
+    assert [r.signal_timestamp_utc for r in dataset.panels[0].rows] == ["2026-11-29T00:00:00+00:00"]
 
 
-def test_the_dataset_hash_is_deterministic_and_content_bound() -> None:
-    a = _dataset()
-    b = _dataset()
+def test_the_frozen_boundary_lies_before_signal_selection() -> None:
+    """Auch NICHT feuernde Zeilen werden eingefroren.
 
-    assert dataset_sha256(a) == dataset_sha256(b)
-    changed = build_frozen_dataset(
+    Sonst koennte das Artefakt zeigen, WELCHE Feuerungen gewertet wurden, aber
+    nicht, ob aus dem urspruenglichen Schnitt die richtigen ausgewaehlt wurden.
+    """
+    rows = [_feature_row(0, fires=True), _feature_row(1, fires=False)]
+    frozen = frozen_rows_from_panel(
+        rows, [50.0, 10.0], ["2026-10-01T04:00:00+00:00", "2026-10-01T05:00:00+00:00"]
+    )
+
+    assert len(frozen) == 2, "der Decider wird beim Einfrieren NICHT gefragt"
+    assert frozen[1].features["rsi_14"] == 50.0
+
+
+# ── Artefakt ────────────────────────────────────────────────────────────────
+
+
+def _input(tmp_path: Path, candidate=None, activation=None, rows=None):
+    from app.research.prereg_window import MaturityCounts
+
+    candidate = candidate or _candidate()
+    dataset = build_frozen_dataset(
         checkpoint="T1",
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
-        rows_by_symbol={"BTC/USDT": [_frozen_row(0, label=51.0)]},
+        rows_by_symbol=rows if rows is not None else _rows(),
     )
-    assert dataset_sha256(changed) != dataset_sha256(a)
-
-
-def test_the_dataset_hash_ignores_input_row_order() -> None:
-    """Sonst waere ein Retry je nach Ladereihenfolge ein anderer Datensatz."""
-    forward = {"BTC/USDT": [_frozen_row(0), _frozen_row(40)]}
-    reverse = {"BTC/USDT": [_frozen_row(40), _frozen_row(0)]}
-
-    a = build_frozen_dataset(
-        checkpoint="T1", t0_utc=_T0, cutoff_utc=_T1, sealed_symbols=_SYMBOLS, rows_by_symbol=forward
-    )
-    b = build_frozen_dataset(
-        checkpoint="T1", t0_utc=_T0, cutoff_utc=_T1, sealed_symbols=_SYMBOLS, rows_by_symbol=reverse
-    )
-
-    assert dataset_sha256(a) == dataset_sha256(b)
-
-
-# ── B. Die Evaluationsidentitaet ────────────────────────────────────────────
-
-
-def _input(dataset=None, candidate=None, activation=None, counts=None):
-    from app.research.prereg_window import MaturityCounts
-
-    candidate = candidate or _candidate()
-    return build_frozen_input(
-        dataset=dataset or _dataset(),
+    frozen = build_frozen_input(
+        dataset=dataset,
         candidate=candidate,
         activation=activation or _activation(candidate),
         sealed_universe_sha256=_UNIVERSE_SHA,
         sealed_symbols=_SYMBOLS,
-        maturity_counts=counts or MaturityCounts(n_valid=5, n_clusters=5),
+        maturity_counts=MaturityCounts(n_valid=3, n_clusters=3),
     )
+    return frozen, dataset
 
 
-def test_the_contract_comes_from_the_candidate_not_from_a_caller() -> None:
-    frozen = _input()
+def test_the_sealed_sensitivity_axis_is_part_of_the_contract(tmp_path: Path) -> None:
+    """ "Ausschliesslich aus dem Frozen Input" soll buchstaeblich stimmen."""
+    frozen, _ = _input(tmp_path)
 
-    assert frozen.resolved_contract["round_trip_cost_bps"] == 20.0
-    assert frozen.resolved_contract["economic_floor_bps"] == 5.0
-    assert frozen.resolved_contract["horizon"] == 4
-    assert frozen.resolved_contract["alpha"] == 0.05
+    assert frozen.resolved_contract["sensitivity_cost_bps"] == [20.0, 25.0, 30.0]
 
 
-def test_a_different_cost_is_a_different_evaluation_identity() -> None:
-    """Dieselben Daten unter anderen Kosten sind NICHT dieselbe Auswertung."""
-    cheap = _candidate(round_trip_cost_bps=10.0)
-
-    a = evaluation_input_sha256(_input())
-    b = evaluation_input_sha256(_input(candidate=cheap, activation=_activation(cheap)))
-
-    assert a != b
-
-
-def test_thirty_three_symbols_are_refused_even_with_the_right_universe_hash() -> None:
-    """Die Luecke, die ``run_confirmatory`` hatte.
-
-    Ein korrekter ``universe_sha256`` beweist, WELCHES Universum versiegelt
-    wurde — nicht, dass die Daten genau dieses abdecken.
-    """
-    short = build_frozen_dataset(
-        checkpoint="T1",
-        t0_utc=_T0,
-        cutoff_utc=_T1,
-        sealed_symbols=_SYMBOLS[:2],
-        rows_by_symbol=_rows({"BTC/USDT": 1}),
-    )
-
-    with pytest.raises(FrozenInputError, match="nicht das versiegelte Universum"):
-        _input(dataset=short)
-
-
-def test_an_activation_for_another_candidate_is_refused() -> None:
-    other = _candidate(cluster_min=7)
-
-    with pytest.raises(FrozenInputError, match="verweist auf Candidate"):
-        _input(candidate=_candidate(), activation=_activation(other))
-
-
-def test_a_cutoff_that_is_not_the_sealed_checkpoint_is_refused() -> None:
-    wrong = build_frozen_dataset(
-        checkpoint="T1",
-        t0_utc=_T0,
-        cutoff_utc="2026-12-15T00:00:00+00:00",
-        sealed_symbols=_SYMBOLS,
-        rows_by_symbol=_rows({"BTC/USDT": 1}),
-    )
-
-    with pytest.raises(FrozenInputError, match="nicht der versiegelte"):
-        _input(dataset=wrong)
-
-
-def test_the_artifact_hash_is_verified_against_its_content(tmp_path: Path) -> None:
-    """Der Dateiname ist ein Hinweis, kein Beweis — er laesst sich umbenennen."""
-    dataset = _dataset()
-    frozen = _input(dataset=dataset)
+def test_an_existing_artifact_is_revalidated_not_trusted(tmp_path: Path) -> None:
+    """Der Dateiname ist kein Beweis — gerade weil danach EVALUATE folgt."""
+    frozen, dataset = _input(tmp_path)
     digest = evaluation_input_sha256(frozen)
-    write_frozen_artifact(tmp_path, frozen, dataset)
+    directory = tmp_path / "frozen"
+    write_frozen_artifact(directory, frozen, dataset)
 
-    assert read_frozen_artifact(tmp_path, digest)["input"]["dataset_sha256"]
+    assert write_frozen_artifact(directory, frozen, dataset).name.endswith(f"{digest}.json")
 
-    path = tmp_path / f"evaluation_input_{digest}.json"
+    path = directory / f"evaluation_input_{digest}.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["input"]["n_symbols"] = 99
     path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(FrozenInputError, match="passt nicht zum Inhalt"):
-        read_frozen_artifact(tmp_path, digest)
+        write_frozen_artifact(directory, frozen, dataset)
 
 
-def test_a_missing_artifact_is_an_error_not_a_reload(tmp_path: Path) -> None:
-    with pytest.raises(FrozenInputError, match="das Artefakt fehlt"):
-        read_frozen_artifact(tmp_path, "a" * 64)
+def test_thirty_three_symbols_are_refused(tmp_path: Path) -> None:
+    # 33 Symbole, sonst alles korrekt — der Datensatz selbst ist in sich
+    # stimmig, nur eben nicht das versiegelte Universum.
+    thirty_three = _SYMBOLS[:33]
+    short = build_frozen_dataset(
+        checkpoint="T1",
+        t0_utc=_T0,
+        cutoff_utc=_T1,
+        sealed_symbols=thirty_three,
+        rows_by_symbol={s: rows for s, rows in _rows().items() if s in thirty_three},
+    )
+    from app.research.prereg_window import MaturityCounts
 
-
-def test_writing_the_same_artifact_twice_is_idempotent(tmp_path: Path) -> None:
-    dataset = _dataset()
-    frozen = _input(dataset=dataset)
-
-    first = write_frozen_artifact(tmp_path, frozen, dataset)
-    second = write_frozen_artifact(tmp_path, frozen, dataset)
-
-    assert first == second
-    assert len(list(tmp_path.glob("evaluation_input_*.json"))) == 1
-
-
-# ── C/D. Zustandsautomat und Wiederaufnahme ─────────────────────────────────
-
-
-def _paths(tmp_path: Path):
-    return tmp_path / "checkpoints.jsonl", tmp_path / "verdicts.jsonl", tmp_path / "frozen"
-
-
-def _decide(tmp_path: Path, *, now: str = _T1, counts=None, candidate=None):
-    candidate = candidate or _candidate()
-    checkpoints, verdicts, artifacts = _paths(tmp_path)
-    return (
-        decide_and_freeze(
-            now_utc=now,
-            candidate=candidate,
-            activation=_activation(candidate),
-            sealed_symbols=_SYMBOLS,
+    with pytest.raises(FrozenInputError, match="nicht das versiegelte Universum"):
+        build_frozen_input(
+            dataset=short,
+            candidate=_candidate(),
+            activation=_activation(),
             sealed_universe_sha256=_UNIVERSE_SHA,
-            rows_by_symbol=_rows(counts or {"BTC/USDT": 3, "ETH/USDT": 2, "SOL/USDT": 1}),
-            checkpoint_journal=checkpoints,
-            verdict_journal=verdicts,
-            artifact_dir=artifacts,
-        ),
-        candidate,
+            sealed_symbols=_SYMBOLS,
+            maturity_counts=MaturityCounts(n_valid=1, n_clusters=1),
+        )
+
+
+# ── Der Plan: ohne Daten ────────────────────────────────────────────────────
+
+
+class _ExplodingLoader:
+    """Ein Loader, der beweist, dass er nicht aufgerufen wurde."""
+
+    def __call__(self):
+        raise AssertionError("es wurden Daten geladen, obwohl der Plan das verbietet")
+
+
+def _decide(root: Path, candidate, activation, now: str, rows=None):
+    return decide_and_freeze(
+        now_utc=now,
+        candidate=candidate,
+        activation=activation,
+        root=root,
+        repo_root=REPO,
+        rows_loader=(lambda: rows) if rows is not None else _ExplodingLoader(),
     )
 
 
-def test_an_extension_writes_no_artifact(tmp_path: Path) -> None:
-    """Bei ``EXTEND`` wird nichts gewertet — also entsteht auch kein Datenschnitt."""
-    (decision, digest), _ = _decide(
-        tmp_path, counts={"BTC/USDT": 1}, candidate=_candidate(n_valid_min=100, cluster_min=50)
-    )
+def test_before_t1_no_data_is_loaded(tmp_path: Path) -> None:
+    candidate = _candidate()
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
 
-    assert decision.action == ACTION_EXTEND_TO_T2
-    assert digest == ""
-    assert not (tmp_path / "frozen").exists()
+    plan, counts = _decide(root, candidate, activation, "2026-11-01T00:00:00+00:00")
+
+    assert plan.action == PLAN_WAIT
+    assert counts is None
 
 
 def test_the_artifact_exists_before_the_journal_says_evaluate(tmp_path: Path) -> None:
-    """Der eigentliche Sicherheitsgewinn: die Reihenfolge.
-
-    Stuende ``EVALUATE`` im Journal ohne Artefakt, waere der Entschluss erhalten
-    und seine Datengrundlage nicht — der Neustart wuerde neu laden.
-    """
-    (decision, digest), candidate = _decide(tmp_path)
-    checkpoints, _, artifacts = _paths(tmp_path)
-
-    assert decision.action == ACTION_EVALUATE
-    assert (artifacts / f"evaluation_input_{digest}.json").exists()
-
-    journal = [json.loads(line) for line in checkpoints.read_text(encoding="utf-8").splitlines()]
-    assert journal[0]["action"] == ACTION_EVALUATE
-    assert journal[0]["evaluation_input_sha256"] == digest
-
-
-def test_a_restart_without_a_verdict_resumes_on_the_frozen_input(tmp_path: Path) -> None:
-    """Wiederaufnahme ist nicht Wiederholung: derselbe Schnitt, kein zweiter Blick."""
-    (_first, digest), candidate = _decide(tmp_path)
-
-    # Neustart. Der Provider liefert inzwischen MEHR Zeilen — sie duerfen das
-    # Ergebnis nicht beruehren.
-    (second, second_digest), _ = _decide(tmp_path, counts={"BTC/USDT": 9, "ETH/USDT": 9})
-
-    assert second.action == ACTION_RESUME_EVALUATION
-    assert second.must_use_frozen_input
-    assert second_digest == ""
-    checkpoints, _, _ = _paths(tmp_path)
-    assert (
-        resume_evaluation_input_sha256(
-            checkpoints,
-            activation_sha256_value=json.loads(
-                checkpoints.read_text(encoding="utf-8").splitlines()[0]
-            )["activation_sha256"],
-            checkpoint="T1",
-        )
-        == digest
-    )
-
-
-def test_re_evaluating_the_frozen_input_reproduces_the_same_result(tmp_path: Path) -> None:
-    """Der Beweis, dass eine Wiederaufnahme keine zweite Auswertung ist."""
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
+    candidate = _candidate()
     activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
 
-    first = run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
+    plan, counts = _decide(root, candidate, activation, _T1, rows=_rows())
+    sha = read_active(root)
+
+    assert plan.action == PLAN_UNDECIDED
+    assert counts is not None and counts.n_valid == 3
+    artifact = (
+        root / sha / "frozen" / "T1" / f"evaluation_input_{plan.evaluation_input_sha256}.json"
     )
-    stored = load_verdicts(verdicts, activation_sha256_value=_act(activation))
-
-    second = run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc="2026-12-01T00:00:00+00:00",
-    )
-
-    assert first.verdict == second.verdict
-    assert first.summary.p_value == second.summary.p_value
-    assert len(stored) == 1
-    assert len(load_verdicts(verdicts, activation_sha256_value=_act(activation))) == 1
+    assert artifact.exists()
+    journal = [
+        json.loads(line)
+        for line in (root / sha / "checkpoints.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert journal[0]["action"] == "EVALUATE"
+    assert journal[0]["evaluation_input_sha256"] == plan.evaluation_input_sha256
 
 
-def _act(activation) -> str:
-    from app.research.prereg_candidate import activation_sha256
-
-    return activation_sha256(activation)
-
-
-def test_only_a_recorded_verdict_closes_the_checkpoint(tmp_path: Path) -> None:
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
+def test_a_restart_resumes_without_touching_the_loader(tmp_path: Path) -> None:
+    """Die Zusicherung ueber den WEG, nicht nur ueber den Ausgang."""
+    candidate = _candidate()
     activation = _activation(candidate)
-    run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
+    root = _tree(tmp_path, activation)
+    first, _ = _decide(root, candidate, activation, _T1, rows=_rows())
 
-    (after, _), _ = _decide(tmp_path, now=_T2)
+    plan, counts = _decide(root, candidate, activation, _BETWEEN)  # Loader explodiert
 
-    assert after.action == ACTION_CLOSED
+    assert plan.action == PLAN_RESUME
+    assert plan.must_use_frozen_input
+    assert plan.evaluation_input_sha256 == first.evaluation_input_sha256
+    assert counts is None
 
 
-def test_an_evaluate_without_a_hash_cannot_be_resumed(tmp_path: Path) -> None:
-    """Lieber ein Abbruch als eine frische Ladung Daten."""
+def test_an_immature_t1_extends_and_then_waits(tmp_path: Path) -> None:
+    candidate = _candidate(n_valid_min=100, cluster_min=50)
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+
+    extended, counts = _decide(root, candidate, activation, _T1, rows=_rows(fires=2))
+    assert extended.action == PLAN_WAIT
+    assert counts is not None and counts.n_valid == 2
+
+    waiting, _ = _decide(root, candidate, activation, _BETWEEN)
+    assert waiting.action == PLAN_WAIT
+
+
+def test_an_immature_t2_is_terminal(tmp_path: Path) -> None:
+    """Fristende ohne Reife ist INCONCLUSIVE — und danach ist Schluss."""
+    candidate = _candidate(n_valid_min=100, cluster_min=50)
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    _decide(root, candidate, activation, _T1, rows=_rows(fires=2))
+
+    at_t2, _ = _decide(root, candidate, activation, _AFTER_T2, rows=_rows(fires=2))
+    assert at_t2.action == PLAN_CLOSED
+
+    later, _ = _decide(root, candidate, activation, "2027-06-01T00:00:00+00:00")
+    assert later.action == PLAN_CLOSED
+    assert "terminal" in " ".join(later.reasons)
+
+
+def test_a_t2_evaluate_without_a_verdict_resumes_on_t2(tmp_path: Path) -> None:
+    """Der Pfad, der vorher gar nicht existierte."""
+    candidate = _candidate(n_valid_min=3, cluster_min=1)
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    _decide(root, candidate, activation, _T1, rows=_rows(fires=2))  # unreif -> EXTEND
+
+    frozen_at_t2, _ = _decide(root, candidate, activation, _AFTER_T2, rows=_rows(fires=3))
+    assert frozen_at_t2.action == PLAN_UNDECIDED
+    assert frozen_at_t2.checkpoint == "T2"
+
+    resumed, _ = _decide(root, candidate, activation, "2027-03-10T00:00:00+00:00")
+    assert resumed.action == PLAN_RESUME
+    assert resumed.checkpoint == "T2"
+    assert resumed.evaluation_input_sha256 == frozen_at_t2.evaluation_input_sha256
+
+
+def test_a_journal_evaluate_without_a_hash_cannot_be_resumed(tmp_path: Path) -> None:
+    from app.research.prereg_storage import checkpoint_journal_path
     from app.research.prereg_window_state import CheckpointRecord, record_checkpoint
 
-    checkpoints, _, _ = _paths(tmp_path)
+    activation = _activation()
+    root = _tree(tmp_path, activation)
+    sha = read_active(root)
     record_checkpoint(
-        checkpoints,
+        checkpoint_journal_path(root, sha),
         CheckpointRecord(
-            activation_sha256="a" * 64,
+            activation_sha256=sha,
             checkpoint="T1",
-            action=ACTION_EVALUATE,
+            action="EVALUATE",
             mature=True,
             recorded_at_utc=_T1,
             counts={"n_valid": 5},
@@ -554,19 +555,38 @@ def test_an_evaluate_without_a_hash_cannot_be_resumed(tmp_path: Path) -> None:
     )
 
     with pytest.raises(SealedEvaluationError, match="nicht wiederherstellbar"):
-        resume_evaluation_input_sha256(
-            checkpoints, activation_sha256_value="a" * 64, checkpoint="T1"
+        plan_checkpoint(now_utc=_T1, activation=activation, root=root)
+
+
+# ── Auswertung ──────────────────────────────────────────────────────────────
+
+
+def _evaluate(root: Path, activation, plan, now=_T1, *, head=None):
+    import app.research.evaluator_identity as identity
+
+    bundle = evaluator_bundle_sha256(REPO, decider_name="rsi_reentry_volume_confirmed")
+    original = identity.assert_runtime_matches
+
+    def _stub(**kwargs):
+        # Die Bindung selbst hat eigene Tests; hier soll die Auswertung
+        # geprueft werden, nicht der Checkout-Zustand des Testlaeufers.
+        assert kwargs["research_code_sha"] == _CODE_SHA
+        assert kwargs["evaluator_sha256"] == _EVAL_SHA
+        assert bundle
+
+    identity.assert_runtime_matches = _stub  # type: ignore[assignment]
+    try:
+        return run_sealed_evaluation(
+            plan=plan, activation=activation, root=root, repo_root=REPO, now_utc=now
         )
-
-
-# ── E. Der aktivierungsgebundene Evaluator ──────────────────────────────────
+    finally:
+        identity.assert_runtime_matches = original  # type: ignore[assignment]
 
 
 def test_the_sealed_evaluator_takes_no_research_parameters() -> None:
-    """Struktur-Wache: kein Weg, am Candidate vorbei etwas anderes zu messen."""
     import inspect
 
-    signature = inspect.signature(run_sealed_evaluation)
+    parameters = inspect.signature(run_sealed_evaluation).parameters
 
     for forbidden in (
         "hypothesis",
@@ -579,227 +599,190 @@ def test_the_sealed_evaluator_takes_no_research_parameters() -> None:
         "economic_floor_bps",
         "n_min",
         "cluster_min",
+        "candidate",
+        "sensitivity_cost_bps",
         "kwargs",
     ):
-        assert forbidden not in signature.parameters, forbidden
+        assert forbidden not in parameters, forbidden
 
 
-def test_the_evaluator_uses_the_sealed_cost_not_a_default(tmp_path: Path) -> None:
-    """Label 50 bps, versiegelte Kosten 20 ⇒ Mittelwert 30. Kein Default greift."""
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
+def test_the_evaluation_uses_the_sealed_cost(tmp_path: Path) -> None:
+    candidate = _candidate()
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
 
-    result = run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=_activation(candidate),
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
+    result = _evaluate(root, activation, plan)
 
     assert result.round_trip_cost_bps == 20.0
     assert result.economic_floor_bps == 5.0
-    # Labels 50/53/56 | 50/53 | 50, minus 20 bps versiegelte Kosten.
-    gross = [50.0, 53.0, 56.0, 50.0, 53.0, 50.0]
-    assert result.summary.mean_bps == pytest.approx(sum(gross) / len(gross) - 20.0)
+    assert result.summary.mean_bps == pytest.approx((50.0 + 53.0 + 56.0) / 3 - 20.0)
 
 
-def test_the_evaluator_refuses_when_the_window_says_no(tmp_path: Path) -> None:
-    from app.research.prereg_window import ACTION_WAIT, MaturityCounts, WindowDecision
+def test_re_evaluating_reproduces_the_same_result(tmp_path: Path) -> None:
+    candidate = _candidate()
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
 
-    (_d, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
-    waiting = WindowDecision(
-        action=ACTION_WAIT,
-        checkpoint="PRE_T1",
-        mature=True,
-        counts=MaturityCounts(n_valid=9, n_clusters=9),
+    first = _evaluate(root, activation, plan)
+    second = _evaluate(root, activation, plan, now="2026-12-01T00:00:00+00:00")
+
+    assert first.verdict == second.verdict
+    assert first.summary.p_value == second.summary.p_value
+    assert (
+        len(
+            load_verdicts(
+                verdict_journal_path(root, read_active(root)),
+                activation_sha256_value=read_active(root),
+            )
+        )
+        == 1
     )
+
+
+def test_only_a_recorded_verdict_closes(tmp_path: Path) -> None:
+    candidate = _candidate()
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
+    _evaluate(root, activation, plan)
+
+    closed, _ = _decide(root, candidate, activation, _AFTER_T2)
+
+    assert closed.action == PLAN_CLOSED
+
+
+def test_the_verdict_links_the_whole_chain_and_carries_its_decomposition(
+    tmp_path: Path,
+) -> None:
+    candidate = _candidate()
+    activation = _activation(candidate)
+    root = _tree(tmp_path, activation)
+    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
+    _evaluate(root, activation, plan)
+    sha = read_active(root)
+
+    record = load_verdicts(verdict_journal_path(root, sha), activation_sha256_value=sha)[0]
+
+    assert record.evaluation_input_sha256 == plan.evaluation_input_sha256
+    assert record.evaluator_sha256 == _EVAL_SHA
+    assert record.decomposition["status"] == "DIAGNOSTIC_NON_GATING"
+    assert record.decomposition["per_symbol_signals"]
+    assert len(record.result_sha256) == 64
+
+
+def test_the_evaluator_refuses_outside_a_decision_point(tmp_path: Path) -> None:
+    activation = _activation()
+    root = _tree(tmp_path, activation)
 
     with pytest.raises(SealedEvaluationError, match="darf nicht gewertet werden"):
-        run_sealed_evaluation(
-            decision=waiting,
-            evaluation_input_sha256_value=digest,
-            candidate=candidate,
-            activation=_activation(candidate),
-            artifact_dir=artifacts,
-            verdict_journal=verdicts,
-            now_utc=_T1,
-        )
+        _evaluate(root, activation, CheckpointPlan(action=PLAN_WAIT, checkpoint="T1"))
 
 
-def test_the_verdict_record_links_the_whole_chain(tmp_path: Path) -> None:
-    """WAS · UNTER WELCHEM VERTRAG · WELCHE POPULATION · WELCHER CODE · ERGEBNIS."""
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
+def test_an_unregistered_hypothesis_cannot_be_resolved() -> None:
+    with pytest.raises(SealedEvaluationError, match="nicht registriert"):
+        resolve_decider("etwas_anderes")
+
+
+# ── Verdikt-Journal: strikte Schema-Disziplin ───────────────────────────────
+
+
+def _verdict_payload(tmp_path: Path, **overrides):
+    candidate = _candidate()
     activation = _activation(candidate)
-    run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
+    root = _tree(tmp_path, activation)
+    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
+    _evaluate(root, activation, plan)
+    sha = read_active(root)
+    path = verdict_journal_path(root, sha)
+    payload = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    payload.update(overrides)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return path, sha
 
-    record = load_verdicts(verdicts, activation_sha256_value=_act(activation))[0]
 
-    assert record.evaluation_input_sha256 == digest
-    assert record.evaluator_sha256 == _EVAL_SHA
-    assert record.activation_sha256 == _act(activation)
-    assert record.alpha == 0.05
-    assert record.economic_floor_bps == 5.0
-    assert len(record.result_sha256) == 64
+@pytest.mark.parametrize(
+    ("field_name", "value", "pattern"),
+    [
+        ("schema_version", "kai/prereg-verdict/v9", "schema_version"),
+        ("checkpoint", "T3", "checkpoint"),
+        ("verdict", "SIEHT_GUT_AUS", "verdict"),
+        ("p_value", 1.5, "ausserhalb"),
+        ("p_value", "0.03", "erwartet Zahl"),
+        ("alpha", 0.0, "ausserhalb"),
+        ("n_valid", True, "erwartet int"),
+        ("n_valid", -1, "negativ"),
+        ("evaluator_sha256", "kurz", "SHA-256"),
+        ("recorded_at_utc", "2026-11-30T00:00:00", "zeitzonenlos"),
+        ("decomposition", [1, 2], "kein Objekt"),
+    ],
+)
+def test_every_invalid_verdict_field_aborts(
+    tmp_path: Path, field_name: str, value: object, pattern: str
+) -> None:
+    """An der letzten Wahrheitsschicht keine implizite Python-Semantik."""
+    from app.research.prereg_window_state import CheckpointJournalError
+
+    path, sha = _verdict_payload(tmp_path, **{field_name: value})
+
+    with pytest.raises(CheckpointJournalError, match=pattern):
+        load_verdicts(path, activation_sha256_value=sha)
 
 
 def test_a_tampered_verdict_is_detected(tmp_path: Path) -> None:
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
-    activation = _activation(candidate)
-    run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
-
-    payload = json.loads(verdicts.read_text(encoding="utf-8").splitlines()[0])
-    payload["p_value"] = 0.0001
-    verdicts.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-
     from app.research.prereg_window_state import CheckpointJournalError
 
+    path, sha = _verdict_payload(tmp_path, p_value=0.0001)
+
     with pytest.raises(CheckpointJournalError, match="nachtraeglich veraendert"):
-        load_verdicts(verdicts, activation_sha256_value=_act(activation))
+        load_verdicts(path, activation_sha256_value=sha)
 
 
-def test_the_candidate_hash_still_matches_the_committed_artifact() -> None:
-    """Gegenprobe: die Haertung von ``activate`` hat den Candidate nicht veraendert."""
-    payload = json.loads(
-        (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "research"
-            / "prereg_rsi_reentry_volume_v1_candidate.json"
-        ).read_text(encoding="utf-8")
+# ── Code-Identitaet ─────────────────────────────────────────────────────────
+
+
+def test_the_bundle_hash_is_deterministic() -> None:
+    a = evaluator_bundle_sha256(REPO, decider_name="rsi_reentry_volume_confirmed")
+    b = evaluator_bundle_sha256(REPO, decider_name="rsi_reentry_volume_confirmed")
+
+    assert a == b
+    assert len(a) == 64
+
+
+def test_a_wrong_git_head_aborts_before_any_number() -> None:
+    """Ein Verdikt unter anderem Code ist kein schwaecheres — es ist ein anderes."""
+    with pytest.raises(EvaluatorIdentityError, match="nicht der praeregistrierte"):
+        assert_runtime_matches(
+            repo_root=REPO,
+            research_code_sha="a" * 40,
+            evaluator_sha256="b" * 64,
+            decider_name="rsi_reentry_volume_confirmed",
+            head_provider=lambda _root: "f" * 40,
+        )
+
+
+def test_a_changed_evaluator_bundle_aborts() -> None:
+    head = "a" * 40
+    with pytest.raises(EvaluatorIdentityError, match="seit T0 veraendert"):
+        assert_runtime_matches(
+            repo_root=REPO,
+            research_code_sha=head,
+            evaluator_sha256="b" * 64,
+            decider_name="rsi_reentry_volume_confirmed",
+            head_provider=lambda _root: head,
+        )
+
+
+def test_the_matching_runtime_passes() -> None:
+    """Gegenprobe — sonst waere die Bindung nur eine Mauer."""
+    head = "a" * 40
+    bundle = evaluator_bundle_sha256(REPO, decider_name="rsi_reentry_volume_confirmed")
+
+    assert_runtime_matches(
+        repo_root=REPO,
+        research_code_sha=head,
+        evaluator_sha256=bundle,
+        decider_name="rsi_reentry_volume_confirmed",
+        head_provider=lambda _root: head,
     )
-
-    rebuilt = build_rsi_reentry_volume_candidate(payload["universe_sha256"], payload["n_symbols"])
-
-    assert payload["candidate_sha256"] == candidate_sha256(rebuilt)
-
-
-def test_a_degenerate_statistic_is_stored_as_none_not_infinity(tmp_path: Path) -> None:
-    """Bei Streuung null liefert der Sandwich ein unendliches t.
-
-    Das ist ein legitimes Ergebnis, aber kein JSON: ``Infinity`` waere beim
-    Zurueckladen etwas, das wie eine Zahl aussieht. Der p-Wert traegt dieselbe
-    Information. Aufgefallen ist das erst, weil der Testdatensatz zunaechst
-    lauter identische Labels hatte.
-    """
-    checkpoints, verdicts, artifacts = _paths(tmp_path)
-    candidate = _candidate()
-    identical = {
-        "BTC/USDT": [_frozen_row(0, label=50.0), _frozen_row(40, label=50.0)],
-        "ETH/USDT": [_frozen_row(80, label=50.0)],
-    }
-    decision, digest = decide_and_freeze(
-        now_utc=_T1,
-        candidate=candidate,
-        activation=_activation(candidate),
-        sealed_symbols=_SYMBOLS,
-        sealed_universe_sha256=_UNIVERSE_SHA,
-        rows_by_symbol=identical,
-        checkpoint_journal=checkpoints,
-        verdict_journal=verdicts,
-        artifact_dir=artifacts,
-    )
-    activation = _activation(candidate)
-
-    run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
-
-    record = load_verdicts(verdicts, activation_sha256_value=_act(activation))[0]
-    assert record.t_statistic is None
-    assert record.standard_error == 0.0
-    assert len(record.result_sha256) == 64
-
-
-def test_an_unregistered_hypothesis_cannot_be_evaluated() -> None:
-    """Der Decider wird ueber den versiegelten Namen aufgeloest, nicht uebergeben."""
-    from app.research.prereg_evaluation import _resolve_decider_or_fail
-
-    with pytest.raises(SealedEvaluationError, match="nicht registriert"):
-        _resolve_decider_or_fail("etwas_anderes")
-
-
-def test_data_unavailable_rows_are_frozen_but_do_not_count(tmp_path: Path) -> None:
-    """Eine Feuerung ohne Label bleibt im Artefakt sichtbar und ausserhalb von n_valid."""
-    checkpoints, verdicts, artifacts = _paths(tmp_path)
-    candidate = _candidate()
-    decision, digest = decide_and_freeze(
-        now_utc=_T1,
-        candidate=candidate,
-        activation=_activation(candidate),
-        sealed_symbols=_SYMBOLS,
-        sealed_universe_sha256=_UNIVERSE_SHA,
-        rows_by_symbol=_rows({"BTC/USDT": 4}, missing=2),
-        checkpoint_journal=checkpoints,
-        verdict_journal=verdicts,
-        artifact_dir=artifacts,
-    )
-
-    payload = read_frozen_artifact(artifacts, digest)
-    labels = [row["label_bps"] for row in payload["dataset"]["panels"][0]["rows"]]
-    counts = payload["input"]["maturity_counts"]
-
-    assert labels.count(None) == 2, "die nicht auswertbaren Feuerungen stehen im Artefakt"
-    assert counts["raw_fires"] == 4
-    assert counts["n_valid"] == 2
-    assert counts["data_unavailable_count"] == 2
-
-
-def test_the_verdict_carries_its_own_decomposition(tmp_path: Path) -> None:
-    """Der p-Wert darf gar nicht erst ohne seine Zerlegung zitierbar sein.
-
-    Direktive 2026-08-08: kein Aggregat ohne Zerlegung. Der Ratchet hat genau
-    an dieser Funktion angeschlagen — zu Recht, denn sie ist die einzige der
-    neuen, die eine urteilstragende Kennzahl erzeugt.
-    """
-    (decision, digest), candidate = _decide(tmp_path)
-    _, verdicts, artifacts = _paths(tmp_path)
-    activation = _activation(candidate)
-    run_sealed_evaluation(
-        decision=decision,
-        evaluation_input_sha256_value=digest,
-        candidate=candidate,
-        activation=activation,
-        artifact_dir=artifacts,
-        verdict_journal=verdicts,
-        now_utc=_T1,
-    )
-
-    decomposition = load_verdicts(verdicts, activation_sha256_value=_act(activation))[
-        0
-    ].decomposition
-
-    assert decomposition["status"] == "DIAGNOSTIC_NON_GATING"
-    assert decomposition["per_symbol_signals"] == {"BTC/USDT": 3, "ETH/USDT": 2, "SOL/USDT": 1}
-    assert decomposition["leave_one_out_top_symbol"]["symbol"] == "BTC/USDT"
-    assert {d["label"] for d in decomposition["robustness"]} == {
-        "result_without_largest_cluster",
-        "result_without_top_symbol",
-    }
