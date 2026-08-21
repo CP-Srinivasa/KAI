@@ -88,7 +88,8 @@ def _legacy_close(**kw) -> dict[str, object]:
 
 
 def test_vollstaendige_kette_ergibt_execution_provenance() -> None:
-    r = verify_close(_full_close(), _evidence())
+    ev = _evidence()
+    r = verify_close(_full_close(), ev, expected_evidence_sha256=ev.payload_sha256())
     assert r.verdict is VerifierVerdict.VERIFIED_EXECUTION_PROVENANCE
     assert r.provenance_class is ProvenanceClass.FULL
     assert r.reasons == ()
@@ -155,7 +156,8 @@ def test_short_close_nutzt_die_andere_slippage_richtung() -> None:
         exit_price=ref * (1 + SLIP),
         observed_market_price=ref,
     )
-    r = verify_close(row, _evidence(candles=(VenueCandle(BASE_MS, 99.5, 101.0, 99.0, 100.2),)))
+    ev = _evidence(candles=(VenueCandle(BASE_MS, 99.5, 101.0, 99.0, 100.2),))
+    r = verify_close(row, ev, expected_evidence_sha256=ev.payload_sha256())
     assert ReasonCode.SLIPPAGE_MISMATCH not in r.reasons
 
 
@@ -163,15 +165,17 @@ def test_short_close_nutzt_die_andere_slippage_richtung() -> None:
 
 
 def test_legacy_erreicht_hoechstens_market_plausible() -> None:
-    r = verify_close(_legacy_close(), _evidence())
+    ev = _evidence()
+    r = verify_close(_legacy_close(), ev, expected_evidence_sha256=ev.payload_sha256())
     assert r.verdict is VerifierVerdict.VERIFIED_MARKET_PLAUSIBLE
     assert r.provenance_class is ProvenanceClass.UNAVAILABLE_BY_LEGACY_SCHEMA
 
 
 def test_legacy_wird_niemals_execution_provenance() -> None:
     """Keine noch so gute Kerzen-Rekonstruktion macht daraus Provenienz."""
+    ev = _evidence()
     for _ in range(3):
-        r = verify_close(_legacy_close(), _evidence())
+        r = verify_close(_legacy_close(), ev, expected_evidence_sha256=ev.payload_sha256())
         assert r.verdict is not VerifierVerdict.VERIFIED_EXECUTION_PROVENANCE
 
 
@@ -261,3 +265,99 @@ def test_code_sha_aendert_sich_mit_den_regeln() -> None:
     sha = verifier_code_sha()
     assert len(sha) == 64
     assert verify_close(_full_close(), _evidence()).verifier_code_sha == sha
+
+
+# --- Der richtige Preis gegen den Markt (die Trennung aus #746) ----------------
+
+
+def test_full_prueft_den_beobachteten_preis_gegen_die_kerze() -> None:
+    """Bei einer Liquidation ist der exit_price NICHT der Marktpreis.
+
+    Der Verifier hielt zuvor fuer beide Klassen den ``exit_price`` gegen das
+    Kerzenband — und haette damit bei jeder Liquidation entweder eine Abweichung
+    gemeldet, die es nicht gibt, oder eine echte verdeckt.
+    """
+    observed = 100.0  # liegt in der Kerze 99.0..101.0
+    liq = 92.0  # ausserhalb — die Engine fuellte gegen den Liquidationspreis
+    row = _full_close(
+        observed_market_price=observed,
+        execution_reference_price=liq,
+        exit_price=liq * (1 - SLIP),
+        reason="liquidation",
+    )
+    ev = _evidence()
+    r = verify_close(row, ev, expected_evidence_sha256=ev.payload_sha256())
+    assert ReasonCode.OBSERVED_PRICE_OUTSIDE_VENUE_BAND not in r.reasons
+    assert r.verdict is VerifierVerdict.VERIFIED_EXECUTION_PROVENANCE
+
+
+def test_full_meldet_wenn_der_beobachtete_preis_ausserhalb_liegt() -> None:
+    row = _full_close(observed_market_price=500.0)
+    ev = _evidence()
+    r = verify_close(row, ev, expected_evidence_sha256=ev.payload_sha256())
+    assert ReasonCode.OBSERVED_PRICE_OUTSIDE_VENUE_BAND in r.reasons
+
+
+def test_legacy_haelt_weiterhin_den_exit_preis_gegen_die_kerze() -> None:
+    """Ohne Provenienz gibt es nichts anderes — deshalb ist dort auch Schluss."""
+    ev = _evidence()
+    r = verify_close(
+        _legacy_close(exit_price=500.0), ev, expected_evidence_sha256=ev.payload_sha256()
+    )
+    assert ReasonCode.OBSERVED_PRICE_OUTSIDE_VENUE_BAND in r.reasons
+
+
+# --- Verankerung ----------------------------------------------------------------
+
+
+def test_ohne_verankerten_hash_kein_verified() -> None:
+    """Sonst prueft der Verifier gegen den Hash, den er selbst gerade ausrechnet."""
+    r = verify_close(_full_close(), _evidence())
+    assert r.verdict is VerifierVerdict.UNVERIFIED
+    assert ReasonCode.MISSING_EVIDENCE_HASH in r.reasons
+
+
+def test_ohne_verankerten_hash_auch_kein_legacy_verified() -> None:
+    r = verify_close(_legacy_close(), _evidence())
+    assert r.verdict is VerifierVerdict.UNVERIFIED
+    assert ReasonCode.MISSING_EVIDENCE_HASH in r.reasons
+
+
+# --- Vollstaendige Identitaetskette ---------------------------------------------
+
+
+def test_artefakt_einer_fremden_order_zaehlt_nicht() -> None:
+    ev = _evidence(close_order_id="ord_fremd")
+    r = verify_close(_full_close(), ev, expected_evidence_sha256=ev.payload_sha256())
+    assert ReasonCode.EVIDENCE_ORDER_MISMATCH in r.reasons
+
+
+def test_artefakt_einer_fremden_close_zeit_zaehlt_nicht() -> None:
+    ev = _evidence(close_timestamp_utc="2026-08-21T10:00:00+00:00")
+    r = verify_close(_full_close(), ev, expected_evidence_sha256=ev.payload_sha256())
+    assert ReasonCode.EVIDENCE_CLOSE_TIME_MISMATCH in r.reasons
+
+
+def test_venue_muss_zur_preisquelle_passen() -> None:
+    ev = _evidence(venue="binance")
+    r = verify_close(
+        _full_close(price_source="bybit"), ev, expected_evidence_sha256=ev.payload_sha256()
+    )
+    assert ReasonCode.VENUE_SOURCE_MISMATCH in r.reasons
+
+
+def test_marker_an_der_quelle_stoert_den_venue_abgleich_nicht() -> None:
+    """`bybit|provider_disagreement:…` ist weiterhin bybit."""
+    ev = _evidence(venue="bybit")
+    row = _full_close(price_source="bybit|provider_disagreement:1vs2")
+    r = verify_close(row, ev, expected_evidence_sha256=ev.payload_sha256())
+    assert ReasonCode.VENUE_SOURCE_MISMATCH not in r.reasons
+
+
+def test_fehlende_close_zeit_hat_einen_eigenen_code() -> None:
+    """Nicht mit einer fehlenden QUOTE-Zeit verwechseln."""
+    ev = _evidence()
+    r = verify_close(
+        _full_close(timestamp_utc=""), ev, expected_evidence_sha256=ev.payload_sha256()
+    )
+    assert ReasonCode.MISSING_CLOSE_TIMESTAMP in r.reasons

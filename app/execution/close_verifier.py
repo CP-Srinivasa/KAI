@@ -82,6 +82,10 @@ class ReasonCode(StrEnum):
     MISSING_EXECUTION_REFERENCE_PRICE = "missing_execution_reference_price"
     MISSING_TICK_ID = "missing_tick_id"
     MISSING_CLOSE_IDENTITY = "missing_close_identity"
+    MISSING_CLOSE_TIMESTAMP = "missing_close_timestamp"
+    """Der Close selbst traegt keine verwertbare Zeit — nicht zu verwechseln mit
+    ``MISSING_OBSERVED_TIMESTAMP`` (die QUOTE hat keine)."""
+
     AGE_UNAVAILABLE = "age_unavailable"
     # negative Evidenz
     STALE_MARKET_DATA = "stale_market_data"
@@ -96,6 +100,14 @@ class ReasonCode(StrEnum):
     VENUE_WINDOW_DOES_NOT_COVER_CLOSE = "venue_window_does_not_cover_close"
     EVIDENCE_HASH_MISMATCH = "evidence_hash_mismatch"
     EVIDENCE_SYMBOL_MISMATCH = "evidence_symbol_mismatch"
+    MISSING_EVIDENCE_HASH = "missing_evidence_hash"
+    """Ein VERIFIED-Urteil braucht einen EXTERN verankerten Hash. Ohne ihn
+    pruefte der Verifier nur gegen den Hash, den er sich selbst aus demselben
+    Objekt gerade ausgerechnet hat — das beweist nichts."""
+
+    EVIDENCE_ORDER_MISMATCH = "evidence_order_mismatch"
+    EVIDENCE_CLOSE_TIME_MISMATCH = "evidence_close_time_mismatch"
+    VENUE_SOURCE_MISMATCH = "venue_source_mismatch"
 
 
 @dataclass(frozen=True)
@@ -147,6 +159,16 @@ def _parse_ms(timestamp: object) -> int | None:
     return int(stamp.timestamp() * 1000)
 
 
+def _normalize_source(raw: object) -> str:
+    """Anbietername ohne angehaengte Marker.
+
+    ``price_source`` kann Zusaetze tragen (``bybit|provider_disagreement:…``,
+    ``mock|synthetic_not_tradeable``). Fuer den Abgleich mit der Venue des
+    Artefakts zaehlt der Anbieter davor.
+    """
+    return str(raw or "").strip().split("|", 1)[0].strip().lower()
+
+
 def _provenance_class(close_row: dict[str, object]) -> ProvenanceClass:
     """Legacy erkennt man daran, dass die Provenienz-Felder gar nicht existieren."""
     has_any = any(
@@ -174,7 +196,9 @@ def _check_evidence(
         return reasons, None
     close_ms = _parse_ms(close_row.get("timestamp_utc"))
     if close_ms is None:
-        reasons.append(ReasonCode.MISSING_OBSERVED_TIMESTAMP)
+        # Der CLOSE hat keine verwertbare Zeit — eigener Code, damit das nicht
+        # mit einer fehlenden Quote-Zeit verwechselt wird.
+        reasons.append(ReasonCode.MISSING_CLOSE_TIMESTAMP)
         return reasons, None
     candle = evidence.candle_covering(close_ms)
     if candle is None:
@@ -214,18 +238,48 @@ def verify_close(
     if evidence is not None and evidence.close_fill_id:
         if evidence.close_fill_id != str(close_row.get("fill_id", "") or "").strip():
             reasons.append(ReasonCode.IDENTITY_CHAIN_MISMATCH)
+    if evidence is not None and evidence.close_order_id:
+        # Ein Artefakt fuer Fill A darf Fill B nicht verifizieren, nur weil Symbol
+        # und Kerzenfenster zufaellig passen.
+        if evidence.close_order_id != str(close_row.get("order_id", "") or "").strip():
+            reasons.append(ReasonCode.EVIDENCE_ORDER_MISMATCH)
+    if evidence is not None and evidence.close_timestamp_utc:
+        if evidence.close_timestamp_utc != str(close_row.get("timestamp_utc", "") or "").strip():
+            reasons.append(ReasonCode.EVIDENCE_CLOSE_TIME_MISMATCH)
 
     # --- Marktplausibilitaet: gilt fuer BEIDE Klassen -------------------------
     evidence_reasons, candle = _check_evidence(close_row, evidence, expected_evidence_sha256)
     reasons.extend(evidence_reasons)
 
     exit_price = _as_float(close_row.get("exit_price"))
+    observed = _as_float(close_row.get("observed_market_price"))
+
+    # WELCHER Preis gegen den Markt gehalten wird, haengt an der Provenienz-Klasse
+    # — sonst haette #746 die Preise umsonst getrennt:
+    #
+    #   LEGACY : nur ``exit_price`` existiert. Er traegt die Slippage und ist bei
+    #            einer Liquidation nicht der beobachtete Marktpreis; mehr ist ohne
+    #            Provenienz aber nicht zu haben, und genau deshalb ist der
+    #            Hoechststatus dort MARKET_PLAUSIBLE und nicht mehr.
+    #   FULL   : ``observed_market_price`` ist der TATSAECHLICH beobachtete
+    #            Venue-Preis. Ihn gegen die Kerze zu halten ist die eigentliche
+    #            Marktpruefung. Bei einer Liquidation gilt
+    #            observed != execution_reference != exit — den exit_price gegen
+    #            den Markt zu halten wuerde dort eine Abweichung melden, die es
+    #            nicht gibt (oder eine echte verdecken).
+    band_price = observed if provenance is ProvenanceClass.FULL else exit_price
     market_ok = False
-    if candle is not None and exit_price is not None:
+    if candle is not None and band_price is not None:
         # Externer Vergleich: Band, nicht Bit-Gleichheit.
-        market_ok = candle.contains(exit_price, tolerance_pct=VENUE_BAND_TOLERANCE_PCT)
+        market_ok = candle.contains(band_price, tolerance_pct=VENUE_BAND_TOLERANCE_PCT)
         if not market_ok:
             reasons.append(ReasonCode.OBSERVED_PRICE_OUTSIDE_VENUE_BAND)
+
+    # Ein VERIFIED-Urteil braucht einen EXTERN verankerten Hash. Ohne ihn pruefte
+    # der Verifier gegen den Hash, den er sich gerade selbst aus demselben Objekt
+    # ausgerechnet hat — das ist keine Verankerung, sondern ein Zirkelschluss.
+    if evidence is not None and not expected_evidence_sha256:
+        reasons.append(ReasonCode.MISSING_EVIDENCE_HASH)
 
     if provenance is ProvenanceClass.UNAVAILABLE_BY_LEGACY_SCHEMA:
         # Hoechststatus fuer Legacy — mehr ist ohne Provenienz nicht beweisbar.
@@ -242,6 +296,10 @@ def verify_close(
         reasons.append(ReasonCode.SYNTHETIC_PRICE_SOURCE)
         return result(VerifierVerdict.QUARANTINE)
 
+    if evidence is not None and evidence.venue and source:
+        if _normalize_source(source) != str(evidence.venue).strip().lower():
+            # Die Evidenz stammt von einer anderen Venue als der Preis.
+            reasons.append(ReasonCode.VENUE_SOURCE_MISMATCH)
     if not str(close_row.get("price_observed_at_utc", "") or "").strip():
         reasons.append(ReasonCode.MISSING_OBSERVED_TIMESTAMP)
     if _as_float(close_row.get("observed_market_price")) is None:
