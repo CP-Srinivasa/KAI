@@ -825,3 +825,76 @@ def test_retry_mit_nicht_utc_zeit_meldet_den_zeitfehler(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     assert r.status is CollectionStatus.INVALID_CLOSE_TIMESTAMP
+
+
+# --- Vollstaendigkeit: die Minute des Closes muss dabei sein ---------------------
+
+
+def test_fenster_ohne_close_bucket_wird_abgewiesen() -> None:
+    """Formal tadellos, inhaltlich unvollstaendig.
+
+    Die 08:59-Kerze liegt im Fenster, ist ausgerichtet, settled und plausibel —
+    aber sie deckt den Close um 09:00:30 nicht ab. Das ist Sammel-
+    Unvollstaendigkeit und gehoert hier abgewiesen, nicht erst im Verifier.
+    """
+    nur_davor = [VenueCandle(M_PREV, 99.0, 100.5, 98.5, 100.0)]
+    r = build_close_evidence(_close(), venue="bybit", fetch=_fetcher(nur_davor), now_utc=NOW)
+    assert r.status is CollectionStatus.CLOSE_BUCKET_MISSING
+    assert r.evidence is None
+
+
+def test_fenster_ohne_close_bucket_ist_nicht_window_unavailable() -> None:
+    """Zwei verschiedene Wahrheiten: keine Antwort vs. unvollstaendige Antwort."""
+    leer = build_close_evidence(_close(), venue="bybit", fetch=_fetcher([]), now_utc=NOW)
+    assert leer.status is CollectionStatus.WINDOW_UNAVAILABLE
+
+    nur_danach = [VenueCandle(M0 + MINUTE, 100.0, 101.0, 99.5, 100.8)]
+    unvollstaendig = build_close_evidence(
+        _close(), venue="bybit", fetch=_fetcher(nur_danach), now_utc=NOW
+    )
+    assert unvollstaendig.status is CollectionStatus.CLOSE_BUCKET_MISSING
+
+
+def test_close_bucket_allein_genuegt() -> None:
+    """Nachbarkerzen sind willkommen, aber nicht Bedingung."""
+    r = build_close_evidence(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher([VenueCandle(M0, 100.0, 101.0, 99.5, 100.8)]),
+        now_utc=NOW,
+    )
+    assert r.status is CollectionStatus.COLLECTED
+
+
+def test_orchestrator_veroeffentlicht_ohne_close_bucket_nichts(tmp_path: Path) -> None:
+    nur_davor = [VenueCandle(M_PREV, 99.0, 100.5, 98.5, 100.0)]
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(nur_davor), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.CLOSE_BUCKET_MISSING
+    # Was zaehlt: es wurde keine Evidenz veroeffentlicht.
+    assert not list(tmp_path.rglob("*.json"))
+    # Und es bleibt auch kein leerer Ordner liegen, der wie ein angefangener
+    # Commit aussieht.
+    assert not list(tmp_path.iterdir())
+
+
+def test_gescheiterter_lauf_laesst_kein_lock_zurueck(tmp_path: Path) -> None:
+    collect_and_publish(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher(raises=TimeoutError("kein Netz")),
+        now_utc=NOW,
+        base_dir=tmp_path,
+    )
+    assert not list(tmp_path.rglob(".publish.lock"))
+
+
+def test_aufraeumen_ruehrt_veroeffentlichte_evidenz_nicht_an(tmp_path: Path) -> None:
+    """rmdir loescht nur leere Verzeichnisse — ein Artefakt bleibt liegen."""
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert first.status is CollectionStatus.COLLECTED
+    assert Path(first.path).exists()
+    assert (_the_folder(tmp_path) / "manifest.json").exists()

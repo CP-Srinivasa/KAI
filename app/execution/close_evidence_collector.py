@@ -80,10 +80,13 @@ PRIMARY_INTERVAL = "1m"
 """Minutengenau und NICHT konfigurierbar."""
 
 PRIMARY_WINDOW_RADIUS_MINUTES = 1
-"""Radius um den Close: eine Kerze davor, eine danach — Spannweite 2 Minuten.
+"""Radius in Kerzen um den Close-Bucket: eine davor, eine danach.
 
-Frueher hiess das ``PRIMARY_WINDOW_MINUTES = 3`` und wurde intern halbiert; der
-Name versprach drei Minuten und lieferte zwei. Der Radius sagt, was passiert.
+Der angefragte Bereich umfasst damit DREI 1m-Buckets und drei Minuten. Fuer einen
+Close um 09:00:30 ist das ``[08:59:00, 09:02:00)`` — 08:59, der Close-Bucket
+09:00 und 09:01. Der Vorgaengername ``PRIMARY_WINDOW_MINUTES = 3`` wurde intern
+halbiert und versprach etwas anderes, als er tat; der Radius benennt die Einheit,
+in der tatsaechlich gerechnet wird.
 """
 
 CORROBORATING_INTERVAL = "5m"
@@ -106,6 +109,17 @@ class CollectionStatus(StrEnum):
     nach Strom-/Prozessausfall sein — beweisbar ist nur, DASS es liegt. Fail
     closed; bewusst KEINE "stale lock nach X Minuten loeschen"-Heuristik."""
     WINDOW_UNAVAILABLE = "window_unavailable"
+    """Der Anbieter lieferte ueberhaupt keine Kerzen."""
+
+    CLOSE_BUCKET_MISSING = "close_bucket_missing"
+    """Kerzen kamen, aber keine deckt den Close-Zeitpunkt ab.
+
+    Ein anderer Zustand als WINDOW_UNAVAILABLE: der Anbieter hat geantwortet,
+    seine Antwort traegt die entscheidende Minute nur nicht. Das ist bereits
+    Sammel-Unvollstaendigkeit und gehoert hier fail-closed abgewiesen — nicht
+    erst spaeter im Verifier als VENUE_WINDOW_DOES_NOT_COVER_CLOSE.
+    """
+
     FETCH_FAILED = "fetch_failed"
     CLOSE_IDENTITY_INCOMPLETE = "close_identity_incomplete"
     INVALID_CLOSE_TIMESTAMP = "invalid_close_timestamp"
@@ -212,7 +226,12 @@ def _is_nonnegative_int(value: object) -> bool:
 
 
 def _validate_candles(
-    candles: list[VenueCandle], *, collected_at_ms: int, start_ms: int, end_ms: int
+    candles: list[VenueCandle],
+    *,
+    collected_at_ms: int,
+    start_ms: int,
+    end_ms: int,
+    close_ms: int,
 ) -> tuple[CollectionStatus, str] | None:
     """Rohdaten-Pruefung. None, wenn alles sauber ist.
 
@@ -259,6 +278,16 @@ def _validate_candles(
         # High/Low/Close-Werte noch nicht. Als historische Evidenz taugt sie nicht.
         if c.open_time_ms + interval_ms > collected_at_ms:
             return (CollectionStatus.UNSETTLED_CANDLE, f"Kerze {c.open_time_ms} ist noch offen")
+
+    # Vollstaendigkeit: eine Antwort ohne die Minute des Closes ist keine
+    # Close-Evidenz. Eine einzelne 08:59-Kerze kann formal tadellos sein — im
+    # Fenster, ausgerichtet, settled, plausible OHLC — und deckt den Close um
+    # 09:00:30 trotzdem nicht ab.
+    if not any(c.open_time_ms <= close_ms < c.open_time_ms + interval_ms for c in candles):
+        return (
+            CollectionStatus.CLOSE_BUCKET_MISSING,
+            f"keine {PRIMARY_INTERVAL}-Kerze deckt den Close-Zeitpunkt {close_ms} ab",
+        )
     return None
 
 
@@ -346,6 +375,7 @@ def build_close_evidence(
         collected_at_ms=int(collected_at.timestamp() * 1000),
         start_ms=start_ms,
         end_ms=end_ms,
+        close_ms=close_ms,
     )
     if problem is not None:
         status, detail = problem
@@ -471,12 +501,17 @@ def _identity_of(payload: dict[str, object], *, artifact: bool) -> dict[str, str
 
 
 def _inspect_anchor(folder: Path, identity: dict[str, str]) -> _Anchor:
-    """Streng pruefen, was bereits verankert ist — nichts davon wird geglaubt.
+    """Streng pruefen, was lokal committet ist — nichts davon wird geglaubt.
 
-    Ein Manifest ist ein Wahrheitsanker; ihm zu vertrauen, weil eine Datei mit dem
-    genannten Namen existiert, reicht nicht. Geprueft werden Schema, die FORM des
-    Hashes, die Existenz, der Hash ueber die TATSAECHLICHEN Bytes und die
-    Identitaeten von Manifest, Artefakt und Anfrage.
+    Das Manifest ist ein **lokaler Commit-Marker**, keine externe Verankerung: es
+    sagt "dieser Sammellauf ist hier vollstaendig abgeschlossen", nicht "dieser
+    Hash ist ausserhalb bezeugt". Der Verifier bleibt deshalb strenger und
+    verlangt fuer ein VERIFIED-Urteil weiterhin einen von aussen uebergebenen
+    ``expected_evidence_sha256``; das Manifest allein genuegt ihm nicht.
+
+    Geprueft werden Schema, die FORM des Hashes, die Existenz, der Hash ueber die
+    TATSAECHLICHEN Bytes, deren Kanonizitaet und die Identitaeten von Manifest,
+    Artefakt und Anfrage.
     """
     manifest_path = folder / _MANIFEST_NAME
     if not manifest_path.exists():
@@ -625,6 +660,14 @@ def _release_lock(folder: Path, fd: int) -> None:
         os.close(fd)
     finally:
         (folder / _LOCK_NAME).unlink(missing_ok=True)
+        # Der Ordner entsteht VOR dem Lock (er traegt ihn). Scheitert der
+        # Sammellauf danach, bliebe ein leerer Ordner zurueck — kein Schaden, aber
+        # Muell, der spaeter wie ein angefangener Commit aussieht. rmdir loescht
+        # nur wirklich leere Verzeichnisse und laesst jede Evidenz unangetastet.
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
 
 
 def _lock_present(evidence: CloseEvidence | None = None, sha: str = "") -> CollectionResult:
