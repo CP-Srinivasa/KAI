@@ -36,6 +36,12 @@ from app.execution.models import (
 )
 from app.execution.normalized_signal import SignalStatus as OrderLifecycleState
 from app.execution.order_intent import ExecutableOrderIntent
+from app.execution.paper_finite_gate import (
+    PaperExecutionNumberError,
+    PaperFiniteGateMixin,
+    build_fill_mutation_plan,
+    validate_order_numbers,
+)
 from app.execution.phantom_filter import _DEFAULT_MAX_CLOSE_RETURN_PCT
 from app.execution.price_evidence import _age_ms_at_fill, _finite_or_none
 from app.execution.rotation_gate import evaluate_rotation_gate
@@ -250,7 +256,7 @@ def _publish_paper_event(event_type: str, record: dict[str, object]) -> None:
         pass
 
 
-class PaperExecutionEngine:
+class PaperExecutionEngine(PaperFiniteGateMixin):
     """
     Simulated order execution engine for paper trading.
 
@@ -502,6 +508,30 @@ class PaperExecutionEngine:
         used, keeping the fill realistic (a long SL at/above the fill price is
         still rejected).
         """
+        blocked = self._mutations_blocked_reason()
+        if blocked is not None:
+            raise PaperMutationBlockedError(
+                f"create_order refused ({blocked}): paper book mutations are disabled"
+            )
+        current_price = self._validated_execution_number(
+            current_price,
+            field="current_price",
+            stage="execute_intent",
+            minimum=0.0,
+            minimum_inclusive=False,
+            symbol=intent.symbol,
+            side=str(intent.side),
+        )
+        if fill_price is not None:
+            fill_price = self._validated_execution_number(
+                fill_price,
+                field="fill_price",
+                stage="execute_intent",
+                minimum=0.0,
+                minimum_inclusive=False,
+                symbol=intent.symbol,
+                side=str(intent.side),
+            )
         kwargs = executable_intent_to_paper_kwargs(intent)
         kwargs["risk_check_id"] = risk_check_id
         # 2026-06-13: regime-AT-ENTRY for premium/bridge intents. The autonomous
@@ -514,9 +544,7 @@ class PaperExecutionEngine:
         order = self.create_order(**kwargs)
         # Limit or market? In paper, fill_order requires a price. We fill at the
         # explicit override when given, else at the current spot.
-        effective_fill_price = (
-            fill_price if fill_price is not None and fill_price > 0 else current_price
-        )
+        effective_fill_price = fill_price if fill_price is not None else current_price
         fill = self.fill_order(order, effective_fill_price)
         return order, fill
 
@@ -568,13 +596,30 @@ class PaperExecutionEngine:
             )
         if position_side not in {"long", "short"}:
             raise ValueError("position_side must be 'long' or 'short'")
-        if (
-            isinstance(partial_fill_ratio, bool)
-            or not isinstance(partial_fill_ratio, (int, float))
-            or partial_fill_ratio <= 0.0
-            or partial_fill_ratio > 1.0
-        ):
-            raise ValueError("partial_fill_ratio must be > 0.0 and <= 1.0")
+        try:
+            numbers = validate_order_numbers(
+                quantity=quantity,
+                partial_fill_ratio=partial_fill_ratio,
+                limit_price=limit_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                leverage=leverage,
+            )
+        except PaperExecutionNumberError as error:
+            self._audit_execution_rejection(
+                stage="create_order",
+                error=error,
+                symbol=symbol,
+                side=side,
+                position_side=position_side,
+            )
+            raise
+        quantity = numbers.quantity
+        partial_fill_ratio = numbers.partial_fill_ratio
+        limit_price = numbers.limit_price
+        stop_loss = numbers.stop_loss
+        take_profit = numbers.take_profit
+        leverage = numbers.leverage
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
         # Sprint C (2026-05-12): upfront idempotency-Check verhindert das
         # Schreiben einer doppelten order_created-Audit-Zeile wenn dieser
@@ -623,12 +668,12 @@ class PaperExecutionEngine:
             document_id=document_id,
             regime=regime,
         )
-        self._partial_fill_ratios[order.order_id] = float(partial_fill_ratio)
+        self._partial_fill_ratios[order.order_id] = partial_fill_ratio
         self._append_audit(
             "order_created",
             {
                 **order.__dict__,
-                "partial_fill_ratio": float(partial_fill_ratio),
+                "partial_fill_ratio": partial_fill_ratio,
                 "requested_quantity": quantity,
             },
         )
@@ -670,19 +715,72 @@ class PaperExecutionEngine:
         if order.position_side not in {"long", "short"}:
             raise ValueError("position_side must be 'long' or 'short'")
 
-        if current_price <= 0:
-            logger.error(
-                "[PAPER] Invalid price for fill: %s price=%.2f", order.symbol, current_price
+        try:
+            current_price = self._validated_execution_number(
+                current_price,
+                field="current_price",
+                stage="fill_order",
+                minimum=0.0,
+                minimum_inclusive=False,
+                order=order,
             )
+            requested_quantity = self._validated_execution_number(
+                order.quantity,
+                field="quantity",
+                stage="fill_order",
+                minimum=0.0,
+                minimum_inclusive=False,
+                order=order,
+            )
+            for field, value in (
+                ("limit_price", order.limit_price),
+                ("stop_loss", order.stop_loss),
+                ("take_profit", order.take_profit),
+                ("leverage", order.leverage),
+            ):
+                if value is not None:
+                    self._validated_execution_number(
+                        value,
+                        field=field,
+                        stage="fill_order",
+                        minimum=0.0,
+                        minimum_inclusive=False,
+                        order=order,
+                    )
+        except PaperExecutionNumberError:
             return None
 
         is_entry_fill = self._is_opening_order(order.side, order.position_side)
         partial_fill_ratio = self._partial_fill_ratios.get(order.order_id, 1.0)
         if not is_entry_fill:
             partial_fill_ratio = 1.0
-        requested_quantity = order.quantity
-        fill_quantity = requested_quantity * partial_fill_ratio
-        remaining_quantity = max(requested_quantity - fill_quantity, 0.0)
+        try:
+            partial_fill_ratio = self._validated_execution_number(
+                partial_fill_ratio,
+                field="partial_fill_ratio",
+                stage="fill_order",
+                minimum=0.0,
+                maximum=1.0,
+                minimum_inclusive=False,
+                order=order,
+            )
+            fill_quantity = self._validated_execution_number(
+                requested_quantity * partial_fill_ratio,
+                field="fill_quantity",
+                stage="fill_order",
+                minimum=0.0,
+                minimum_inclusive=False,
+                order=order,
+            )
+            remaining_quantity = self._validated_execution_number(
+                requested_quantity - fill_quantity,
+                field="remaining_quantity",
+                stage="fill_order",
+                minimum=0.0,
+                order=order,
+            )
+        except PaperExecutionNumberError:
+            return None
         is_partial_entry = is_entry_fill and remaining_quantity > 1e-12
 
         # Defense-in-depth against inverted stops — the Risk Engine owns the
@@ -773,13 +871,40 @@ class PaperExecutionEngine:
                 )
                 return None
 
-        # Apply slippage (adverse for buyer, favorable for seller)
-        if order.side == "buy":
-            fill_price = current_price * (1 + self._slippage_pct)
-        else:
-            fill_price = current_price * (1 - self._slippage_pct)
-
-        cost = fill_price * fill_quantity
+        try:
+            slippage_ratio = self._validated_execution_number(
+                self._slippage_pct,
+                field="slippage_ratio",
+                stage="fill_order",
+                minimum=0.0,
+                maximum=1.0,
+                maximum_inclusive=False,
+                order=order,
+            )
+            # Apply slippage (adverse for buyer, favorable for seller).
+            candidate_fill_price = (
+                current_price * (1 + slippage_ratio)
+                if order.side == "buy"
+                else current_price * (1 - slippage_ratio)
+            )
+            fill_price = self._validated_execution_number(
+                candidate_fill_price,
+                field="fill_price",
+                stage="fill_order",
+                minimum=0.0,
+                minimum_inclusive=False,
+                order=order,
+            )
+            cost = self._validated_execution_number(
+                fill_price * fill_quantity,
+                field="cost_usd",
+                stage="fill_order",
+                minimum=0.0,
+                minimum_inclusive=False,
+                order=order,
+            )
+        except PaperExecutionNumberError:
+            return None
         # NEO-P-106 / Sprint B (CostModel single source): venue-spezifische
         # Maker/Taker-Fee aus config/venue_fees.yaml — dieselbe per-side-Quelle
         # die CostModel und das V1-Kosten-Geometrie-Gate lesen. Market = taker;
@@ -789,24 +914,55 @@ class PaperExecutionEngine:
         # bleibt als explizite Opt-out fuer Property-Tests.
         from app.execution.fees import lookup_order_fee
 
-        if order.venue == "legacy":
-            fee_pct_eff = self._fee_pct
-            fee_meta = ("legacy", "taker", self._fee_pct * 10000.0, "constructor")
-        else:
-            fee_record = lookup_order_fee(
-                order.venue,
-                order_type=order.order_type,
-                limit_price=order.limit_price,
+        try:
+            if order.venue == "legacy":
+                fee_pct_eff = self._validated_execution_number(
+                    self._fee_pct,
+                    field="fee_rate",
+                    stage="fill_order",
+                    minimum=0.0,
+                    maximum=1.0,
+                    order=order,
+                )
+                fee_bps_applied = self._validated_execution_number(
+                    fee_pct_eff * 10000.0,
+                    field="fee_bps_applied",
+                    stage="fill_order",
+                    minimum=0.0,
+                    maximum=10000.0,
+                    order=order,
+                )
+                fee_meta = ("legacy", "taker", fee_bps_applied, "constructor")
+            else:
+                fee_record = lookup_order_fee(
+                    order.venue,
+                    order_type=order.order_type,
+                    limit_price=order.limit_price,
+                )
+                fee_bps_applied = self._validated_execution_number(
+                    fee_record.bps_applied,
+                    field="fee_bps_applied",
+                    stage="fill_order",
+                    minimum=0.0,
+                    maximum=10000.0,
+                    order=order,
+                )
+                fee_pct_eff = fee_bps_applied / 10000.0
+                fee_meta = (
+                    fee_record.venue,
+                    fee_record.role,
+                    fee_bps_applied,
+                    fee_record.table_version,
+                )
+            fee = self._validated_execution_number(
+                cost * fee_pct_eff,
+                field="fee_usd",
+                stage="fill_order",
+                minimum=0.0,
+                order=order,
             )
-            fee_pct_eff = fee_record.bps_applied / 10000.0
-            fee_meta = (
-                fee_record.venue,
-                fee_record.role,
-                fee_record.bps_applied,
-                fee_record.table_version,
-            )
-        fee = cost * fee_pct_eff
-        pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
+        except PaperExecutionNumberError:
+            return None
 
         # 2026-06-25 DQ-Backstop: reject orders that would OPEN/ADD to an untradeable
         # symbol (self-pair like USDT/USDT, stablecoin/stablecoin). Closes still pass
@@ -875,208 +1031,41 @@ class PaperExecutionEngine:
                         )
                         return None
 
-        # Epoche v2 (Weg B+): Cash-Delta ↔ Order-Notional je Event nachvollziehbar.
-        # cash_before/cash_delta wandern auf die order_filled-Zeile, damit (a) der
-        # Ledger-Replay Deltas statt Writer-Snapshots bucht und (b) Forensik einen
-        # Bruch der Cash-Kette pro Zeile erkennt statt ihn zu erben.
-        cash_before = self._portfolio.cash
-
-        if order.position_side == "long" and order.side == "buy":
-            # 2026-06-25 DQ-Fix: no long entry while a SHORT is open on the same
-            # symbol (symmetric to the short-sell guard below). Prevents the false
-            # blended avg that produced 4 ETH/BTC side-conflicts on 06-23/24.
-            existing_pos = self._portfolio.positions.get(order.symbol)
-            if existing_pos is not None and existing_pos.position_side != "long":
-                logger.warning(
-                    "[PAPER] Cannot open long %s — short position already open (side-conflict)",
-                    order.symbol,
-                )
-                return None
-            if self._portfolio.cash < cost + fee:
-                logger.warning(
-                    "[PAPER] Insufficient cash for order %s: need=%.2f have=%.2f",
-                    order.order_id,
-                    cost + fee,
-                    self._portfolio.cash,
-                )
-                return None
-            self._portfolio.cash -= cost + fee
-
-            pos = self._portfolio.positions.get(order.symbol)
-            if pos:
-                # Average into existing position. V25-C: tier ladder + initial
-                # quantity carry forward — averaging in does NOT reset the
-                # staged-exit plan that the bridge already attached.
-                total_qty = pos.quantity + fill_quantity
-                avg_price = (
-                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
-                ) / total_qty
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=total_qty,
-                    avg_entry_price=avg_price,
-                    stop_loss=order.stop_loss or pos.stop_loss,
-                    take_profit=order.take_profit or pos.take_profit,
-                    opened_at=pos.opened_at,
-                    realized_pnl_usd=pos.realized_pnl_usd,
-                    position_side=pos.position_side,
-                    take_profit_tiers=list(pos.take_profit_tiers),
-                    initial_quantity=pos.initial_quantity,
-                    correlation_id=pos.correlation_id,
-                    leverage=pos.leverage,
-                    source=pos.source,
-                    document_id=pos.document_id,
-                    regime=pos.regime,
-                )
-            else:
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=fill_quantity,
-                    avg_entry_price=fill_price,
-                    stop_loss=order.stop_loss,
-                    take_profit=order.take_profit,
-                    opened_at=_now_utc(),
-                    position_side=order.position_side,
-                    correlation_id=order.correlation_id,
-                    leverage=order.leverage,
-                    source=order.source,
-                    document_id=order.document_id,
-                    regime=order.regime,
-                )
-        elif order.position_side == "long" and order.side == "sell":
-            pos = self._portfolio.positions.get(order.symbol)
-            if not pos or pos.position_side != "long" or pos.quantity < order.quantity:
-                logger.warning("[PAPER] Cannot sell %s — insufficient position", order.symbol)
-                return None
-            proceeds = fill_price * fill_quantity - fee
-            pnl = (fill_price - pos.avg_entry_price) * fill_quantity - fee
-            self._portfolio.cash += proceeds
-            self._portfolio.realized_pnl_usd += pnl
-
-            remaining_qty = pos.quantity - fill_quantity
-            if remaining_qty <= 1e-8:
-                del self._portfolio.positions[order.symbol]
-            else:
-                # V25-C: partial sell preserves the tier ladder + initial
-                # quantity so the next monitor tick can fire the next tier.
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=remaining_qty,
-                    avg_entry_price=pos.avg_entry_price,
-                    stop_loss=pos.stop_loss,
-                    take_profit=pos.take_profit,
-                    opened_at=pos.opened_at,
-                    realized_pnl_usd=pos.realized_pnl_usd + pnl,
-                    position_side=pos.position_side,
-                    take_profit_tiers=list(pos.take_profit_tiers),
-                    initial_quantity=pos.initial_quantity,
-                    correlation_id=pos.correlation_id,
-                    leverage=pos.leverage,
-                    source=pos.source,
-                    document_id=pos.document_id,
-                    regime=pos.regime,
-                )
-        elif order.position_side == "short" and order.side == "sell":
-            pos = self._portfolio.positions.get(order.symbol)
-            if pos:
-                if pos.position_side != "short":
-                    logger.warning("[PAPER] Cannot short %s — long position exists", order.symbol)
-                    return None
-            proceeds = fill_price * fill_quantity - fee
-            self._portfolio.cash += proceeds
-
-            if pos:
-                total_qty = pos.quantity + fill_quantity
-                avg_price = (
-                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
-                ) / total_qty
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=total_qty,
-                    avg_entry_price=avg_price,
-                    stop_loss=order.stop_loss or pos.stop_loss,
-                    take_profit=order.take_profit or pos.take_profit,
-                    opened_at=pos.opened_at,
-                    realized_pnl_usd=pos.realized_pnl_usd,
-                    position_side=pos.position_side,
-                    take_profit_tiers=list(pos.take_profit_tiers),
-                    initial_quantity=pos.initial_quantity,
-                    correlation_id=pos.correlation_id,
-                    leverage=pos.leverage,
-                    source=pos.source,
-                    document_id=pos.document_id,
-                    regime=pos.regime,
-                )
-            else:
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=fill_quantity,
-                    avg_entry_price=fill_price,
-                    stop_loss=order.stop_loss,
-                    take_profit=order.take_profit,
-                    opened_at=_now_utc(),
-                    position_side=order.position_side,
-                    correlation_id=order.correlation_id,
-                    leverage=order.leverage,
-                    source=order.source,
-                    document_id=order.document_id,
-                    regime=order.regime,
-                )
-        elif order.position_side == "short" and order.side == "buy":
-            pos = self._portfolio.positions.get(order.symbol)
-            if not pos or pos.position_side != "short" or pos.quantity < order.quantity:
-                logger.warning("[PAPER] Cannot buy-cover %s — insufficient short", order.symbol)
-                return None
-            cover_cost = fill_price * fill_quantity + fee
-            if self._portfolio.cash < cover_cost:
-                logger.warning(
-                    "[PAPER] Insufficient cash to cover short %s: need=%.2f have=%.2f",
-                    order.order_id,
-                    cover_cost,
-                    self._portfolio.cash,
-                )
-                return None
-            pnl = (pos.avg_entry_price - fill_price) * fill_quantity - fee
-            self._portfolio.cash -= cover_cost
-            self._portfolio.realized_pnl_usd += pnl
-
-            remaining_qty = pos.quantity - fill_quantity
-            if remaining_qty <= 1e-8:
-                del self._portfolio.positions[order.symbol]
-            else:
-                self._portfolio.positions[order.symbol] = PaperPosition(
-                    symbol=order.symbol,
-                    quantity=remaining_qty,
-                    avg_entry_price=pos.avg_entry_price,
-                    stop_loss=pos.stop_loss,
-                    take_profit=pos.take_profit,
-                    opened_at=pos.opened_at,
-                    realized_pnl_usd=pos.realized_pnl_usd + pnl,
-                    position_side=pos.position_side,
-                    take_profit_tiers=list(pos.take_profit_tiers),
-                    initial_quantity=pos.initial_quantity,
-                    correlation_id=pos.correlation_id,
-                    leverage=pos.leverage,
-                    source=pos.source,
-                    document_id=pos.document_id,
-                    regime=pos.regime,
-                )
-        else:
+        try:
+            mutation_plan, unavailable_reason = build_fill_mutation_plan(
+                order=order,
+                portfolio=self._portfolio,
+                requested_quantity=requested_quantity,
+                fill_quantity=fill_quantity,
+                fill_price=fill_price,
+                cost=cost,
+                fee=fee,
+            )
+        except PaperExecutionNumberError as error:
+            self._audit_execution_rejection(stage="fill_order", error=error, order=order)
+            return None
+        if mutation_plan is None:
             logger.warning(
-                "[PAPER] Unsupported side/position_side combo: side=%s position_side=%s",
-                order.side,
-                order.position_side,
+                "[PAPER] Fill rejected before mutation: reason=%s order_id=%s symbol=%s",
+                unavailable_reason,
+                order.order_id,
+                order.symbol,
             )
             return None
 
-        self._portfolio.total_fees_usd += fee
+        cash_before = mutation_plan.cash_before
+        cash_delta = mutation_plan.cash_delta
+        self._portfolio.cash = mutation_plan.cash_after
+        self._portfolio.realized_pnl_usd = mutation_plan.realized_pnl_after
+        if mutation_plan.remove_position:
+            del self._portfolio.positions[order.symbol]
+        elif mutation_plan.replacement_position is not None:
+            self._portfolio.positions[order.symbol] = mutation_plan.replacement_position
+        self._portfolio.total_fees_usd = mutation_plan.total_fees_after
         self._portfolio.trade_count += 1
         self._filled_keys.add(order.idempotency_key)
 
-        is_closing_fill = (order.position_side == "long" and order.side == "sell") or (
-            order.position_side == "short" and order.side == "buy"
-        )
-        trade_pnl_for_fill = pnl if is_closing_fill else 0.0
+        trade_pnl_for_fill = mutation_plan.trade_pnl
 
         filled_at_stamp = _now_utc()
         fill = PaperFill(
@@ -1088,7 +1077,7 @@ class PaperExecutionEngine:
             fill_price=fill_price,
             fee_usd=fee,
             filled_at=filled_at_stamp,
-            slippage_pct=self._slippage_pct * 100,
+            slippage_pct=slippage_ratio * 100,
             price_source=(
                 price_evidence.source if price_evidence and price_evidence.source else price_source
             ),
@@ -1127,7 +1116,7 @@ class PaperExecutionEngine:
                 **fill.__dict__,
                 "portfolio_cash": self._portfolio.cash,
                 "cash_before_usd": cash_before,
-                "cash_delta_usd": self._portfolio.cash - cash_before,
+                "cash_delta_usd": cash_delta,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
                 "requested_quantity": requested_quantity,
                 "filled_quantity": fill_quantity,
@@ -1237,58 +1226,6 @@ class PaperExecutionEngine:
     # to the residual position. When tiers is empty and SL never fired the
     # operator can manually close or wait for SL.
 
-    def set_position_tp_tiers(
-        self,
-        symbol: str,
-        tiers: list[tuple[float, float]],
-    ) -> bool:
-        """Attach a multi-tier take-profit ladder to an open position.
-
-        ``tiers`` is a list of ``(price, qty_share)`` pairs, where qty_share
-        is the fraction of the position's current quantity to close when that
-        price is hit. Tiers are sorted ascending by price so the lowest target
-        fires first. Returns True if applied, False if the symbol has no open
-        position. Setting an empty list reverts to legacy single-TP behaviour.
-        Audit event: ``position_tp_tiers_set``.
-        """
-        if self._mutations_blocked_reason() is not None:
-            logger.warning(
-                "[PAPER] set_position_tp_tiers refused (%s): %s",
-                self._mutations_blocked_reason(),
-                symbol,
-            )
-            return False
-        pos = self._portfolio.positions.get(symbol)
-        if pos is None:
-            return False
-        sorted_tiers = sorted(
-            (
-                (float(price), float(qty_share))
-                for price, qty_share in tiers
-                if qty_share > 0 and price > 0
-            ),
-            key=lambda item: item[0],
-            reverse=pos.position_side == "short",
-        )
-        pos.take_profit_tiers = sorted_tiers
-        if pos.initial_quantity <= 0:
-            pos.initial_quantity = pos.quantity
-        self._append_audit(
-            "position_tp_tiers_set",
-            {
-                "symbol": symbol,
-                "tiers": [{"price": p, "qty_share": q} for p, q in sorted_tiers],
-                "initial_quantity": pos.initial_quantity,
-            },
-        )
-        logger.info(
-            "[PAPER] Tiers set: %s tiers=%s initial_qty=%.6f",
-            symbol,
-            sorted_tiers,
-            pos.initial_quantity,
-        )
-        return True
-
     def _consume_first_tier(
         self,
         symbol: str,
@@ -1311,7 +1248,16 @@ class PaperExecutionEngine:
         pos = self._portfolio.positions.get(symbol)
         if pos is None or not pos.take_profit_tiers:
             return None
-        if current_price <= 0:
+        try:
+            current_price = self._validated_execution_number(
+                current_price,
+                field="current_price",
+                stage="consume_first_tier",
+                minimum=0.0,
+                minimum_inclusive=False,
+                symbol=symbol,
+            )
+        except PaperExecutionNumberError:
             return None
 
         tier_price, qty_share = pos.take_profit_tiers[0]
@@ -1483,6 +1429,24 @@ class PaperExecutionEngine:
         pos = self._portfolio.positions.get(symbol)
         if pos is None:
             return False
+        if stop_loss is not None:
+            stop_loss = self._validated_execution_number(
+                stop_loss,
+                field="stop_loss",
+                stage="adjust_position",
+                minimum=0.0,
+                minimum_inclusive=False,
+                symbol=symbol,
+            )
+        if take_profit is not None:
+            take_profit = self._validated_execution_number(
+                take_profit,
+                field="take_profit",
+                stage="adjust_position",
+                minimum=0.0,
+                minimum_inclusive=False,
+                symbol=symbol,
+            )
         new_sl = stop_loss if stop_loss is not None else pos.stop_loss
         new_tp = take_profit if take_profit is not None else pos.take_profit
         self._portfolio.positions[symbol] = PaperPosition(
@@ -1557,7 +1521,16 @@ class PaperExecutionEngine:
         pos = self._portfolio.positions.get(symbol)
         if not pos:
             return None
-        if current_price <= 0:
+        try:
+            current_price = self._validated_execution_number(
+                current_price,
+                field="current_price",
+                stage="close_position",
+                minimum=0.0,
+                minimum_inclusive=False,
+                symbol=symbol,
+            )
+        except PaperExecutionNumberError:
             return None
 
         idem_key = f"close_{symbol}_{pos.opened_at}_{reason}"
@@ -1743,7 +1716,18 @@ class PaperExecutionEngine:
             return fills
         for symbol in list(self._portfolio.positions.keys()):
             price = prices_by_symbol.get(symbol)
-            if price is None or price <= 0:
+            if price is None:
+                continue
+            try:
+                price = self._validated_execution_number(
+                    price,
+                    field="current_price",
+                    stage="monitor_positions",
+                    minimum=0.0,
+                    minimum_inclusive=False,
+                    symbol=symbol,
+                )
+            except PaperExecutionNumberError:
                 continue
             src = self._tick_price_sources.get(symbol, "")
             ev = self._tick_price_evidence.get(symbol)
@@ -1849,8 +1833,8 @@ class PaperExecutionEngine:
             PaperExecutionAuditStreamRow.model_validate(record)
             with append_lock(self._audit_path):
                 with self._audit_path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(record) + "\n")
-        except (OSError, ValueError) as e:
+                    fh.write(json.dumps(record, allow_nan=False) + "\n")
+        except (OSError, TypeError, ValueError) as e:
             logger.error("[PAPER] Audit log write failed: %s", e)
         _publish_paper_event(event_type, record)
 
