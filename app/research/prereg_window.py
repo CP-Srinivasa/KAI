@@ -106,8 +106,19 @@ class WindowDecision:
 
 
 def _parse(timestamp_utc: str) -> datetime:
+    """Zeitzonenbehaftet, sonst Abbruch.
+
+    ``activate()`` wurde bereits so gehaertet; dasselbe Prinzip muss durchgaengig
+    gelten. Ein still als UTC gelesener Zeitstempel kann ein Fenster um Stunden
+    verschieben — und damit die Menge der Signale, die ueberhaupt hineinfallen.
+    """
     parsed = datetime.fromisoformat(timestamp_utc)
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"{timestamp_utc!r} ist zeitzonenlos — UTC wird nicht geraten. "
+            "Zeitzone ausdruecklich angeben."
+        )
+    return parsed.astimezone(UTC)
 
 
 def decide_window_action(

@@ -95,6 +95,11 @@ def resolve_contract(candidate: PreRegCandidate) -> dict[str, Any]:
         "primary_estimand": candidate.primary_estimand,
         "inference": candidate.inference,
         "execution_convention": candidate.execution_convention,
+        # NON_GATING, aber ebenfalls versiegelt: der Anspruch lautet
+        # "ausschliesslich aus dem Frozen Input", und der soll buchstaeblich
+        # stimmen. Sonst kaeme die Sensitivitaets-Achse zur Verdikt-Zeit aus
+        # einem Candidate-Objekt, das jemand daneben gereicht hat.
+        "sensitivity_cost_bps": list(candidate.sensitivity_cost_bps),
     }
 
 
@@ -274,6 +279,15 @@ def write_frozen_artifact(
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"evaluation_input_{digest}.json"
     if target.exists():
+        # Der Dateiname ist KEIN Beweis. Idempotent ist nur, was byte-identisch
+        # ist; alles andere ist eine Beschaedigung und darf nicht als Erfolg
+        # durchgehen — gerade weil danach EVALUATE journalisiert wird.
+        existing = read_frozen_artifact(directory, digest)
+        if canonical_bytes(existing) != canonical_bytes(payload):
+            raise FrozenInputError(
+                f"{target} existiert bereits mit ABWEICHENDEM Inhalt bei gleichem "
+                "Hash — das Artefakt ist beschaedigt. Kein EVALUATE darauf."
+            )
         return target
 
     tmp = directory / f".{digest}.tmp"
@@ -346,3 +360,56 @@ def validate_sha256(value: str, field: str) -> str:
     if not isinstance(value, str) or not _SHA256_RE.match(value):
         raise FrozenInputError(f"{field}: {value!r} ist kein SHA-256 (64 Hex, klein)")
     return value
+
+
+# --- Das kanonische Universum: geladen, nachgerechnet, nicht uebergeben ------
+
+SEALED_UNIVERSE_RELPATH = "docs/research/universe_rsi_reentry_v1.json"
+
+
+def load_sealed_universe(repo_root: Path, *, expected_sha256: str) -> tuple[str, tuple[str, ...]]:
+    """Das Universum aus dem Repo-Artefakt — Hash aus dem INHALT nachgerechnet.
+
+    Der Aufrufer darf weder die Symbolliste noch ihren Hash mitbringen. Sonst
+    bliebe der staerkere Angriff offen: irgendeine andere Liste mit 34 Symbolen
+    neben dem korrekten offiziellen Hash als getrennt uebergebenem String.
+
+    Args:
+        repo_root: Wurzel des Checkouts.
+        expected_sha256: der im Candidate versiegelte Universums-Hash.
+
+    Returns:
+        (Hash, kanonische Symbolliste in ihrer Reihenfolge).
+
+    Raises:
+        FrozenInputError: Artefakt fehlt, ist unlesbar, blockiert oder sein
+            nachgerechneter Hash weicht ab.
+    """
+    from app.research.universe_integrity import universe_sha256
+
+    path = repo_root / SEALED_UNIVERSE_RELPATH
+    if not path.is_file():
+        raise FrozenInputError(f"das versiegelte Universum fehlt: {path}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise FrozenInputError(f"{path} ist kein gueltiges JSON") from exc
+
+    symbols = payload.get("canonical_universe")
+    if not isinstance(symbols, list) or not all(isinstance(s, str) for s in symbols):
+        raise FrozenInputError(f"{path}: 'canonical_universe' fehlt oder ist keine Liste")
+    if payload.get("ok") is not True:
+        raise FrozenInputError(f"{path}: ok=false — ein blockiertes Universum wird nicht benutzt")
+
+    recomputed = universe_sha256(symbols)
+    if payload.get("universe_sha256") != recomputed:
+        raise FrozenInputError(
+            f"{path}: universe_sha256 passt nicht zur Liste "
+            f"(steht {str(payload.get('universe_sha256'))[:12]}…, berechnet {recomputed[:12]}…)"
+        )
+    if recomputed != expected_sha256:
+        raise FrozenInputError(
+            f"das Repo-Universum ist {recomputed[:12]}…, der Candidate verlangt "
+            f"{expected_sha256[:12]}… — verschiedene Populationen."
+        )
+    return recomputed, tuple(symbols)

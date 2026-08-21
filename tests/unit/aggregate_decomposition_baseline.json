@@ -162,7 +162,7 @@
     "app/research/news_signal_eval.py::pool_sources",
     "app/research/news_stories.py::dedup_stats",
     "app/research/prereg_evaluation.py::_dataset_from_payload",
-    "app/research/prereg_evaluation.py::freeze_rows",
+    "app/research/prereg_evaluation.py::frozen_rows_from_panel",
     "app/research/prereg_evaluation.py::maturity_from_dataset",
     "app/research/prereg_maturity.py::_maturity_hit_to_win",
     "app/research/prereg_resolution.py::manual_resolution",

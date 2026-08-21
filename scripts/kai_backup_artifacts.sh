@@ -129,6 +129,13 @@ DEFAULT_SOURCES=(
 # Dateien, nicht um Zeilen — eine feste Namensliste wuerde neue verpassen).
 DEFAULT_SOURCE_DIRS=(
     "artifacts/research/forecaster_panel"
+    # Laufzeit-Zustand der Praeregistrierung: Activation, Checkpoint-Journal,
+    # Verdikt-Journal und die eingefrorenen Datenschnitte. Bewusst NICHT in Git
+    # (ein T1-Ereignis darf keinen Commit brauchen, an dem wiederum
+    # research_code_sha haengt) — damit ist das Backup der EINZIGE Rueckweg.
+    # Geht es verloren, ist nicht das Ergebnis weg, sondern der Beweis, unter
+    # welchen Daten es entstand.
+    "artifacts/research/prereg"
 )
 
 # Dateien, deren Fehlen ein FEHLER ist, kein Hinweis. Fuer die Evidenz-Stroeme
