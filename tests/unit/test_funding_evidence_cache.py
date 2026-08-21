@@ -124,13 +124,31 @@ def test_refresh_many_iterates_symbols() -> None:
     assert cache.cache_size() == 2
 
 
-def test_ttl_expiry_invalidates_cache() -> None:
-    cache = FundingEvidenceCache(_StubAdapter(snap=_snap()), ttl_seconds=0.01)
-    asyncio.run(cache.refresh("BTC/USDT"))
-    assert cache.get("BTC/USDT") is not None
-    import time as _time
+def test_ttl_expiry_invalidates_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TTL gegen eine kontrollierte Uhr pruefen, nicht gegen Wanduhr und Last.
 
-    _time.sleep(0.05)
+    Die Vorgaengerfassung nutzte ``ttl_seconds=0.01`` und ein ``sleep(0.05)``.
+    Schon zwischen ``refresh()`` und dem unmittelbar folgenden ``get()`` koennen
+    unter ``pytest -n auto`` mehr als 10 ms vergehen — dann schlug ausgerechnet
+    die Behauptung "noch nicht abgelaufen" zufaellig fehl. Genau so ist der Test
+    am 21.08. im Suite-Lauf ausgefallen, waehrend er isoliert gruen blieb.
+
+    Die Produktionslogik bleibt unveraendert: sie nutzt ``time.monotonic()``, und
+    genau die wird hier gesteuert. Kein sleep, keine Scheduler-Abhaengigkeit,
+    keine CPU-Last-Abhaengigkeit.
+    """
+    now = [100.0]
+    monkeypatch.setattr("app.signals.funding_evidence_cache.time.monotonic", lambda: now[0])
+
+    cache = FundingEvidenceCache(_StubAdapter(snap=_snap()), ttl_seconds=10.0)
+    asyncio.run(cache.refresh("BTC/USDT"))
+
+    # exakt am Rand: noch gueltig
+    now[0] = 110.0
+    assert cache.get("BTC/USDT") is not None
+
+    # eine Wimper darueber: abgelaufen
+    now[0] = 110.001
     assert cache.get("BTC/USDT") is None
 
 
