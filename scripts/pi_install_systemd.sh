@@ -11,6 +11,7 @@
 #     sudo bash scripts/pi_install_systemd.sh --uninstall
 #     sudo bash scripts/pi_install_systemd.sh --force    # skip path-warning prompt
 #                                                          (SSH non-interactive; D-208)
+#     sudo bash scripts/pi_install_systemd.sh --broker-only # NUR den Broker, keine Unit
 #     sudo bash scripts/pi_install_systemd.sh --no-enable # install + daemon-reload only,
 #                                                          # do NOT enable/start units.
 #                                                          # Cutover pre-stage: keeps the
@@ -34,6 +35,9 @@ UNIT_SRC="${REPO_ROOT}/deploy/systemd"
 # Writer → Trade in die kontaminierte Alt-Epoche).
 # shellcheck source=scripts/lib/paper_writer_freeze.sh
 source "${REPO_ROOT}/scripts/lib/paper_writer_freeze.sh"
+# Trennt Provisionierung (frischer Host) von Live-Aenderung (Drift im Ziel).
+# shellcheck source=scripts/lib/pi_install_guard.sh
+source "${REPO_ROOT}/scripts/lib/pi_install_guard.sh"
 PAPER_WRITER_FREEZE_STATE=0  # 0/10/20, je Lauf via _paper_freeze_preflight gesetzt
 UNIT_DST="/etc/systemd/system"
 TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
@@ -171,6 +175,8 @@ UNINSTALL=0
 FORCE=0
 NO_ENABLE=0
 REACTIVATE_ONLY=0
+BROKER_ONLY=0
+FORCE_UNITS=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
@@ -178,6 +184,8 @@ for arg in "$@"; do
         --force) FORCE=1 ;;
         --no-enable) NO_ENABLE=1 ;;
         --reactivate) REACTIVATE_ONLY=1 ;;
+        --broker-only) BROKER_ONLY=1 ;;
+        --force-units) FORCE_UNITS=1 ;;
         -h|--help)
             sed -n '3,24p' "$0"
             exit 0
@@ -330,6 +338,49 @@ uninstall() {
     echo "Uninstall complete."
 }
 
+# Privilegien-Broker: root:root 0755. Bewusst NICHT `ubuntu`-schreibbar —
+# der Inhalt ist das Privileg, nicht der Dateiname. Ein von `ubuntu`
+# beschreibbares NOPASSWD-Ziel waere exakt so viel wert wie NOPASSWD:ALL.
+#
+# Eigene Funktion, damit `--broker-only` sie aufrufen kann, OHNE eine einzige
+# Unit-Datei anzufassen. Genau dieses Buendel war der Befund vom 2026-08-21:
+# wer den Broker installieren wollte, wendete nebenbei 24 divergente Units an.
+install_broker() {
+    if [[ ! -f "$BROKER_SRC" ]]; then
+        echo "FATAL: $BROKER_SRC fehlt — die NOPASSWD-Policy zeigt dann ins Leere." >&2
+        exit 1
+    fi
+    echo ""
+    echo "Installing privilege broker (Ziel der NOPASSWD-Policy)…"
+    run command install -m 0755 -o root -g root "$BROKER_SRC" "$BROKER_DST"
+    # Nachbedingungen BEWEISEN, nicht annehmen: ohne diese Pruefung faellt ein
+    # stiller Fehlschlag erst auf, wenn die Recovery gebraucht wird.
+    if [[ "${DRY_RUN:-0}" != "1" ]]; then
+        local actual
+        actual="$(stat -c '%U:%G:%a' "$BROKER_DST" 2>/dev/null || echo 'MISSING')"
+        if [[ "$actual" != "root:root:755" ]]; then
+            echo "FATAL: $BROKER_DST hat '$actual', erwartet 'root:root:755'." >&2
+            exit 1
+        fi
+        if ! cmp -s "$BROKER_SRC" "$BROKER_DST"; then
+            echo "FATAL: $BROKER_DST weicht vom Repo-Artefakt ab." >&2
+            exit 1
+        fi
+        echo "  broker ok: root:root 0755, inhaltsgleich mit dem Repo"
+    fi
+}
+
+# Nur den Broker. Keine Unit, kein daemon-reload, kein enable — der Eingriff
+# mit der kleinsten Angriffsflaeche, den der P0-Weg braucht.
+broker_only() {
+    require_root
+    install_broker
+    echo ""
+    echo "--broker-only: KEINE Unit-Datei angefasst."
+    echo "Unit-Drift gehoert in den Operator-Pfad:"
+    echo "  bash scripts/pi_apply_systemd_units.sh --dry-run"
+}
+
 install() {
     require_root
     echo "Source:      $UNIT_SRC"
@@ -376,6 +427,14 @@ install() {
         exit 1
     fi
 
+    # Massenkopie NUR bei Provisionierung. Liegen im Ziel abweichende Units,
+    # waere das eine Live-Aenderung ohne Sicherung, Freeze-Guard, Beweis und
+    # Rueckweg — und wuerde `pi_apply_systemd_units.sh` stillschweigend umgehen.
+    if (( FORCE_UNITS == 0 )) && ! pi_install_units_allowed "$UNIT_SRC" "$UNIT_DST"; then
+        pi_install_units_refusal "$(pi_install_units_drift "$UNIT_SRC" "$UNIT_DST" | wc -l)"
+        exit 1
+    fi
+
     for unit in "${UNITS[@]}"; do
         src="${UNIT_SRC}/${unit}"
         dst="${UNIT_DST}/${unit}"
@@ -394,31 +453,7 @@ install() {
         echo "WARNING: $HELPER_SRC fehlt — kai-standby-* wuerden ins Leere zeigen." >&2
     fi
 
-    # Privilegien-Broker: root:root 0755. Bewusst NICHT `ubuntu`-schreibbar —
-    # der Inhalt ist das Privileg, nicht der Dateiname. Ein von `ubuntu`
-    # beschreibbares NOPASSWD-Ziel waere exakt so viel wert wie NOPASSWD:ALL.
-    if [[ -f "$BROKER_SRC" ]]; then
-        echo ""
-        echo "Installing privilege broker (Ziel der NOPASSWD-Policy)…"
-        run command install -m 0755 -o root -g root "$BROKER_SRC" "$BROKER_DST"
-        # Nachbedingungen BEWEISEN, nicht annehmen: ohne diese Pruefung faellt
-        # ein stiller Fehlschlag erst auf, wenn die Recovery gebraucht wird.
-        if [[ "${DRY_RUN:-0}" != "1" ]]; then
-            actual="$(stat -c '%U:%G:%a' "$BROKER_DST" 2>/dev/null || echo 'MISSING')"
-            if [[ "$actual" != "root:root:755" ]]; then
-                echo "FATAL: $BROKER_DST hat '$actual', erwartet 'root:root:755'." >&2
-                exit 1
-            fi
-            if ! cmp -s "$BROKER_SRC" "$BROKER_DST"; then
-                echo "FATAL: $BROKER_DST weicht vom Repo-Artefakt ab." >&2
-                exit 1
-            fi
-            echo "  broker ok: root:root 0755, inhaltsgleich mit dem Repo"
-        fi
-    else
-        echo "FATAL: $BROKER_SRC fehlt — die NOPASSWD-Policy zeigt dann ins Leere." >&2
-        exit 1
-    fi
+    install_broker
 
     # 2026-05-07 Cutover-Lehre B-3: kai-server-Erststart auf Blank-Slate
     # crashte mit `Failed to set up standard output: No such file or directory`
@@ -476,7 +511,10 @@ reactivate_only() {
 
 # Nur ausführen, wenn direkt gestartet — beim Sourcen (Tests) NICHT dispatchen.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    if (( REACTIVATE_ONLY == 1 )); then
+    if (( BROKER_ONLY == 1 )); then
+        broker_only
+        exit $?
+    elif (( REACTIVATE_ONLY == 1 )); then
         reactivate_only
         exit $?
     elif (( UNINSTALL == 1 )); then
