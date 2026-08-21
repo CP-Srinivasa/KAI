@@ -1,0 +1,61 @@
+{
+  "activation_preconditions": [
+    "Pi privilege broker installed and verified",
+    "systemd unit drift resolved",
+    "timer postconditions proven",
+    "deploy verdict no longer HOLD"
+  ],
+  "alpha": 0.05,
+  "candidate_sha256": "7aa3bfd10d441809e7d7603f5c558e7c071bebc9b6493534362e0803faf6d3e7",
+  "cluster_min": 50,
+  "data_unavailable_policy": {
+    "asset_substitution": "forbidden",
+    "canonical_rename_continuity": "Das Provider-Mapping darf NUR geaendert werden, wenn der bisherige Provider-Ticker nicht mehr TRADING ist UND ein offiziell dokumentierter 1:1-Nachfolger bzw. eine reine Redenominierung DESSELBEN kanonischen Assets existiert. Die Aenderung darf Universe-Mitgliedschaft weder hinzufuegen noch entfernen noch doppelt gewichten und muss zeitgestempelt und auditierbar dokumentiert werden. Keine heuristische Alias-Suche. Keine Entscheidung nach Performance.",
+    "canonical_universe_membership": "immutable — kein Asset rueckt jemals nach",
+    "disclosure": "mandatory",
+    "fire_without_label": "NOT_VALID — zaehlt nicht zu n_valid",
+    "past_valid_observations": "retained",
+    "true_delisting_without_successor": "Alle bis zum Delisting erzeugten gueltigen Signale bleiben enthalten; ab Delisting keine neuen Signale; keine Substitution; keine Neugewichtung; Delisting-Zeitpunkt wird offengelegt.",
+    "unavailable_as_no_signal": "forbidden — Nichtbeobachtbarkeit ist kein Nullsignal",
+    "zero_filling": "forbidden"
+  },
+  "economic_floor_bps": 5.0,
+  "execution_convention": "signal close(t) -> entry open(t+1) -> exit close(t+h)",
+  "horizon": 4,
+  "hypothesis": "rsi_reentry_volume_confirmed",
+  "inference": "CR1 cluster-robust Student-t, df = G-1, one-sided H0: mean <= 0",
+  "mandatory_disclosure": [
+    "raw_fires",
+    "label_capable_fires",
+    "n_valid",
+    "data_unavailable_count",
+    "n_clusters",
+    "symbols_with_valid_signals",
+    "per_symbol_signals",
+    "top_symbol_share",
+    "top_cluster_share",
+    "leave_one_out_top_symbol"
+  ],
+  "n_symbols": 34,
+  "n_valid_min": 100,
+  "per_symbol_status": "DIAGNOSTIC_NON_GATING",
+  "prereg_version": "rsi_reentry_volume_v1",
+  "primary_estimand": "mean net bps per valid signal, pooled across the sealed universe",
+  "robustness_diagnostics": [
+    "result_without_largest_cluster",
+    "result_without_top_symbol"
+  ],
+  "round_trip_cost_bps": 20.0,
+  "sensitivity_cost_bps": [
+    20.0,
+    25.0,
+    30.0
+  ],
+  "spec_version": "kai/prereg/v2",
+  "status": "CANDIDATE_LOCKED_NOT_ACTIVE",
+  "t0_utc": "NOT_SET",
+  "t1_offset_days": 90,
+  "t2_offset_days": 180,
+  "timeframe": "1h",
+  "universe_sha256": "d28e10d5ba2e11b1f541c9d2cd17e1219b92107c1b307441e5353ea05ac3f03e"
+}

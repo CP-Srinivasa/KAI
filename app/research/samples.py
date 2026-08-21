@@ -34,6 +34,44 @@ class TradeSample:
     net_bps: float
 
 
+@dataclass(frozen=True)
+class DecisionCounts:
+    """Was aus den Feuerungen wurde — die Offenlegung, die n_valid erst ehrlich macht.
+
+    Eine Feuerung ohne auswertbares Label ist NICHT dasselbe wie "kein Signal":
+    die Regel hat gefeuert, nur war das Ergebnis nicht beobachtbar. Wer beides
+    zusammenwirft, meldet ein n_valid, das eine andere Groesse ist als die, die
+    es zu sein vorgibt.
+    """
+
+    raw_fires: int
+    label_capable_fires: int
+    data_unavailable: int
+
+
+def decisions_to_trades_with_counts(
+    rows: list[FeatureRow],
+    forward_bps: list[float | None],
+    decide: Decider,
+    round_trip_cost_bps: float,
+) -> tuple[list[TradeSample], DecisionCounts]:
+    """Wie ``decisions_to_trades``, plus die Zaehlung der nicht auswertbaren Feuerungen.
+
+    Getrennte Funktion statt geaenderter Signatur, damit die bestehenden Aufrufer
+    unberuehrt bleiben — und **eine** Kostenarithmetik, statt sie fuer die
+    Praeregistrierung ein zweites Mal zu schreiben.
+    """
+    trades = _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
+    # Die Feuerungen ZAEHLEN, unabhaengig davon, ob ein Label existierte.
+    # Genau diese Differenz ist ``data_unavailable``.
+    raw = sum(1 for row in rows if decide(row) != 0)
+    return trades, DecisionCounts(
+        raw_fires=raw,
+        label_capable_fires=len(trades),
+        data_unavailable=raw - len(trades),
+    )
+
+
 def decisions_to_trades(
     rows: list[FeatureRow],
     forward_bps: list[float | None],
@@ -54,6 +92,16 @@ def decisions_to_trades(
     Raises:
         ValueError: length mismatch, negative cost, or a side not in {-1,0,1}.
     """
+    return _emit_trades(rows, forward_bps, decide, round_trip_cost_bps)
+
+
+def _emit_trades(
+    rows: list[FeatureRow],
+    forward_bps: list[float | None],
+    decide: Decider,
+    round_trip_cost_bps: float,
+) -> list[TradeSample]:
+    """Die einzige Stelle, an der Kosten auf einen Trade angewendet werden."""
     if len(rows) != len(forward_bps):
         raise ValueError("rows and forward_bps must have equal length")
     if round_trip_cost_bps < 0:
