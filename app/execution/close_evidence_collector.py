@@ -143,15 +143,43 @@ def collector_code_sha() -> str:
 
 
 def _parse_utc(value: object) -> datetime | None:
+    """Nur echte UTC-Zeitstempel. None bei allem anderen.
+
+    Naive Zeiten werden nicht als UTC angenommen — raten waere hier das Gegenteil
+    von Evidenz. Und ein Feld namens ``*_utc`` darf auch keinen Offset ``+02:00``
+    tragen: der Verifier vergleicht den Evidence-Timestamp mit dem Close-Timestamp
+    als exakten String, deshalb wird hier abgelehnt statt still umgerechnet.
+    """
     if not value:
         return None
     try:
         stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    # Naive Zeitstempel werden NICHT als UTC angenommen — raten waere hier das
-    # Gegenteil von Evidenz.
-    return None if stamp.tzinfo is None else stamp
+    if stamp.tzinfo is None:
+        return None
+    offset = stamp.utcoffset()
+    return stamp if offset is not None and offset.total_seconds() == 0 else None
+
+
+def _identity_problem(identity: dict[str, str]) -> tuple[CollectionStatus, str] | None:
+    """Die eine Identitaets-Regel — fuer Bau UND Orchestrator dieselbe.
+
+    Ohne sie endete ein Retry mit fehlender ``order_id`` als EVIDENCE_CONFLICT,
+    obwohl die Wahrheit CLOSE_IDENTITY_INCOMPLETE lautet.
+    """
+    missing = [k for k in ("fill_id", "order_id", "symbol", "venue") if not identity.get(k)]
+    if missing:
+        return (CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, f"fehlend: {', '.join(missing)}")
+    raw = identity.get("close_timestamp_utc", "")
+    if not raw:
+        return (CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, "fehlend: timestamp_utc")
+    if _parse_utc(raw) is None:
+        return (
+            CollectionStatus.INVALID_CLOSE_TIMESTAMP,
+            f"unlesbar, ohne Zeitzone oder nicht UTC: {raw!r}",
+        )
+    return None
 
 
 def _canonical_venue(raw: object) -> str:
@@ -184,9 +212,15 @@ def _is_nonnegative_int(value: object) -> bool:
 
 
 def _validate_candles(
-    candles: list[VenueCandle], *, collected_at_ms: int
+    candles: list[VenueCandle], *, collected_at_ms: int, start_ms: int, end_ms: int
 ) -> tuple[CollectionStatus, str] | None:
-    """Rohdaten-Pruefung. None, wenn alles sauber ist."""
+    """Rohdaten-Pruefung. None, wenn alles sauber ist.
+
+    Das ANGEFRAGTE Fenster war exakt — die ZURUECKGELIEFERTEN Kerzen muessen es
+    auch sein. Sonst behauptet ``window_start_ms``/``window_end_ms`` im Artefakt
+    etwas anderes als sein Inhalt, und ein fehlerhafter Adapter koennte eine
+    08:40-Kerze oder eine Kerze mit Sekunden-Offset einschleusen.
+    """
     seen: set[int] = set()
     interval_ms = _INTERVAL_MS[PRIMARY_INTERVAL]
     for c in candles:
@@ -201,6 +235,17 @@ def _validate_candles(
             return (
                 CollectionStatus.INVALID_CANDLE_DATA,
                 f"unbrauchbare Kerzenzeit: {c.open_time_ms!r}",
+            )
+        if c.open_time_ms % interval_ms != 0:
+            return (
+                CollectionStatus.INVALID_CANDLE_DATA,
+                f"Kerze {c.open_time_ms} liegt nicht auf einer {PRIMARY_INTERVAL}-Grenze",
+            )
+        if not (start_ms <= c.open_time_ms < end_ms):
+            return (
+                CollectionStatus.INVALID_CANDLE_DATA,
+                f"Kerze {c.open_time_ms} liegt ausserhalb des angefragten Fensters "
+                f"[{start_ms}, {end_ms})",
             )
         if c.open_time_ms in seen:
             return (CollectionStatus.INVALID_CANDLE_DATA, f"doppelte Kerzenzeit {c.open_time_ms}")
@@ -238,21 +283,18 @@ def build_close_evidence(
     # Evidenz, Manifest und Retry-Abgleich muessen dieselbe Venue meinen.
     venue = _canonical_venue(venue)
 
-    missing = [
-        name
-        for name, value in (
-            ("fill_id", fill_id),
-            ("order_id", order_id),
-            ("symbol", symbol),
-            ("venue", venue),
-        )
-        if not value
-    ]
-    if missing:
-        return CollectionResult(
-            status=CollectionStatus.CLOSE_IDENTITY_INCOMPLETE,
-            detail=f"fehlend: {', '.join(missing)}",
-        )
+    problem = _identity_problem(
+        {
+            "fill_id": fill_id,
+            "order_id": order_id,
+            "symbol": symbol,
+            "venue": venue,
+            "close_timestamp_utc": close_ts_raw,
+        }
+    )
+    if problem is not None:
+        status, detail = problem
+        return CollectionResult(status=status, detail=detail)
 
     if now_utc.tzinfo is None:
         # Sonst haengt `.timestamp()` still an der Maschinen-Zeitzone.
@@ -262,11 +304,7 @@ def build_close_evidence(
         )
 
     close_at = _parse_utc(close_ts_raw)
-    if close_at is None:
-        return CollectionResult(
-            status=CollectionStatus.INVALID_CLOSE_TIMESTAMP,
-            detail=f"unlesbar oder ohne Zeitzone: {close_ts_raw!r}",
-        )
+    assert close_at is not None  # von _identity_problem bereits geprueft
 
     # Bucket-genau statt um den Close herum: viele Kline-APIs filtern nach
     # Candle-OPEN-Zeit. Ein Fenster 08:59:30..09:01:30 laesst die 08:59-Kerze
@@ -303,7 +341,12 @@ def build_close_evidence(
         )
 
     collected_at = now_utc.astimezone(UTC)
-    problem = _validate_candles(candles, collected_at_ms=int(collected_at.timestamp() * 1000))
+    problem = _validate_candles(
+        candles,
+        collected_at_ms=int(collected_at.timestamp() * 1000),
+        start_ms=start_ms,
+        end_ms=end_ms,
+    )
     if problem is not None:
         status, detail = problem
         return CollectionResult(status=status, detail=detail)
@@ -361,6 +404,18 @@ def _atomic_write(path: Path, payload: bytes) -> None:
 
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+_MANIFEST_REQUIRED = (
+    "fill_id",
+    "order_id",
+    "symbol",
+    "venue",
+    "close_timestamp_utc",
+    "payload_sha256",
+    "schema_version",
+    "collector_code_sha",
+    "collected_at_utc",
+)
 
 
 def _close_identity(close_row: dict[str, object], venue: str) -> dict[str, str]:
@@ -451,11 +506,16 @@ def _inspect_anchor(folder: Path, identity: dict[str, str]) -> _Anchor:
             problem=CollectionStatus.EVIDENCE_CONFLICT,
             detail=f"payload_sha256 ist kein 64-stelliger Hex-Wert: {sha!r}",
         )
-    for feld in ("fill_id", "order_id", "symbol", "venue", "close_timestamp_utc", "schema_version"):
+    for feld in _MANIFEST_REQUIRED:
         if not str(manifest.get(feld, "") or "").strip():
             return _Anchor(
                 problem=CollectionStatus.EVIDENCE_CONFLICT, detail=f"Manifest ohne {feld}"
             )
+    if str(manifest.get("schema_version")) != EVIDENCE_SCHEMA_VERSION:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail=f"fremde schema_version: {manifest.get('schema_version')!r}",
+        )
 
     artifact = folder / f"{sha}.json"
     if not artifact.exists():
@@ -484,6 +544,31 @@ def _inspect_anchor(folder: Path, identity: dict[str, str]) -> _Anchor:
         return _Anchor(
             problem=CollectionStatus.EVIDENCE_CONFLICT, detail="Artefakt kein Objekt", sha=sha
         )
+
+    # Der Writer schreibt IMMER kanonisch. Ein nichtkanonisches Artefakt kann
+    # deshalb nicht legitim aus diesem Collector stammen — auch dann nicht, wenn
+    # jemand Manifest und Dateinamen passend umgeschrieben hat.
+    try:
+        if canonical_bytes(payload) != raw:
+            return _Anchor(
+                problem=CollectionStatus.EVIDENCE_CONFLICT,
+                detail="Artefakt-Bytes sind nicht die kanonische Darstellung",
+                sha=sha,
+            )
+    except ValueError as exc:
+        return _Anchor(
+            problem=CollectionStatus.EVIDENCE_CONFLICT,
+            detail=f"Artefakt nicht kanonisierbar: {exc}",
+            sha=sha,
+        )
+
+    for feld in ("schema_version", "collector_code_sha", "collected_at_utc"):
+        if str(manifest.get(feld, "")) != str(payload.get(feld, "")):
+            return _Anchor(
+                problem=CollectionStatus.EVIDENCE_CONFLICT,
+                detail=f"Manifest und Artefakt widersprechen sich bei {feld}",
+                sha=sha,
+            )
 
     manifest_identity = _identity_of(manifest, artifact=False)
     artifact_identity = _identity_of(payload, artifact=True)
@@ -641,15 +726,13 @@ def collect_and_publish(
     verschiedenen ``collected_at_utc`` um denselben Close.
     """
     identity = _close_identity(close_row, venue)
-    if not identity["fill_id"]:
-        return CollectionResult(
-            status=CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, detail="fehlend: fill_id"
-        )
-    if not identity["venue"]:
-        # Ohne Venue bekaeme ein Retry sonst fremde Evidenz zurueck.
-        return CollectionResult(
-            status=CollectionStatus.CLOSE_IDENTITY_INCOMPLETE, detail="fehlend: venue"
-        )
+    # VOR dem Fast-Path: sonst endet ein Retry mit fehlender order_id als
+    # EVIDENCE_CONFLICT, obwohl die Wahrheit CLOSE_IDENTITY_INCOMPLETE lautet.
+    # Ohne Venue bekaeme ein Retry ausserdem fremde Evidenz zurueck.
+    problem = _identity_problem(identity)
+    if problem is not None:
+        status, detail = problem
+        return CollectionResult(status=status, detail=detail)
 
     folder = Path(base_dir) / _folder_key(identity["fill_id"])
 

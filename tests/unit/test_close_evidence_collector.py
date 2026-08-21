@@ -114,13 +114,31 @@ def test_venue_muss_explizit_sein() -> None:
     assert "venue" in r.detail
 
 
-@pytest.mark.parametrize("bad", ["", "kaputt", "2026-08-21T09:00:30"])
+@pytest.mark.parametrize("bad", ["kaputt", "2026-08-21T09:00:30", "2026-08-21T11:00:30+02:00"])
 def test_unbrauchbare_close_zeit_wird_abgewiesen(bad: str) -> None:
-    """Auch der naive Zeitstempel — als UTC anzunehmen waere Raten."""
+    """Naiv ist Raten — und ein Feld namens `_utc` darf keinen Offset +02:00 tragen.
+
+    Nicht still umrechnen: der Verifier vergleicht den Evidence-Timestamp mit dem
+    Close-Timestamp als exakten String.
+    """
     r = build_close_evidence(
         _close(timestamp_utc=bad), venue="bybit", fetch=_fetcher(), now_utc=NOW
     )
     assert r.status is CollectionStatus.INVALID_CLOSE_TIMESTAMP
+
+
+def test_fehlende_close_zeit_ist_unvollstaendige_identitaet() -> None:
+    """Fehlend und unbrauchbar sind zwei verschiedene Wahrheiten."""
+    r = build_close_evidence(_close(timestamp_utc=""), venue="bybit", fetch=_fetcher(), now_utc=NOW)
+    assert r.status is CollectionStatus.CLOSE_IDENTITY_INCOMPLETE
+    assert "timestamp_utc" in r.detail
+
+
+def test_utc_mit_z_suffix_wird_akzeptiert() -> None:
+    r = build_close_evidence(
+        _close(timestamp_utc="2026-08-21T09:00:30Z"), venue="bybit", fetch=_fetcher(), now_utc=NOW
+    )
+    assert r.status is CollectionStatus.COLLECTED
 
 
 def test_naive_sammelzeit_wird_abgewiesen() -> None:
@@ -209,8 +227,15 @@ def test_fetch_fehler_ist_ein_sammelausfall_keine_exception() -> None:
 
 
 def test_kerzen_hinter_dem_sammelzeitpunkt_werden_abgewiesen() -> None:
-    future = VenueCandle(int((NOW + timedelta(minutes=5)).timestamp() * 1000), 1.0, 2.0, 0.5, 1.5)
-    r = build_close_evidence(_close(), venue="bybit", fetch=_fetcher([future]), now_utc=NOW)
+    """Kerze IM Fenster, aber nach dem Sammelzeitpunkt — sonst greift die
+    Fenster-Pruefung zuerst und der Zukunftsfall bliebe ungeprueft."""
+    frueh = datetime.fromtimestamp((M0 - 30_000) / 1000, UTC)  # 08:59:30
+    r = build_close_evidence(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher([VenueCandle(M0, 100.0, 101.0, 99.5, 100.8)]),
+        now_utc=frueh,
+    )
     assert r.status is CollectionStatus.CANDLES_IN_FUTURE
 
 
@@ -644,3 +669,159 @@ def test_neuer_close_ordner_wird_im_parent_haltbar_gemacht(tmp_path: Path, monke
 
     assert str(tmp_path) in gefsynct, "der Parent des neuen Close-Ordners wurde nicht gefsynct"
     assert any(str(_the_folder(tmp_path)) == p for p in gefsynct), "Close-Ordner nicht gefsynct"
+
+
+# --- A: die zurueckgelieferten Kerzen muessen zum angefragten Fenster passen ------
+
+
+def test_kerze_ausserhalb_des_angefragten_fensters_wird_abgewiesen() -> None:
+    """Sonst behaupten window_start/window_end im Artefakt etwas anderes als sein Inhalt."""
+    weit_davor = VenueCandle(M0 - 20 * MINUTE, 100.0, 101.0, 99.5, 100.8)
+    r = build_close_evidence(_close(), venue="bybit", fetch=_fetcher([weit_davor]), now_utc=NOW)
+    assert r.status is CollectionStatus.INVALID_CANDLE_DATA
+    assert "ausserhalb" in r.detail
+
+
+def test_kerze_am_oberen_fensterrand_wird_abgewiesen() -> None:
+    """Das Fenster ist halboffen: end_ms selbst gehoert nicht mehr dazu."""
+    r = build_close_evidence(
+        _close(),
+        venue="bybit",
+        fetch=_fetcher([VenueCandle(M0 + 2 * MINUTE, 100.0, 101.0, 99.5, 100.8)]),
+        now_utc=NOW,
+    )
+    assert r.status is CollectionStatus.INVALID_CANDLE_DATA
+
+
+def test_kerze_ohne_minutengrenze_wird_abgewiesen() -> None:
+    """open_time mit Sekunden-Offset ist keine 1m-Kerze."""
+    schief = VenueCandle(M0 + 30_000, 100.0, 101.0, 99.5, 100.8)
+    r = build_close_evidence(_close(), venue="bybit", fetch=_fetcher([schief]), now_utc=NOW)
+    assert r.status is CollectionStatus.INVALID_CANDLE_DATA
+    assert "Grenze" in r.detail
+
+
+# --- B: der Anker wird auf Vollstaendigkeit und Kanonizitaet geprueft ------------
+
+
+@pytest.mark.parametrize("feld", ["collector_code_sha", "collected_at_utc", "payload_sha256"])
+def test_manifest_ohne_pflichtfeld_wird_abgewiesen(tmp_path: Path, feld: str) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, **{feld: ""})
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+
+
+def test_fremde_schema_version_wird_abgewiesen(tmp_path: Path) -> None:
+    """Fremde Version auf BEIDEN Seiten — sonst faenge der Metadaten-Abgleich.
+
+    Die Mutations-Gegenprobe hat genau das gezeigt: aendert man nur das Manifest,
+    schlaegt schon der Manifest-gegen-Artefakt-Vergleich an und die
+    Schema-Version-Pruefung bliebe ungeprueft.
+    """
+    import hashlib
+
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    folder = _the_folder(tmp_path)
+
+    payload = json.loads(Path(first.path).read_text(encoding="utf-8"))
+    payload["schema_version"] = "close_evidence/v99"
+    roh = canonical_bytes(payload)
+    neuer_sha = hashlib.sha256(roh).hexdigest()
+    Path(first.path).unlink()
+    (folder / f"{neuer_sha}.json").write_bytes(roh)
+    _corrupt_manifest(tmp_path, schema_version="close_evidence/v99", payload_sha256=neuer_sha)
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert "schema_version" in r.detail
+
+
+def test_abweichende_schema_version_nur_im_manifest_faellt_ebenfalls_auf(
+    tmp_path: Path,
+) -> None:
+    """Der andere Pfad — Manifest und Artefakt widersprechen sich."""
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, schema_version="close_evidence/v99")
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+
+
+@pytest.mark.parametrize("feld", ["collector_code_sha", "collected_at_utc"])
+def test_manifest_und_artefakt_muessen_bei_metadaten_uebereinstimmen(
+    tmp_path: Path, feld: str
+) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+    _corrupt_manifest(tmp_path, **{feld: "abweichend"})
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert feld in r.detail
+
+
+def test_nichtkanonisches_artefakt_wird_erkannt(tmp_path: Path) -> None:
+    """Der Writer schreibt IMMER kanonisch — alles andere stammt nicht von ihm.
+
+    Hier wird der Inhalt NICHT veraendert, nur huebscher formatiert, und Manifest
+    plus Dateiname werden passend nachgezogen. Ohne die Kanonizitaets-Pruefung
+    wuerde das Artefakt akzeptiert.
+    """
+    import hashlib
+
+    first = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    folder = _the_folder(tmp_path)
+    payload = json.loads(Path(first.path).read_text(encoding="utf-8"))
+
+    huebsch = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+    neuer_sha = hashlib.sha256(huebsch).hexdigest()
+    Path(first.path).unlink()
+    (folder / f"{neuer_sha}.json").write_bytes(huebsch)
+    _corrupt_manifest(tmp_path, payload_sha256=neuer_sha)
+
+    r = collect_and_publish(
+        _close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.EVIDENCE_CONFLICT
+    assert "kanonische" in r.detail
+
+
+# --- C: vollstaendige Identitaet vor dem Fast-Path -------------------------------
+
+
+@pytest.mark.parametrize("feld", ["order_id", "symbol"])
+def test_retry_ohne_vollstaendige_identitaet_meldet_das_richtige(tmp_path: Path, feld: str) -> None:
+    """Sonst endete ein Retry mit fehlender order_id als EVIDENCE_CONFLICT."""
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+
+    r = collect_and_publish(
+        _close(**{feld: ""}), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path
+    )
+    assert r.status is CollectionStatus.CLOSE_IDENTITY_INCOMPLETE
+    assert feld in r.detail
+
+
+def test_retry_mit_nicht_utc_zeit_meldet_den_zeitfehler(tmp_path: Path) -> None:
+    collect_and_publish(_close(), venue="bybit", fetch=_fetcher(), now_utc=NOW, base_dir=tmp_path)
+
+    r = collect_and_publish(
+        _close(timestamp_utc="2026-08-21T11:00:30+02:00"),
+        venue="bybit",
+        fetch=_fetcher(),
+        now_utc=NOW,
+        base_dir=tmp_path,
+    )
+    assert r.status is CollectionStatus.INVALID_CLOSE_TIMESTAMP
