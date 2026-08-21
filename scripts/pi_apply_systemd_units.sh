@@ -163,6 +163,49 @@ _has_future_trigger() {
     return 1
 }
 
+# Ein Timer ohne Termin ist NICHT automatisch kaputt. Laeuft der von ihm
+# ausgeloeste Service gerade, hat `OnUnitActiveSec` nichts zum Ankern, und ein
+# per `Persistent=` nachgeholter Lauf haelt den Timer ebenso kurz terminlos.
+#
+# VORFALL 2026-08-21: `kai-tv-auto-promote.timer` bekam mit diesem Apply seine
+# Reparatur (`OnCalendar=*:0/5` + `Persistent=true`). 11 ms nach dem
+# Timer-Restart holte systemd den seit dem 12.07. verpassten Lauf nach; der
+# Beweis mass 3,2 s spaeter mitten im Lauf, las "kein naechster Termin" und
+# rollte ALLE 30 Units zurueck — obwohl der Lauf nachweislich durchlief
+# (2093 Events geprueft). Der Beweis wartet das Ende des Laufs jetzt ab.
+#
+# 90 s deckt jeden kurzen Nachholer ab (der obige brauchte 4,0 s). Laeuft der
+# Service laenger (kai-shadow-resolver: p50 12,9 min), wird das ausgewiesen
+# statt zurueckgerollt — ein aufgeschobener Beweis ist keine Fehlfunktion.
+PROOF_WAIT_S="${KAI_UNIT_PROOF_WAIT_S:-90}"
+
+_triggered_unit() {
+    "$SYSTEMCTL" show "$1" -p Unit 2>/dev/null | sed -n 's/^Unit=//p'
+}
+
+_unit_running() {
+    local state
+    state="$("$SYSTEMCTL" show "$1" -p ActiveState 2>/dev/null | sed -n 's/^ActiveState=//p')"
+    case "$state" in
+        active | activating | reloading | deactivating) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 0 = Termin vorhanden · 2 = kein Termin, aber der Lauf dauert an (kein
+# Fehlschlag) · 1 = wirklich terminlos, also der Vorfall vom 19.08.
+_proof_future_trigger() {
+    local timer="$1" svc waited=0
+    svc="$(_triggered_unit "$timer")"
+    while :; do
+        _has_future_trigger "$timer" && return 0
+        { [ -n "$svc" ] && _unit_running "$svc"; } || return 1
+        [ "$waited" -lt "$PROOF_WAIT_S" ] || return 2
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 proof_failures=()
 for base in "${apply_set[@]}"; do
     if ! cmp -s "$SRC/$base" "$DST/$base"; then
@@ -173,10 +216,13 @@ for base in "${apply_set[@]}"; do
     [ "${base##*.}" = "timer" ] || continue
     if [ "$("$SYSTEMCTL" is-active "$base" 2>/dev/null)" != "active" ]; then
         proof_failures+=("$base: nicht active")
-    elif ! _has_future_trigger "$base"; then
-        proof_failures+=("$base: aktiv, aber KEIN naechster Termin (NextElapse leer/infinity)")
     else
-        echo "beweis: $base active mit endlichem naechsten Termin"
+        _proof_future_trigger "$base"
+        case $? in
+            0) echo "beweis: $base active mit endlichem naechsten Termin" ;;
+            2) echo "beweis: $base active, ausgeloester Lauf dauert nach ${PROOF_WAIT_S}s an — Termin entsteht nach dem Lauf (kein Rollback)" ;;
+            *) proof_failures+=("$base: aktiv, aber KEIN naechster Termin (NextElapse leer/infinity)") ;;
+        esac
     fi
 done
 
