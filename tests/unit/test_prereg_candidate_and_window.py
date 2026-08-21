@@ -49,6 +49,9 @@ _UNIVERSE_SHA = "d28e10d5ba2e11b1f541c9d2cd17e1219b92107c1b307441e5353ea05ac3f03
 _START = "2026-09-01T00:00:00+00:00"
 _T1 = "2026-11-30T00:00:00+00:00"  # +90d
 _T2 = "2027-02-28T00:00:00+00:00"  # +180d
+# Formgueltige Platzhalter: 40 Hex fuer Git, 64 Hex fuer SHA-256.
+_CODE_SHA = "c" * 40
+_EVAL_SHA = "e" * 64
 
 
 def _candidate() -> PreRegCandidate:
@@ -167,8 +170,8 @@ def test_activation_derives_t1_and_t2_from_the_sealed_offsets() -> None:
     activation = activate(
         _candidate(),
         t0_utc=_START,
-        research_code_sha="abc123",
-        evaluator_sha256="def456",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVAL_SHA,
         operator_approved=True,
     )
 
@@ -185,8 +188,8 @@ def test_activation_links_to_the_candidate_hash() -> None:
     activation = activate(
         candidate,
         t0_utc=_START,
-        research_code_sha="abc123",
-        evaluator_sha256="def456",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVAL_SHA,
         operator_approved=True,
     )
 
@@ -201,16 +204,33 @@ def test_activation_requires_explicit_operator_approval() -> None:
         activate(
             _candidate(),
             t0_utc=_START,
-            research_code_sha="abc",
-            evaluator_sha256="def",
+            research_code_sha=_CODE_SHA,
+            evaluator_sha256=_EVAL_SHA,
             operator_approved=False,
         )
 
 
-def test_activation_requires_both_shas() -> None:
-    """Ohne Code- und Evaluator-SHA ist nicht feststellbar, WAS gemessen hat."""
-    for code, evaluator in (("", "def"), ("abc", "")):
-        with pytest.raises(ValueError, match="mandatory"):
+@pytest.mark.parametrize(
+    ("code", "evaluator", "pattern"),
+    [
+        ("", _EVAL_SHA, "Git-SHA-1"),
+        ("abc", _EVAL_SHA, "Git-SHA-1"),
+        ("C" * 40, _EVAL_SHA, "Git-SHA-1"),
+        ("c" * 39, _EVAL_SHA, "Git-SHA-1"),
+        (_CODE_SHA, "", "SHA-256"),
+        (_CODE_SHA, "def", "SHA-256"),
+        (_CODE_SHA, "e" * 63, "SHA-256"),
+    ],
+)
+def test_activation_requires_well_formed_shas(code: str, evaluator: str, pattern: str) -> None:
+    """Nicht "nichtleer", sondern die richtige Form.
+
+    Frueher haette ``"abc"`` genuegt — und hinterher waere nicht mehr
+    feststellbar, WAS gemessen hat. Grossbuchstaben werden ebenfalls
+    abgewiesen, damit derselbe Wert nicht in zwei Schreibweisen existiert.
+    """
+    if True:
+        with pytest.raises(ValueError, match=pattern):
             activate(
                 _candidate(),
                 t0_utc=_START,
@@ -220,6 +240,31 @@ def test_activation_requires_both_shas() -> None:
             )
 
 
+def test_activation_refuses_a_naive_timestamp() -> None:
+    """UTC wird nicht geraten — ein verschobenes T0 verschiebt T1, T2 und das Sample."""
+    with pytest.raises(ValueError, match="zeitzonenlos"):
+        activate(
+            _candidate(),
+            t0_utc="2026-09-01T00:00:00",
+            research_code_sha=_CODE_SHA,
+            evaluator_sha256=_EVAL_SHA,
+            operator_approved=True,
+        )
+
+
+def test_activation_canonicalises_an_offset_to_utc() -> None:
+    """Zeitzonenbehaftet ist erlaubt — und wird auf UTC normiert."""
+    activation = activate(
+        _candidate(),
+        t0_utc="2026-09-01T02:00:00+02:00",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVAL_SHA,
+        operator_approved=True,
+    )
+
+    assert activation.t0_utc.startswith("2026-09-01T00:00:00+00:00")
+
+
 def test_an_already_active_record_cannot_be_activated_again() -> None:
     from dataclasses import replace
 
@@ -227,8 +272,8 @@ def test_an_already_active_record_cannot_be_activated_again() -> None:
         activate(
             replace(_candidate(), status=STATUS_ACTIVE),
             t0_utc=_START,
-            research_code_sha="abc",
-            evaluator_sha256="def",
+            research_code_sha=_CODE_SHA,
+            evaluator_sha256=_EVAL_SHA,
             operator_approved=True,
         )
 
@@ -240,8 +285,8 @@ def test_activation_does_not_mutate_the_candidate() -> None:
     activate(
         candidate,
         t0_utc=_START,
-        research_code_sha="abc",
-        evaluator_sha256="def",
+        research_code_sha=_CODE_SHA,
+        evaluator_sha256=_EVAL_SHA,
         operator_approved=True,
     )
 
@@ -363,8 +408,27 @@ def test_immature_at_t2_is_inconclusive_never_not_met() -> None:
     assert "NOT_MET" in " ".join(decision.reasons)
 
 
-def test_a_verdict_at_t1_closes_the_experiment() -> None:
+def test_a_recorded_verdict_closes_the_experiment() -> None:
     """Genau ein konfirmatorischer Lauf. Kein zweiter bei T2."""
+    decision = decide_window_action(
+        now_utc=_T2,
+        t1_utc=_T1,
+        t2_utc=_T2,
+        counts=_counts(300, 150),
+        n_valid_min=100,
+        cluster_min=50,
+        t1_outcome=ACTION_EVALUATE,
+        verdict_recorded=True,
+    )
+
+    assert decision.action == ACTION_CLOSED
+    assert not decision.may_evaluate
+
+
+def test_an_evaluate_without_a_verdict_does_not_close() -> None:
+    """Der Entschluss allein schliesst nicht — sonst waere ein Absturz terminal."""
+    from app.research.prereg_window import ACTION_RESUME_EVALUATION
+
     decision = decide_window_action(
         now_utc=_T2,
         t1_utc=_T1,
@@ -375,8 +439,8 @@ def test_a_verdict_at_t1_closes_the_experiment() -> None:
         t1_outcome=ACTION_EVALUATE,
     )
 
-    assert decision.action == ACTION_CLOSED
-    assert not decision.may_evaluate
+    assert decision.action == ACTION_RESUME_EVALUATION
+    assert decision.must_use_frozen_input
 
 
 @pytest.mark.parametrize(
