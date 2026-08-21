@@ -80,6 +80,72 @@ def _last_rejection(engine: PaperExecutionEngine) -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     "invalid",
+    [True, False, "0.1", float("nan"), float("inf"), float("-inf"), -0.1, 100.1],
+    ids=[
+        "true",
+        "false",
+        "string",
+        "nan",
+        "pos-inf",
+        "neg-inf",
+        "negative",
+        "above-one-hundred",
+    ],
+)
+def test_constructor_rejects_invalid_fee_pct_before_normalization(
+    tmp_path: Path, invalid: object
+) -> None:
+    with pytest.raises(ValueError, match="fee_pct"):
+        PaperExecutionEngine(
+            fee_pct=cast(float, invalid),
+            audit_log_path=str(tmp_path / "audit.jsonl"),
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [True, False, "0.1", float("nan"), float("inf"), float("-inf"), -0.1, 100.0],
+    ids=[
+        "true",
+        "false",
+        "string",
+        "nan",
+        "pos-inf",
+        "neg-inf",
+        "negative",
+        "one-hundred",
+    ],
+)
+def test_constructor_rejects_invalid_slippage_pct_before_normalization(
+    tmp_path: Path, invalid: object
+) -> None:
+    with pytest.raises(ValueError, match="slippage_pct"):
+        PaperExecutionEngine(
+            slippage_pct=cast(float, invalid),
+            audit_log_path=str(tmp_path / "audit.jsonl"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("fee_pct", "slippage_pct"),
+    [(0.0, 0.0), (100.0, 99.999)],
+    ids=["zero-boundaries", "upper-boundaries"],
+)
+def test_constructor_accepts_valid_fee_and_slippage_boundaries(
+    tmp_path: Path, fee_pct: float, slippage_pct: float
+) -> None:
+    engine = PaperExecutionEngine(
+        fee_pct=fee_pct,
+        slippage_pct=slippage_pct,
+        audit_log_path=str(tmp_path / "audit.jsonl"),
+    )
+
+    assert engine._fee_pct == fee_pct / 100.0
+    assert engine._slippage_pct == slippage_pct / 100.0
+
+
+@pytest.mark.parametrize(
+    "invalid",
     [True, False, "1", float("nan"), float("inf"), float("-inf"), 0.0, -1.0],
     ids=["true", "false", "string", "nan", "pos-inf", "neg-inf", "zero", "negative"],
 )

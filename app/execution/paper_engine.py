@@ -40,6 +40,7 @@ from app.execution.paper_finite_gate import (
     PaperExecutionNumberError,
     PaperFiniteGateMixin,
     build_fill_mutation_plan,
+    require_finite_number,
     validate_order_numbers,
 )
 from app.execution.phantom_filter import _DEFAULT_MAX_CLOSE_RETURN_PCT
@@ -283,6 +284,19 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
                 "PaperExecutionEngine: live_enabled=True is not allowed. "
                 "Use a live execution adapter instead."
             )
+        fee_pct = require_finite_number(
+            fee_pct,
+            field="fee_pct",
+            minimum=0.0,
+            maximum=100.0,
+        )
+        slippage_pct = require_finite_number(
+            slippage_pct,
+            field="slippage_pct",
+            minimum=0.0,
+            maximum=100.0,
+            maximum_inclusive=False,
+        )
         # Epoche v2: hartes Mutations-Gate für das Reset-Fenster. Bewusst als
         # Konstruktor-Snapshot (EXECUTION_PAPER_FROZEN wird beim Prozessstart
         # gelesen, nicht im Hot-Loop — get_settings() re-parst .env pro Call);
@@ -294,8 +308,8 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
         self._state_unverified = False
         self._epoch_id = "legacy"
         self._epoch_started_at_utc: str | None = None
-        self._fee_pct = fee_pct / 100
-        self._slippage_pct = slippage_pct / 100
+        self._fee_pct = fee_pct / 100.0
+        self._slippage_pct = slippage_pct / 100.0
         # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter Time-Stop.
         # Default LEER ⇒ AUS ⇒ heutiges Verhalten unverändert. Befund: chop_quiet
         # revertiert nach ~300s ins Negative, breakout_up läuft länger — also
