@@ -4,6 +4,7 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from httpx import ASGITransport
 
 from app.api.main import app
 from app.api.routers import dashboard as dashboard_mod
+from app.api.routers.dashboard_quality_cache import SingleFlightCache
 
 FIXED_NOW = datetime(2026, 8, 25, 12, 0, 0, tzinfo=UTC)
 
@@ -204,37 +206,37 @@ async def _fixed_hold_report() -> dict[str, Any]:
     return FIXED_REPORT
 
 
-def _reset_quality_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    dashboard_mod._quality_cache.update(
-        {
-            "at": 0.0,
-            "payload": None,
-            "generated_at_utc": None,
-            "compute_ms": None,
-            "stale_served_during_compute": False,
-        }
+class FakeClock:
+    def __init__(self, start: float = 100.0) -> None:
+        self.value = start
+
+    def monotonic(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
+def _reset_quality_state(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    now_utc: Callable[[], datetime] = lambda: FIXED_NOW,
+) -> SingleFlightCache:
+    cache = SingleFlightCache(
+        refresh=dashboard_mod._refresh_quality,
+        ttl_s=dashboard_mod._QUALITY_CACHE_TTL_S,
+        clock=clock,
+        now_utc=now_utc,
     )
-    monkeypatch.setattr(dashboard_mod, "_quality_lock", None)
-    monkeypatch.setattr(dashboard_mod, "_quality_lock_loop", None)
-    monkeypatch.setattr(dashboard_mod, "_quality_compute_task", None)
-    monkeypatch.setattr(dashboard_mod, "_quality_compute_task_loop", None)
+    monkeypatch.setattr(dashboard_mod, "_quality_cache_sf", cache)
+    return cache
 
 
 @pytest.fixture(autouse=True)
 def reset_quality_state(monkeypatch: pytest.MonkeyPatch) -> None:
     _reset_quality_state(monkeypatch)
     yield
-    dashboard_mod._quality_cache.update(
-        {
-            "at": 0.0,
-            "payload": None,
-            "generated_at_utc": None,
-            "compute_ms": None,
-            "stale_served_during_compute": False,
-        }
-    )
-    dashboard_mod._quality_compute_task = None
-    dashboard_mod._quality_compute_task_loop = None
 
 
 @pytest.fixture()
@@ -349,18 +351,21 @@ async def test_quality_endpoint_singleflight_empty_cache(
 async def test_quality_endpoint_serves_stale_while_revalidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _reset_quality_state(monkeypatch)
+    clock = FakeClock()
+    _reset_quality_state(monkeypatch, clock=clock.monotonic)
     monkeypatch.setattr(dashboard_mod, "_live_hold_report", _fixed_hold_report)
-    old_generated = "2026-08-25T11:59:00+00:00"
-    dashboard_mod._quality_cache.update(
-        {
-            "at": time.monotonic() - dashboard_mod._QUALITY_CACHE_TTL_S - 5.0,
-            "payload": {"marker": "old"},
-            "generated_at_utc": old_generated,
-            "compute_ms": 12.0,
-            "stale_served_during_compute": False,
-        }
-    )
+
+    monkeypatch.setattr(dashboard_mod, "_build_quality_payload", lambda _report: {"marker": "old"})
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        seeded_response = await client.get("/dashboard/api/quality")
+
+    assert seeded_response.status_code == 200
+    assert seeded_response.json()["marker"] == "old"
+    clock.advance(dashboard_mod._QUALITY_CACHE_TTL_S + 5.0)
+
     builder_started = threading.Event()
 
     def slow_builder(report: dict[str, Any]) -> dict[str, Any]:
@@ -371,8 +376,9 @@ async def test_quality_endpoint_serves_stale_while_revalidate(
 
     monkeypatch.setattr(dashboard_mod, "_build_quality_payload", slow_builder)
 
-    transport = ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first_task = asyncio.create_task(client.get("/dashboard/api/quality"))
         assert await asyncio.to_thread(builder_started.wait, 1.0)
 
@@ -388,7 +394,6 @@ async def test_quality_endpoint_serves_stale_while_revalidate(
     assert stale_elapsed < 0.2
     assert stale_payload["marker"] == "old"
     assert stale_payload["cache"]["stale"] is True
-    assert stale_payload["cache"]["generated_at_utc"] == old_generated
     assert stale_payload["cache"]["age_s"] > dashboard_mod._QUALITY_CACHE_TTL_S
 
     assert first_response.status_code == 200
@@ -416,8 +421,6 @@ def test_quality_endpoint_build_error_does_not_poison_cache(
         response = client.get("/dashboard/api/quality")
 
     assert response.status_code == 500
-    assert dashboard_mod._quality_cache["payload"] is None
-    assert dashboard_mod._quality_compute_task is None
 
     monkeypatch.setattr(dashboard_mod, "_build_quality_payload", lambda _report: {"marker": "ok"})
     with TestClient(app, raise_server_exceptions=False) as client:

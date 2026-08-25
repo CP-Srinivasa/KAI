@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
 from app.api.deps import get_document_repo, get_source_repo, get_source_repo_optional
+from app.api.routers.dashboard_quality_cache import SingleFlightCache
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -78,23 +79,9 @@ _hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
 _PROVENANCE_CACHE_TTL_S = 30.0
 _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
-# NEO-P-201/202: the quality endpoint full-scans paper/alert/loop audit JSONL
-# (trading_loop_audit ~27 MB) and had no top-level cache -> 2-4s on the Pi on
-# EVERY request, even repeats, and it is polled by ~6 components in parallel.
-# Cache the assembled response so repeat polls are served instantly; TTL matches
-# the inner _hold/_provenance caches it depends on.
+# Quality full-scans large audit JSONL; cache semantics live in
+# dashboard_quality_cache.py. TTL matches the inner hold/provenance caches.
 _QUALITY_CACHE_TTL_S = 20.0
-_quality_cache: dict[str, Any] = {
-    "at": 0.0,
-    "payload": None,
-    "generated_at_utc": None,
-    "compute_ms": None,
-    "stale_served_during_compute": False,
-}
-_quality_lock: asyncio.Lock | None = None
-_quality_lock_loop: asyncio.AbstractEventLoop | None = None
-_quality_compute_task: asyncio.Task[None] | None = None
-_quality_compute_task_loop: asyncio.AbstractEventLoop | None = None
 
 # Edge-window build parses both audit streams (trading_loop_audit ~27 MB), so the
 # Edge-Truth panel's 60 s poll must not re-parse every tick. Keyed by mode.
@@ -1211,107 +1198,19 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     return quality_payload
 
 
-def _quality_singleflight_lock() -> asyncio.Lock:
-    global _quality_lock, _quality_lock_loop
-    loop = asyncio.get_running_loop()
-    if _quality_lock is None or _quality_lock_loop is not loop:
-        _quality_lock = asyncio.Lock()
-        _quality_lock_loop = loop
-    return _quality_lock
-
-
-def _quality_cached_response(*, now: float, stale: bool) -> dict[str, Any]:
-    payload = cast(dict[str, Any], _quality_cache["payload"])
-    generated_at_utc = _quality_cache.get("generated_at_utc")
-    if not isinstance(generated_at_utc, str):
-        generated_at_utc = datetime.now(UTC).isoformat()
-    compute_ms_raw = _quality_cache.get("compute_ms")
-    compute_ms = float(compute_ms_raw) if isinstance(compute_ms_raw, (int, float)) else 0.0
-    response = dict(payload)
-    response["cache"] = {
-        "generated_at_utc": generated_at_utc,
-        "age_s": round(max(0.0, now - float(_quality_cache["at"])), 3),
-        "stale": stale,
-        "ttl_s": _QUALITY_CACHE_TTL_S,
-        "compute_ms": round(compute_ms, 3),
-    }
-    return response
-
-
-async def _refresh_quality_cache() -> None:
-    started = time.perf_counter()
+async def _refresh_quality() -> dict[str, Any]:
     report = await _live_hold_report()
-    quality_payload = await asyncio.to_thread(_build_quality_payload, report)
-    compute_ms = (time.perf_counter() - started) * 1000.0
-    generated_at_utc = datetime.now(UTC).isoformat()
-    lock = _quality_singleflight_lock()
-    async with lock:
-        stale_served = bool(_quality_cache.get("stale_served_during_compute"))
-        _quality_cache["payload"] = quality_payload
-        _quality_cache["at"] = time.monotonic()
-        _quality_cache["generated_at_utc"] = generated_at_utc
-        _quality_cache["compute_ms"] = compute_ms
-        _quality_cache["stale_served_during_compute"] = False
-    logger.info(
-        "dashboard_quality_computed compute_ms=%.0f stale_served=%s", compute_ms, stale_served
-    )
+    return await asyncio.to_thread(_build_quality_payload, report)
+
+
+_quality_cache_sf = SingleFlightCache(refresh=_refresh_quality, ttl_s=_QUALITY_CACHE_TTL_S)
 
 
 @router.get("/dashboard/api/quality", tags=["dashboard"])
 async def dashboard_quality_api() -> JSONResponse:
     """Return quality-bar metrics as JSON for the dashboard SPA."""
-    global _quality_compute_task, _quality_compute_task_loop
-    loop = asyncio.get_running_loop()
-    lock = _quality_singleflight_lock()
-    while True:
-        wait_task: asyncio.Task[None] | None = None
-        async with lock:
-            cache_now = time.monotonic()
-            cached_quality = _quality_cache.get("payload")
-            if (
-                cached_quality is not None
-                and (cache_now - float(_quality_cache["at"])) < _QUALITY_CACHE_TTL_S
-            ):
-                quality_payload = _quality_cached_response(now=cache_now, stale=False)
-                return JSONResponse(
-                    content=quality_payload,
-                    headers={"Cache-Control": "no-store, max-age=0"},
-                )
-
-            running_task = (
-                _quality_compute_task
-                if _quality_compute_task is not None
-                and _quality_compute_task_loop is loop
-                and not _quality_compute_task.done()
-                else None
-            )
-            if running_task is not None:
-                if cached_quality is not None:
-                    _quality_cache["stale_served_during_compute"] = True
-                    quality_payload = _quality_cached_response(now=cache_now, stale=True)
-                    return JSONResponse(
-                        content=quality_payload,
-                        headers={"Cache-Control": "no-store, max-age=0"},
-                    )
-                wait_task = running_task
-            else:
-                wait_task = asyncio.create_task(_refresh_quality_cache())
-                _quality_compute_task = wait_task
-                _quality_compute_task_loop = loop
-
-        assert wait_task is not None
-        try:
-            await wait_task
-        finally:
-            if wait_task.done():
-                async with lock:
-                    if _quality_compute_task is wait_task:
-                        _quality_compute_task = None
-                        _quality_compute_task_loop = None
-
-        # The task populated the cache. Re-enter the loop so every return path
-        # goes through the same cache metadata wrapper.
-        continue
+    payload = await _quality_cache_sf.get()
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @router.get("/dashboard/api/edge-window", tags=["dashboard"])

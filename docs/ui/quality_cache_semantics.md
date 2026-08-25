@@ -2,6 +2,8 @@
 
 `GET /dashboard/api/quality` keeps `Cache-Control: no-store`; the response body carries cache
 state so the frontend can render freshness without changing HTTP semantics.
+The generic single-flight/TTL implementation lives in
+`app/api/routers/dashboard_quality_cache.py`; `dashboard.py` only injects the quality refresh.
 
 Top-level `cache` fields:
 

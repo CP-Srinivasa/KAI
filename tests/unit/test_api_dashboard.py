@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routers import dashboard as dashboard_mod
 from app.api.routers.dashboard import _load_jsonl, router
+from app.api.routers.dashboard_quality_cache import SingleFlightCache
 from app.core.settings import (
     AlertSettings,
     AppSettings,
@@ -103,9 +104,16 @@ def _patch_artifacts(
             d / "research" / "prereg_verdicts.jsonl",
         ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
-        patch.dict(dashboard_mod._quality_cache, {"payload": None, "at": 0.0}),
-        # Wie _quality_cache: die TTL-Caches müssen mit den gepatchten Pfaden
-        # leer starten, sonst antwortet ein Test mit den Artefakten eines anderen.
+        patch.object(
+            dashboard_mod,
+            "_quality_cache_sf",
+            SingleFlightCache(
+                refresh=dashboard_mod._refresh_quality,
+                ttl_s=dashboard_mod._QUALITY_CACHE_TTL_S,
+            ),
+        ),
+        # Die TTL-Caches müssen mit den gepatchten Pfaden leer starten, sonst
+        # antwortet ein Test mit den Artefakten eines anderen.
         patch.dict(dashboard_mod._priority_gate_cache, {"payload": None, "at": 0.0}),
         patch.dict(dashboard_mod._n_overview_cache, {"payload": None, "at": 0.0}),
         patch.dict(dashboard_mod._operator_board_cache, {"live": None, "at": 0.0}),
