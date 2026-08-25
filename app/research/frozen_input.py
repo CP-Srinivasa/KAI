@@ -278,6 +278,25 @@ def write_frozen_artifact(
 
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"evaluation_input_{digest}.json"
+
+    # Ein Checkpoint traegt genau EINEN Datenschnitt. Die Revalidierung unten
+    # faengt "gleicher Hash, anderer Inhalt"; sie faengt NICHT den Fall daneben:
+    # eine zweite, abweichende Eingabe bekommt einen anderen Dateinamen, womit
+    # ``target.exists()`` falsch ist und beide Artefakte friedlich
+    # nebeneinanderliegen. Dann steht im Verzeichnis der physische Beleg zweier
+    # Einfrier-Versuche, ohne dass irgendwo ein Fehler entstanden waere — und
+    # welcher davon das Verdikt getragen hat, haengt allein daran, welcher Hash
+    # spaeter im Journal steht. Die Einmaligkeit gehoert an den Schreibvorgang.
+    foreign = sorted(
+        path.name for path in directory.glob("evaluation_input_*.json") if path.name != target.name
+    )
+    if foreign:
+        raise FrozenInputError(
+            f"{directory} enthaelt bereits ein anderes eingefrorenes Artefakt "
+            f"({', '.join(foreign)}) — ein Checkpoint hat genau einen Datenschnitt. "
+            "Ein zweiter Einfrier-Versuch ist ein Befund, kein Nebenprodukt."
+        )
+
     if target.exists():
         # Der Dateiname ist KEIN Beweis. Idempotent ist nur, was byte-identisch
         # ist; alles andere ist eine Beschaedigung und darf nicht als Erfolg
