@@ -37,7 +37,7 @@ __all__ = ["app"]
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
+app = typer.Typer(name="kai", help="KAI CLI (Alias `trading-bot`, veraltet)", no_args_is_help=True)
 console = Console()
 
 

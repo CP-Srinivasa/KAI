@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
 # Server instance
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("KAI Analyst Trading Bot")
+mcp = FastMCP("KAI")
 
 # ---------------------------------------------------------------------------
 # Register canonical read tools

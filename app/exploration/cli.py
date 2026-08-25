@@ -1,6 +1,6 @@
 """Standalone CLI for the exploration sandbox.
 
-Deliberately NOT registered into the production ``trading-bot`` Typer app — that
+Deliberately NOT registered into the production ``kai`` Typer app — that
 would make ``app/cli/main.py`` import the sandbox and break isolation. Run it
 directly:
 

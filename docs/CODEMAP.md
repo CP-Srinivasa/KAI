@@ -50,7 +50,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 
 ### Digest / CLI / API / Audit / Regime
 - `scripts/operator_digest.py` (tägl. Telegram-Digest; `collect_*`→`compose_digest_message`; inkl. `collect_edge_discovery` = jüngster `artifacts/research/edge_search_*.json` als 🔎-Sektion) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`
-- `app/cli/main.py` → Typer-Entry (Gruppen: ingest / pipeline / signals / alerts / analyze / trading / audit / learning)
+- `app/cli/main.py` → Typer-Entry, Console-Scripts `kai` (kanonisch, D-236) + `trading-bot` (veralteter Alias) (Gruppen: ingest / pipeline / signals / alerts / analyze / trading / audit / learning)
 - `app/api/routers/` → `dashboard`, `signals`, `premium_signals`, `operator`, `alerts`, `health`, `tradingview`, `kyt`, `agents` …
 - `app/api/main.py` → `create_app`; **Middleware-Reihenfolge ist heikel**: `GZipMiddleware` MUSS als erstes registriert (= innerste Schicht) bleiben, sonst streamen die `BaseHTTPMiddleware`-Schichten (RequestGovernance/SecurityHeaders) die Antwort und `minimum_size` verpufft
 - `app/observability/operator_board_live.py` → `build_live_board`/`open_preregs`/`curated_is_stale` (rein, kein I/O) — LIVE-Hälfte von `/dashboard/api/operator-board`: `prereg_ledger.jsonl` minus `prereg_verdicts.jsonl`, ergänzt um Reife + terminale Resolution aus `research/prereg_maturity.py`. Der Reife-Reader vertraut Resolutionen ausschließlich nach Vollverifikation von `artifacts/truth/attestation_ledger.jsonl`; `RESOLVED` verschwindet aus offen, kaputte/widersprüchliche Evidenz bleibt sichtbar als HOLD. ⚠ `INSUFFICIENT_N` ist NICHT terminal; Stale-Alarm nur bei OFFENEN kuratierten Punkten, Chronik (`status: done`) veraltet nie

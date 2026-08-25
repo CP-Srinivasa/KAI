@@ -249,8 +249,11 @@ def create_app() -> FastAPI:
     is_production = settings.env.lower() == "production"
 
     app = FastAPI(
-        title="AI Analyst Trading Bot",
-        description="Modular AI-powered market intelligence platform",
+        title="KAI",
+        description=(
+            "KAI — Research-/Truth-Plattform für auditierbare Signal-Falsifikation "
+            "(Analyse, Paper-Execution, Audit)."
+        ),
         version="0.1.0",
         lifespan=lifespan,
         # Disable interactive API docs in production — reduces attack surface

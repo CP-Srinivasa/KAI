@@ -1,5 +1,5 @@
 # ============================================================
-# AI Analyst Trading Bot - Keyword Monitor List
+# KAI - Keyword Monitor List
 # Format: one keyword/phrase per line, # = comment
 # Aliases defined in entity_aliases.yml
 # ============================================================

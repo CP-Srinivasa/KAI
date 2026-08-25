@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
-    { name = "AI Analyst Trading Bot Team" }
+    { name = "KAI" }
 ]
 keywords = ["trading", "ai", "crypto", "finance", "analysis", "monitoring"]
 
@@ -86,7 +86,8 @@ dev = [
 ]
 
 [project.scripts]
-trading-bot = "app.cli.main:app"
+kai = "app.cli.main:app"          # kanonischer Entry (D-236)
+trading-bot = "app.cli.main:app"  # veralteter Alias — traegt Runbooks/Units bis zur Umstellung
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

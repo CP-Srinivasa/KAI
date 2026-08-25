@@ -13,7 +13,7 @@ This package is fully isolated and reversible (`rm -rf app/exploration`):
 - No production runtime module imports it; it imports only
   `app.exploration` / `app.security` / `app.core`.
 - It has its own settings (`ExplorationSettings`, env prefix `EXPLORATION_`) and
-  its own CLI — it is **not** wired into the production `trading-bot` CLI.
+  its own CLI — it is **not** wired into the production `kai` CLI.
 - Enforced by `tests/unit/test_exploration_import_isolation.py`.
 
 ## Hard lines (always in force, not covered by the §5 override)

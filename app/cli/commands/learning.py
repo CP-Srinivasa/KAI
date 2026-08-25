@@ -1,19 +1,19 @@
 """Learning-specific CLI commands.
 
-Provides the ``learning`` command group (``trading-bot learning <cmd>``).
+Provides the ``learning`` command group (``kai learning <cmd>``).
 All commands are read-only or operator-gated writes against the hash-chained
 parameter journal at ``artifacts/learning/parameter_journal.jsonl``.
 
 Operator workflow:
 
-  trading-bot learning list
-  trading-bot learning show pv_<version_id>
-  trading-bot learning approve <path> pv_<id> --operator <name> [--notes ...]
-  trading-bot learning reject  <path> pv_<id> --operator <name> --reason ...
-  trading-bot learning rollback <path> pv_<id> --operator <name> --notes ...
-  trading-bot learning verify
-  trading-bot learning active   [--path PATH]
-  trading-bot learning history  PATH
+  kai learning list
+  kai learning show pv_<version_id>
+  kai learning approve <path> pv_<id> --operator <name> [--notes ...]
+  kai learning reject  <path> pv_<id> --operator <name> --reason ...
+  kai learning rollback <path> pv_<id> --operator <name> --notes ...
+  kai learning verify
+  kai learning active   [--path PATH]
+  kai learning history  PATH
 """
 
 from __future__ import annotations
