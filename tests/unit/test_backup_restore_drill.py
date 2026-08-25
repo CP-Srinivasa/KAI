@@ -36,10 +36,13 @@ def _directives(path: Path) -> dict[str, dict[str, str]]:
 def test_backup_artifacts_timer_contract() -> None:
     timer = _directives(SYSTEMD / "kai-backup-artifacts.timer")
 
-    assert timer["Timer"]["OnCalendar"] == "*-*-* 03:40:00"
+    # Der Timer existierte schon (03:47 UTC, RandomizedDelay, kein Requires= — #414);
+    # er war auf der Pi nur nie ENABLED. Deshalb bleibt die Datei unveraendert.
+    assert timer["Timer"]["OnCalendar"] == "*-*-* 03:47:00"
     assert timer["Timer"]["Persistent"] == "true"
-    assert timer["Timer"]["AccuracySec"] == "120s"
-    assert timer["Timer"]["Unit"] == "kai-backup-artifacts.service"
+    assert timer["Timer"]["AccuracySec"] == "10min"
+    assert timer["Timer"]["RandomizedDelaySec"] == "15min"
+    assert "Requires" not in timer.get("Unit", {}), "Timer-Requires-Kaskade (#414)"
     assert timer["Install"]["WantedBy"] == "timers.target"
 
 
