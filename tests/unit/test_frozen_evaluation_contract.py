@@ -491,6 +491,9 @@ def _decide(root: Path, candidate, activation, now: str, rows=None):
         root=root,
         repo_root=REPO,
         rows_loader=(lambda: rows) if rows is not None else _ExplodingLoader(),
+        # Der Producer-Guard hat eigene Tests; hier wuerde er am dreckigen
+        # Entwickler-Baum scheitern statt an dem, was gemessen werden soll.
+        runtime_guard=lambda **_kw: None,
     )
 
 
@@ -614,26 +617,35 @@ def test_a_journal_evaluate_without_a_hash_cannot_be_resumed(tmp_path: Path) -> 
 # ── Auswertung ──────────────────────────────────────────────────────────────
 
 
-def _evaluate(root: Path, activation, plan, now=_T1, *, head=None):
-    import app.research.evaluator_identity as identity
+def _evaluate(root: Path, activation, plan, now=_T1):
+    """Werten mit neutralisierter Code-Bindung.
+
+    Gepatcht wird der Name IM auswertenden Modul, nicht im Herkunftsmodul:
+    ``prereg_evaluation`` importiert ``assert_runtime_matches`` auf Modulebene,
+    also zeigt sein Name nach dem Import nicht mehr auf das Original. Ein Patch
+    an ``evaluator_identity`` liefe wirkungslos ins Leere — und der Test saehe
+    aus, als sei die Bindung abgeschaltet, waehrend sie in Wahrheit lief.
+
+    Die Bindung selbst hat eigene Tests; hier soll die Auswertung geprueft
+    werden, nicht der Checkout-Zustand des Testlaeufers.
+    """
+    import app.research.prereg_evaluation as evaluation
 
     bundle = evaluator_bundle_sha256(REPO, decider_name="rsi_reentry_volume_confirmed")
-    original = identity.assert_runtime_matches
+    original = evaluation.assert_runtime_matches
 
     def _stub(**kwargs):
-        # Die Bindung selbst hat eigene Tests; hier soll die Auswertung
-        # geprueft werden, nicht der Checkout-Zustand des Testlaeufers.
         assert kwargs["research_code_sha"] == _CODE_SHA
         assert kwargs["evaluator_sha256"] == _EVAL_SHA
         assert bundle
 
-    identity.assert_runtime_matches = _stub  # type: ignore[assignment]
+    evaluation.assert_runtime_matches = _stub  # type: ignore[assignment]
     try:
         return run_sealed_evaluation(
             plan=plan, activation=activation, root=root, repo_root=REPO, now_utc=now
         )
     finally:
-        identity.assert_runtime_matches = original  # type: ignore[assignment]
+        evaluation.assert_runtime_matches = original  # type: ignore[assignment]
 
 
 def test_the_sealed_evaluator_takes_no_research_parameters() -> None:

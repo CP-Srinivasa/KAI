@@ -141,6 +141,18 @@ def _require_utc(timestamp_utc: str, field: str) -> str:
     return parsed.astimezone(UTC).isoformat()
 
 
+def _expected_slots(start_ms: int, cutoff_ms: int, timeframe_ms: int, horizon: int) -> set[int]:
+    """Die Kerzen, die ein vollstaendig beobachtetes Label tragen KOENNEN.
+
+    Ausgeschrieben als Menge, nicht als Anzahl: nur so laesst sich pruefen, ob
+    die gelieferten Zeilen wirklich auf dem Raster liegen.
+    """
+    last_signal = cutoff_ms - horizon * timeframe_ms
+    if last_signal < start_ms:
+        return set()
+    return set(range(start_ms, last_signal + 1, timeframe_ms))
+
+
 def _to_epoch_ms(timestamp_utc: str) -> int:
     return int(datetime.fromisoformat(timestamp_utc).timestamp() * 1000)
 
@@ -226,25 +238,56 @@ def build_frozen_dataset(
     if horizon < 1:
         raise FrozenDatasetError("horizon muss >= 1 sein")
 
-    # Die letzten ``horizon`` Kerzen koennen kein vollstaendig beobachtetes
-    # Label mehr tragen; sie gehoeren nicht in die Erwartung.
-    window_ms = _to_epoch_ms(cutoff) - _to_epoch_ms(start)
-    bars_expected = max(0, window_ms // timeframe_ms - horizon)
+    # Das erwartete Raster, ausgeschrieben. Nicht "wie viele Kerzen passen ins
+    # Fenster", sondern WELCHE — nur so ist Abdeckung eine Aussage ueber das
+    # Raster statt ueber eine Anzahl.
+    #
+    # Die letzten ``horizon`` Kerzen koennen kein vollstaendig beobachtetes Label
+    # mehr tragen und gehoeren nicht in die Erwartung.
+    start_ms = _to_epoch_ms(start)
+    cutoff_ms = _to_epoch_ms(cutoff)
+    expected_slots = _expected_slots(start_ms, cutoff_ms, timeframe_ms, horizon)
+    bars_expected = len(expected_slots)
 
     panels: list[FrozenSymbolPanel] = []
     for symbol in symbols:
         frozen_rows: list[FrozenRow] = []
+        seen_slots: set[int] = set()
         for index, row in enumerate(rows_by_symbol.get(symbol, ())):
             where = f"{symbol}[{index}]"
             signal_at = _require_utc(row.signal_timestamp_utc, f"{where}.signal_timestamp_utc")
             exit_at = _require_utc(row.label_exit_utc, f"{where}.label_exit_utc")
-            if exit_at <= signal_at:
-                raise FrozenDatasetError(f"{where}: label_exit_utc liegt nicht nach dem Signal")
+            signal_ms = _to_epoch_ms(signal_at)
+            exit_ms = _to_epoch_ms(exit_at)
+
+            # Der Ausstieg gehoert zur versiegelten Konvention, nicht irgendwohin
+            # zwischen Signal und Cutoff: Einstieg zum OPEN der Folgekerze,
+            # Ausstieg zum CLOSE nach ``horizon`` Kerzen. Ohne diese Pruefung
+            # koennte eine Zeile ein Label ueber eine ganz andere Haltedauer
+            # tragen und trotzdem korrekt gehasht werden.
+            if exit_ms - signal_ms != horizon * timeframe_ms:
+                raise FrozenDatasetError(
+                    f"{where}: label_exit_utc liegt {(exit_ms - signal_ms) / timeframe_ms:g} "
+                    f"Kerzen nach dem Signal, versiegelt sind {horizon}."
+                )
+            # Off-grid faellt hier auf: ein Zeitstempel, der nicht auf dem
+            # Kerzenraster liegt, ist keine Kerze dieses Timeframes.
+            if (signal_ms - start_ms) % timeframe_ms != 0:
+                raise FrozenDatasetError(
+                    f"{where}: {signal_at} liegt nicht auf dem {timeframe_ms}ms-Raster ab T0."
+                )
+
             # Das Fenster ist eine Aussage ueber Beobachtbarkeit: das Label muss
             # bis zum Checkpoint VOLLSTAENDIG vorgelegen haben, nicht nur das
             # Signal.
-            if signal_at < start or exit_at > cutoff:
+            if signal_ms < start_ms or exit_ms > cutoff_ms:
                 continue
+            if signal_ms in seen_slots:
+                raise FrozenDatasetError(
+                    f"{where}: die Kerze {signal_at} kommt zweimal vor — ein Slot, eine Zeile."
+                )
+            seen_slots.add(signal_ms)
+
             frozen_rows.append(
                 FrozenRow(
                     signal_timestamp_utc=signal_at,
@@ -258,18 +301,19 @@ def build_frozen_dataset(
             )
         frozen_rows.sort(key=lambda r: (r.signal_timestamp_utc, r.label_exit_utc))
 
-        # Die Frozen-Grenze mechanisch sichern: erwartet wird der VOLLSTAENDIGE
-        # Schnitt. Ein Lader, der nur feuernde Zeilen liefert, faellt hier auf —
-        # er laege um Groessenordnungen unter der Schranke.
+        # Die Frozen-Grenze mechanisch sichern: gezaehlt wird der Schnitt der
+        # vorhandenen Slots mit den ERWARTETEN. Eine blosse Zahl verschiedener
+        # Zeitstempel bewiese nichts — zwanzig Werte im Fuenfminutentakt saehen
+        # aus wie zwanzig Stunden.
         coverage = SymbolCoverage(
             bars_expected=bars_expected,
-            bars_present=len({row.signal_timestamp_utc for row in frozen_rows}),
+            bars_present=len(seen_slots & expected_slots),
         )
         if bars_expected and coverage.ratio < min_coverage:
             raise FrozenDatasetError(
-                f"{symbol}: {coverage.bars_present} von {bars_expected} Kerzen "
-                f"({coverage.ratio:.1%}) — unter {min_coverage:.0%}. Erwartet wird "
-                "der vollstaendige OOS-Schnitt, nicht nur die feuernden Zeilen."
+                f"{symbol}: {coverage.bars_present} von {bars_expected} Kerzen des "
+                f"Rasters ({coverage.ratio:.1%}) — unter {min_coverage:.0%}. Erwartet "
+                "wird der vollstaendige OOS-Schnitt, nicht nur die feuernden Zeilen."
             )
 
         # Auch ein Symbol ohne gueltige Zeile bleibt Mitglied: DATA_UNAVAILABLE

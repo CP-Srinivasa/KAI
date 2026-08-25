@@ -57,6 +57,7 @@ from typing import Any
 
 from app.analysis.features.feature_matrix import FeatureRow
 from app.market_data.kline_windows import interval_to_ms
+from app.research.evaluator_identity import assert_runtime_matches
 from app.research.exclusive_lock import exclusive_lock
 from app.research.frozen_dataset import (
     FrozenEvaluationDataset,
@@ -595,16 +596,37 @@ def decide_and_freeze(
     root: Path,
     repo_root: Path,
     rows_loader: Callable[[], Mapping[str, Sequence[FrozenRow]]],
+    runtime_guard: Callable[..., None] = assert_runtime_matches,
 ) -> tuple[CheckpointPlan, MaturityCounts | None]:
     """Plan aus den Journalen; Daten NUR, wenn wirklich unentschieden.
 
     ``rows_loader`` wird auf den Pfaden CLOSED, WAIT und RESUME nicht aufgerufen.
     Das macht "eine Wiederaufnahme benutzt keine neuen Daten" zu einer Aussage
     ueber den Weg statt ueber den Ausgang.
+
+    ``runtime_guard`` existiert als Parameter, damit Tests ihn gezielt scheitern
+    lassen koennen — in Produktion bleibt die Vorgabe. Er laeuft VOR dem Lader:
+    ein dreckiger Producer-Baum darf gar nicht erst Daten erzeugen.
     """
     plan = plan_checkpoint(now_utc=now_utc, activation=activation, root=root)
     if plan.action != PLAN_UNDECIDED:
         return plan, None
+
+    # DER Producer-Guard. Er stand bisher nur im Auswertungspfad — und liess damit
+    # genau die Luecke offen, wegen der es ihn gibt:
+    #
+    #     tracked Producer-Datei aendern -> rows_loader() liefert einen ANDEREN
+    #     Datensatz -> dataset_sha256 bindet die falschen Bytes korrekt ->
+    #     Arbeitsbaum wieder saeubern -> die spaetere Auswertung meldet PASS.
+    #
+    # Der eingefrorene Schnitt ist dann beweisbar konsistent und trotzdem falsch.
+    # Deshalb hier, VOR dem Universum, VOR dem Lader, VOR dem Datensatzbau.
+    runtime_guard(
+        repo_root=repo_root,
+        research_code_sha=activation.research_code_sha,
+        evaluator_sha256=activation.evaluator_sha256,
+        decider_name=candidate.hypothesis,
+    )
 
     checkpoint = plan.checkpoint or CHECKPOINT_T1
     sha = activation_sha256(activation)
@@ -727,10 +749,8 @@ def run_sealed_evaluation(
 
     contract = body["resolved_contract"]
 
-    # Der laufende Code muss der versiegelte sein — sonst ist es ein anderes
-    # Experiment, kein schwaecheres Ergebnis.
-    from app.research.evaluator_identity import assert_runtime_matches
-
+    # Zweite Bindung: derselbe Guard nochmals unmittelbar vor der Rechnung.
+    # Zwischen Freeze und Auswertung koennen Tage liegen.
     assert_runtime_matches(
         repo_root=repo_root,
         research_code_sha=body["research_code_sha"],

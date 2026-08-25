@@ -34,6 +34,7 @@ from app.research.prereg_candidate import activate, build_rsi_reentry_volume_can
 from app.research.prereg_evaluation import (
     SealedEvaluationError,
     VerdictRecord,
+    decide_and_freeze,
     load_verdicts,
     plan_checkpoint,
     record_verdict,
@@ -60,14 +61,17 @@ _T1 = "2026-09-02T00:00:00+00:00"
 _DECIDER = "rsi_reentry_volume_confirmed"
 
 
-def _activation():
-    candidate = replace(
+def _candidate():
+    return replace(
         build_rsi_reentry_volume_candidate(_UNIVERSE["universe_sha256"], len(_SYMBOLS)),
         t1_offset_days=1,
         t2_offset_days=2,
     )
+
+
+def _activation():
     return activate(
-        candidate,
+        _candidate(),
         t0_utc=_T0,
         research_code_sha="c" * 40,
         evaluator_sha256="e" * 64,
@@ -195,14 +199,16 @@ def test_the_full_cut_passes_and_records_its_coverage() -> None:
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS[:1],
-        rows_by_symbol={_SYMBOLS[0]: [_row(hour) for hour in range(20)]},
+        rows_by_symbol={_SYMBOLS[0]: [_row(hour) for hour in range(21)]},
         timeframe_ms=_HOUR_MS,
         horizon=4,
     )
 
     coverage = dataset.panels[0].coverage
-    assert coverage.bars_expected == 20
-    assert coverage.bars_present == 20
+    # 21, nicht 20: die Kerze bei exakt ``cutoff - horizon*dt`` hat ihren
+    # Ausstieg genau auf dem Cutoff und ist damit vollstaendig beobachtet.
+    assert coverage.bars_expected == 21
+    assert coverage.bars_present == 21
     assert coverage.ratio >= MIN_BAR_COVERAGE
 
 
@@ -213,12 +219,12 @@ def test_a_real_provider_gap_still_passes() -> None:
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS[:1],
-        rows_by_symbol={_SYMBOLS[0]: [_row(hour) for hour in range(20) if hour != 7]},
+        rows_by_symbol={_SYMBOLS[0]: [_row(hour) for hour in range(21) if hour != 7]},
         timeframe_ms=_HOUR_MS,
         horizon=4,
     )
 
-    assert dataset.panels[0].coverage.bars_present == 19
+    assert dataset.panels[0].coverage.bars_present == 20
 
 
 # ── 5. T2 nur nach einer Verlaengerung an T1 ────────────────────────────────
@@ -383,14 +389,181 @@ def test_the_same_lock_serves_every_writer() -> None:
     assert "O_EXCL" not in source, "die Mechanik gehoert an genau eine Stelle"
 
 
-def test_the_runbook_covers_every_lock_that_exists() -> None:
-    """Ich habe zwei Locks hinzugefuegt — das Runbook kannte nur einen.
+def test_the_runbook_separates_recovery_by_lock_kind() -> None:
+    """Erwaehnung ist keine Semantik.
 
-    Eine Recovery-Anleitung, die zwei von drei Faellen nicht erwaehnt, ist
-    schlimmer als keine: sie erweckt den Eindruck der Vollstaendigkeit.
+    Die erste Fassung nannte alle drei Locks und verlangte danach fuer jeden
+    "Checkpoint aus dem Pfad" plus Artefaktzaehlung — beides gibt es bei den
+    Journal-Locks gar nicht. Eine Recovery-Anleitung, die fuer zwei von drei
+    Faellen das Falsche sagt, ist schlimmer als eine, die sie verschweigt.
     """
     runbook = (REPO / "docs" / "runbooks" / "freeze_lock_recovery.md").read_text(encoding="utf-8")
 
     for lock in (".freeze.lock", ".checkpoints.jsonl.lock", ".verdicts.jsonl.lock"):
         assert lock in runbook, f"{lock} fehlt im Recovery-Runbook"
+    for kind in ("FROZEN_PUBLISH", "CHECKPOINT_JOURNAL", "VERDICT_JOURNAL"):
+        assert kind in runbook, f"{kind} ist keine eigene Lock-Art im Runbook"
     assert "exclusive_lock.py" in runbook, "die gemeinsame Mechanik gehoert benannt"
+
+    # Die Artefaktzaehlung darf NUR im Freeze-Teil stehen.
+    freeze_part = runbook[runbook.index("## Teil B1") : runbook.index("## Teil B2")]
+    journal_parts = runbook[runbook.index("## Teil B2") : runbook.index("## Entfernen")]
+    assert "evaluation_input_*.json" in freeze_part
+    assert "evaluation_input_*.json" not in journal_parts, (
+        "Journal-Locks haben kein Checkpoint-Verzeichnis mit Artefakten"
+    )
+    assert "erfindet ihn" in runbook, "der fehlende Checkpoint im Pfad gehoert benannt"
+
+
+def test_the_runbook_audits_intent_and_outcome_separately() -> None:
+    """Ein Eintrag VOR dem Entfernen beweist die Absicht, nicht das Ergebnis.
+
+    Scheitert das ``rm``, staende im Journal dasselbe wie nach einem geglueckten
+    Lauf — und "Eintrag da, Lock weg" waere nicht mehr aufloesbar zwischen
+    "dieser Versuch hat ihn entfernt" und "ein spaeterer Vorgang war es".
+    """
+    runbook = (REPO / "docs" / "runbooks" / "freeze_lock_recovery.md").read_text(encoding="utf-8")
+
+    for event in ("RECOVERY_PREPARED", "RECOVERY_COMPLETED", "RECOVERY_FAILED"):
+        assert event in runbook, f"{event} fehlt"
+    for field in ("attempt_id", "lock_kind", "lock_path", "removed", "completed_at_utc"):
+        assert field in runbook, f"Auditfeld {field} fehlt"
+    assert "`null`" in runbook, "checkpoint muss bei Journal-Locks nullable sein"
+
+
+# ── Der Producer-Guard laeuft VOR dem Lader ─────────────────────────────────
+
+
+def test_a_failing_runtime_guard_stops_before_any_data_is_read(tmp_path: Path) -> None:
+    """Der Angriff, den der Guard an seiner alten Stelle offen liess.
+
+    Er stand nur im Auswertungspfad. Damit war moeglich::
+
+        tracked Producer-Datei aendern -> rows_loader() liefert einen ANDEREN
+        Datensatz -> dataset_sha256 bindet die falschen Bytes KORREKT ->
+        Arbeitsbaum wieder saeubern -> die spaetere Auswertung meldet PASS.
+
+    Der eingefrorene Schnitt waere beweisbar konsistent und trotzdem falsch.
+    Geprueft wird deshalb nicht, dass der Guard existiert, sondern dass der
+    Freeze-Pfad ihn aufruft, BEVOR er irgendetwas liest.
+    """
+    activation = _activation()
+    root = tmp_path / "prereg"
+    initialise_activation(root, activation)
+    sha = read_active(root)
+    calls: list[int] = []
+
+    def _loader():
+        calls.append(1)
+        return {}
+
+    def _failing_guard(**_kwargs):
+        raise EvaluatorIdentityError("der Checkout traegt unversionierte Aenderungen")
+
+    with pytest.raises(EvaluatorIdentityError):
+        decide_and_freeze(
+            now_utc=activation.t1_utc,
+            candidate=_candidate(),
+            activation=activation,
+            root=root,
+            repo_root=REPO,
+            rows_loader=_loader,
+            runtime_guard=_failing_guard,
+        )
+
+    assert calls == [], "der Lader wurde trotz gescheitertem Guard aufgerufen"
+    assert list((root / sha / "frozen" / "T1").glob("*.json")) == []
+    assert (root / sha / "checkpoints.jsonl").read_text(encoding="utf-8") == ""
+    assert (root / sha / "verdicts.jsonl").read_text(encoding="utf-8") == ""
+
+
+def test_the_guard_is_the_default_not_an_opt_in() -> None:
+    """Ein Guard, den man anfordern muss, ist keiner.
+
+    Der Parameter existiert nur, damit Tests ihn gezielt scheitern lassen
+    koennen — die Vorgabe ist die echte Pruefung.
+    """
+    import inspect
+
+    from app.research.evaluator_identity import assert_runtime_matches
+    from app.research.prereg_evaluation import decide_and_freeze as production
+
+    assert (
+        inspect.signature(production).parameters["runtime_guard"].default is assert_runtime_matches
+    )
+
+
+# ── Abdeckung ist eine Aussage ueber das RASTER ─────────────────────────────
+
+
+def test_twenty_timestamps_off_the_grid_are_not_twenty_bars() -> None:
+    """Der Gegenbeweis zur ersten Fassung.
+
+    Sie zaehlte verschiedene Zeitstempel. Zwanzig Werte im Fuenfminutentakt
+    ergaeben damit volle Abdeckung eines Zwanzig-Stunden-Rasters, obwohl fast
+    jede Stunde fehlt.
+    """
+    start = datetime.fromisoformat(_T0)
+    five_minute_ticks = [
+        FrozenRow(
+            signal_timestamp_utc=(start + timedelta(minutes=5 * i)).isoformat(),
+            label_exit_utc=(start + timedelta(minutes=5 * i, hours=4)).isoformat(),
+            features={"rsi_14": 50.0},
+            label_bps=1.0,
+        )
+        for i in range(20)
+    ]
+
+    with pytest.raises(FrozenDatasetError, match="nicht auf dem"):
+        build_frozen_dataset(
+            checkpoint="T1",
+            t0_utc=_T0,
+            cutoff_utc=_T1,
+            sealed_symbols=_SYMBOLS[:1],
+            rows_by_symbol={_SYMBOLS[0]: five_minute_ticks},
+            timeframe_ms=_HOUR_MS,
+            horizon=4,
+        )
+
+
+def test_a_label_over_the_wrong_horizon_is_refused() -> None:
+    """``signal < exit <= cutoff`` genuegt nicht.
+
+    Ohne diese Pruefung koennte eine Zeile ein Label ueber eine ganz andere
+    Haltedauer tragen und trotzdem korrekt gehasht werden — der Datensatz waere
+    in sich konsistent und wuerde etwas anderes messen als versiegelt.
+    """
+    start = datetime.fromisoformat(_T0)
+    wrong = FrozenRow(
+        signal_timestamp_utc=start.isoformat(),
+        label_exit_utc=(start + timedelta(hours=6)).isoformat(),
+        features={"rsi_14": 50.0},
+        label_bps=1.0,
+    )
+
+    with pytest.raises(FrozenDatasetError, match="versiegelt sind 4"):
+        build_frozen_dataset(
+            checkpoint="T1",
+            t0_utc=_T0,
+            cutoff_utc=_T1,
+            sealed_symbols=_SYMBOLS[:1],
+            rows_by_symbol={_SYMBOLS[0]: [wrong]},
+            timeframe_ms=_HOUR_MS,
+            horizon=4,
+        )
+
+
+def test_the_same_slot_twice_is_refused() -> None:
+    """Ein Slot, eine Zeile — sonst liesse sich Abdeckung durch Duplikate erkaufen."""
+    rows = [_row(hour) for hour in range(21)] + [_row(0)]
+
+    with pytest.raises(FrozenDatasetError, match="kommt zweimal vor"):
+        build_frozen_dataset(
+            checkpoint="T1",
+            t0_utc=_T0,
+            cutoff_utc=_T1,
+            sealed_symbols=_SYMBOLS[:1],
+            rows_by_symbol={_SYMBOLS[0]: rows},
+            timeframe_ms=_HOUR_MS,
+            horizon=4,
+        )
