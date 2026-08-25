@@ -99,8 +99,11 @@ from app.research.primary_confirmatory import (
     evaluate_primary,
     maturity_counts,
 )
-from app.research.runner import PRIMARY_CONFIRMATORY_NAME, rsi_reentry_volume_confirmed
 from app.research.samples import Decider
+from app.research.sealed_hypothesis import (
+    PRIMARY_CONFIRMATORY_NAME,
+    rsi_reentry_volume_confirmed,
+)
 
 VERDICT_SCHEMA_VERSION = "kai/prereg-verdict/v1"
 

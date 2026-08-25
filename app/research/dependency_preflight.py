@@ -97,7 +97,8 @@ async def measure(
     horizon: int,
 ) -> FrequencyReport:
     from app.market_data.binance_adapter import BinanceAdapter
-    from app.research.runner import build_fetch, rsi_reentry_volume_confirmed
+    from app.research.runner import build_fetch
+    from app.research.sealed_hypothesis import rsi_reentry_volume_confirmed
 
     fetch = build_fetch(BinanceAdapter().get_ohlcv)
     end_ms = int(datetime.now(UTC).timestamp() * 1000)
