@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,6 +45,7 @@ from app.api.routers import (
     kai,
     kyt,
     ln_control,
+    metrics,
     node_blitz,
     operator,
     premium_signals,
@@ -68,6 +70,8 @@ from app.messaging.context_builder import make_context_provider
 from app.messaging.telegram_bot import TelegramOperatorBot, TelegramPoller
 from app.messaging.text_intent import TextIntentProcessor
 from app.messaging.voice_transcriber import VoiceTranscriber
+from app.observability.event_loop_lag import EventLoopLagSampler
+from app.observability.http_latency import install_http_latency_middleware
 from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
 from app.security.auth import setup_auth
@@ -232,12 +236,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             dry_run=op.telegram_dry_run,
         )
 
+    app.state.event_loop_lag_sampler = EventLoopLagSampler()
+    app.state.event_loop_lag_task = app.state.event_loop_lag_sampler.start()
+
     try:
         yield
     finally:
         # NEO-F-001: getattr-based teardown so a start()-exception earlier in
         # lifespan (before a later attribute is ever assigned) does not mask
         # the original error with a misleading AttributeError in finally.
+        _lag_task = getattr(app.state, "event_loop_lag_task", None)
+        if _lag_task is not None:
+            _lag_task.cancel()
+            try:
+                await _lag_task
+            except asyncio.CancelledError:
+                pass
         _poller = getattr(app.state, "telegram_poller", None)
         if _poller is not None:
             _poller.stop()
@@ -295,6 +309,7 @@ def create_app() -> FastAPI:
     # Tokens stehen in Headern, nie im Body. Zugang ist ohnehin CF-Access-/
     # Bearer-gated (Single-Operator).
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+    install_http_latency_middleware(app)
 
     # CORS — origins controlled via APP_CORS_ALLOWED_ORIGINS (comma-separated env var)
     app.add_middleware(
@@ -378,6 +393,7 @@ def create_app() -> FastAPI:
     app.include_router(truth_oracle.router)
     app.include_router(ln_control.router)
     app.include_router(node_blitz.router)
+    app.include_router(metrics.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
