@@ -91,7 +91,7 @@ def _divergence_sample(
         "fill_id": str(close_row.get("fill_id", "")),
         "symbol": str(close_row.get("symbol", "")),
         "timestamp_utc": str(close_row.get("timestamp_utc", "")),
-        "venues": {
+        "by_venue": {
             "binance": {"low": left.low, "high": left.high, "midpoint": left_mid},
             "bybit": {"low": right.low, "high": right.high, "midpoint": right_mid},
         },
@@ -202,7 +202,7 @@ def build_shadow_report(
                 "order_id": str(close_row.get("order_id", "")),
                 "symbol": str(close_row.get("symbol", "")),
                 "timestamp_utc": str(close_row.get("timestamp_utc", "")),
-                "venues": per_venue,
+                "by_venue": per_venue,
             }
         )
 
@@ -223,7 +223,7 @@ def build_shadow_report(
         "generated_at_utc": now_utc.astimezone(UTC).isoformat(),
         "input_rows": len(rows),
         "eligible_closes": len(closes),
-        "venues": venue_payload,
+        "by_venue": venue_payload,
         "quote_age_ms": {
             "available_n": len(quote_age_samples),
             "unavailable_n": len(closes) - len(quote_age_samples),

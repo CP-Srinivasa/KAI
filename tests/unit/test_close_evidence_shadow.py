@@ -53,9 +53,9 @@ def test_report_zerlegt_verdikte_gruende_und_divergenz() -> None:
     assert report["mode"] == "shadow_read_only"
     assert report["input_rows"] == 2
     assert report["eligible_closes"] == 1
-    assert report["venues"]["binance"]["verdict_counts"] == {"verified_execution_provenance": 1}
-    assert report["venues"]["bybit"]["verdict_counts"] == {"unverified": 1}
-    assert report["venues"]["bybit"]["unverified_reason_counts"] == {
+    assert report["by_venue"]["binance"]["verdict_counts"] == {"verified_execution_provenance": 1}
+    assert report["by_venue"]["bybit"]["verdict_counts"] == {"unverified": 1}
+    assert report["by_venue"]["bybit"]["unverified_reason_counts"] == {
         "observed_price_outside_venue_band": 1,
         "venue_source_mismatch": 1,
     }
@@ -83,7 +83,7 @@ def test_sammelfehler_ist_unverified_mit_explizitem_grund() -> None:
         now_utc=NOW,
     )
 
-    binance = report["venues"]["binance"]
+    binance = report["by_venue"]["binance"]
     assert binance["collection_status_counts"] == {"fetch_failed": 1}
     assert binance["verdict_counts"] == {"unverified": 1}
     assert binance["reason_counts"] == {"collection:fetch_failed": 1}
