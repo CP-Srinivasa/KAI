@@ -567,3 +567,47 @@ def test_the_same_slot_twice_is_refused() -> None:
             timeframe_ms=_HOUR_MS,
             horizon=4,
         )
+
+
+def test_the_runbook_requires_parent_directory_fsync_on_first_write() -> None:
+    """``fsync`` auf den Deskriptor sichert den INHALT, nicht den Verzeichniseintrag.
+
+    Entsteht ``lock_recovery.jsonl`` erst in diesem Lauf, liegt sein Eintrag im
+    Verzeichnis noch im Cache: nach einem Stromausfall existiert die Datei gar
+    nicht, obwohl ihr Inhalt geschrieben war. Betroffen ist ausgerechnet der
+    erste ``RECOVERY_PREPARED`` einer Aktivierung — die einzige Spur einer
+    Intervention, deren Ausgang unbekannt blieb.
+
+    Der Code macht das an drei Stellen bereits so; hier steht es fuer die
+    Handarbeit, und ohne diesen Ratchet faellt es beim naechsten Umbau des
+    Runbooks lautlos weg.
+    """
+    runbook = (REPO / "docs" / "runbooks" / "freeze_lock_recovery.md").read_text(encoding="utf-8")
+    section = runbook[runbook.index("## Entfernen") :]
+
+    assert "fsync(elternverzeichnis)" in section, (
+        "der Parent-Directory-fsync beim erstmaligen Anlegen fehlt"
+    )
+    assert "NEU angelegt" in section, "die Bedingung dafuer muss benannt sein"
+    # Beide Phasen brauchen weiterhin ihren eigenen fsync.
+    assert section.count("fsync(datei)") >= 2, (
+        "PREPARED und COMPLETED/FAILED brauchen jeweils flush + fsync"
+    )
+
+
+def test_the_code_actually_fsyncs_the_parent_on_creation() -> None:
+    """Gegenprobe im Code — das Runbook beschreibt keine Wunschvorstellung.
+
+    Alle drei Schreiber der Wahrheitsschicht muessen es so machen, sonst
+    beschriebe das Runbook eine Sorgfalt, die die Maschine nicht aufbringt.
+    """
+    for relative in (
+        "app/research/prereg_window_state.py",
+        "app/research/prereg_evaluation.py",
+        "app/research/frozen_input.py",
+        "app/research/prereg_storage.py",
+    ):
+        source = (REPO / relative).read_text(encoding="utf-8")
+        assert "O_RDONLY" in source or "_fsync_dir" in source or "_fsync_directory" in source, (
+            f"{relative} sichert den Verzeichniseintrag nicht"
+        )

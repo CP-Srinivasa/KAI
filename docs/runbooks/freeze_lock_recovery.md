@@ -175,13 +175,29 @@ Deshalb zwei Zeilen, verbunden ueber `attempt_id`, beide angehaengt, **keine
 davon nachtraeglich veraendert**:
 
 ```
-1. RECOVERY_PREPARED     alle Pruefungen, Hashes, Operator   -> fsync
+1. RECOVERY_PREPARED     alle Pruefungen, Hashes, Operator
+                         append -> flush -> fsync(datei)
+                         wurde lock_recovery.jsonl dabei NEU angelegt:
+                             zusaetzlich fsync(elternverzeichnis)
 2. rm <lock_path>
 3. RECOVERY_COMPLETED    removed=true,  error=null
    oder
    RECOVERY_FAILED       removed=false, error=<errno/Meldung>
-                                                             -> fsync
+                         append -> flush -> fsync(datei)
 ```
+
+**Warum das Elternverzeichnis mitmuss.** `fsync` auf einen Dateideskriptor
+sichert den INHALT. Ist die Datei in diesem Lauf erst entstanden, liegt ihr
+Verzeichniseintrag noch im Cache — nach einem Stromausfall existiert die Datei
+dann gar nicht, obwohl ihr Inhalt geschrieben war. Genau der erste
+`RECOVERY_PREPARED` einer Aktivierung ist dieser Fall, und genau er ist der
+wichtigste: er ist die einzige Spur einer Intervention, deren Ausgang unbekannt
+blieb. Ab dem zweiten Eintrag genuegt `fsync` auf die Datei.
+
+Dieselbe Regel gilt im Code fuer die Journale
+(`app/research/prereg_window_state.py`, `app/research/prereg_evaluation.py`) und
+fuer das eingefrorene Artefakt (`app/research/frozen_input.py`) — hier steht sie
+fuer die Handarbeit.
 
 Bricht der Vorgang zwischen 1 und 3 ganz ab, bleibt ein `RECOVERY_PREPARED`
 ohne Abschluss stehen. Das ist kein Mangel, sondern die ehrliche Aussage: der
