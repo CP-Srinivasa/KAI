@@ -46,7 +46,7 @@ def _fetch(low: float, high: float):
 def test_report_zerlegt_verdikte_gruende_und_divergenz() -> None:
     report = build_shadow_report(
         [_close(), {"event_type": "order_filled"}],
-        fetchers={"binance": _fetch(99.0, 101.0), "bybit": _fetch(100.0, 102.0)},
+        fetchers={"binance": _fetch(99.0, 101.0), "bybit": _fetch(100.5, 102.5)},
         now_utc=NOW,
     )
 
@@ -55,13 +55,21 @@ def test_report_zerlegt_verdikte_gruende_und_divergenz() -> None:
     assert report["eligible_closes"] == 1
     assert report["venues"]["binance"]["verdict_counts"] == {"verified_execution_provenance": 1}
     assert report["venues"]["bybit"]["verdict_counts"] == {"unverified": 1}
-    assert report["venues"]["bybit"]["reason_counts"] == {"venue_source_mismatch": 1}
+    assert report["venues"]["bybit"]["unverified_reason_counts"] == {
+        "observed_price_outside_venue_band": 1,
+        "venue_source_mismatch": 1,
+    }
+    assert report["quote_age_ms"]["distribution"]["p50"] == 10.0
+    band_distance = report["venue_band_distance_pct"]
+    assert band_distance["binance"]["distribution"]["max"] == 0.0
+    assert band_distance["bybit"]["distribution"]["max"] == pytest.approx(50 / 101.5)
+    assert band_distance["bybit"]["samples"][0]["price_field"] == "observed_market_price"
 
     divergence = report["divergence"]
     assert divergence["comparable_n"] == 1
     assert divergence["unavailable_n"] == 0
     assert divergence["band_gap_pct"]["max"] == 0.0
-    assert divergence["midpoint_pct"]["p50"] == pytest.approx(100 / 100.5)
+    assert divergence["midpoint_pct"]["p50"] == pytest.approx(150 / 100.75)
     assert divergence["samples"][0]["fill_id"] == "fill-1"
 
 

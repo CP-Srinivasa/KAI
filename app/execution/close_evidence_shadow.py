@@ -52,6 +52,15 @@ def _distribution(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def _metric_number(value: object, *, zero_allowed: bool) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0 or (not zero_allowed and parsed == 0):
+        return None
+    return parsed
+
+
 def _covering_candle(timestamp_utc: object, candles: tuple[VenueCandle, ...]) -> VenueCandle | None:
     try:
         stamp = datetime.fromisoformat(str(timestamp_utc).replace("Z", "+00:00"))
@@ -109,14 +118,22 @@ def build_shadow_report(
             "collection": Counter[str](),
             "verdict": Counter[str](),
             "reasons": Counter[str](),
+            "unverified_reasons": Counter[str](),
         }
         for venue in venues
     }
     closes = [row for row in rows if row.get("event_type") == "position_closed"]
     observations: list[dict[str, Any]] = []
     divergence_samples: list[dict[str, Any]] = []
+    quote_age_samples: list[dict[str, Any]] = []
+    band_distance_samples: dict[str, list[dict[str, Any]]] = {venue: [] for venue in venues}
 
     for close_row in closes:
+        age_ms = _metric_number(close_row.get("market_data_age_ms"), zero_allowed=True)
+        if age_ms is not None:
+            quote_age_samples.append(
+                {"fill_id": str(close_row.get("fill_id", "")), "age_ms": age_ms}
+            )
         per_venue: dict[str, Any] = {}
         covering: dict[str, VenueCandle] = {}
         for venue in venues:
@@ -147,8 +164,28 @@ def build_shadow_report(
                 )
                 if candle is not None:
                     covering[venue] = candle
+                    observed = _metric_number(
+                        close_row.get("observed_market_price"), zero_allowed=False
+                    )
+                    price_field = "observed_market_price"
+                    price = observed
+                    if price is None:
+                        price_field = "exit_price"
+                        price = _metric_number(close_row.get("exit_price"), zero_allowed=False)
+                    if price is not None:
+                        midpoint = (candle.low + candle.high) / 2.0
+                        distance = max(candle.low - price, price - candle.high, 0.0)
+                        band_distance_samples[venue].append(
+                            {
+                                "fill_id": str(close_row.get("fill_id", "")),
+                                "distance_pct": distance / midpoint * 100.0,
+                                "price_field": price_field,
+                            }
+                        )
             aggregate[venue]["verdict"][verdict] += 1
             aggregate[venue]["reasons"].update(reasons)
+            if verdict == VerifierVerdict.UNVERIFIED.value:
+                aggregate[venue]["unverified_reasons"].update(reasons)
             per_venue[venue] = {
                 "collection_status": status,
                 "verdict": verdict,
@@ -174,6 +211,7 @@ def build_shadow_report(
             "collection_status_counts": _counter_payload(aggregate[venue]["collection"]),
             "verdict_counts": _counter_payload(aggregate[venue]["verdict"]),
             "reason_counts": _counter_payload(aggregate[venue]["reasons"]),
+            "unverified_reason_counts": _counter_payload(aggregate[venue]["unverified_reasons"]),
         }
         for venue in venues
     }
@@ -186,6 +224,23 @@ def build_shadow_report(
         "input_rows": len(rows),
         "eligible_closes": len(closes),
         "venues": venue_payload,
+        "quote_age_ms": {
+            "available_n": len(quote_age_samples),
+            "unavailable_n": len(closes) - len(quote_age_samples),
+            "distribution": _distribution(
+                [float(sample["age_ms"]) for sample in quote_age_samples]
+            ),
+            "samples": quote_age_samples,
+        },
+        "venue_band_distance_pct": {
+            venue: {
+                "distribution": _distribution(
+                    [float(sample["distance_pct"]) for sample in band_distance_samples[venue]]
+                ),
+                "samples": band_distance_samples[venue],
+            }
+            for venue in venues
+        },
         "divergence": {
             "comparable_n": len(divergence_samples),
             "unavailable_n": len(closes) - len(divergence_samples),
