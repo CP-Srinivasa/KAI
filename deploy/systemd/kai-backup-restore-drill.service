@@ -1,0 +1,33 @@
+[Unit]
+Description=KAI Backup Restore Drill — decrypt latest artifact backup and write proof
+After=network-online.target
+Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Monatlicher Beweis, dass das verschluesselte Artifact-Backup nicht nur
+# geschrieben, sondern auch entschluesselt, entpackt und inhaltlich gelesen
+# werden kann. Jeder FAIL schreibt vorher artifacts/ops/backup_drill/*.json.
+ExecStart=/bin/bash /home/ubuntu/ai_analyst_trading_bot/scripts/kai_backup_restore_drill.sh
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=20min
+
+# openssl + tar + Python-Validierung auf kleinen Audit-Artefakten.
+MemoryMax=512M
+CPUQuota=60%
+
+# Haerten: liest Backups, schreibt nur das Drill-Beweisartefakt und nutzt ein
+# privates tmp-Verzeichnis fuer Klartext-Entpackung.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/ai_analyst_trading_bot/artifacts /tmp
