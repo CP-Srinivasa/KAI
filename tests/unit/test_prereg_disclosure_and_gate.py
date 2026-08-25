@@ -25,13 +25,6 @@ from datetime import UTC, datetime
 import pytest
 
 from app.analysis.features.feature_matrix import FeatureRow
-from app.research.prereg_window import (
-    ACTION_EVALUATE,
-    ACTION_WAIT,
-    MaturityCounts,
-    PrematureEvaluationError,
-    WindowDecision,
-)
 from app.research.primary_confirmatory import (
     DIAGNOSTIC_STATUS,
     VERDICT_NOT_MET,
@@ -39,7 +32,6 @@ from app.research.primary_confirmatory import (
     SymbolPanel,
     evaluate_primary,
     maturity_counts,
-    run_confirmatory,
 )
 
 _HOUR_MS = 3_600_000
@@ -198,51 +190,35 @@ def test_robustness_is_reported_but_the_verdict_stands() -> None:
     assert all(d.status == DIAGNOSTIC_STATUS for d in result.robustness)
 
 
-# ── Der Torwaechter ─────────────────────────────────────────────────────────
+# ── Der freie Pfad existiert nicht mehr ─────────────────────────────────────
 
 
-def _decision(action: str) -> WindowDecision:
-    return WindowDecision(
-        action=action,
-        checkpoint="PRE_T1" if action == ACTION_WAIT else "T1",
-        mature=True,
-        counts=MaturityCounts(n_valid=146, n_clusters=75),
-    )
+def test_the_free_evaluation_path_no_longer_exists() -> None:
+    """``run_confirmatory(..., **kwargs)`` ist entfernt, nicht nur abgeraten.
+
+    Es nahm beliebige Panels, einen freien Decider und beliebige
+    Forschungsparameter entgegen — ein Weg, am versiegelten Candidate vorbei
+    etwas anderes zu messen. Ein Ratchet haette ihn nur aus dem T0-Pfad
+    ausgeschlossen; entfernt ist er ueberall weg. Was es nicht gibt, kann
+    niemand versehentlich benutzen.
+
+    Der Torwaechter selbst ist damit nicht verschwunden: er sitzt in
+    ``run_sealed_evaluation``, das keinen einzigen Forschungsparameter mehr
+    entgegennimmt (siehe ``test_frozen_evaluation_contract``).
+    """
+    import app.research.primary_confirmatory as module
+
+    assert not hasattr(module, "run_confirmatory")
 
 
-def test_no_p_value_before_t1_even_with_a_full_sample() -> None:
-    """Der eigentliche Schutz gegen optional stopping, Ende zu Ende."""
-    with pytest.raises(PrematureEvaluationError):
-        run_confirmatory(
-            _decision(ACTION_WAIT),
-            [_panel("BTC", n=30, spacing_bars=40)],
-            _always_long,
-            hypothesis="x",
-            universe_sha256="abc",
-            round_trip_cost_bps=20.0,
-            timeframe_ms=_HOUR_MS,
-            horizon=4,
-            n_min=1,
-            cluster_min=1,
-        )
+def test_no_evaluation_entry_point_accepts_free_keyword_arguments() -> None:
+    """Ein ``**kwargs`` an dieser Stelle waere eine Tuer ohne Schloss."""
+    import inspect
 
+    from app.research.prereg_evaluation import run_sealed_evaluation
 
-def test_the_gate_lets_the_real_checkpoint_through() -> None:
-    """Gegenprobe — ein Torwaechter, der nie oeffnet, ist nur eine Mauer."""
-    result = run_confirmatory(
-        _decision(ACTION_EVALUATE),
-        [_panel("BTC", n=30, spacing_bars=40)],
-        _always_long,
-        hypothesis="x",
-        universe_sha256="abc",
-        round_trip_cost_bps=20.0,
-        timeframe_ms=_HOUR_MS,
-        horizon=4,
-        n_min=1,
-        cluster_min=1,
-    )
-
-    assert result.verdict in {VERDICT_PASS, VERDICT_NOT_MET}
+    for parameter in inspect.signature(run_sealed_evaluation).parameters.values():
+        assert parameter.kind is not inspect.Parameter.VAR_KEYWORD
 
 
 def test_maturity_counts_agree_with_the_later_disclosure() -> None:

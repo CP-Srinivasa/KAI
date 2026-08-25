@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -82,19 +83,26 @@ _UNIVERSE_ARTIFACT = json.loads(
 _UNIVERSE_SHA = _UNIVERSE_ARTIFACT["universe_sha256"]
 _SYMBOLS = tuple(_UNIVERSE_ARTIFACT["canonical_universe"])
 
+_HOUR_MS = 3_600_000
 _CODE_SHA = "c" * 40
 _EVAL_SHA = "e" * 64
 _T0 = "2026-09-01T00:00:00+00:00"
-_T1 = "2026-11-30T00:00:00+00:00"
-_T2 = "2027-02-28T00:00:00+00:00"
-_AFTER_T2 = "2027-03-05T00:00:00+00:00"
-_BETWEEN = "2026-12-20T00:00:00+00:00"
+_T1 = "2026-09-02T00:00:00+00:00"
+_T2 = "2026-09-03T00:00:00+00:00"
+_AFTER_T2 = "2026-09-04T00:00:00+00:00"
+_BETWEEN = "2026-09-02T12:00:00+00:00"
 
 
 def _candidate(**overrides):
-    """Echte Struktur, aber Schranken, die ein kleines Sample erreichen kann."""
+    """Echte Struktur, aber ein kurzes Fenster und erreichbare Schranken.
+
+    Das Fenster ist bewusst EIN Tag statt 90: die Abdeckungspruefung verlangt
+    den vollstaendigen bar-by-bar Schnitt, und 34 Symbole ueber 90 Tage waeren
+    73.000 Zeilen je Test. Ein Tag sind 24 Kerzen, davon 20 mit vollstaendig
+    beobachtbarem Label — genug, um denselben Pfad zu fahren.
+    """
     base = build_rsi_reentry_volume_candidate(_UNIVERSE_SHA, len(_SYMBOLS))
-    values = {"n_valid_min": 1, "cluster_min": 1}
+    values = {"n_valid_min": 1, "cluster_min": 1, "t1_offset_days": 1, "t2_offset_days": 2}
     values.update(overrides)
     return replace(base, **values)
 
@@ -110,8 +118,10 @@ def _activation(candidate=None):
 
 
 def _feature_row(hour: int, *, fires: bool) -> FeatureRow:
+    """Eine Kerze im OOS-Fenster. ``fires`` entscheidet, ob die Regel anspricht."""
+    stamp = (datetime.fromisoformat(_T0) + timedelta(hours=hour)).isoformat()
     return FeatureRow(
-        timestamp_utc=f"2026-10-{1 + hour // 24:02d}T{hour % 24:02d}:00:00+00:00",
+        timestamp_utc=stamp,
         close=100.0,
         log_return=None,
         rsi_14=31.0 if fires else 50.0,
@@ -130,28 +140,47 @@ def _feature_row(hour: int, *, fires: bool) -> FeatureRow:
 
 def _row(hour: int, *, fires: bool = True, label: float | None = 50.0) -> FrozenRow:
     row = _feature_row(hour, fires=fires)
-    exit_hour = hour + 4
+    exit_at = (datetime.fromisoformat(_T0) + timedelta(hours=hour + 4)).isoformat()
     return FrozenRow(
         signal_timestamp_utc=row.timestamp_utc,
-        label_exit_utc=f"2026-10-{1 + exit_hour // 24:02d}T{exit_hour % 24:02d}:00:00+00:00",
+        label_exit_utc=exit_at,
         features={k: v for k, v in asdict(row).items() if k != "timestamp_utc"},
         label_bps=label,
     )
 
 
-def _rows(fires: int = 3, *, quiet: int = 2, missing: int = 0):
-    """Ein vollstaendiger Schnitt: feuernde UND stille Zeilen."""
-    out: dict[str, list[FrozenRow]] = {symbol: [] for symbol in _SYMBOLS}
-    hour = 0
-    for index in range(fires):
-        out[_SYMBOLS[index % 3]].append(
-            _row(hour, label=None if index < missing else 50.0 + index * 3.0)
-        )
-        hour += 40
-    for _ in range(quiet):
-        out[_SYMBOLS[0]].append(_row(hour, fires=False))
-        hour += 40
+# Das Raster deckt BEIDE Fenster ab: T1 = ein Tag, T2 = zwei. Zeilen, deren
+# Ausstieg hinter dem jeweiligen Cutoff liegt, filtert der Einfrier-Schritt
+# selbst heraus — genau das soll er.
+_BARS_IN_WINDOW = 48
+
+
+def _rows(fires: int = 3, *, missing: int = 0):
+    """Der VOLLSTAENDIGE Schnitt: jedes Symbol traegt jede Kerze des Fensters.
+
+    Nur ein kleiner Teil davon feuert — genau so sieht der echte Lader aus. Ein
+    Fixture, das nur die feuernden Zeilen liefert, faellt an der
+    Abdeckungspruefung durch, und das ist der Zweck der Uebung.
+    """
+    out: dict[str, list[FrozenRow]] = {}
+    for index, symbol in enumerate(_SYMBOLS):
+        rows = []
+        fired = 0
+        for hour in range(_BARS_IN_WINDOW):
+            # Die feuernden Zeilen auf die ersten drei Symbole verteilen.
+            should_fire = index < 3 and fired < _per_symbol(fires, index) and hour % 7 == 1
+            label: float | None = 50.0 + fired * 3.0
+            if should_fire and fired < missing:
+                label = None
+            rows.append(_row(hour, fires=should_fire, label=label))
+            fired += int(should_fire)
+        out[symbol] = rows
     return out
+
+
+def _per_symbol(total: int, index: int) -> int:
+    """Verteile ``total`` Feuerungen deterministisch auf die ersten drei Symbole."""
+    return total // 3 + (1 if index < total % 3 else 0)
 
 
 def _tree(tmp_path: Path, activation) -> Path:
@@ -269,6 +298,10 @@ def test_all_thirty_four_symbols_stay_members(tmp_path: Path) -> None:
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
         rows_by_symbol=_rows(),
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
 
     assert len(dataset.panels) == 34
@@ -281,7 +314,11 @@ def test_none_and_zero_stay_different() -> None:
         t0_utc=_T0,
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
-        rows_by_symbol={_SYMBOLS[0]: [_row(0, label=0.0), _row(40, label=None)]},
+        rows_by_symbol={_SYMBOLS[0]: [_row(0, label=0.0), _row(5, label=None)]},
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
 
     payload = dataset_to_dict(dataset)
@@ -298,6 +335,10 @@ def test_non_finite_values_cannot_be_frozen(bad: float) -> None:
             cutoff_utc=_T1,
             sealed_symbols=_SYMBOLS,
             rows_by_symbol={_SYMBOLS[0]: [_row(0, label=bad)]},
+            timeframe_ms=_HOUR_MS,
+            horizon=4,
+            # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+            min_coverage=0.0,
         )
 
 
@@ -309,15 +350,15 @@ def test_canonical_bytes_refuse_nan() -> None:
 def test_the_window_is_about_observability() -> None:
     """Ein Label zaehlt nur, wenn es bis zum Checkpoint VOLLSTAENDIG vorlag."""
     inside = FrozenRow(
-        signal_timestamp_utc="2026-11-29T00:00:00+00:00",
-        label_exit_utc="2026-11-29T04:00:00+00:00",
+        signal_timestamp_utc="2026-09-01T10:00:00+00:00",
+        label_exit_utc="2026-09-01T14:00:00+00:00",
         features=_row(0).features,
         label_bps=10.0,
     )
     exits_after = replace(
         inside,
-        signal_timestamp_utc="2026-11-29T23:00:00+00:00",
-        label_exit_utc="2026-11-30T03:00:00+00:00",
+        signal_timestamp_utc="2026-09-01T23:00:00+00:00",
+        label_exit_utc="2026-09-02T03:00:00+00:00",
     )
 
     dataset = build_frozen_dataset(
@@ -326,9 +367,13 @@ def test_the_window_is_about_observability() -> None:
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
         rows_by_symbol={_SYMBOLS[0]: [inside, exits_after]},
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
 
-    assert [r.signal_timestamp_utc for r in dataset.panels[0].rows] == ["2026-11-29T00:00:00+00:00"]
+    assert [r.signal_timestamp_utc for r in dataset.panels[0].rows] == ["2026-09-01T10:00:00+00:00"]
 
 
 def test_the_frozen_boundary_lies_before_signal_selection() -> None:
@@ -359,6 +404,10 @@ def _input(tmp_path: Path, candidate=None, activation=None, rows=None):
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
         rows_by_symbol=rows if rows is not None else _rows(),
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
     frozen = build_frozen_input(
         dataset=dataset,
@@ -406,6 +455,10 @@ def test_thirty_three_symbols_are_refused(tmp_path: Path) -> None:
         cutoff_utc=_T1,
         sealed_symbols=thirty_three,
         rows_by_symbol={s: rows for s, rows in _rows().items() if s in thirty_three},
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
     from app.research.prereg_window import MaturityCounts
 
@@ -446,7 +499,7 @@ def test_before_t1_no_data_is_loaded(tmp_path: Path) -> None:
     activation = _activation(candidate)
     root = _tree(tmp_path, activation)
 
-    plan, counts = _decide(root, candidate, activation, "2026-11-01T00:00:00+00:00")
+    plan, counts = _decide(root, candidate, activation, "2026-09-01T12:00:00+00:00")
 
     assert plan.action == PLAN_WAIT
     assert counts is None
@@ -513,7 +566,7 @@ def test_an_immature_t2_is_terminal(tmp_path: Path) -> None:
     at_t2, _ = _decide(root, candidate, activation, _AFTER_T2, rows=_rows(fires=2))
     assert at_t2.action == PLAN_CLOSED
 
-    later, _ = _decide(root, candidate, activation, "2027-06-01T00:00:00+00:00")
+    later, _ = _decide(root, candidate, activation, "2026-10-01T00:00:00+00:00")
     assert later.action == PLAN_CLOSED
     assert "terminal" in " ".join(later.reasons)
 
@@ -529,7 +582,7 @@ def test_a_t2_evaluate_without_a_verdict_resumes_on_t2(tmp_path: Path) -> None:
     assert frozen_at_t2.action == PLAN_UNDECIDED
     assert frozen_at_t2.checkpoint == "T2"
 
-    resumed, _ = _decide(root, candidate, activation, "2027-03-10T00:00:00+00:00")
+    resumed, _ = _decide(root, candidate, activation, "2026-09-03T12:00:00+00:00")
     assert resumed.action == PLAN_RESUME
     assert resumed.checkpoint == "T2"
     assert resumed.evaluation_input_sha256 == frozen_at_t2.evaluation_input_sha256
@@ -607,16 +660,41 @@ def test_the_sealed_evaluator_takes_no_research_parameters() -> None:
 
 
 def test_the_evaluation_uses_the_sealed_cost(tmp_path: Path) -> None:
+    """Label minus die VERSIEGELTEN 20 bps — kein Default greift."""
     candidate = _candidate()
     activation = _activation(candidate)
     root = _tree(tmp_path, activation)
-    plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
+    rows = _rows()
+    plan, _ = _decide(root, candidate, activation, _T1, rows=rows)
 
     result = _evaluate(root, activation, plan)
 
+    # Die Erwartung aus dem Fixture ableiten, nicht raten: nur feuernde Zeilen
+    # mit Label und vollstaendig beobachtbarem Ausstieg zaehlen.
+    cutoff = datetime.fromisoformat(_T1)
+    gross = [
+        row.label_bps
+        for panel in rows.values()
+        for row in panel
+        if row.label_bps is not None
+        and _fires(row)
+        and datetime.fromisoformat(row.label_exit_utc) <= cutoff
+    ]
+    assert gross, "das Fixture erzeugt keine wertbaren Signale"
     assert result.round_trip_cost_bps == 20.0
     assert result.economic_floor_bps == 5.0
-    assert result.summary.mean_bps == pytest.approx((50.0 + 53.0 + 56.0) / 3 - 20.0)
+    assert result.summary.mean_bps == pytest.approx(sum(gross) / len(gross) - 20.0)
+
+
+def _fires(row: FrozenRow) -> bool:
+    from app.research.sealed_hypothesis import rsi_reentry_volume_confirmed
+
+    return (
+        rsi_reentry_volume_confirmed(
+            FeatureRow(timestamp_utc=row.signal_timestamp_utc, **row.features)
+        )
+        != 0
+    )
 
 
 def test_re_evaluating_reproduces_the_same_result(tmp_path: Path) -> None:
@@ -626,7 +704,7 @@ def test_re_evaluating_reproduces_the_same_result(tmp_path: Path) -> None:
     plan, _ = _decide(root, candidate, activation, _T1, rows=_rows())
 
     first = _evaluate(root, activation, plan)
-    second = _evaluate(root, activation, plan, now="2026-12-01T00:00:00+00:00")
+    second = _evaluate(root, activation, plan, now="2026-09-02T06:00:00+00:00")
 
     assert first.verdict == second.verdict
     assert first.summary.p_value == second.summary.p_value
@@ -759,6 +837,8 @@ def test_a_wrong_git_head_aborts_before_any_number() -> None:
             evaluator_sha256="b" * 64,
             decider_name="rsi_reentry_volume_confirmed",
             head_provider=lambda _root: "f" * 40,
+            worktree_check=lambda _root: None,
+            module_check=lambda _root: None,
         )
 
 
@@ -771,6 +851,8 @@ def test_a_changed_evaluator_bundle_aborts() -> None:
             evaluator_sha256="b" * 64,
             decider_name="rsi_reentry_volume_confirmed",
             head_provider=lambda _root: head,
+            worktree_check=lambda _root: None,
+            module_check=lambda _root: None,
         )
 
 
@@ -785,4 +867,6 @@ def test_the_matching_runtime_passes() -> None:
         evaluator_sha256=bundle,
         decider_name="rsi_reentry_volume_confirmed",
         head_provider=lambda _root: head,
+        worktree_check=lambda _root: None,
+        module_check=lambda _root: None,
     )

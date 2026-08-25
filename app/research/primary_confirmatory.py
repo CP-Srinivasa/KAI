@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 
 from app.analysis.features.feature_matrix import FeatureRow
 from app.research.pooled_inference import ClusterRobustSummary, cluster_robust_mean
-from app.research.prereg_window import MaturityCounts, WindowDecision, assert_evaluable
+from app.research.prereg_window import MaturityCounts
 from app.research.samples import Decider, decisions_to_trades_with_counts
 from app.research.signal_clusters import ClusterStats, Signal, assign_clusters, summarize_clusters
 
@@ -370,18 +370,3 @@ def maturity_counts(
         data_unavailable_count=unavailable,
         symbols_with_valid_signals=symbols_with_signals,
     )
-
-
-def run_confirmatory(
-    decision: WindowDecision,
-    panels: Sequence[SymbolPanel],
-    decide: Decider,
-    **kwargs: object,
-) -> PrimaryConfirmatoryResult:
-    """Torwaechter: der Primaertest laeuft NUR an einem Entscheidungszeitpunkt.
-
-    Fail-closed. Ein p-Wert, den niemand haette sehen duerfen, laesst sich nicht
-    zurueckziehen — deshalb ein Abbruch statt einer Warnung.
-    """
-    assert_evaluable(decision)
-    return evaluate_primary(panels, decide, **kwargs)  # type: ignore[arg-type]

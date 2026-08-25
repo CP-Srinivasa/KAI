@@ -33,13 +33,13 @@ import hashlib
 import json
 import os
 import re
-import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.research.exclusive_lock import ExclusiveLockError, exclusive_lock
 from app.research.frozen_dataset import (
     FrozenEvaluationDataset,
     canonical_bytes,
@@ -296,48 +296,17 @@ _LOCK_NAME = ".freeze.lock"
 
 @contextmanager
 def _publish_lock(directory: Path, *, timeout_s: float = 30.0) -> Iterator[None]:
-    """Exklusiv je Checkpoint-Verzeichnis, ueber ``O_CREAT | O_EXCL``.
+    """Exklusiv je Checkpoint-Verzeichnis.
 
-    Das Anlegen einer Datei mit ``O_EXCL`` ist die eine Operation, die das
-    Dateisystem selbst serialisiert — genau einer gewinnt, alle anderen sehen
-    ``FileExistsError``. Ein Lock, der erst NACH dem Verzeichnis-Lesen genommen
-    wuerde, schloesse die Race nicht; deshalb liegt hier alles darin: lesen,
-    revalidieren, schreiben.
-
-    EHRLICHE GRENZE: ein Prozess, der mitten im Abschnitt stirbt, laesst die
-    Lock-Datei liegen; nachfolgende Schreiber laufen dann in den Timeout und
-    brechen ab. Das ist die gewollte Richtung — ein blockierter Freeze ist
-    harmlos, ein doppelter nicht. Aufgeraeumt wird von Hand, sichtbar.
+    Die Mechanik liegt in ``app/research/exclusive_lock.py`` — dieselbe Race
+    haben auch die Checkpoint- und Verdikt-Journale, und zwei Implementierungen
+    desselben Locks waeren genau die Doppelung, die spaeter auseinanderlaeuft.
     """
-    lock_path = directory / _LOCK_NAME
-    deadline = time.monotonic() + timeout_s
-    last_error: OSError | None = None
-    while True:
-        try:
-            handle = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-            break
-        except (FileExistsError, PermissionError) as exc:
-            # ``PermissionError`` gehoert hier dazu: gibt ein Schreiber den Lock
-            # gerade frei, meldet Windows fuer die noch nicht abgeschlossene
-            # Loeschung "Permission denied" statt "File exists". Wer nur
-            # ``FileExistsError`` faengt, laesst einen harmlosen Wiederanlauf
-            # scheitern. Eine echte Rechteverweigerung laeuft dagegen in den
-            # Timeout und traegt die Ursache als ``__cause__``.
-            last_error = exc
-            if time.monotonic() >= deadline:
-                raise FrozenInputError(
-                    f"{lock_path} ist seit ueber {timeout_s:.0f}s belegt — ein anderer "
-                    "Einfrier-Vorgang laeuft oder ist abgestuerzt. Kein zweiter Freeze."
-                ) from last_error
-            time.sleep(0.005)
     try:
-        os.write(handle, f"{os.getpid()}\n".encode())
-    finally:
-        os.close(handle)
-    try:
-        yield
-    finally:
-        lock_path.unlink(missing_ok=True)
+        with exclusive_lock(directory / _LOCK_NAME, timeout_s=timeout_s, what="Einfrier-Vorgang"):
+            yield
+    except ExclusiveLockError as exc:
+        raise FrozenInputError(str(exc)) from exc
 
 
 def _publish_under_lock(

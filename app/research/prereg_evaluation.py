@@ -51,16 +51,18 @@ import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from app.analysis.features.feature_matrix import FeatureRow
 from app.market_data.kline_windows import interval_to_ms
+from app.research.exclusive_lock import exclusive_lock
 from app.research.frozen_dataset import (
     FrozenEvaluationDataset,
     FrozenRow,
     FrozenSymbolPanel,
+    SymbolCoverage,
     build_frozen_dataset,
     canonical_bytes,
     dataset_sha256,
@@ -233,6 +235,46 @@ def _strict_float(value: object, where: str, field_name: str) -> float:
     return number
 
 
+def require_canonical_utc(value: object, where: str, field_name: str) -> str:
+    """Ein Feld auf ``_utc`` muss auch UTC sein — nicht nur zeitzonenbehaftet.
+
+    ``2026-11-30T02:00:00+02:00`` ist derselbe Augenblick wie ``00:00:00+00:00``
+    und passierte die alte Pruefung. In einer Wahrheitsschicht ist das trotzdem
+    falsch: zwei Schreibweisen desselben Zeitpunkts erzeugen zwei verschiedene
+    Bytes und damit zwei verschiedene Hashes. Der Schreiber normiert, der Leser
+    besteht darauf.
+    """
+    if not isinstance(value, str):
+        raise CheckpointJournalError(f"{where}: {field_name} ist kein Text")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise CheckpointJournalError(f"{where}: {field_name} ist kein ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise CheckpointJournalError(
+            f"{where}: {field_name} ist zeitzonenlos — UTC wird nicht geraten"
+        )
+    if parsed.utcoffset() != timedelta(0):
+        raise CheckpointJournalError(
+            f"{where}: {field_name} traegt Offset {parsed.utcoffset()}, erwartet +00:00. "
+            "Ein Feld auf _utc ist UTC."
+        )
+    return value
+
+
+def canonical_utc(timestamp_utc: str) -> str:
+    """Auf UTC normieren. Zeitzonenlos wird abgelehnt, nicht geraten."""
+    try:
+        parsed = datetime.fromisoformat(timestamp_utc)
+    except (TypeError, ValueError) as exc:
+        # Eine rohe ValueError aus der Standardbibliothek waere hier eine
+        # Fehlermeldung ueber ein Datumsformat statt ueber das, was schiefging.
+        raise SealedEvaluationError(f"{timestamp_utc!r} ist kein ISO-8601-Zeitstempel") from exc
+    if parsed.tzinfo is None:
+        raise SealedEvaluationError(f"{timestamp_utc!r} ist zeitzonenlos — UTC wird nicht geraten")
+    return parsed.astimezone(UTC).isoformat()
+
+
 def _validate_verdict_payload(payload: Any, where: str) -> VerdictRecord:
     """Typ UND Wertebereich. An der letzten Wahrheitsschicht keine Python-Semantik."""
     if not isinstance(payload, dict):
@@ -264,17 +306,9 @@ def _validate_verdict_payload(payload: Any, where: str) -> VerdictRecord:
     if not 0.0 < alpha < 1.0:
         raise CheckpointJournalError(f"{where}: alpha={alpha} liegt ausserhalb (0, 1)")
 
-    recorded_at = payload.get("recorded_at_utc")
-    if not isinstance(recorded_at, str):
-        raise CheckpointJournalError(f"{where}: recorded_at_utc ist kein Text")
-    try:
-        parsed = datetime.fromisoformat(recorded_at)
-    except ValueError as exc:
-        raise CheckpointJournalError(f"{where}: recorded_at_utc ist kein ISO-8601") from exc
-    if parsed.tzinfo is None:
-        raise CheckpointJournalError(
-            f"{where}: recorded_at_utc ist zeitzonenlos — UTC wird nicht geraten"
-        )
+    # Der Rueckgabewert wird gebraucht: die Pruefung ENGT den Typ ein, und ohne
+    # ihn muesste weiter unten ein `Any | None` in ein `str`-Feld.
+    recorded_at = require_canonical_utc(payload.get("recorded_at_utc"), where, "recorded_at_utc")
 
     t_stat = payload.get("t_statistic")
     if t_stat is not None:
@@ -335,31 +369,50 @@ def load_verdicts(path: Path, *, activation_sha256_value: str) -> tuple[VerdictR
 
 
 def record_verdict(path: Path, record: VerdictRecord) -> bool:
-    """Genau ein Verdikt je Checkpoint. Identisch = No-Op, abweichend = Abbruch."""
-    for previous in load_verdicts(path, activation_sha256_value=record.activation_sha256):
-        if previous.checkpoint != record.checkpoint:
-            continue
-        if previous.result_sha256 == record.result_sha256:
-            return False
-        raise CheckpointJournalError(
-            f"{record.checkpoint}: es steht bereits ein ANDERES Verdikt "
-            f"({previous.verdict}, p={previous.p_value}). Ein Checkpoint wird "
-            "genau einmal gewertet."
-        )
-    existed = path.exists()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Genau ein Verdikt je Checkpoint. Identisch = No-Op, abweichend = Abbruch.
+
+    Zwei Haertungen gegenueber dem ersten Entwurf:
+
+    **Streng VOR dem Schreiben.** Vorher validierte nur der Leser. Ein direkt
+    gebauter ``VerdictRecord(n_valid=True, …)`` liess sich anhaengen und machte
+    das append-only Journal beim naechsten Lesen dauerhaft rot — der Fehler
+    waere erst aufgefallen, als er nicht mehr zu beheben war.
+
+    **Lesen, pruefen und Anhaengen unter EINEM Lock.** Ohne ihn koennen zwei
+    Prozesse beide "kein Eintrag vorhanden" sehen und beide schreiben; im
+    Verdikt-Journal stuenden dann zwei autoritative Zeilen.
+    """
     payload = asdict(record)
     payload["result_sha256"] = record.result_sha256
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    if not existed and os.name == "posix":  # pragma: no cover - plattformabhaengig
-        fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+    # Der Schreiber normiert, der Leser besteht darauf.
+    payload["recorded_at_utc"] = canonical_utc(record.recorded_at_utc)
+    _validate_verdict_payload(
+        {k: v for k, v in payload.items() if k != "result_sha256"}, f"{path} (Schreibvorgang)"
+    )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_lock(path.parent / f".{path.name}.lock", what="Verdikt-Schreibvorgang"):
+        for previous in load_verdicts(path, activation_sha256_value=record.activation_sha256):
+            if previous.checkpoint != record.checkpoint:
+                continue
+            if previous.result_sha256 == record.result_sha256:
+                return False
+            raise CheckpointJournalError(
+                f"{record.checkpoint}: es steht bereits ein ANDERES Verdikt "
+                f"({previous.verdict}, p={previous.p_value}). Ein Checkpoint wird "
+                "genau einmal gewertet."
+            )
+        existed = path.exists()
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not existed and os.name == "posix":  # pragma: no cover - plattformabhaengig
+            fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
     return True
 
 
@@ -411,6 +464,15 @@ def plan_checkpoint(*, now_utc: str, activation: PreRegActivation, root: Path) -
     if t1 is not None and t1.action == ACTION_EVALUATE and t2 is not None:
         raise SealedEvaluationError(
             "T1 wurde gewertet UND T2 entschieden — das Journal ist widerspruechlich."
+        )
+    # T2 gibt es nur, wenn T1 verlaengert hat. Der Kommentar sagte das schon,
+    # geprueft wurde es nicht: ein Journal mit T2 ohne T1 waere durchgegangen und
+    # haette ein Fenster beschrieben, das nie eroeffnet wurde.
+    if t2 is not None and (t1 is None or t1.action != ACTION_EXTEND_TO_T2):
+        raise SealedEvaluationError(
+            "T2 ist entschieden, aber T1 steht auf "
+            f"{t1.action if t1 else 'GAR NICHTS'} — T2 existiert nur nach einer "
+            "Verlaengerung an T1."
         )
 
     # T2 zuerst: ist dort etwas entschieden, ist T1 zwangslaeufig verlaengert
@@ -558,6 +620,8 @@ def decide_and_freeze(
         cutoff_utc=cutoff,
         sealed_symbols=symbols,
         rows_by_symbol=rows_loader(),
+        timeframe_ms=timeframe_ms,
+        horizon=candidate.horizon,
     )
     counts = maturity_from_dataset(
         dataset,
@@ -756,6 +820,10 @@ def _dataset_from_payload(payload: dict[str, Any]) -> FrozenEvaluationDataset:
         panels=tuple(
             FrozenSymbolPanel(
                 symbol=panel["symbol"],
+                coverage=SymbolCoverage(
+                    bars_expected=panel["coverage"]["bars_expected"],
+                    bars_present=panel["coverage"]["bars_present"],
+                ),
                 rows=tuple(
                     FrozenRow(
                         signal_timestamp_utc=row["signal_timestamp_utc"],

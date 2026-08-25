@@ -45,7 +45,21 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-DATASET_SCHEMA_VERSION = "kai/prereg-evaluation-dataset/v1"
+DATASET_SCHEMA_VERSION = "kai/prereg-evaluation-dataset/v2"
+
+# Mindestabdeckung des OOS-Fensters je Symbol.
+#
+# Ohne sie bliebe die Frozen-Grenze eine Absichtserklaerung: ``build_frozen_dataset``
+# bekommt Zeilen von einem Lader und kann nicht beweisen, dass es der VOLLSTAENDIGE
+# Schnitt war. Ein Lader, der (versehentlich oder nicht) nur die feuernden Zeilen
+# liefert, laege bei ~0,2 % Abdeckung — die Regel feuert rund 1,5-mal pro Tag ueber
+# 34 Symbole, gegenueber 24 Kerzen pro Symbol und Tag. Ein echter Provider-Ausfall
+# liegt bei 99,x %.
+#
+# 0.95 trennt beides mit grossem Abstand und toleriert reale Luecken. Die
+# gemessenen Werte wandern in den Datensatz und damit in ``dataset_sha256`` —
+# eine Luecke ist danach sichtbar, nicht stillschweigend akzeptiert.
+MIN_BAR_COVERAGE = 0.95
 
 
 class FrozenDatasetError(ValueError):
@@ -68,11 +82,28 @@ class FrozenRow:
 
 
 @dataclass(frozen=True)
+class SymbolCoverage:
+    """Wie vollstaendig der Schnitt dieses Symbols war.
+
+    Geht in ``dataset_sha256`` ein: die Abdeckung ist Teil dessen, WAS
+    eingefroren wurde, nicht eine Randnotiz darueber.
+    """
+
+    bars_expected: int
+    bars_present: int
+
+    @property
+    def ratio(self) -> float:
+        return self.bars_present / self.bars_expected if self.bars_expected else 1.0
+
+
+@dataclass(frozen=True)
 class FrozenSymbolPanel:
     """Alle eingefrorenen Zeilen eines kanonischen Symbols."""
 
     symbol: str
     rows: tuple[FrozenRow, ...]
+    coverage: SymbolCoverage = SymbolCoverage(0, 0)
 
 
 @dataclass(frozen=True)
@@ -110,6 +141,10 @@ def _require_utc(timestamp_utc: str, field: str) -> str:
     return parsed.astimezone(UTC).isoformat()
 
 
+def _to_epoch_ms(timestamp_utc: str) -> int:
+    return int(datetime.fromisoformat(timestamp_utc).timestamp() * 1000)
+
+
 def _finite_or_none(value: object, where: str) -> float | None:
     """``None`` bleibt ``None``; alles andere muss ein endlicher ``float`` sein.
 
@@ -136,6 +171,9 @@ def build_frozen_dataset(
     cutoff_utc: str,
     sealed_symbols: Sequence[str],
     rows_by_symbol: Mapping[str, Sequence[FrozenRow]],
+    timeframe_ms: int,
+    horizon: int,
+    min_coverage: float = MIN_BAR_COVERAGE,
 ) -> FrozenEvaluationDataset:
     """Friere den Datenschnitt ein. Reihenfolge und Mitgliedschaft sind gebunden.
 
@@ -145,7 +183,14 @@ def build_frozen_dataset(
         cutoff_utc: der Checkpoint. Ein Label zaehlt nur, wenn es bis hierhin
             vollstaendig beobachtbar war.
         sealed_symbols: die kanonische Universumsliste IN IHRER REIHENFOLGE.
-        rows_by_symbol: je Symbol die Kandidatenzeilen (ungefiltert).
+        rows_by_symbol: je Symbol die Kandidatenzeilen (ungefiltert). Erwartet
+            wird der VOLLSTAENDIGE Schnitt, nicht nur die feuernden Zeilen — das
+            wird ueber die Abdeckung mechanisch geprueft.
+        timeframe_ms: Kerzenlaenge; bestimmt, wie viele Kerzen das Fenster hat.
+        horizon: Haltedauer in Kerzen; die letzten ``horizon`` Kerzen koennen
+            kein vollstaendig beobachtetes Label mehr tragen und zaehlen nicht
+            zur Erwartung.
+        min_coverage: Mindestanteil vorhandener Kerzen je Symbol.
 
     Returns:
         FrozenEvaluationDataset mit genau ``len(sealed_symbols)`` Panels — auch
@@ -153,7 +198,9 @@ def build_frozen_dataset(
 
     Raises:
         FrozenDatasetError: Symbolmenge weicht ab, Duplikat, Zeitfenster
-            verletzt, oder ein Wert ist nicht endlich.
+            verletzt, ein Wert ist nicht endlich, oder die Abdeckung eines
+            Symbols liegt unter ``min_coverage`` — dann war es nicht der
+            vollstaendige Schnitt.
     """
     if checkpoint not in {"T1", "T2"}:
         raise FrozenDatasetError(f"checkpoint {checkpoint!r} ist kein Entscheidungszeitpunkt")
@@ -173,6 +220,16 @@ def build_frozen_dataset(
     cutoff = _require_utc(cutoff_utc, "cutoff_utc")
     if cutoff <= start:
         raise FrozenDatasetError("cutoff_utc liegt nicht nach t0_utc")
+
+    if timeframe_ms <= 0:
+        raise FrozenDatasetError("timeframe_ms muss > 0 sein")
+    if horizon < 1:
+        raise FrozenDatasetError("horizon muss >= 1 sein")
+
+    # Die letzten ``horizon`` Kerzen koennen kein vollstaendig beobachtetes
+    # Label mehr tragen; sie gehoeren nicht in die Erwartung.
+    window_ms = _to_epoch_ms(cutoff) - _to_epoch_ms(start)
+    bars_expected = max(0, window_ms // timeframe_ms - horizon)
 
     panels: list[FrozenSymbolPanel] = []
     for symbol in symbols:
@@ -200,9 +257,24 @@ def build_frozen_dataset(
                 )
             )
         frozen_rows.sort(key=lambda r: (r.signal_timestamp_utc, r.label_exit_utc))
+
+        # Die Frozen-Grenze mechanisch sichern: erwartet wird der VOLLSTAENDIGE
+        # Schnitt. Ein Lader, der nur feuernde Zeilen liefert, faellt hier auf —
+        # er laege um Groessenordnungen unter der Schranke.
+        coverage = SymbolCoverage(
+            bars_expected=bars_expected,
+            bars_present=len({row.signal_timestamp_utc for row in frozen_rows}),
+        )
+        if bars_expected and coverage.ratio < min_coverage:
+            raise FrozenDatasetError(
+                f"{symbol}: {coverage.bars_present} von {bars_expected} Kerzen "
+                f"({coverage.ratio:.1%}) — unter {min_coverage:.0%}. Erwartet wird "
+                "der vollstaendige OOS-Schnitt, nicht nur die feuernden Zeilen."
+            )
+
         # Auch ein Symbol ohne gueltige Zeile bleibt Mitglied: DATA_UNAVAILABLE
         # ist NICHT dasselbe wie "Asset entfernt".
-        panels.append(FrozenSymbolPanel(symbol=symbol, rows=tuple(frozen_rows)))
+        panels.append(FrozenSymbolPanel(symbol=symbol, rows=tuple(frozen_rows), coverage=coverage))
 
     return FrozenEvaluationDataset(
         schema_version=DATASET_SCHEMA_VERSION,
@@ -225,6 +297,10 @@ def dataset_to_dict(dataset: FrozenEvaluationDataset) -> dict[str, Any]:
         "panels": [
             {
                 "symbol": panel.symbol,
+                "coverage": {
+                    "bars_expected": panel.coverage.bars_expected,
+                    "bars_present": panel.coverage.bars_present,
+                },
                 "rows": [
                     {
                         "signal_timestamp_utc": row.signal_timestamp_utc,

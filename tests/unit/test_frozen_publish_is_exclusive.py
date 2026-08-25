@@ -39,6 +39,7 @@ from app.research.prereg_candidate import activate, build_rsi_reentry_volume_can
 from app.research.prereg_window import MaturityCounts
 
 REPO = Path(__file__).resolve().parents[2]
+_HOUR_MS = 3_600_000
 _UNIVERSE_ARTIFACT = json.loads(
     (REPO / "docs" / "research" / "universe_rsi_reentry_v1.json").read_text(encoding="utf-8")
 )
@@ -103,6 +104,10 @@ def _input(counts: MaturityCounts):
         cutoff_utc=_T1,
         sealed_symbols=_SYMBOLS,
         rows_by_symbol=_rows(),
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
     frozen = build_frozen_input(
         dataset=dataset,

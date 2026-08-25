@@ -1,16 +1,30 @@
-# Freeze-Lock-Recovery (Frozen Evaluation Contract)
+# Lock-Recovery (Frozen Evaluation Contract)
 
-`write_frozen_artifact` haelt beim Veroeffentlichen eines eingefrorenen
-Datenschnitts einen exklusiven Lock je Checkpoint-Verzeichnis:
+Drei Schreiber der Wahrheitsschicht nehmen einen exklusiven Lock. Alle drei
+benutzen dieselbe Mechanik (`app/research/exclusive_lock.py`) und dieselbe
+Recovery — dieses Runbook gilt fuer jeden von ihnen:
 
 ```
 artifacts/research/prereg/<activation_sha256>/frozen/<T1|T2>/.freeze.lock
+artifacts/research/prereg/<activation_sha256>/.checkpoints.jsonl.lock
+artifacts/research/prereg/<activation_sha256>/.verdicts.jsonl.lock
 ```
 
-Der Lock wird ueber `O_CREAT | O_EXCL` genommen; `foreign`-Check, Revalidierung
-eines vorhandenen Artefakts und das Schreiben liegen **vollstaendig** darin.
-Bleibt er nach einem harten Absturz liegen, laufen alle weiteren Schreiber nach
-30 Sekunden in `FrozenInputError` und brechen ab.
+Der erste schuetzt das Veroeffentlichen eines eingefrorenen Datenschnitts, die
+beiden anderen das Anhaengen an die Journale. Bei den Journalen liegen *Lesen,
+Pruefen und Anhaengen* im Lock: ohne ihn koennen zwei Prozesse beide "kein
+Eintrag vorhanden" sehen und beide schreiben — beim Verdikt-Journal stuenden
+dann zwei autoritative Zeilen, beim Checkpoint-Journal zwei konkurrierende
+Entscheidungen.
+
+Der Lock wird ueber `O_CREAT | O_EXCL` genommen — die eine Operation, die das
+Dateisystem selbst serialisiert. Beim Freeze liegen `foreign`-Check,
+Revalidierung eines vorhandenen Artefakts und das Schreiben **vollstaendig**
+darin; bei den Journalen das Lesen, die Konfliktpruefung und das Anhaengen.
+
+Bleibt ein Lock nach einem harten Absturz liegen, laufen alle weiteren Schreiber
+nach 30 Sekunden in einen Abbruch (`FrozenInputError` beim Freeze,
+`ExclusiveLockError` bei den Journalen).
 
 **Das ist Absicht und wird nicht automatisiert.** Es gibt bewusst keine
 Stale-Erkennung — weder ueber das Alter der Datei noch ueber die PID darin:
@@ -20,8 +34,9 @@ Stale-Erkennung — weder ueber das Alter der Datei noch ueber die PID darin:
 * Eine PID beweist nichts. PIDs werden wiederverwendet, und nach einem Reboot
   ist Prozessidentitaet ohnehin nicht mehr eindeutig.
 
-Ein faelschlich geloeschter Lock erlaubt einen **zweiten Freeze** desselben
-Checkpoints. Ein blockierter Checkpoint kostet Zeit; ein zweiter Datenschnitt
+Ein faelschlich geloeschter Lock erlaubt beim Freeze einen **zweiten
+Datenschnitt** desselben Checkpoints, bei den Journalen eine **zweite
+autoritative Zeile**. Ein blockierter Checkpoint kostet Zeit; beides andere
 kostet die Beweisbarkeit des Verdikts. Deshalb ist Blockieren die richtige
 Richtung, und das Aufloesen ist eine auditierte Operator-Handlung.
 
@@ -33,7 +48,14 @@ Ein Lauf meldet:
 
 ```
 ... /frozen/T1/.freeze.lock ist seit ueber 30s belegt — ein anderer
-Einfrier-Vorgang laeuft oder ist abgestuerzt. Kein zweiter Freeze.
+Einfrier-Vorgang laeuft oder ist abgestuerzt. Kein zweiter.
+```
+
+oder, fuer eines der Journale:
+
+```
+... /.verdicts.jsonl.lock ist seit ueber 30s belegt — ein anderer
+Verdikt-Schreibvorgang laeuft oder ist abgestuerzt. Kein zweiter.
 ```
 
 ## Pruefreihenfolge

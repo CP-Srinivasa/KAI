@@ -68,6 +68,13 @@ EVALUATOR_BUNDLE_MODULES: tuple[str, ...] = (
     "app/research/primary_confirmatory.py",
     "app/research/samples.py",
     "app/research/signal_clusters.py",
+    # Die Kerzenlaenge. ``interval_to_ms`` uebersetzt den versiegelten
+    # Timeframe in Millisekunden und bestimmt damit Cluster-Grenzen und
+    # Haltefenster — aus DEMSELBEN Artefakt kaeme mit anderen Millisekunden
+    # ein anderes Verdikt.
+    "app/market_data/kline_windows.py",
+    # Der Lock, unter dem publiziert und journalisiert wird.
+    "app/research/exclusive_lock.py",
     # Der Waechter selbst. Schuetzt nicht gegen einen entschlossenen Angreifer,
     # macht aber eine versehentliche Aufweichung sichtbar.
     "app/research/evaluator_identity.py",
@@ -105,11 +112,57 @@ def evaluator_bundle_sha256(repo_root: Path, *, decider_name: str) -> str:
     return hashlib.sha256(b"\n".join(parts)).hexdigest()
 
 
-def git_head(repo_root: Path) -> str:
-    """Der Commit, mit dem tatsaechlich gearbeitet wird."""
+def assert_worktree_clean(repo_root: Path) -> None:
+    """Der Checkout darf keine unversionierten Aenderungen an Code tragen.
+
+    ``git rev-parse HEAD`` sieht uncommittete Aenderungen NICHT. Ohne diese
+    Pruefung waere ``research_code_sha == HEAD`` eine Aussage ueber die
+    Historie, nicht ueber die Bytes, die gerade laufen — und der
+    Producer-Code (Features, Labels, Universum), der bewusst NICHT im
+    Evaluator-Bundle liegt, waere ueberhaupt nicht gebunden.
+
+    Geprueft werden ausschliesslich TRACKED Dateien: unversionierte Artefakte
+    unter ``artifacts/`` entstehen im Normalbetrieb und sind kein Befund.
+    """
+    completed = _git(repo_root, "status", "--porcelain", "--untracked-files=no")
+    dirty = [line for line in completed.splitlines() if line.strip()]
+    if dirty:
+        raise EvaluatorIdentityError(
+            "der Checkout traegt unversionierte Aenderungen — research_code_sha "
+            "waere dann eine Aussage ueber die Historie, nicht ueber die "
+            "laufenden Bytes: " + "; ".join(dirty[:10])
+        )
+
+
+def assert_modules_load_from(repo_root: Path) -> None:
+    """Die IMPORTIERTEN Module muessen aus genau diesem Checkout stammen.
+
+    ``evaluator_bundle_sha256`` liest Dateien unter ``repo_root``; die
+    Auswertung laeuft mit bereits importierten Modulen. Ein Prozess koennte
+    Module aus Checkout A geladen haben und ``repo_root`` auf den sauberen
+    Checkout B zeigen lassen — dann wird B gehasht und A ausgefuehrt.
+    """
+    import importlib
+
+    for relative in EVALUATOR_BUNDLE_MODULES:
+        module_name = relative.removesuffix(".py").replace("/", ".")
+        module = importlib.import_module(module_name)
+        origin = getattr(module, "__file__", None)
+        if origin is None:  # pragma: no cover - reine Namespace-Pakete
+            raise EvaluatorIdentityError(f"{module_name} hat keinen Dateipfad")
+        loaded = Path(origin).resolve()
+        expected = (repo_root / relative).resolve()
+        if loaded != expected:
+            raise EvaluatorIdentityError(
+                f"{module_name} ist aus {loaded} geladen, gehasht wird {expected} — "
+                "es wuerde anderer Code laufen als geprueft."
+            )
+
+
+def _git(repo_root: Path, *args: str) -> str:
     try:
         completed = subprocess.run(  # noqa: S603
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],  # noqa: S607
+            ["git", "-C", str(repo_root), *args],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,
@@ -117,8 +170,13 @@ def git_head(repo_root: Path) -> str:
     except OSError as exc:  # pragma: no cover - git fehlt
         raise EvaluatorIdentityError(f"git nicht aufrufbar: {exc}") from exc
     if completed.returncode != 0:
-        raise EvaluatorIdentityError(f"git rev-parse HEAD scheiterte: {completed.stderr.strip()}")
-    return completed.stdout.strip()
+        raise EvaluatorIdentityError(f"git {' '.join(args)} scheiterte: {completed.stderr.strip()}")
+    return completed.stdout
+
+
+def git_head(repo_root: Path) -> str:
+    """Der Commit, mit dem tatsaechlich gearbeitet wird."""
+    return _git(repo_root, "rev-parse", "HEAD").strip()
 
 
 def assert_runtime_matches(
@@ -128,12 +186,27 @@ def assert_runtime_matches(
     evaluator_sha256: str,
     decider_name: str,
     head_provider: Callable[[Path], str] = git_head,
+    worktree_check: Callable[[Path], None] = assert_worktree_clean,
+    module_check: Callable[[Path], None] = assert_modules_load_from,
 ) -> None:
     """Beide Bindungen pruefen. Abweichung = Abbruch, nicht Warnung.
+
+    Vier Bindungen, alle fail-closed:
+
+    * der Checkout traegt keine unversionierten Aenderungen
+    * die importierten Module stammen aus genau diesem Checkout
+    * ``git HEAD`` ist der versiegelte Commit
+    * das Evaluator-Bundle hat den versiegelten Hash
 
     Ein Verdikt, das unter anderem Code entstanden ist als versiegelt, ist kein
     schwaecheres Verdikt — es ist ein anderes Experiment.
     """
+    # Reihenfolge ist Absicht: erst die billigen, umfassenden Pruefungen, dann
+    # die teuren. Die beiden Rueckrufe existieren, damit Tests JEDE Bindung
+    # einzeln pruefen koennen — in Produktion bleiben die Vorgaben.
+    worktree_check(repo_root)
+    module_check(repo_root)
+
     head = head_provider(repo_root)
     if head != research_code_sha:
         raise EvaluatorIdentityError(

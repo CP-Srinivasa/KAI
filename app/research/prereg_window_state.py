@@ -46,10 +46,11 @@ import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.research.exclusive_lock import exclusive_lock
 from app.research.prereg_window import (
     ACTION_EVALUATE,
     ACTION_EXTEND_TO_T2,
@@ -231,9 +232,21 @@ def _parse_record(payload: Any, where: str, activation_sha256: str) -> Checkpoin
     if not isinstance(recorded_at, str):
         raise CheckpointJournalError(f"{where}: 'recorded_at_utc' ist kein Text")
     try:
-        datetime.fromisoformat(recorded_at)
+        parsed_at = datetime.fromisoformat(recorded_at)
     except ValueError as exc:
         raise CheckpointJournalError(f"{where}: 'recorded_at_utc' ist kein ISO-8601") from exc
+    # Zeitzonenlos ging bisher durch — und ein Offset ebenfalls. Beides ist in
+    # einer Wahrheitsschicht falsch: zwei Schreibweisen desselben Augenblicks
+    # ergeben zwei verschiedene Bytes und damit zwei verschiedene Hashes.
+    if parsed_at.tzinfo is None:
+        raise CheckpointJournalError(
+            f"{where}: 'recorded_at_utc' ist zeitzonenlos — UTC wird nicht geraten"
+        )
+    if parsed_at.utcoffset() != timedelta(0):
+        raise CheckpointJournalError(
+            f"{where}: 'recorded_at_utc' traegt Offset {parsed_at.utcoffset()}, "
+            "erwartet +00:00. Ein Feld auf _utc ist UTC."
+        )
 
     record = CheckpointRecord(
         activation_sha256=payload["activation_sha256"],
@@ -307,10 +320,18 @@ def record_checkpoint(path: Path, record: CheckpointRecord) -> bool:
     Entschluss noch einmal ist harmlos, dieselbe Aktion auf anderer Grundlage
     nicht.
 
-    Geschrieben wird mit ``flush`` + ``os.fsync``; beim erstmaligen Anlegen
-    zusaetzlich ein ``fsync`` des Verzeichnisses. Ohne das koennte genau die
-    zuletzt gefasste Entscheidung einen Stromausfall nicht ueberleben — und der
-    Neustart saehe wieder "kein T1-Ausgang".
+    Drei Zusicherungen:
+
+    **Streng VOR dem Schreiben.** Vorher pruefte nur der Leser; ein direkt
+    gebauter Datensatz mit einem ungueltigen Feld liess sich anhaengen und machte
+    das Journal beim naechsten Lesen dauerhaft rot.
+
+    **Lesen, pruefen und Anhaengen unter EINEM Lock.** Sonst koennen zwei
+    Prozesse beide "kein Eintrag vorhanden" sehen und beide schreiben — bei
+    Checkpoints waeren das zwei konkurrierende Entscheidungen.
+
+    **Geschrieben heisst auf der Platte** (``flush`` + ``fsync``, beim Anlegen
+    zusaetzlich das Verzeichnis).
 
     Returns:
         True, wenn geschrieben wurde; False bei identischem Retry.
@@ -324,31 +345,49 @@ def record_checkpoint(path: Path, record: CheckpointRecord) -> bool:
         raise CheckpointJournalError(f"{record.action!r} ist keine Checkpoint-Entscheidung")
 
     fingerprint = record.fingerprint
-    for previous in load_checkpoints(path, activation_sha256=record.activation_sha256):
-        if previous.checkpoint != record.checkpoint:
-            continue
-        if previous.fingerprint == fingerprint:
-            return False  # identischer Retry — absturzsicher, kein zweiter Eintrag
-        raise CheckpointConflictError(
-            f"{record.checkpoint} steht bereits auf {previous.action!r} "
-            f"(mature={previous.mature}, counts={previous.counts}); "
-            f"{record.action!r} (mature={record.mature}, counts={record.counts}) "
-            "waere eine zweite Entscheidung desselben Checkpoints. "
-            "Ein Checkpoint wird genau einmal entschieden."
-        )
-
-    existed = path.exists()
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = asdict(record)
     payload["decision_fingerprint"] = fingerprint
-    line = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    if not existed:
-        _fsync_directory(path.parent)
+    # Der Schreiber normiert auf UTC, der Leser besteht darauf.
+    payload["recorded_at_utc"] = _canonical_utc(record.recorded_at_utc)
+    # Streng gegen dasselbe Schema pruefen, das der Leser anlegt — bevor eine
+    # Zeile im append-only Journal steht, die niemand mehr entfernen kann.
+    _parse_record(payload, f"{path} (Schreibvorgang)", record.activation_sha256)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_lock(path.parent / f".{path.name}.lock", what="Checkpoint-Schreibvorgang"):
+        for previous in load_checkpoints(path, activation_sha256=record.activation_sha256):
+            if previous.checkpoint != record.checkpoint:
+                continue
+            if previous.fingerprint == fingerprint:
+                return False  # identischer Retry — absturzsicher, kein zweiter Eintrag
+            raise CheckpointConflictError(
+                f"{record.checkpoint} steht bereits auf {previous.action!r} "
+                f"(mature={previous.mature}, counts={previous.counts}); "
+                f"{record.action!r} (mature={record.mature}, counts={record.counts}) "
+                "waere eine zweite Entscheidung desselben Checkpoints. "
+                "Ein Checkpoint wird genau einmal entschieden."
+            )
+
+        existed = path.exists()
+        line = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not existed:
+            _fsync_directory(path.parent)
     return True
+
+
+def _canonical_utc(timestamp_utc: str) -> str:
+    """Auf UTC normieren. Zeitzonenlos wird abgelehnt, nicht geraten."""
+    try:
+        parsed = datetime.fromisoformat(timestamp_utc)
+    except (TypeError, ValueError) as exc:
+        raise CheckpointJournalError(f"{timestamp_utc!r} ist kein ISO-8601-Zeitstempel") from exc
+    if parsed.tzinfo is None:
+        raise CheckpointJournalError(f"{timestamp_utc!r} ist zeitzonenlos — UTC wird nicht geraten")
+    return parsed.astimezone(UTC).isoformat()
 
 
 def resolve_t1_outcome(path: Path, *, activation_sha256: str) -> str | None:

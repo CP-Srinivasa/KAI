@@ -55,6 +55,7 @@ from app.research.prereg_window import MaturityCounts
 from app.research.prereg_window_state import CheckpointRecord, record_checkpoint
 
 REPO = Path(__file__).resolve().parents[2]
+_HOUR_MS = 3_600_000
 BACKUP_SCRIPT = REPO / "scripts" / "kai_backup_artifacts.sh"
 _UNIVERSE = json.loads(
     (REPO / "docs" / "research" / "universe_rsi_reentry_v1.json").read_text(encoding="utf-8")
@@ -123,6 +124,10 @@ def _populated_tree(root: Path) -> tuple[str, str]:
         cutoff_utc=activation.t1_utc,
         sealed_symbols=_SYMBOLS,
         rows_by_symbol=rows,
+        timeframe_ms=_HOUR_MS,
+        horizon=4,
+        # Diese Tests pruefen nicht die Abdeckung — sie haben eigene.
+        min_coverage=0.0,
     )
     counts = MaturityCounts(n_valid=3, n_clusters=3, raw_fires=3, label_capable_fires=3)
     frozen = build_frozen_input(
