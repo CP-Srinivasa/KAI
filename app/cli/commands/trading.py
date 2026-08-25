@@ -1,6 +1,6 @@
 """Trading-specific CLI commands.
 
-Provides the ``trading`` command group (``trading-bot trading <cmd>``).
+Provides the ``trading`` command group (``kai trading <cmd>``).
 All commands are read-only or guarded-write (paper/shadow only).
 
 """
@@ -771,7 +771,7 @@ def trading_edge_validation(
     prereg_registered = PreRegistrationLedger(Path(prereg_cfg.ledger_path)).is_registered(prereg_id)
     _sc = prereg_claim["success_criteria"]
     prereg_register_cmd = (
-        "trading-bot trading prereg-register "
+        "kai trading prereg-register "
         f"--name {prereg_claim['name']} --direction {prereg_claim['direction']} "
         f"--horizon {prereg_claim['horizon']} "
         f'--success-criteria "{_sc}" '
@@ -2774,7 +2774,7 @@ def trading_loop_idle_check(
       2 — idle (every threshold tripped; operator action needed)
 
     Designed for cron use:
-        trading-bot trading loop-idle-check --notify || true
+        kai trading loop-idle-check --notify || true
     """
     import asyncio
 

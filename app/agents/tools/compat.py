@@ -79,7 +79,7 @@ async def get_mcp_capabilities() -> str:
     return json.dumps(
         {
             "status": "online",
-            "description": "KAI Analyst Trading Bot - controlled MCP interface",
+            "description": "KAI - controlled MCP interface",
             "transport": "stdio_only",
             "read_tools": inventory["canonical_read_tools"],
             "write_tools": inventory["guarded_write_tools"],

@@ -1,4 +1,4 @@
-"""Test factories for the AI Analyst Trading Bot."""
+"""Test factories for KAI."""
 
 import uuid
 

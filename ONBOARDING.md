@@ -1,4 +1,4 @@
-# ONBOARDING.md — KAI / AI-Analyst-Trading-Bot
+# ONBOARDING.md — KAI
 
 **Stand:** 2026-05-21 · **Zielgruppe:** menschliche Zweit-Bearbeiter + neue KI-Agenten
 

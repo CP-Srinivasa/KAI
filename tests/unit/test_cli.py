@@ -53,7 +53,7 @@ def _collected_feed(
 def test_cli_help() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "trading-bot" in result.output.lower() or "Usage" in result.output
+    assert "kai" in result.output.lower() or "Usage" in result.output
 
 
 def test_ingest_rss_dry_run_skips_storage(monkeypatch) -> None:

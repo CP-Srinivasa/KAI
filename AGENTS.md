@@ -14,7 +14,7 @@
 | re_entry_status | `vollzogen -- RE_ENTRY_MODE live; D-125-Gates erfüllt; Kalender-Termin 2026-05-16 historisch überholt` |
 | active_workstream | `Diversification/Asset-Reserve in paper (D-226/D-228/S3), Dispatch-Recall-Proxy (D-227), Deadlock-/Drift-Hardening (DS-20260531 V1-V5)` |
 | source_of_truth | `Pi 5 (ubuntu@192.168.178.23), live seit 2026-05-07` |
-| multi_agent_status | `Codex/Antigravity als externe LLMs nicht reaktiviert (D-186); KAI-interner 6-Agenten-Roster (Claude-Code-only) aktiv -- siehe § Agent Roster + Wiring-Realität` |
+| multi_agent_status | `Codex als Coding-Agent fuer das Stabilisierungspaket STAB-2026-08 reaktiviert (D-235, 2026-08-25; Scope-Allowlist/Tabu-Pfade in docs/strategy/stab_2026_08_paket.md §5, Claude reviewt+mergt, kein Auto-Merge, kein Pi-Zugriff); Antigravity weiter nicht reaktiviert (D-186); KAI-interner Agenten-Roster bleibt Claude-Code-only -- siehe § Agent Roster + Wiring-Realität` |
 | live_execution | `OFF -- paper + operator-approval only (Live-Gates bleiben bis explizite Öffnung zu)` |
 | liveness_watchdog | `hardened D-188; loop-open-deadlock-watchdog DS-20260531-V5 live (#113); externer 5-min Service-Watchdog auf Pi` |
 | provenance_persistence | `V1 active (D-125/SAT-C-PROV-20260422-001) -- HMAC-seal, zero-downtime rotation D-183, replay-guard D-179` |
@@ -27,7 +27,7 @@
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**
 >
 > Aktiver Agent: **Claude Code** (Architekt + Implementierer)
-> Multi-Agent-Modell (Codex, Antigravity) **endgültig nicht reaktiviert bis TV-Pivot Re-Entry** (D-186, 2026-04-24) — archivierte Roster-Historie in `docs/archive/AGENT_ROLES.md`.
+> Multi-Agent-Modell: Antigravity nicht reaktiviert (D-186, 2026-04-24). **Codex ist seit 2026-08-25 (D-235) als Coding-Agent fuer das Stabilisierungspaket STAB-2026-08 aktiv** — nur innerhalb der Scope-Allowlist aus `docs/strategy/stab_2026_08_paket.md` §5, Claim vor Worktree, Claude reviewt und mergt, kein Auto-Merge, kein Pi-Zugriff. Archivierte Roster-Historie in `docs/archive/AGENT_ROLES.md`.
 >
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 

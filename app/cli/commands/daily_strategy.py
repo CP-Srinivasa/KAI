@@ -1,6 +1,6 @@
 """Daily-Strategy CLI — bootstraps today's strategy-review skeleton.
 
-Two subcommands (`trading-bot daily-strategy <cmd>`):
+Two subcommands (`kai daily-strategy <cmd>`):
 
     check      — prints whether today's review file exists (exit 0/1)
     bootstrap  — if today's file is missing, writes a skeleton with live
@@ -869,8 +869,7 @@ def cmd_reminder(
     if not path.exists():
         kind = "Skeleton fehlt komplett"
         detail = (
-            "Der Bootstrap lief heute nicht. "
-            "`trading-bot daily-strategy bootstrap` ausführen. " + stale
+            "Der Bootstrap lief heute nicht. `kai daily-strategy bootstrap` ausführen. " + stale
         )
         exit_code = 2
     else:

@@ -1,10 +1,10 @@
 """Audit-specific CLI commands.
 
-Provides the ``audit`` command group (``trading-bot audit <cmd>``) for the
+Provides the ``audit`` command group (``kai audit <cmd>``) for the
 structured-reasoning trail:
 
-  trading-bot audit trail   <decision_id>     [--journal PATH]
-  trading-bot audit verify                    [--journal PATH]
+  kai audit trail   <decision_id>     [--journal PATH]
+  kai audit verify                    [--journal PATH]
 
 The trail joins three streams:
   1. ``artifacts/structured_reasoning.jsonl``  (this CLI's primary input)
@@ -12,7 +12,7 @@ The trail joins three streams:
   3. ``artifacts/bayes_confidence_audit.jsonl`` (raw Bayes report, if any)
 
 All read-only. No write commands here — operator writes happen via
-``trading-bot learning approve`` / ``reject`` / ``rollback``.
+``kai learning approve`` / ``reject`` / ``rollback``.
 """
 
 from __future__ import annotations

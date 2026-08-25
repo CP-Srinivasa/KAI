@@ -1,4 +1,4 @@
-"""Source-lifecycle operator CLI (``trading-bot source <cmd>``).
+"""Source-lifecycle operator CLI (``kai source <cmd>``).
 
 Currently exposes the operator-manual **RETIRE** action: a terminal kill of a
 source feed. RETIRED is a one-way FSM state (``app.learning.source_lifecycle``)

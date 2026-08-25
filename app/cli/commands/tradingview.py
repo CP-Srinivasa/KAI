@@ -1,6 +1,6 @@
 """TradingView CLI — TV-3.1 operator-gated promotion of pending events.
 
-Subcommands (`trading-bot tradingview <cmd>`):
+Subcommands (`kai tradingview <cmd>`):
 
     list      — open pending events (decision log filtered)
     show      — full event dump (JSON)

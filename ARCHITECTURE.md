@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — KAI / AI-Analyst-Trading-Bot
+# ARCHITECTURE.md — KAI
 
 **Stand:** 2026-07-02 · **Phase:** Truth-Platform-Wegpunkt (ADR 0012) · **Modus:** Paper-First (Messinstrument), Live-Disabled
 

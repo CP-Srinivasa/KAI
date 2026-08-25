@@ -1,3 +1,7 @@
+## 2026-08-25 - STAB-W0: KAI-Identität Stufe 1 + Codex-Reaktivierung für STAB-2026-08 (D-235/D-236)
+
+Kein Verhaltens-Code im Geldpfad. `kai` ist der kanonische Console-Script-Entry, `trading-bot` bleibt als veralteter Alias (Runbooks/Units laufen unverändert; auf dem Pi existiert `kai` erst nach `pip install -e .` im nächsten Deploy-Fenster). Typer-Help, FastAPI-Titel/-Beschreibung (`/docs`), MCP-Name, `ARCHITECTURE.md`/`ONBOARDING.md`-Header, CLI-Docstrings und `monitor/`-Kommentare nennen KAI statt „AI Analyst Trading Bot". Neu: `tests/unit/test_identity_ratchet.py` (Selbstbezeichnung als Trading Bot außerhalb Archiv/Historie schlägt CI fehl; Legacy-Pfad-/Paketname bleibt erlaubt). `docs/strategy/stab_2026_08_paket.md` = Paketdefinition + Claude/Codex-Spielregeln; `AGENTS.md` und `DECISION_LOG.md` (D-235, D-236) synchronisiert. Repo-/Pfad-Rename bleibt gated (Stufe 2).
+
 ## 2026-07-02 - A2/B1: Doku zur Wahrheit — Vision/Wegpunkt-Hierarchie, SECURITY.md, Risiko-/Annahmen-Register (Doku-only)
 
 Reiner Doku-PR, kein `app/`-Code. Bringt die Top-Level-Doku auf die reale Ziel-Hierarchie: Gesamt-Vision (institutionelle AI-Finanzanalyse-/Entscheidungs-Infrastruktur, `docs/KAI_IDENTITY.md`) als Dach, ADR 0012 (Research-/Truth-Plattform für auditierbare Signal-Falsifikation) als aktueller Wegpunkt darunter.
