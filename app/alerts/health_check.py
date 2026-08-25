@@ -32,6 +32,12 @@ from typing import Any
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.audit.stream_validation import AuditStreamName, load_audit_stream
+from app.core.runtime_identity import (
+    checkout_stable_for_s,
+    drift_report,
+    evaluate_runtime_drift,
+    read_runtime_identity_artifact,
+)
 from app.orchestrator.trading_loop import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
@@ -596,6 +602,46 @@ def _check_privilege_broker(*, runs_on_pi: bool) -> list[HealthIssue]:
     return [HealthIssue(severity="critical", component="privilege_broker", message=finding)]
 
 
+def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> list[HealthIssue]:
+    """Laeuft der Server auf dem Code, der im Checkout liegt? (STAB-02)
+
+    25.08.2026: kai-server lief seit 7 Tagen 23 Commits hinter seinem eigenen
+    Checkout — vier Fast-Forwards ohne Restart. Kein Waechter sah es, weil
+    /health nur 'ok' kannte. Monitoring-Lehre 18.08.: ein gesunder Ausgang
+    beweist keinen aktuellen Code — der Abstand selbst ist der Befund.
+
+    Quelle ist das Artefakt, das der Server beim Start schreibt. Fehlt es auf
+    der Pi, ist das ein Befund (Server vor STAB-02 oder nie gestartet); auf
+    einer Workstation ohne Server bleibt der Check still.
+    """
+    # Gleiche Klasse wie Sudo-/Broker-Probe: tests/conftest.py setzt runs_on_pi
+    # in JEDEM Test auf wahr; ohne Kill-Switch meldete das fehlende Artefakt in
+    # fremden Fixtures (test_daily_briefing, test_notify) einen Befund.
+    if os.environ.get("KAI_RUNTIME_IDENTITY_PROBE", "").strip().lower() == "off":
+        return []
+    artifact = read_runtime_identity_artifact(adir / "runtime" / "runtime_identity.json")
+    if artifact is None:
+        if not runs_on_pi:
+            return []
+        return [
+            HealthIssue(
+                severity="warning",
+                component="runtime_identity",
+                message=(
+                    "kein runtime_identity-Artefakt — der laufende kai-server ist entweder "
+                    "aelter als STAB-02 oder nie gestartet; welcher Code laeuft, ist unbelegt."
+                ),
+            )
+        ]
+    repo_dir = adir.resolve().parent
+    report = drift_report(artifact, repo_dir, now=now)
+    stable = checkout_stable_for_s(repo_dir, now=now)
+    return [
+        HealthIssue(severity=f.severity, component="runtime_identity", message=f.message)
+        for f in evaluate_runtime_drift(report, checkout_stable_for_s=stable)
+    ]
+
+
 def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
 
@@ -832,6 +878,7 @@ def run_health_check_report(
     min_expected_actionable: int = 0,
     max_priority_rejected_ratio: float = 0.95,
     max_open_blocking_ratio: float = 0.5,
+    now: datetime | None = None,
 ) -> HealthReport:
     """Run all health checks and return a structured report (P0+P1+V5).
 
@@ -841,7 +888,7 @@ def run_health_check_report(
     regardless because a self-inflicted open-deadlock is never intended.
     """
     adir = artifacts_dir or _ARTIFACTS
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     cutoff = now - timedelta(hours=lookback_hours)
     report = HealthReport()
     report.re_entry_mode_active = _re_entry_mode_active()
@@ -865,6 +912,7 @@ def run_health_check_report(
     report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

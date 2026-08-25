@@ -266,13 +266,32 @@ def _sync_etc(pi_obj) -> None:
         (pi_obj.etc / src.name).write_bytes(src.read_bytes())
 
 
-def _run_step(pi_obj, *, health: str = "200", args: str = "", broker_rc: int = 0):
+def _run_step(
+    pi_obj,
+    *,
+    health: str = "200",
+    args: str = "",
+    broker_rc: int = 0,
+    runtime: str | None = "auto",
+):
+    """``runtime``: "auto" = /health nennt den Commit, auf den der Step ff-merged
+    (Nachbedingung erfuellt); fester SHA = Server meldet diesen (veraltet);
+    None = alter Server ohne Feld (vor STAB-02)."""
     curl = pi_obj.tmp / "fakecurl.sh"
+    if runtime == "auto":
+        runtime = _git_in(pi_obj.work, "rev-parse", "origin/main").stdout.strip() or None
+    body = (
+        f'{{"status":"ok","version":"0.1.0","runtime_commit":"{runtime}","drift_commits":3}}'
+        if runtime
+        else '{"status":"ok","version":"0.1.0"}'
+    )
     # Echtes curl gibt bei unerreichbarem Ziel "000" aus UND scheitert mit rc=7.
     # Der Fake bildet beides ab, sonst wuerde der Fehlerpfad nie durchlaufen.
-    curl.write_text(
-        f'printf "%s" "{health}"\nexit {7 if health == "000" else 0}\n', encoding="utf-8"
-    )
+    # Seit STAB-02 liest der Step Body + Code (curl -w '\n%{http_code}'): der Fake
+    # liefert dasselbe Format (Body, Newline, Code).
+    script = "printf '%s\\n%s' '" + body + "' \"" + health + '"\n'
+    script += f"exit {7 if health == '000' else 0}\n"
+    curl.write_text(script, encoding="utf-8")
     broker = pi_obj.tmp / "fakebroker.sh"
     broker.write_text(f'echo "broker $*"\nexit {broker_rc}\n', encoding="utf-8")
 
@@ -370,3 +389,84 @@ def test_successful_restart_goes_through_the_broker(pi) -> None:
 
     assert proc.returncode == 0
     assert "broker restart kai-server.service" in proc.stdout
+
+
+# ── STAB-02: Runtime-Identität als Deploy-Nachbedingung ─────────────────────
+
+
+def _runtime(body: str, checkout: str, restarted: str) -> list[str]:
+    body_q = body.replace("'", "'''")
+    proc = _bash(
+        f'set -uo pipefail; . "{LIB.as_posix()}"; '
+        f'pi_deploy_runtime_reason \'{body_q}\' "{checkout}" "{restarted}"'
+    )
+    assert proc.returncode == 0, proc.stderr
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+_A = "a" * 40
+_B = "b" * 40
+
+
+def test_runtime_matches_checkout_is_silent() -> None:
+    body = f'{{"status":"ok","runtime_commit":"{_A}","checkout_commit":"{_A}","drift_commits":0}}'
+    assert _runtime(body, _A, "1") == []
+    assert _runtime(body, _A, "0") == []
+
+
+def test_runtime_behind_after_restart_is_a_real_failure() -> None:
+    # Der Restart lief, aber der Prozess meldet den alten Commit: kaputter Restart.
+    body = f'{{"status":"ok","runtime_commit":"{_A}","checkout_commit":"{_B}","drift_commits":4}}'
+    tokens = _runtime(body, _B, "1")
+    assert tokens == ["RUNTIME_DRIFT_AFTER_RESTART:4"]
+    assert _verdict(*tokens) == ("DEPLOY_FAILED", 1)
+
+
+def test_runtime_behind_without_restart_is_a_hold() -> None:
+    # Kein Restart angefordert: der Code liegt im Checkout, laeuft aber nicht — Operator.
+    body = f'{{"status":"ok","runtime_commit":"{_A}","checkout_commit":"{_B}","drift_commits":4}}'
+    tokens = _runtime(body, _B, "0")
+    assert tokens == ["RUNTIME_STALE_NO_RESTART:4"]
+    assert _verdict(*tokens) == ("DEPLOY_HOLD", 10)
+
+
+def test_runtime_unknown_is_a_hold_not_a_success() -> None:
+    # Alter Server ohne Feld (vor STAB-02) oder leerer Body: 'aktuell' ist unbelegt.
+    assert _runtime('{"status":"ok","version":"0.1.0"}', _B, "1") == ["RUNTIME_IDENTITY_UNKNOWN"]
+    assert _runtime("", _B, "1") == ["RUNTIME_IDENTITY_UNKNOWN"]
+    assert _verdict("RUNTIME_IDENTITY_UNKNOWN") == ("DEPLOY_HOLD", 10)
+
+
+def test_runtime_drift_count_missing_is_reported_as_unknown() -> None:
+    body = f'{{"status":"ok","runtime_commit":"{_A}"}}'
+    assert _runtime(body, _B, "0") == ["RUNTIME_STALE_NO_RESTART:unknown"]
+
+
+# ── STAB-02 auf Step-Ebene: der /health-Body ist Teil der Nachbedingung ─────
+
+
+def test_old_server_without_runtime_commit_holds(pi) -> None:
+    """Ein Server von vor STAB-02 kann nicht beweisen, dass er den Code laedt."""
+    _sync_etc(pi)
+    proc = _run_step(pi, runtime=None)
+    assert "RUNTIME_IDENTITY_UNKNOWN" in proc.stdout
+    assert "DEPLOY_VERDICT=DEPLOY_HOLD" in proc.stdout
+    assert proc.returncode == 10
+
+
+def test_restart_that_did_not_load_the_code_fails(pi) -> None:
+    """Der reale Fall vom 25.08. in Zukunft: Restart lief, Prozess meldet alten Commit."""
+    _sync_etc(pi)
+    proc = _run_step(pi, args="--restart kai-server", runtime="7" * 40)
+    assert "restarted:kai-server.service" in proc.stdout
+    assert "RUNTIME_DRIFT_AFTER_RESTART:3" in proc.stdout
+    assert "DEPLOY_VERDICT=DEPLOY_FAILED" in proc.stdout
+    assert proc.returncode == 1
+
+
+def test_stale_runtime_without_restart_is_a_hold_with_the_next_step(pi) -> None:
+    _sync_etc(pi)
+    proc = _run_step(pi, runtime="7" * 40)
+    assert "RUNTIME_STALE_NO_RESTART:3" in proc.stdout
+    assert "kai_deploy.sh --restart kai-server" in proc.stdout
+    assert proc.returncode == 10

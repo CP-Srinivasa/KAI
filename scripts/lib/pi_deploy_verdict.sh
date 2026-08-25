@@ -43,7 +43,8 @@ PI_DEPLOY_RC_FAILED=1
 _pi_deploy_severity() {
     case "${1:-}" in
         SYSTEMD_CHANGE_REQUIRES_OPERATOR | SYSTEMD_DRIFT_PREEXISTING | \
-        SYSTEMD_DRIFT_UNKNOWN | WRITER_FREEZE_DEFERRED)
+        SYSTEMD_DRIFT_UNKNOWN | WRITER_FREEZE_DEFERRED | \
+        RUNTIME_IDENTITY_UNKNOWN | RUNTIME_STALE_NO_RESTART)
             echo hold
             ;;
         *)
@@ -90,6 +91,46 @@ pi_deploy_reasons() {
             fi
             ;;
     esac
+}
+
+# Runtime-Identitaet (STAB-02, 25.08.2026): der Server lief 7 Tage 23 Commits
+# hinter seinem Checkout, weil vier ff-Merges ohne Restart durchliefen und
+# /health nur 'ok' kannte. Deshalb liest der Deploy den /health-BODY:
+#
+#   $1 body       JSON-Body von /health ('' wenn keiner)
+#   $2 checkout   Commit des Checkouts nach dem ff-Merge (git rev-parse HEAD)
+#   $3 restarted  1 = kai-server wurde in diesem Deploy neu gestartet
+#
+#   runtime == checkout                -> nichts (Nachbedingung erfuellt)
+#   kein runtime_commit im Body        -> RUNTIME_IDENTITY_UNKNOWN (HOLD:
+#                                         'aktuell' ist unbelegt — alter Server)
+#   runtime != checkout, restarted=1   -> RUNTIME_DRIFT_AFTER_RESTART:<n> (FAILED:
+#                                         der Restart hat den Code nicht geladen)
+#   runtime != checkout, restarted=0   -> RUNTIME_STALE_NO_RESTART:<n> (HOLD:
+#                                         Code liegt im Checkout, laeuft nicht)
+#
+# Bewusst grep statt jq/python: die Lib darf auf einem kahlen Host laufen.
+pi_deploy_runtime_reason() {
+    local body="${1:-}" checkout="${2:-}" restarted="${3:-0}" runtime drift
+    runtime="$(printf '%s' "$body" \
+        | grep -oE '"runtime_commit": *"[0-9a-f]{40}"' \
+        | grep -oE '[0-9a-f]{40}' | head -1)"
+    if [[ -z "$runtime" ]]; then
+        echo RUNTIME_IDENTITY_UNKNOWN
+        return 0
+    fi
+    if [[ -n "$checkout" && "$runtime" == "$checkout" ]]; then
+        return 0
+    fi
+    drift="$(printf '%s' "$body" \
+        | grep -oE '"drift_commits": *[0-9]+' \
+        | grep -oE '[0-9]+$' | head -1)"
+    [[ -n "$drift" ]] || drift=unknown
+    if [[ "$restarted" == "1" ]]; then
+        echo "RUNTIME_DRIFT_AFTER_RESTART:$drift"
+    else
+        echo "RUNTIME_STALE_NO_RESTART:$drift"
+    fi
 }
 
 # Grund-Tokens -> Urteil. Echo = Verdikt-Token, Rueckgabe = kanonischer Exit-Code.
@@ -153,6 +194,20 @@ pi_deploy_explain() {
                 ;;
             WRITER_FREEZE_DEFERRED)
                 echo "HOLD: Writer-Freeze aktiv, Unit(s) bewusst zurueckgestellt statt halb angewendet."
+                ;;
+            RUNTIME_IDENTITY_UNKNOWN)
+                echo "HOLD: /health nennt keinen runtime_commit — der laufende Server ist aelter als"
+                echo "      STAB-02; ob er den neuen Code laedt, ist unbelegt. Restart im Deploy-Fenster."
+                ;;
+            RUNTIME_STALE_NO_RESTART)
+                echo "HOLD: kai-server laeuft ${value:+$value Commits }hinter dem Checkout — kein Restart"
+                echo "      angefordert. Der Code liegt auf der Platte, nicht im Prozess:"
+                echo "      kai_deploy.sh --restart kai-server (Freeze-Guard, Beweis, Rueckweg)."
+                ;;
+            RUNTIME_DRIFT_AFTER_RESTART)
+                echo "FEHLER: kai-server wurde neu gestartet und meldet trotzdem ${value:+$value Commits }Rueckstand"
+                echo "        zum Checkout — der Restart hat den neuen Code NICHT geladen (falsches"
+                echo "        WorkingDirectory? anderer Checkout? pip install -e . fehlt?)."
                 ;;
             *)
                 echo "FEHLER: $bare${value:+ ($value)}"

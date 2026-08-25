@@ -56,6 +56,12 @@ from app.api.routers import (
 )
 from app.core.lightning_settings import validate_lightning_boot
 from app.core.logging import configure_logging, get_logger
+from app.core.runtime_identity import (
+    ARTIFACT_RELATIVE_PATH,
+    REPO_ROOT,
+    get_runtime_identity,
+    write_runtime_identity_artifact,
+)
 from app.core.settings import get_settings
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
 from app.messaging.context_builder import make_context_provider
@@ -75,6 +81,14 @@ _logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+    # STAB-02: Identitaet des Prozesses einmal einfrieren und als Artefakt ablegen —
+    # der Health-Check-Timer (eigener Prozess) liest sie und meldet Drift.
+    try:
+        _identity = get_runtime_identity()
+        write_runtime_identity_artifact(_identity, REPO_ROOT / ARTIFACT_RELATIVE_PATH)
+        _logger.info("runtime_identity", commit=_identity.runtime_commit, pid=_identity.pid)
+    except Exception:  # noqa: BLE001 - Start darf an der Attestation nicht scheitern
+        _logger.warning("runtime_identity_unavailable", exc_info=True)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
     app.state.session_factory = build_session_factory(settings.db)

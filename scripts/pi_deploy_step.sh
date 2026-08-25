@@ -54,6 +54,8 @@ HEALTH_SLEEP="${PI_DEPLOY_HEALTH_SLEEP:-2}"
 BROKER="${PI_DEPLOY_BROKER:-sudo -n /usr/local/sbin/kai-service-control}"
 
 extra_reasons=()
+server_restarted=0
+health_body=""
 
 # ── 1. Code nachziehen ──────────────────────────────────────────────────────
 [ -n "$base" ] || base="$($GIT rev-parse HEAD)"
@@ -127,6 +129,7 @@ if [ -n "$restart" ]; then
         for s in $svc; do
             if $BROKER restart "${s%.service}.service"; then
                 echo "restarted:${s%.service}.service"
+                [ "${s%.service}" = "kai-server" ] && server_restarted=1
             else
                 echo "Restart FEHLGESCHLAGEN: $s" >&2
                 extra_reasons+=("RESTART_FAILED")
@@ -145,15 +148,28 @@ while [ "$tries" -lt "$HEALTH_TRIES" ]; do
     tries=$((tries + 1))
     # Kein `|| echo 000`: ein unerreichbarer Dienst ist ein Fakt, den die
     # Urteilslogik lesen soll — kein Fehlschlag, den man wegschreibt.
-    if ! code="$($CURL -s -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL")"; then
+    # Body UND Code: seit STAB-02 traegt /health den laufenden Commit — der
+    # Deploy liest ihn als Nachbedingung (Restart hat den Code geladen?).
+    if raw="$($CURL -s -w '\n%{http_code}' --max-time 5 "$HEALTH_URL")"; then
+        code="${raw##*$'\n'}"
+        health_body="${raw%$'\n'*}"
+    else
         code=000
+        health_body=""
     fi
+    [ -n "$code" ] || code=000
     [ "$code" = "200" ] && break
     [ "$tries" -lt "$HEALTH_TRIES" ] && sleep "$HEALTH_SLEEP"
 done
 echo "health:$code (nach ${tries} Versuch(en))"
 
 # ── 6. Urteil ───────────────────────────────────────────────────────────────
+# Runtime-Identitaet (STAB-02): nur sinnvoll, wenn /health ueberhaupt antwortete —
+# ein toter Server ist schon HEALTH_NOT_200, kein zweiter Grund.
+if [ "$code" = "200" ]; then
+    runtime_token="$(pi_deploy_runtime_reason "$health_body" "$($GIT rev-parse HEAD)" "$server_restarted")"
+    [ -n "$runtime_token" ] && extra_reasons+=("$runtime_token")
+fi
 mapfile -t reasons < <(pi_deploy_reasons "$code" "$drift" "$caused" ${extra_reasons[@]+"${extra_reasons[@]}"})
 verdict="$(pi_deploy_verdict ${reasons[@]+"${reasons[@]}"})"
 rc=$?
@@ -170,5 +186,8 @@ if [ "$drift" != "0" ] && [ "$drift" != "unknown" ]; then
     printf '%s\n' "$unit_out" | awk '/^(DIFF|NEW) .*\.timer$/{print "    sudo systemctl restart " $2}'
 fi
 
+# Tokens maschinenlesbar neben dem Urteil — der Aufrufer (kai_deploy.sh, CI-Test)
+# soll den Grund nicht aus Prosa zurueckparsen muessen.
+echo "DEPLOY_REASONS=${reasons[*]-}"
 echo "DEPLOY_VERDICT=$verdict"
 exit "$rc"
