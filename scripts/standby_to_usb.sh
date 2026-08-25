@@ -26,9 +26,30 @@ MODE="${1:?usage: standby_to_usb.sh system|data}"
 REPO=/home/ubuntu/ai_analyst_trading_bot
 USB=/mnt/kai-data/kai-standby
 TS=$(date -u +%Y%m%dT%H%M%SZ)
+REPO="${KAI_STANDBY_REPO:-$REPO}"
+USB="${KAI_STANDBY_USB:-$USB}"
+TS="${KAI_STANDBY_TS:-$TS}"
 LOG=$USB/standby.log
 
 log() { echo "$(date -u +%FT%TZ)  [$MODE] $*" | tee -a "$LOG" >&2; }
+
+TAR_SNAPSHOT_RC=0
+
+write_manifest() {
+    local archive="$1" tar_rc="$2" size crash note manifest ts_utc
+    manifest="$archive.manifest.json"
+    ts_utc=$(date -u +%FT%TZ)
+    size=$(wc -c < "$archive" | tr -d ' ')
+    if [ "$tar_rc" -eq 1 ]; then
+        crash=true
+        note="tar rc=1 accepted: live file changed during read; archive is crash-consistent"
+    else
+        crash=false
+        note="tar rc=0 clean snapshot"
+    fi
+    printf '{"schema":"standby_manifest/v1","ts_utc":"%s","archive":"%s","size_bytes":%s,"tar_rc":%s,"crash_consistent":%s,"note":"%s"}\n' \
+        "$ts_utc" "$archive" "$size" "$tar_rc" "$crash" "$note" > "$manifest"
+}
 
 # tar over a LIVE tree: the running bot appends to JSONL while we read, so tar
 # returns 1 ("file changed as we read it"). That is benign for an append-only
@@ -37,6 +58,7 @@ tar_snapshot() {
     local out=$1; shift
     local rc=0
     tar czf "$out" "$@" 2>>"$LOG" || rc=$?
+    TAR_SNAPSHOT_RC=$rc
     if [ "$rc" -ge 2 ]; then log "FAIL: tar rc=$rc for $out"; return "$rc"; fi
     [ "$rc" -eq 1 ] && log "note: tar rc=1 (live file changed during read) -- accepted"
     return 0
@@ -55,10 +77,14 @@ case "$MODE" in
         --exclude='./.mypy_cache' --exclude='./.ruff_cache' \
         --exclude='./.pytest_cache' --exclude='./.hypothesis' \
         -C "$REPO" .
+    system_tar_rc=$TAR_SNAPSHOT_RC
     mv "$USB/system_$TS.tar.gz.part" "$USB/system_$TS.tar.gz"
+    write_manifest "$USB/system_$TS.tar.gz" "$system_tar_rc"
     # Config bits outside the repo needed for a clean rebuild.
     tar_snapshot "$USB/etc_$TS.tar.gz.part" -C / etc/systemd/system etc/fstab || true
+    etc_tar_rc=$TAR_SNAPSHOT_RC
     [ -f "$USB/etc_$TS.tar.gz.part" ] && mv "$USB/etc_$TS.tar.gz.part" "$USB/etc_$TS.tar.gz"
+    [ -f "$USB/etc_$TS.tar.gz" ] && [ "$etc_tar_rc" -le 1 ] && write_manifest "$USB/etc_$TS.tar.gz" "$etc_tar_rc"
     # Rebuild hints (versions + package state) for a faithful restore.
     {
         echo "# KAI standby rebuild hints  $TS"
@@ -77,7 +103,9 @@ case "$MODE" in
     ;;
   data)
     tar_snapshot "$USB/data_$TS.tar.gz.part" -C "$REPO" data artifacts
+    data_tar_rc=$TAR_SNAPSHOT_RC
     mv "$USB/data_$TS.tar.gz.part" "$USB/data_$TS.tar.gz"
+    write_manifest "$USB/data_$TS.tar.gz" "$data_tar_rc"
     # Retention: keep newest 28 sets (~7d @ 6h).
     ls -1t "$USB"/data_*.tar.gz 2>/dev/null | tail -n +29 | xargs -r rm -f
     sz=$(du -h "$USB/data_$TS.tar.gz" | cut -f1)

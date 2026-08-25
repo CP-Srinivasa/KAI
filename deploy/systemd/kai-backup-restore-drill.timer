@@ -1,0 +1,12 @@
+[Unit]
+Description=Trigger KAI Backup Restore Drill monatlich
+
+[Timer]
+# Monatlich am 01. um 04:10 lokal — nach dem taeglichen 03:40-Backup-Fenster,
+# vor dem Operator-Digest, damit ein kaputtes Backup als roter Unit-Fehler endet.
+OnCalendar=*-*-01 04:10:00
+Persistent=true
+Unit=kai-backup-restore-drill.service
+
+[Install]
+WantedBy=timers.target
