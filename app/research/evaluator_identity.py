@@ -1,32 +1,44 @@
 """Beweisen, dass der laufende Code der versiegelte ist — nicht nur behaupten.
 
-``activation.evaluator_sha256`` war bisher ein wohlgeformter 64-Hex-String und
-sonst nichts. Die Auswertung lief anschliessend mit der gerade importierten
-Implementierung. Das ist derselbe Fehler wie „Code auf Platte != Code im
-Prozess", nur eine Ebene hoeher: das Artefakt behauptet eine Identitaet, die
-niemand nachrechnet.
+``activation.evaluator_sha256`` war anfangs ein wohlgeformter 64-Hex-String und
+sonst nichts; die Auswertung lief mit der gerade importierten Implementierung.
+Das ist derselbe Fehler wie "Code auf Platte != Code im Prozess", nur eine Ebene
+hoeher: das Artefakt behauptet eine Identitaet, die niemand nachrechnet.
 
 Zwei Bindungen, beide fail-closed vor jeder Performance-Rechnung::
 
     git HEAD                 == activation.research_code_sha
     evaluator bundle SHA256  == activation.evaluator_sha256
 
-**Was im Bundle steckt und warum genau das.** Die Auswertungsmodule sind klein
-und ausschliesslich fuer diesen Zweck da — ihre Bytes gehoeren vollstaendig
-hinein. ``runner.py`` dagegen ist gross und aendert sich aus Gruenden, die den
-Primaertest nichts angehen; es vollstaendig zu hashen wuerde den Seal bei jeder
-unbeteiligten Aenderung brechen. Vom Runner geht deshalb nur der **Quelltext des
-versiegelten Deciders** ein — genau die Regel, um die es geht, und sonst nichts.
+**Warum der Bundle-Hash die eigentliche Verteidigung ist.** ``git rev-parse
+HEAD`` sieht uncommittete Aenderungen im Arbeitsbaum ueberhaupt nicht. Wer eine
+Datei editiert und nicht committet, passiert die HEAD-Pruefung mit wehenden
+Fahnen. Nur der Bundle-Hash liest Bytes.
 
-Der Bundle-Hash ist damit praezise: er aendert sich, wenn sich die Regel oder die
-Auswertung aendert, und nicht, wenn jemand anderswo eine Zeile Kommentar
-verschiebt.
+**Was im Bundle steckt — und warum nicht weniger.** Am 2026-08-25 hashte eine
+fruehere Fassung aus ``runner.py`` nur den Quelltext des Deciders
+(``inspect.getsource``). Gemessen::
+
+    RSI_REENTRY_LOW = 30.0 -> 15.0    Bundle-Hash unveraendert  !!
+    VOLUME_SPIKE_Z  = 2.0  -> 1.0     Bundle-Hash unveraendert  !!
+
+Beide Konstanten definieren die Regel, werden aber zur Auswertungszeit aus
+Modulen gelesen, die nicht im Bundle lagen — und ``getsource`` einer Funktion
+enthaelt die Konstanten nicht, die sie liest. Die Regel liegt deshalb jetzt in
+``app/research/sealed_hypothesis.py``, allein in ihrer eigenen Datei, und jede
+beteiligte Datei geht VOLLSTAENDIG ein.
+
+Die Auswahl folgt einer Frage: *koennte eine Aenderung dieser Datei aus DEMSELBEN
+eingefrorenen Datenschnitt ein anderes Verdikt erzeugen?* Deshalb sind
+``forward_returns`` und ``rsi`` NICHT dabei — sie erzeugen den Datenschnitt,
+laufen bei der Auswertung aber nicht mehr; ihr Ergebnis ist ueber
+``dataset_sha256`` gebunden. ``volume_z`` dagegen ist dabei, weil die Regel
+``VOLUME_SPIKE_Z`` zur Laufzeit liest.
 """
 
 from __future__ import annotations
 
 import hashlib
-import inspect
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -35,17 +47,30 @@ BUNDLE_SPEC_VERSION = "kai/evaluator-bundle/v1"
 
 # Die Module, die das Verdikt tatsaechlich erzeugen. Vollstaendig gehasht.
 EVALUATOR_BUNDLE_MODULES: tuple[str, ...] = (
+    # Die Regel selbst — eigene Datei, damit sie vollstaendig hashbar ist.
+    "app/research/sealed_hypothesis.py",
+    # Die Konstante, die sie liest. Ohne diese Zeile bliebe VOLUME_SPIKE_Z
+    # aenderbar, ohne den Seal zu brechen (gemessen 2026-08-25).
+    "app/analysis/indicators/volume_z.py",
+    # Der FeatureRow-Vertrag: panels_from_frozen rekonstruiert daraus die
+    # Zeilen des Artefakts; ein geaendertes Feldset aendert die Auswertung.
+    "app/analysis/features/feature_matrix.py",
+    # Die Auswertungskette vom Artefakt zum Verdikt.
     "app/analysis/student_t.py",
     "app/research/frozen_dataset.py",
     "app/research/frozen_input.py",
     "app/research/pooled_inference.py",
     "app/research/prereg_candidate.py",
     "app/research/prereg_evaluation.py",
+    "app/research/prereg_storage.py",
     "app/research/prereg_window.py",
     "app/research/prereg_window_state.py",
     "app/research/primary_confirmatory.py",
     "app/research/samples.py",
     "app/research/signal_clusters.py",
+    # Der Waechter selbst. Schuetzt nicht gegen einen entschlossenen Angreifer,
+    # macht aber eine versehentliche Aufweichung sichtbar.
+    "app/research/evaluator_identity.py",
 )
 
 
@@ -54,17 +79,17 @@ class EvaluatorIdentityError(RuntimeError):
 
 
 def evaluator_bundle_sha256(repo_root: Path, *, decider_name: str) -> str:
-    """Hash ueber die Auswertungsmodule PLUS den Quelltext des Deciders.
+    """Hash ueber die VOLLSTAENDIGEN Bytes jeder beteiligten Datei.
 
     Args:
         repo_root: Wurzel des Checkouts.
-        decider_name: der versiegelte Hypothesenname.
+        decider_name: der versiegelte Hypothesenname. Er geht in den Hash ein,
+            damit ein Wechsel der gewerteten Regel den Seal bricht — auch wenn
+            beide Regeln in derselben Datei staenden.
 
     Raises:
-        EvaluatorIdentityError: ein Modul fehlt oder der Decider ist unbekannt.
+        EvaluatorIdentityError: ein Modul fehlt.
     """
-    from app.research.prereg_evaluation import resolve_decider
-
     parts: list[bytes] = [BUNDLE_SPEC_VERSION.encode("utf-8")]
     for relative in EVALUATOR_BUNDLE_MODULES:
         path = repo_root / relative
@@ -76,10 +101,7 @@ def evaluator_bundle_sha256(repo_root: Path, *, decider_name: str) -> str:
         parts.append(relative.encode("utf-8"))
         parts.append(hashlib.sha256(body).hexdigest().encode("utf-8"))
 
-    source = inspect.getsource(resolve_decider(decider_name)).replace("\r\n", "\n")
     parts.append(f"decider:{decider_name}".encode())
-    parts.append(hashlib.sha256(source.encode("utf-8")).hexdigest().encode("utf-8"))
-
     return hashlib.sha256(b"\n".join(parts)).hexdigest()
 
 

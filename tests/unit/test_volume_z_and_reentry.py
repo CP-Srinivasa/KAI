@@ -34,12 +34,11 @@ from app.analysis.indicators.volume_z import (
     compute_volume_z,
 )
 from app.market_data.models import OHLCV
-from app.research.runner import (
+from app.research.runner import default_hypotheses, secondary_benchmark_family
+from app.research.sealed_hypothesis import (
     PRIMARY_CONFIRMATORY_NAME,
-    default_hypotheses,
     primary_confirmatory_hypothesis,
     rsi_reentry_volume_confirmed,
-    secondary_benchmark_family,
 )
 
 

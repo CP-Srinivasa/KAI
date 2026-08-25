@@ -34,7 +34,6 @@ from app.analysis.features.forward_returns import compute_forward_return_bps
 from app.analysis.features.funding_align import FundingPoint
 from app.analysis.features.unlock_align import UnlockEvent
 from app.analysis.features.whale_flow_align import FlowPoint
-from app.analysis.indicators.volume_z import VOLUME_SPIKE_Z
 from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
 from app.market_data.models import OHLCV
@@ -46,6 +45,9 @@ from app.research.ledger import (
     hypothesis_key,
 )
 from app.research.samples import Decider
+from app.research.sealed_hypothesis import (
+    primary_confirmatory_hypothesis,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,57 +179,16 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
 
 # --- the ONE pre-registered confirmatory hypothesis ----------------------------
 #
-# Deliberately NOT part of default_hypotheses(). That list is a sealed BH-FDR
-# family: adding a thirteenth member would raise the multiple-testing bar of the
-# twelve rules whose verdicts are already sealed, and re-label history for a
-# reason that has nothing to do with them. The new experiment gets its own frozen
-# family (spec 2026-08-19, B5/C3b).
-
-# RSI re-entry bounds. Frozen with the spec; not tuning knobs.
-RSI_REENTRY_LOW = 30.0
-RSI_REENTRY_HIGH = 70.0
-
-PRIMARY_CONFIRMATORY_NAME = "rsi_reentry_volume_confirmed"
-
-
-def rsi_reentry_volume_confirmed(r: FeatureRow) -> int:
-    """RSI leaves the extreme zone on a volume spike — fires once per transition.
-
-    ::
-
-        LONG   <=>  rsi_14_prev < 30  AND  rsi_14 >= 30  AND  volume_z_20 >= 2.0
-        SHORT  <=>  rsi_14_prev > 70  AND  rsi_14 <= 70  AND  volume_z_20 >= 2.0
-
-    This is a RE-ENTRY out of the extreme, not entry into it — which is why the
-    measured -23.27 bps of ``rsi_oversold_long`` do not refute it: that rule
-    tests the LEVEL ``rsi_14 < 30`` and therefore fires in every bar of the
-    state. Firing once per transition is the difference that matters for a book
-    whose loss is almost entirely fees.
-
-    Genuinely new is only the CONJUNCTION with a volume spike. The name carries
-    the semantics so no later reader mistakes it for the level rule.
-    """
-    if r.rsi_14 is None or r.rsi_14_prev is None or r.volume_z_20 is None:
-        return 0
-    if r.volume_z_20 < VOLUME_SPIKE_Z:
-        return 0
-    if r.rsi_14_prev < RSI_REENTRY_LOW <= r.rsi_14:
-        return 1
-    if r.rsi_14_prev > RSI_REENTRY_HIGH >= r.rsi_14:
-        return -1
-    return 0
-
-
-def primary_confirmatory_hypothesis() -> list[tuple[str, Decider]]:
-    """The ONLY hypothesis that may earn a confirmatory verdict from this window.
-
-    One member, so BH-FDR reduces to ``p <= alpha``. That is not weak protection:
-    with exactly one hypothesis fixed before T0 and judged only on data after T0,
-    there is no multiple-testing problem inside this experiment. The selection
-    bias from how the idea was born is handled by freezing the rule beforehand
-    and testing it on new data — not by an artificial penalty.
-    """
-    return [(PRIMARY_CONFIRMATORY_NAME, rsi_reentry_volume_confirmed)]
+# Die Regel selbst liegt in app/research/sealed_hypothesis.py — allein in ihrer
+# eigenen Datei, damit das Evaluator-Bundle sie VOLLSTAENDIG hashen kann. Stand
+# sie hier, gaebe es nur schlechte Wahlen: die ganze Datei hashen (dann braeche
+# jede unbeteiligte Runner-Aenderung den Seal) oder nur den Funktionstext (dann
+# fiele eine geaenderte Konstante NICHT auf — am 2026-08-25 gemessen).
+#
+# Sie ist ausdruecklich NICHT Teil von default_hypotheses(). Jene Liste ist eine
+# versiegelte BH-FDR-Familie: ein dreizehntes Mitglied hoebe die
+# Multiple-Testing-Huerde der zwoelf Regeln, deren Verdikte bereits versiegelt
+# sind, und etikettierte Geschichte aus einem Grund um, der sie nichts angeht.
 
 
 def secondary_benchmark_family() -> list[tuple[str, Decider]]:
