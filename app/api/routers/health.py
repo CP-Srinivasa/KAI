@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
+from app.core.runtime_identity import drift_report, get_runtime_identity
 from app.core.settings import AppSettings, get_settings
 from app.services.timer_health import read_latest_timer_audit
 
@@ -13,6 +14,15 @@ router = APIRouter(tags=["health"])
 class HealthResponse(BaseModel):
     status: str
     version: str
+    # STAB-02 (2026-08-25): Runtime-Identitaet. Vorher sah ein Server, der 7 Tage
+    # hinter seinem Checkout lief, exakt so aus wie einer auf dem aktuellen Stand.
+    # Alle Felder fail-soft (None = nicht messbar, NICHT 'aktuell').
+    runtime_commit: str | None = None
+    checkout_commit: str | None = None
+    drift_commits: int | None = None
+    started_at_utc: str | None = None
+    uptime_s: float | None = None
+    lock_changed: bool | None = None
 
 
 # FS-2 (#198): "critical" added so a genuinely-stuck recurring timer is distinct
@@ -44,9 +54,28 @@ class TimerHealthResponse(BaseModel):
     inactive: list[TimerHealthInactiveEntry]
 
 
+_RUNTIME_FIELDS = (
+    "runtime_commit",
+    "checkout_commit",
+    "drift_commits",
+    "started_at_utc",
+    "uptime_s",
+    "lock_changed",
+)
+
+
+def _runtime_fields() -> dict[str, object]:
+    """Runtime vs. Checkout — nie ein 500 auf /health, egal was git tut."""
+    try:
+        report = drift_report(get_runtime_identity())
+    except Exception:  # noqa: BLE001 - Liveness darf an der Identitaet nicht sterben
+        return {}
+    return {key: report.get(key) for key in _RUNTIME_FIELDS}
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", version="0.1.0")
+    return HealthResponse(status="ok", version="0.1.0", **_runtime_fields())  # type: ignore[arg-type]
 
 
 @router.get("/health/timers", response_model=TimerHealthResponse)
