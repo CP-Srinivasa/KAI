@@ -8,6 +8,7 @@ JSON-Daten.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
 from app.api.deps import get_document_repo, get_source_repo, get_source_repo_optional
+from app.api.routers.dashboard_quality_cache import SingleFlightCache
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -77,13 +79,9 @@ _hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
 _PROVENANCE_CACHE_TTL_S = 30.0
 _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
-# NEO-P-201/202: the quality endpoint full-scans paper/alert/loop audit JSONL
-# (trading_loop_audit ~27 MB) and had no top-level cache -> 2-4s on the Pi on
-# EVERY request, even repeats, and it is polled by ~6 components in parallel.
-# Cache the assembled response so repeat polls are served instantly; TTL matches
-# the inner _hold/_provenance caches it depends on.
+# Quality full-scans large audit JSONL; cache semantics live in
+# dashboard_quality_cache.py. TTL matches the inner hold/provenance caches.
 _QUALITY_CACHE_TTL_S = 20.0
-_quality_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 # Edge-window build parses both audit streams (trading_loop_audit ~27 MB), so the
 # Edge-Truth panel's 60 s poll must not re-parse every tick. Keyed by mode.
@@ -725,17 +723,8 @@ def _shadow_attribution_24h() -> dict[str, Any]:
     }
 
 
-@router.get("/dashboard/api/quality", tags=["dashboard"])
-async def dashboard_quality_api() -> JSONResponse:
-    """Return quality-bar metrics as JSON for the dashboard SPA."""
-    cache_now = time.monotonic()
-    cached_quality = _quality_cache.get("payload")
-    if cached_quality is not None and (cache_now - _quality_cache["at"]) < _QUALITY_CACHE_TTL_S:
-        return JSONResponse(
-            content=cached_quality, headers={"Cache-Control": "no-store, max-age=0"}
-        )
-    report = await _live_hold_report()
-
+def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
+    """Build quality-bar metrics from the hold report and audit artifacts."""
     quality = report.get("signal_quality_validation", {})
     hit_rate = report.get("alert_hit_rate_evidence", {})
     paper = report.get("paper_trading_evidence", {})
@@ -1206,12 +1195,22 @@ async def dashboard_quality_api() -> JSONResponse:
         ],
         "generated_at": generated_at,
     }
-    _quality_cache["payload"] = quality_payload
-    _quality_cache["at"] = cache_now
-    return JSONResponse(
-        content=quality_payload,
-        headers={"Cache-Control": "no-store, max-age=0"},
-    )
+    return quality_payload
+
+
+async def _refresh_quality() -> dict[str, Any]:
+    report = await _live_hold_report()
+    return await asyncio.to_thread(_build_quality_payload, report)
+
+
+_quality_cache_sf = SingleFlightCache(refresh=_refresh_quality, ttl_s=_QUALITY_CACHE_TTL_S)
+
+
+@router.get("/dashboard/api/quality", tags=["dashboard"])
+async def dashboard_quality_api() -> JSONResponse:
+    """Return quality-bar metrics as JSON for the dashboard SPA."""
+    payload = await _quality_cache_sf.get()
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @router.get("/dashboard/api/edge-window", tags=["dashboard"])
