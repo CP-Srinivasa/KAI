@@ -614,6 +614,11 @@ def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> l
     der Pi, ist das ein Befund (Server vor STAB-02 oder nie gestartet); auf
     einer Workstation ohne Server bleibt der Check still.
     """
+    # Gleiche Klasse wie Sudo-/Broker-Probe: tests/conftest.py setzt runs_on_pi
+    # in JEDEM Test auf wahr; ohne Kill-Switch meldete das fehlende Artefakt in
+    # fremden Fixtures (test_daily_briefing, test_notify) einen Befund.
+    if os.environ.get("KAI_RUNTIME_IDENTITY_PROBE", "").strip().lower() == "off":
+        return []
     artifact = read_runtime_identity_artifact(adir / "runtime" / "runtime_identity.json")
     if artifact is None:
         if not runs_on_pi:

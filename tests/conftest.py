@@ -43,6 +43,9 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     # Workstation fehlt und der Aufruf in einen OSError lief.
     monkeypatch.setenv("KAI_BROKER_PROBE", "off")
     monkeypatch.setenv("KAI_TIMER_SCHEDULE_PROBE", "off")
+    # STAB-02: die Runtime-Identitaets-Probe meldet ein fehlendes Artefakt auf der
+    # "Pi" — in Fixtures ohne laufenden Server waere das jedes Mal ein Befund.
+    monkeypatch.setenv("KAI_RUNTIME_IDENTITY_PROBE", "off")
 
 
 @pytest.fixture(autouse=True)

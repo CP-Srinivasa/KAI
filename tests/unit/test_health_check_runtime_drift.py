@@ -12,10 +12,18 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from app.alerts import health_check as hc
 from app.core import runtime_identity as ri
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _probe_on(monkeypatch) -> None:
+    # conftest schaltet die Probe global ab — hier wird sie selbst getestet.
+    monkeypatch.delenv("KAI_RUNTIME_IDENTITY_PROBE", raising=False)
 
 
 def _write_artifact(adir: Path, commit: str) -> None:
