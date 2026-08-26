@@ -327,13 +327,24 @@ def setup_auth(
         # them BEFORE the lockout gate; tunnel dashboard traffic (Cf-Ray present
         # with a configured allowlist) still falls through to the CF-Access checks
         # and the lockout below.
+        # STAB-03b (2026-08-26): /metrics (Prometheus-Text, nur Aggregate — Event-Loop-
+        # Lag, Route-p95 je Route-TEMPLATE, Uptime) folgt demselben Muster. Der lokale
+        # Konsument (Watchdog/Health-Check, STAB-08) ist GEPLANT, noch nicht gebaut;
+        # live gab es 401 ohne und 403 mit Bearer-Key, die Messung war unerreichbar.
+        # Exakte Gleichheit, kein Prefix (/metricsv2, /metrics/foo bleiben auth-
+        # pflichtig). Tunnel-Verkehr (Cf-Ray + Allowlist) faellt weiter durch —
+        # auf CF-Access/Bearer, NICHT auf den dashboard-only Cf-Ray-Riegel.
         if (
-            (path == "/dashboard" or path.startswith("/dashboard/"))
+            (path == "/dashboard" or path.startswith("/dashboard/") or path == "/metrics")
             and not _requires_strong_auth(path)  # S-001: sensitive LN control never local-bypasses
             and (not cf_allowed or not request.headers.get("Cf-Ray"))
         ):
             _reset_auth_failures(client_ip)
-            _audit_access(decision="granted", reason="dashboard_local", request=request)
+            _audit_access(
+                decision="granted",
+                reason="metrics_local" if path == "/metrics" else "dashboard_local",
+                request=request,
+            )
             return await call_next(request)
 
         locked, retry_after = _is_rate_limited(

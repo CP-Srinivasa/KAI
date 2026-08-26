@@ -17,3 +17,5 @@ Der JSONL-Rollup des Event-Loop-Lag-Samplers liegt unter
 auf die letzten 1440 Zeilen gekürzt.
 
 Schwellen/Alarme folgen erst nach 7 Tagen Messung (STAB-08).
+
+**Zugriff:** `/metrics` ist lokal ohne Token lesbar (F-002-Muster wie die Dashboard-Reads, `reason=metrics_local`); Verkehr über den Cloudflare-Tunnel (`Cf-Ray`) bleibt hinter CF-Access/Bearer. Auf der Pi: `curl -s http://127.0.0.1:8000/metrics`.

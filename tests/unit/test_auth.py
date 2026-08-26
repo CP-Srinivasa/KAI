@@ -330,3 +330,103 @@ def test_tradingview_webhook_middleware_allows_when_enabled() -> None:
         response = client.post("/tradingview/webhook", json={"x": 1})
     assert response.status_code == 200
     assert response.json() == {"ok": "true"}
+
+
+# ---------------------------------------------------------------------------
+# STAB-03b: /metrics folgt dem F-002-Muster der Dashboard-Reads — lokal ohne
+# Auth (Watchdog/Health-Check auf der Pi lesen es ohne Token), Tunnel-Verkehr
+# (Cf-Ray + konfigurierte Allowlist) bleibt hinter CF-Access. Live 26.08.:
+# /metrics gab 401 ohne und 403 mit Bearer-Key — die Messung war unerreichbar.
+# ---------------------------------------------------------------------------
+
+
+def _app_with_metrics(api_key: str, cf_allowed: list[str] | None = None) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/metrics")
+    async def _metrics() -> str:
+        return "kai_process_uptime_seconds 1\n"
+
+    @app.get("/protected")
+    async def _protected() -> dict[str, str]:
+        return {"ok": "true"}
+
+    setup_auth(app, api_key=api_key, env="production", cf_allowed_emails=cf_allowed or [])
+    return app
+
+
+def test_metrics_local_read_needs_no_auth() -> None:
+    app = _app_with_metrics("secret")
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+        assert client.get("/protected").status_code == 401, "Allowlist bleibt eng"
+
+
+def test_metrics_local_read_open_even_with_cf_allowlist_configured() -> None:
+    app = _app_with_metrics("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+
+
+def test_metrics_tunnel_traffic_still_behind_cf_access() -> None:
+    app = _app_with_metrics("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/metrics", headers={"Cf-Ray": "abc-FRA", "Cf-Connecting-IP": "203.0.113.7"}
+        )
+    assert response.status_code == 401
+
+
+def test_metrics_tunnel_traffic_with_allowed_cf_email_accepted() -> None:
+    """Positivfall: ein legitimer Operator über den Tunnel darf /metrics lesen."""
+    app = _app_with_metrics("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/metrics",
+            headers={
+                "Cf-Ray": "abc-FRA",
+                "Cf-Connecting-IP": "203.0.113.7",
+                "Cf-Access-Authenticated-User-Email": "ops@example.com",
+            },
+        )
+    assert response.status_code == 200
+
+
+def test_metrics_bypass_is_exact_path_not_prefix() -> None:
+    """NEO-F-004-Muster: /metricsv2 und /metrics/foo erben den Bypass NICHT."""
+    app = FastAPI()
+
+    @app.get("/metrics")
+    async def _metrics() -> str:
+        return "ok\n"
+
+    @app.get("/metricsv2")
+    async def _metrics_v2() -> str:
+        return "leak\n"
+
+    @app.get("/metrics/foo")
+    async def _metrics_foo() -> str:
+        return "leak\n"
+
+    setup_auth(app, api_key="secret", env="production")
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+        assert client.get("/metricsv2").status_code == 401
+        assert client.get("/metrics/foo").status_code == 401
+
+
+def test_metrics_local_read_audits_its_own_reason(monkeypatch) -> None:
+    from app.security import auth as auth_mod
+
+    reasons: list[str] = []
+    original = auth_mod._audit_access
+
+    def _spy(**kwargs):  # type: ignore[no-untyped-def]
+        reasons.append(kwargs.get("reason", ""))
+        return original(**kwargs)
+
+    monkeypatch.setattr(auth_mod, "_audit_access", _spy)
+    app = _app_with_metrics("secret")
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+    assert "metrics_local" in reasons
