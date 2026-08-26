@@ -61,6 +61,7 @@ class SingleFlightCache:
         self,
         refresh: RefreshCallable,
         ttl_s: float,
+        include_cache_metadata: bool = True,
         *,
         clock: ClockCallable = time.monotonic,
         now_utc: NowUtcCallable = _utc_now,
@@ -69,6 +70,7 @@ class SingleFlightCache:
         self._ttl_s = ttl_s
         self._clock = clock
         self._now_utc = now_utc
+        self._include_cache_metadata = include_cache_metadata
 
         self._entry: _CacheEntry | None = None
         self._lock: asyncio.Lock | None = None
@@ -78,7 +80,7 @@ class SingleFlightCache:
         self._stale_served_during_compute = False
 
     async def get(self) -> dict[str, Any]:
-        """Return the cached payload with an added ``cache`` metadata block."""
+        """Return the cached payload, optionally with a ``cache`` metadata block."""
         loop = asyncio.get_running_loop()
         lock = self._singleflight_lock()
         while True:
@@ -114,6 +116,9 @@ class SingleFlightCache:
                         if self._compute_task is wait_task:
                             self._compute_task = None
                             self._compute_task_loop = None
+
+    def has_entry(self) -> bool:
+        return self._entry is not None
 
     def _singleflight_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -155,6 +160,8 @@ class SingleFlightCache:
 
     def _payload_with_meta(self, *, entry: _CacheEntry, now: float, stale: bool) -> dict[str, Any]:
         response = dict(entry.payload)
+        if not self._include_cache_metadata:
+            return response
         response["cache"] = CacheMeta(
             generated_at_utc=entry.generated_at_utc,
             age_s=round(max(0.0, now - entry.at), 3),
