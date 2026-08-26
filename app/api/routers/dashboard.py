@@ -67,12 +67,9 @@ _FX_CACHE_TTL_S = 3600.0
 _FX_FALLBACK_EUR_PER_USD = 0.921  # mirrors web/src/state/CurrencyProvider.tsx
 _fx_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
-# In-process TTL cache for the hold report. build_hold_metrics_report touches
-# four jsonl files (~2 MB total) and runs in ~400 ms. With the dashboard
-# polling every 60 s and other consumers (telegram, agent_worker) reading the
-# same data, a 30 s cache absorbs bursts without hiding fresh ticks.
 _HOLD_CACHE_TTL_S = 30.0
 _hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
+_hold_cache_sf = SingleFlightCache(lambda: _refresh_hold_report(), _HOLD_CACHE_TTL_S, False)
 
 # Same rationale as _hold_cache: the provenance report reads the same
 # alert-audit + outcomes files plus the TV pending log. 30 s TTL.
@@ -487,13 +484,7 @@ def _load_source_reliability_summary() -> dict[str, Any]:
 
 
 async def _load_source_by_doc() -> dict[str, str]:
-    """Resolve directional doc-ids → source_name from the DB.
-
-    Used so the hold-report's active-precision metric can filter the
-    legacy-unknown bucket (docs that have no CanonicalDocument row, a
-    pre-D-139 artefact). On any failure returns an empty map — hold_metrics
-    falls back to its date-based cutoff.
-    """
+    """Resolve directional doc-ids to source names; fail-soft to the legacy cutoff."""
     now = time.monotonic()
     cached = _source_map_cache.get("map")
     if cached is not None and (now - _source_map_cache["at"]) < _SOURCE_MAP_TTL_S:
@@ -506,7 +497,9 @@ async def _load_source_by_doc() -> dict[str, str]:
         from app.storage.db.session import build_session_factory
         from app.storage.models.document import CanonicalDocumentModel
 
-        audits = _validate_dashboard_stream(_ALERT_AUDIT, "alert_audit").rows
+        audits = (
+            await asyncio.to_thread(_validate_dashboard_stream, _ALERT_AUDIT, "alert_audit")
+        ).rows
         doc_ids: set[str] = set()
         for rec in audits:
             sentiment = str(rec.get("sentiment_label") or "").lower()
@@ -540,29 +533,36 @@ async def _load_source_by_doc() -> dict[str, str]:
         return cached or {}
 
 
-async def _live_hold_report() -> dict[str, Any]:
-    """Build the hold-metrics report on demand from the live audit files.
-
-    Replaces the previous behaviour of reading a pre-computed snapshot file
-    that was only refreshed by an out-of-band script run — that snapshot was
-    sometimes 24 h+ stale, making the dashboard quality-bar feel frozen.
-    """
-    now = time.monotonic()
-    if _hold_cache["report"] is not None and (now - _hold_cache["at"]) < _HOLD_CACHE_TTL_S:
-        return cast(dict[str, Any], _hold_cache["report"])
+async def _refresh_hold_report() -> dict[str, Any]:
+    cache_at = time.monotonic()
     source_map = await _load_source_by_doc()
-    _validate_dashboard_stream(_ALERT_AUDIT, "alert_audit")
-    _validate_dashboard_stream(_PAPER_EXECUTION_AUDIT, "paper_execution_audit")
-    report = build_hold_metrics_report(
+    await asyncio.to_thread(_validate_dashboard_stream, _ALERT_AUDIT, "alert_audit")
+    await asyncio.to_thread(
+        _validate_dashboard_stream, _PAPER_EXECUTION_AUDIT, "paper_execution_audit"
+    )
+    started = time.monotonic()
+    report = await asyncio.to_thread(
+        build_hold_metrics_report,
         alert_audit_path=_ALERT_AUDIT,
         alert_outcomes_path=_ALERT_OUTCOMES,
         trading_loop_audit_path=_TRADING_LOOP_AUDIT,
         paper_execution_audit_path=_PAPER_EXECUTION_AUDIT,
         source_by_doc=source_map or None,
     )
+    logger.info(
+        "dashboard_hold_report_computed compute_ms=%.0f",
+        (time.monotonic() - started) * 1000.0,
+    )
     _hold_cache["report"] = report
-    _hold_cache["at"] = now
+    _hold_cache["at"] = cache_at
     return report
+
+
+async def _live_hold_report() -> dict[str, Any]:
+    global _hold_cache_sf
+    if _hold_cache.get("report") is None and _hold_cache_sf.has_entry():
+        _hold_cache_sf = SingleFlightCache(lambda: _refresh_hold_report(), _HOLD_CACHE_TTL_S, False)
+    return await _hold_cache_sf.get()
 
 
 async def _fetch_fx_live() -> dict[str, Any] | None:

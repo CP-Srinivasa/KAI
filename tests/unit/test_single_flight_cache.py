@@ -74,6 +74,18 @@ async def test_single_flight_cache_shares_empty_cache_refresh() -> None:
 
 
 @pytest.mark.asyncio
+async def test_single_flight_cache_can_return_payload_without_cache_metadata() -> None:
+    async def refresh() -> dict[str, Any]:
+        return {"marker": "plain"}
+
+    cache = SingleFlightCache(refresh=refresh, ttl_s=10.0, include_cache_metadata=False)
+
+    response = await cache.get()
+
+    assert response == {"marker": "plain"}
+
+
+@pytest.mark.asyncio
 async def test_single_flight_cache_serves_stale_while_revalidate() -> None:
     clock = FakeClock()
     calls = 0

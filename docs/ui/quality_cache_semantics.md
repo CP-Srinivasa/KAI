@@ -15,3 +15,8 @@ Top-level `cache` fields:
 
 Frontend follow-up scope: render `stale=true` as a visible stale-while-revalidate state, not as a
 metric failure. The rest of the payload remains the metric source of truth.
+
+Hold-report note: `_live_hold_report()` uses the same single-flight TTL helper with a 30 s TTL, but
+does not add a top-level `cache` block because downstream consumers rely on the report payload
+staying byte-identical. Its blocking audit scan and `build_hold_metrics_report(...)` refresh run off
+the event loop; refresh duration is logged as `dashboard_hold_report_computed compute_ms=...`.
