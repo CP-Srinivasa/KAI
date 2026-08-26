@@ -330,3 +330,48 @@ def test_tradingview_webhook_middleware_allows_when_enabled() -> None:
         response = client.post("/tradingview/webhook", json={"x": 1})
     assert response.status_code == 200
     assert response.json() == {"ok": "true"}
+
+
+# ---------------------------------------------------------------------------
+# STAB-03b: /metrics folgt dem F-002-Muster der Dashboard-Reads — lokal ohne
+# Auth (Watchdog/Health-Check auf der Pi lesen es ohne Token), Tunnel-Verkehr
+# (Cf-Ray + konfigurierte Allowlist) bleibt hinter CF-Access. Live 26.08.:
+# /metrics gab 401 ohne und 403 mit Bearer-Key — die Messung war unerreichbar.
+# ---------------------------------------------------------------------------
+
+
+def _app_with_metrics(api_key: str, cf_allowed: list[str] | None = None) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/metrics")
+    async def _metrics() -> str:
+        return "kai_process_uptime_seconds 1\n"
+
+    @app.get("/protected")
+    async def _protected() -> dict[str, str]:
+        return {"ok": "true"}
+
+    setup_auth(app, api_key=api_key, env="production", cf_allowed_emails=cf_allowed or [])
+    return app
+
+
+def test_metrics_local_read_needs_no_auth() -> None:
+    app = _app_with_metrics("secret")
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+        assert client.get("/protected").status_code == 401, "Allowlist bleibt eng"
+
+
+def test_metrics_local_read_open_even_with_cf_allowlist_configured() -> None:
+    app = _app_with_metrics("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        assert client.get("/metrics").status_code == 200
+
+
+def test_metrics_tunnel_traffic_still_behind_cf_access() -> None:
+    app = _app_with_metrics("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/metrics", headers={"Cf-Ray": "abc-FRA", "Cf-Connecting-IP": "203.0.113.7"}
+        )
+    assert response.status_code == 401
