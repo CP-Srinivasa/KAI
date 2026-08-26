@@ -77,6 +77,12 @@ STATE_RESOLUTION_HOLD = "RESOLUTION_HOLD"
 # NICHT terminal entschieden hat. Kein Reifegrad, sondern eine Luecke in der
 # Aufsicht selbst — deshalb ein eigener Zustand und nicht "NOT_DUE".
 STATE_UNWATCHED = "UNWATCHED"
+# Ein versiegelter Claim, fuer den ein Verdikt in einer SEITENABLAGE liegt
+# (prereg_verdicts.jsonl, ln_reconciliation_verdict.jsonl), aber keines in
+# der verifizierten Truth-Kette. Kein Abschluss — aber eine andere Handlung
+# als UNWATCHED: attestieren, nicht auswerten. Live 2026-08-26: 0879a65c (LN)
+# trug ein PASS in der Seitenablage und stand trotzdem als "kein Verdikt".
+STATE_VERDICT_UNATTESTED = "VERDICT_UNATTESTED"
 PREREG_LEDGER_RELPATH = Path("research") / "prereg_ledger.jsonl"
 PREREG_VERDICTS_RELPATH = Path("research") / "prereg_verdicts.jsonl"
 # Nur diese Resolution-Status beenden einen Claim. `conflict`,
@@ -601,31 +607,77 @@ def load_attested_resolutions(
     return resolutions, None
 
 
-def _offchain_verdict_ids(artifacts_dir: Path) -> set[str]:
-    """``prereg_id``s mit einem Verdikt-Datensatz ausserhalb der Truth-Kette.
+def _offchain_verdict_sources(artifacts_dir: Path) -> dict[str, list[str]]:
+    """``prereg_id`` → Seitenablagen mit einem terminalen Verdikt-Datensatz.
 
     Rein diagnostisch (siehe ``find_unwatched_preregs``): die Seitenablage ist
     nicht signaturverkettet und kann einen Claim nicht terminal schliessen.
+    Die Leseregel (juengster Datensatz je Datei, nur terminale Klassen) lebt
+    in ``prereg_reconciliation`` — EINE Implementierung fuer alle Leser.
     """
-    path = artifacts_dir / PREREG_VERDICTS_RELPATH
-    if not path.exists():
-        return set()
-    ids: set[str] = set()
-    try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return set()
-    for line in raw_lines:
-        line = line.strip()
-        if not line:
+    from app.research.prereg_reconciliation import load_offchain_verdicts
+
+    return {
+        pid: [row["source"] for row in rows]
+        for pid, rows in load_offchain_verdicts(artifacts_dir).items()
+    }
+
+
+def find_resolved_unspecced_preregs(
+    artifacts_dir: Path,
+    *,
+    specs: Any = MATURITY_SPECS,
+    resolutions: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Terminal entschiedene Claims OHNE Reife-Spec — als RESOLVED-Zeilen.
+
+    Befund 2026-08-26: 19 versiegelte Claims, 14 im Reifeblick. Die fuenf
+    fehlenden trugen alle ein terminales Verdikt in der Truth-Kette und
+    fielen genau deshalb durch: ``find_unwatched_preregs`` schloss sie zu
+    Recht aus, eine Spec-Zeile gab es nie. "Entschieden" sah aus wie
+    "existiert nicht" — ein Reifeblick, der nicht die ganze Grundgesamtheit
+    zeigt, laesst sich nicht gegen das Ledger abgleichen.
+    """
+    from app.research.prereg_reconciliation import load_sealed_entries
+
+    watched = {
+        str(spec.get("prereg_id"))
+        for spec in specs
+        if isinstance(spec.get("prereg_id"), str) and spec.get("prereg_id")
+    }
+    rows: list[dict[str, Any]] = []
+    for record in load_sealed_entries(artifacts_dir):
+        prereg_id = str(record["prereg_id"])
+        if prereg_id in watched:
             continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
+        resolution = (resolutions or {}).get(prereg_id)
+        if not isinstance(resolution, dict):
             continue
-        if isinstance(record, dict) and isinstance(record.get("prereg_id"), str):
-            ids.add(record["prereg_id"])
-    return ids
+        if str(resolution.get("status")) not in _TERMINAL_RESOLUTION_STATUS:
+            continue
+        rows.append(
+            {
+                "name": str(record.get("name") or "?"),
+                "kind": "ledger_resolved",
+                "note": None,
+                "prereg_id": prereg_id,
+                "since_utc": str(record.get("created_at_utc") or ""),
+                "n_target": record.get("sample_size_target"),
+                "n_proxy": None,
+                "n_exact": None,
+                "state_source": "truth_ledger",
+                "per_source": {
+                    "sealed_at_utc": str(record.get("created_at_utc") or ""),
+                    "horizon": str(record.get("horizon") or ""),
+                },
+                "state": STATE_RESOLVED,
+                "window_end_utc": None,
+                "timed_out": False,
+                "resolution": resolution,
+                "due": False,
+            }
+        )
+    return rows
 
 
 def find_unwatched_preregs(
@@ -662,7 +714,7 @@ def find_unwatched_preregs(
     # Claim nicht — terminal ist nur die verifizierte Truth-Kette. Der Marker
     # trennt aber die zwei Operator-Handlungen: "Verdikt attestieren" ist
     # etwas anderes als "versiegelte Regel ueberhaupt erst anwenden".
-    offchain = _offchain_verdict_ids(artifacts_dir)
+    offchain = _offchain_verdict_sources(artifacts_dir)
     closed = {
         pid
         for pid, res in (resolutions or {}).items()
@@ -693,16 +745,31 @@ def find_unwatched_preregs(
             seen.add(prereg_id)
             continue
         seen.add(prereg_id)
+        offchain_sources = offchain.get(prereg_id, [])
+        if offchain_sources:
+            # Ein Off-Chain-Verdikt schliesst nicht, aendert aber die Handlung:
+            # die versiegelte Regel WURDE angewandt — was fehlt, ist die
+            # Attestierung in die Truth-Kette. "Regel anwenden" waere hier
+            # eine zweite Auswertung desselben Claims.
+            state = STATE_VERDICT_UNATTESTED
+            note = (
+                "Versiegelt, Verdikt liegt in der Seitenablage "
+                f"({', '.join(offchain_sources)}), aber NICHT in der verifizierten "
+                "Truth-Kette. Verdikt attestieren — nicht erneut auswerten."
+            )
+        else:
+            state = STATE_UNWATCHED
+            note = (
+                "Versiegelt, aber in keiner Wachliste und ohne terminales "
+                "Verdikt in der verifizierten Truth-Kette. Entweder einen "
+                "Spec eintragen oder die versiegelte Regel anwenden und das "
+                "Verdikt attestieren — nicht liegen lassen."
+            )
         rows.append(
             {
                 "name": str(record.get("name") or "?"),
                 "kind": "unwatched",
-                "note": (
-                    "Versiegelt, aber in keiner Wachliste und ohne terminales "
-                    "Verdikt in der verifizierten Truth-Kette. Entweder einen "
-                    "Spec eintragen oder die versiegelte Regel anwenden und das "
-                    "Verdikt attestieren — nicht liegen lassen."
-                ),
+                "note": note,
                 "prereg_id": prereg_id,
                 "since_utc": str(record.get("created_at_utc") or ""),
                 "n_target": record.get("sample_size_target"),
@@ -712,9 +779,10 @@ def find_unwatched_preregs(
                 "per_source": {
                     "sealed_at_utc": str(record.get("created_at_utc") or ""),
                     "horizon": str(record.get("horizon") or ""),
-                    "offchain_verdict": prereg_id in offchain,
+                    "offchain_verdict": bool(offchain_sources),
+                    "offchain_sources": list(offchain_sources),
                 },
-                "state": STATE_UNWATCHED,
+                "state": state,
                 "window_end_utc": None,
                 "timed_out": False,
                 "resolution": (resolutions or {}).get(prereg_id),
@@ -951,6 +1019,13 @@ async def compute_maturity(
     # vorkommt und kein terminales Verdikt traegt, faellt sonst durch jede
     # Ueberwachung (Befund 2026-08-18: 8 von 19 lagen so).
     out.extend(find_unwatched_preregs(artifacts_dir, specs=specs, resolutions=resolutions))
+    # Und die dritte Gruppe: entschieden, aber ohne Spec. Ohne diese Zeilen
+    # zeigte der Reifeblick 14 von 19 Claims (2026-08-26) — jeder Abgleich
+    # gegen das Ledger haette "5 fehlen" gemeldet, nur gab es keinen.
+    if resolution_error is None:
+        out.extend(
+            find_resolved_unspecced_preregs(artifacts_dir, specs=specs, resolutions=resolutions)
+        )
     return out
 
 
@@ -978,6 +1053,12 @@ def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
         lines.append(
             f"davon {unwatched} {STATE_UNWATCHED}: versiegelt, aber unbeobachtet "
             "und unentschieden — Aufsichtsluecke, kein Reifegrad."
+        )
+    unattested = sum(1 for r in due_rows if r.get("state") == STATE_VERDICT_UNATTESTED)
+    if unattested:
+        lines.append(
+            f"davon {unattested} {STATE_VERDICT_UNATTESTED}: Verdikt liegt in der "
+            "Seitenablage, NICHT in der Truth-Kette — attestieren, nicht neu auswerten."
         )
     for row in due_rows:
         pid = str(row.get("prereg_id") or "ohne-prereg-id")
@@ -1018,11 +1099,13 @@ __all__ = [
     "STATE_RESOLUTION_HOLD",
     "STATE_RESOLVED",
     "STATE_UNWATCHED",
+    "STATE_VERDICT_UNATTESTED",
     "TRUTH_LEDGER_RELPATH",
     "PREREG_LEDGER_RELPATH",
     "PREREG_VERDICTS_RELPATH",
     "build_maturity_alert",
     "compute_maturity",
+    "find_resolved_unspecced_preregs",
     "find_unwatched_preregs",
     "load_attested_resolutions",
     "load_exact_observations",
