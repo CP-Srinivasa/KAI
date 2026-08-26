@@ -273,10 +273,28 @@ def _check_mock_curve_prices(ctx: LintContext) -> list[Violation]:
     Geprueft wird jetzt mit ``app.market_data.mock_price_forensics``: die
     Mock-Kurve wird ueber alle 360 Phasen rekonstruiert und der Preis nur bei
     BIT-GLEICHHEIT als synthetisch gewertet (inkl. beider Slippage-Richtungen).
-    Das ist exakt statt heuristisch und gilt fuer JEDES Symbol in JEDER Preislage.
+
+    ABER Bit-Gleichheit allein beweist nichts. Die Kurvenwerte liegen auf
+    demselben 2-Nachkommastellen-Raster wie ein echter Venue-Quote; wie viel ein
+    Treffer aussagt, haengt allein daran, wie DICHT die Kurve im Preisbereich des
+    Symbols liegt. Bei Basis-Default 100 besetzt sie 199 von 199 Slots ihres
+    Bandes — lueckenlos, jeder echte Preis trifft. Der Detektor liefert deshalb
+    ``MockPriceMatch.coverage`` (= die Falsch-Positiv-Rate), und diese Invariante
+    staffelt danach:
+
+      * ``coverage < 20 %``   Slippage-Treffer zaehlt als belastbare Evidenz
+      * ``20 % .. 60 %``      Treffer wird vorgelegt, aber nur als Verdacht
+      * ``coverage >= 60 %``  Muenzwurf — wird gar nicht gemeldet
+
+    Fuer Symbole der dritten Stufe ist die persistierte ``price_source`` (#737)
+    der einzige belastbare Weg; die Kurve kann es dort strukturell nicht leisten.
 
     Bleibt WARNING, nie ERROR: der Detektor nimmt degenerierte Phasen bewusst aus
     (Basispreis selbst, Amplituden-Extrema), dort bleibt eine schmale Luecke.
+
+    Die Zaehlung wird IMMER nach ``ctx.diagnostics["TL-002"]`` geschrieben, auch
+    bei null Befunden — eine stille Invariante mit struktureller Blindstelle
+    liest sich sonst wie Deckung.
     """
     # Praezisierung V1 (Daily 07-12, nach 2 False Positives AAVE~98$): Fills,
     # deren Loop-Cycle nachweislich mit einer REALEN market_data_source lief,
