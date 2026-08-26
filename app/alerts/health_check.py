@@ -869,6 +869,95 @@ def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
     )
 
 
+def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[HealthIssue]:
+    """Ledger ↔ Aufsicht: jeder versiegelte Claim ist entschieden, beobachtet oder Befund.
+
+    Befund 2026-08-26: 19 versiegelte Claims, 14 im Reifeblick, einer davon mit
+    einem Off-Chain-Verdikt als "kein Verdikt" gefuehrt. Drei Wachlisten am
+    selben Tag stimmten nicht mit ihrer Quelle ueberein
+    (``feedback_watchlists_must_reconcile_against_source``) — deshalb prueft
+    dieser Befund gegen das Ledger, nicht gegen die Wachliste.
+
+    Zerlegung nach Zustand ist Pflicht: eine Summe "7 offen" sagt nicht, ob
+    attestiert oder ausgewertet werden muss. Nur die Existenz des Ledgers wacht
+    ``prereg_ledger_presence`` — hier kein Doppelbefund.
+    """
+    from app.research.prereg_maturity import MATURITY_SPECS
+    from app.research.prereg_reconciliation import (
+        RECON_STATE_RESOLVED,
+        RECON_STATE_UNWATCHED,
+        RECON_STATE_VERDICT_UNATTESTED,
+        RECON_STATE_WATCHED,
+        classify_ledger_entries,
+    )
+
+    if not (adir / "research" / "prereg_ledger.jsonl").exists():
+        return []
+    active_specs = MATURITY_SPECS if specs is None else specs
+    rows = classify_ledger_entries(adir, specs=active_specs)
+    issues: list[HealthIssue] = []
+
+    errors = [r["resolution_error"] for r in rows if r.get("resolution_error")]
+    if errors:
+        status = str((errors[0] or {}).get("status") or "unknown")
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    f"truth ledger unusable ({status}); no claim can be RESOLVED "
+                    f"until the chain verifies — ledger={len(rows)}"
+                ),
+            )
+        )
+        return issues
+
+    sealed = {r["prereg_id"] for r in rows}
+    ghost_specs = sorted(
+        str(s.get("prereg_id"))
+        for s in active_specs
+        if isinstance(s.get("prereg_id"), str) and s.get("prereg_id") not in sealed
+    )
+    if ghost_specs:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    "watchlist drift: MATURITY_SPECS references prereg_id(s) not in the "
+                    f"sealed ledger: {', '.join(ghost_specs)}"
+                ),
+            )
+        )
+
+    counts = {
+        state: sum(1 for r in rows if r["state"] == state)
+        for state in (
+            RECON_STATE_RESOLVED,
+            RECON_STATE_WATCHED,
+            RECON_STATE_VERDICT_UNATTESTED,
+            RECON_STATE_UNWATCHED,
+        )
+    }
+    unattested = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_VERDICT_UNATTESTED]
+    unwatched = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_UNWATCHED]
+    if unattested or unwatched:
+        breakdown = " ".join(f"{k}={v}" for k, v in counts.items())
+        parts = [f"ledger={len(rows)} {breakdown}"]
+        if unattested:
+            parts.append("attestieren (Verdikt nur in Seitenablage): " + ", ".join(unattested))
+        if unwatched:
+            parts.append("Aufsichtsluecke (weder Spec noch Verdikt): " + ", ".join(unwatched))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                component="prereg_reconciliation",
+                message="; ".join(parts),
+            )
+        )
+    return issues
+
+
 def run_health_check_report(
     artifacts_dir: Path | None = None,
     lookback_hours: int = 24,
@@ -913,6 +1002,7 @@ def run_health_check_report(
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_prereg_reconciliation(adir))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

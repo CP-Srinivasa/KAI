@@ -91,7 +91,10 @@ def _board_state(mat: dict[str, Any]) -> str:
     SCHWÄCHERE Zustand angenommen — nie der stärkere.
     """
     raw = mat.get("state")
-    if raw == "UNWATCHED":
+    if raw in ("UNWATCHED", "VERDICT_UNATTESTED"):
+        # Unattestiert ist so dringlich wie unbeobachtet: der Claim steht
+        # ausserhalb der Truth-Kette. Der Handlungstext unterscheidet die
+        # beiden ueber ``per_source.offchain_verdict``.
         return STATE_UNWATCHED
     if raw == "RESOLUTION_HOLD":
         return STATE_EVIDENCE_HOLD

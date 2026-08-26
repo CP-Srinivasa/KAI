@@ -1023,50 +1023,9 @@ def trading_prereg_register(
     console.print(f"ledger: {ledger_path}  total_registered={ledger.count()}")
 
 
-@trading_app.command("prereg-list")
-def trading_prereg_list(
-    ledger_path: str = typer.Option(
-        str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
-    ),
-    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
-) -> None:
-    """List pre-registered hypotheses (read-only)."""
-    import json as _json
-
-    from app.research.prereg_ledger import PreRegistrationLedger
-
-    ledger = PreRegistrationLedger(Path(ledger_path))
-    entries = ledger.entries()
-
-    if as_json:
-        print(_json.dumps([_json.loads(e.to_json()) for e in entries], indent=2))
-        if not entries:
-            raise typer.Exit(1)
-        return
-
-    if not entries:
-        console.print("[yellow]no pre-registrations recorded[/yellow]")
-        raise typer.Exit(1)
-
-    table = Table(
-        title=f"Pre-registered hypotheses ({len(entries)} rows, {ledger.count()} distinct)"
-    )
-    table.add_column("prereg_id")
-    table.add_column("name")
-    table.add_column("dir")
-    table.add_column("horizon")
-    table.add_column("n_target", justify="right")
-    table.add_column("created_at_utc")
-    for e in entries:
-        table.add_row(
-            e.prereg_id,
-            e.name,
-            e.direction,
-            e.horizon,
-            str(e.sample_size_target),
-            e.created_at_utc,
-        )
-    console.print(table)
+# ``prereg-list`` lebt seit STAB-06b in ``research_verdicts.py`` (neben
+# prereg-check/prereg-maturity): die Ledger-Sicht traegt jetzt denselben
+# Abgleichszustand wie der Reifeblick, und das God-File waechst dafuer nicht.
 
 
 @trading_app.command("prereg-observe")

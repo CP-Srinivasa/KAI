@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from rich.table import Table
 
 from app.cli.commands.trading import console, trading_app
 from app.research.prereg_ledger import DEFAULT_PREREG_LEDGER_PATH
@@ -46,6 +47,10 @@ def _render_maturity_state(row: dict[str, Any]) -> str:
         )
     renders = {
         "NOT_DUE": "reift",
+        "VERDICT_UNATTESTED": (
+            "[yellow]VERDIKT OFF-CHAIN — in die Truth-Kette attestieren; "
+            "KEINE neue Auswertung[/yellow]"
+        ),
         "EVAL_CHECK_DUE": (
             "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
         ),
@@ -222,6 +227,97 @@ def trading_prereg_maturity(
             f"{r['name']} ({pid}): {n_render} (seit {r['since_utc']}) {r['per_source']}"
             f" → {state}{note_render}"
         )
+
+
+def _reconciliation_root_for(ledger_file: Path) -> Path:
+    """Artefakt-Wurzel zu einem abweichenden ``--ledger-path`` ableiten.
+
+    Kanonisch liegt das Ledger unter ``<artifacts>/research/prereg_ledger.jsonl``;
+    dann ist die Wurzel zwei Ebenen hoeher. Jede andere Ablage (Tests, Kopien)
+    bekommt ihr Elternverzeichnis — Truth-Kette und Seitenablagen fehlen dort
+    dann schlicht, und der Zustand faellt ehrlich auf WATCHED/UNWATCHED zurueck.
+    """
+    if ledger_file.parent.name == "research":
+        return ledger_file.parent.parent
+    return ledger_file.parent
+
+
+@trading_app.command("prereg-list")
+def trading_prereg_list(
+    ledger_path: str = typer.Option(
+        str(DEFAULT_PREREG_LEDGER_PATH), "--ledger-path", help="Pre-registration ledger JSONL"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Artefakt-Wurzel fuer den Abgleich (Truth-Kette, Seitenablagen, Wachliste)",
+    ),
+) -> None:
+    """List pre-registered hypotheses (read-only) mit Abgleichszustand.
+
+    ``state`` je Zeile: RESOLVED (Truth-Kette) · VERDICT_UNATTESTED (Verdikt nur
+    in der Seitenablage) · WATCHED (Reife-Spec) · UNWATCHED (Aufsichtsluecke).
+    Dieselbe Zustandsfunktion wie Reifeblick und Health-Check — die Ledger-Sicht
+    darf nie etwas anderes behaupten als der Reifeblick.
+    """
+    from app.research.prereg_ledger import PreRegistrationLedger
+    from app.research.prereg_reconciliation import classify_ledger_entries
+
+    ledger = PreRegistrationLedger(Path(ledger_path))
+    entries = ledger.entries()
+    # Der Abgleich liest das Ledger ueber die Artefakt-Wurzel; zeigt
+    # --ledger-path woandershin, gilt die Zustandsfunktion fuer DIESE Datei.
+    adir = Path(artifacts_dir)
+    ledger_file = Path(ledger_path)
+    if ledger_file.resolve() != (adir / "research" / "prereg_ledger.jsonl").resolve():
+        adir = _reconciliation_root_for(ledger_file)
+    states = {
+        row["prereg_id"]: row
+        for row in classify_ledger_entries(adir)
+        if isinstance(row.get("prereg_id"), str)
+    }
+
+    def _with_state(e: Any) -> dict[str, Any]:
+        raw: dict[str, Any] = json.loads(e.to_json())
+        recon = states.get(e.prereg_id) or {}
+        raw["state"] = recon.get("state", "UNWATCHED")
+        raw["watched"] = bool(recon.get("watched", False))
+        raw["verdict_class"] = recon.get("verdict_class")
+        raw["offchain_verdicts"] = list(recon.get("offchain_verdicts") or [])
+        return raw
+
+    if as_json:
+        print(json.dumps([_with_state(e) for e in entries], indent=2))
+        if not entries:
+            raise typer.Exit(1)
+        return
+
+    if not entries:
+        console.print("[yellow]no pre-registrations recorded[/yellow]")
+        raise typer.Exit(1)
+
+    table = Table(
+        title=f"Pre-registered hypotheses ({len(entries)} rows, {ledger.count()} distinct)"
+    )
+    table.add_column("prereg_id")
+    table.add_column("state")
+    table.add_column("name")
+    table.add_column("dir")
+    table.add_column("horizon")
+    table.add_column("n_target", justify="right")
+    table.add_column("created_at_utc")
+    for e in entries:
+        table.add_row(
+            e.prereg_id,
+            str((states.get(e.prereg_id) or {}).get("state", "UNWATCHED")),
+            e.name,
+            e.direction,
+            e.horizon,
+            str(e.sample_size_target),
+            e.created_at_utc,
+        )
+    console.print(table)
 
 
 @trading_app.command("alpha-budget")
