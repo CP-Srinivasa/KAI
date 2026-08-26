@@ -268,6 +268,69 @@ volatilitätsnormalisiert (`move/ATR`) oder gar keine feste Grenze richtig ist,
 entscheidet sich an prospektiv erfassten Triggern — präregistriert, nicht
 rückwirkend optimiert.
 
+## 5e. Die Reichweite der Kurven-Rekonstruktion (2026-08-26)
+
+Der Detektor aus §5b ist bit-exakt — aber Bit-Exaktheit ist **kein Beweis**,
+wenn die Kurve ohnehin alles trifft. Der Mock rechnet
+`round(base + base*(amp/100)*sin(phase/1440*2π), 2)` über 360 Phasen; die Werte
+landen auf demselben 2-Nachkommastellen-Raster wie ein echter Venue-Quote. Ob
+ein Treffer etwas aussagt, hängt deshalb allein am Basispreis:
+
+| Symbol | Basis | Kurvenwerte | Slots im Band | Abdeckung |
+|---|---:|---:|---:|---:|
+| *(jedes Symbol ohne eigenen Basispreis)* | 100 | 199 | 199 | **100,0 %** |
+| SOL/USDT | 150 | 266 | 299 | 89,0 % |
+| AAPL | 185 | 285 | 368 | 77,4 % |
+| BNB/USDT | 400 | 326 | 797 | 40,9 % |
+| MSFT | 420 | 328 | 836 | 39,2 % |
+| SPY | 520 | 334 | 1035 | 32,3 % |
+| ETH/USDT | 3200 | 355 | 6372 | 5,6 % |
+| BTC/USDT | 65000 | 359 | 129433 | 0,3 % |
+
+Die Abdeckung **ist** die Falsch-Positiv-Rate eines Treffers, sofern der echte
+Preis im Mock-Band liegt. Bei Basis 100 ist sie 100 %: die Kurve besetzt jeden
+quotierbaren Preis zwischen 100,01 und 101,99 lückenlos — ein Treffer dort ist
+ein Münzwurf.
+
+**Live belegt am 26.08.:** fünf AAVE-Fills zwischen 100,31 und 101,72 rechneten
+bit-exakt auf (`100.83 × 1.0005 = 100.880415`). Dass AAVE in genau dieser
+Preislage *echt* handelt, ist zweimal sichtgeprüft (12.07. und 02.08., fünf
+Fills zwischen 97,02 und 99,89 gegen Binance-Kerzen, 5/5 innerhalb der Kerze).
+Die Kurve kann die beiden Fälle dort nicht trennen — hätte TL-002 sie gemeldet,
+wäre es exakt der Fehler des alten Bands `[95,105]` gewesen, nur mit mehr
+Nachkommastellen.
+
+Daraus folgt die gestaffelte Regel in `mock_price_forensics.py`:
+
+```
+Abdeckung < 20 %  ── Slippage-Treffer gilt als BELASTBARE Evidenz   (BTC, ETH)
+20 % … 60 %       ── Treffer wird vorgelegt, aber nur als Verdacht  (BNB, MSFT, SPY)
+Abdeckung ≥ 60 %  ── Münzwurf, wird gar nicht gemeldet              (SOL, AAPL, Default)
+```
+
+Beide Schwellen liegen in **gemessenen Lücken** der Verteilung (77,4 → 40,9 und
+32,3 → 5,6), nicht auf einem Datenpunkt — dieselbe Disziplin wie bei der
+20-%-Kappe in §3. Ein Test hält das fest: liegt eine Schwelle näher als 0,05 an
+einer real gemessenen Abdeckung, schlägt er fehl.
+
+**Zwei Konsequenzen, die für alle Agenten gelten:**
+
+1. **Die Quarantäne staffelt NICHT.** `bayes_quarantine.corruption_reason()`
+   nutzt den Detektor bewusst ungefiltert: sie urteilt über einen forensisch
+   bereits belegten Bestand (in jedem betroffenen Tick war *jede* Schließung
+   mock-erzeugt, 0 gemischte bei 514 Close-Sekunden). Wer dort denselben Filter
+   einzieht, wirft die Default-Basis-Symbole aus der Quarantäne und holt den
+   Scheingewinn ins Buch zurück.
+2. **Für Symbole ohne eigenen Basispreis ist `price_source` (#737) der einzige
+   belastbare Weg.** Die Kurve kann es dort strukturell nicht leisten. Das ist
+   kein Mangel der Provenienz-Schicht, sondern ihre Rechtfertigung.
+
+Damit eine stille Invariante nicht mit Deckung verwechselt wird, schreibt TL-002
+seine Zählung jetzt **immer** in `run_lint(...)["diagnostics"]["TL-002"]` —
+auch bei null Befunden, ohne Severity und ohne Wirkung auf `--gate`. Live am
+26.08.: `reported: 0 · suppressed_already_quarantined: 6 ·
+suppressed_curve_not_discriminating: 7`.
+
 ## 6. Verweise
 
 - `app/execution/phantom_filter.py` — kanonische Schwelle + Kalibrierungs-Kommentar
@@ -282,3 +345,5 @@ rückwirkend optimiert.
 - `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz
 - `app/learning/verified_real_closes.py` — belegte Echt-Trades über dem Cap (§5c), Identität via `fill_id`
 - `app/execution/close_classification.py` — das vierstufige Urteil (§5d)
+- `app/truth/lint.py` — TL-002 auf der exakten Kurve, gestaffelt (§5e)
+- `tests/unit/test_truth_lint_tl002_curve.py` — Reichweite + Blindstelle (§5e)

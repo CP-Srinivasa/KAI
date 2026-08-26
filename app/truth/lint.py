@@ -119,6 +119,20 @@ class LintContext:
 
     artifacts_dir: Path
 
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    """Alarmfreier Kanal: was ein Check GESEHEN hat, unabhaengig vom Befund.
+
+    Eine stille Invariante ist von einer kaputten nicht zu unterscheiden — und
+    eine Invariante mit einer strukturellen Blindstelle liest sich still wie
+    Deckung. Zahlen hier veraendern weder ``max_severity`` noch das ``--gate``
+    und tauchen nicht im Operator-Digest als Verletzung auf; sie landen nur im
+    persistierten Report. Genau die Trennung, die #726 gefehlt hat: ein gesunder
+    Ausgang ist kein Beleg fuer einen lebenden Eingang.
+
+    Das Dict ist trotz ``frozen=True`` beschreibbar (die Bindung ist eingefroren,
+    nicht der Inhalt) — Checks schreiben unter ihrer Invarianten-ID hinein.
+    """
+
     @property
     def loop_audit(self) -> Path:
         return self.artifacts_dir / "trading_loop_audit.jsonl"
@@ -236,13 +250,34 @@ def _screener_entry_basis(
     return basis_by_candidate.get(doc[len(prefix) :])
 
 
-def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
-    """TL-002: Fills im verdächtigen Mock-Preisband (~100 $) nach Gate-Baseline.
+def _check_mock_curve_prices(ctx: LintContext) -> list[Violation]:
+    """TL-002: Fills, deren Preis BEWEISBAR aus dem Mock-Adapter stammt.
 
-    Der Mock-Adapter preist um ~100 (SUMR 100,76 · SKYAI 101,94). Reale Assets
-    KÖNNEN dort handeln — darum WARNING (Hinweis auf Sichtprüfung), nie ERROR.
+    V3 (2026-08-26) — vom Preisband auf die exakte Kurve. Die Vorgaengerfassung
+    pruefte ein festes Band ``[95,105]`` und lag damit in BEIDE Richtungen falsch,
+    live gemessen ueber 3091 Fill-/Close-Preise:
+
+      * **30 Falsch-Positive** — reale Assets handeln dort. SOL/USDT bei 96,90
+        wurde als Mock-Verdacht gemeldet, waehrend Bybit im selben Moment 96,97
+        zeigte. Vorher schon AAVE ~98 (zwei Sichtpruefungen 07-12 und 08-02, die
+        beide "realer Preis" ergaben und im Kommentar unten dokumentiert sind).
+      * **20 Falsch-Negative** — der Mock preist NICHT bei 100, sondern je Symbol:
+        ``_BASE_PRICES`` gibt ETH 3200, BTC 65000, SOL 150. Ein Band um 100 kann
+        die gar nicht sehen. Uebersehen wurde damit der gesamte Vorfall vom
+        11./12.08. (DS-20260818-MOCK-EXIT, ETH-Exits ``3225.68635``) und die
+        BTC-Faelle bei ~65500 — also genau die Klasse, fuer die TL-002 existiert.
+
+    Ein Waechter, der 30 Unschuldige greift und 20 Taeter durchlaesst, ist
+    schlechter als keiner (Lehre ``feedback_guard_thresholds_must_be_measured``).
+
+    Geprueft wird jetzt mit ``app.market_data.mock_price_forensics``: die
+    Mock-Kurve wird ueber alle 360 Phasen rekonstruiert und der Preis nur bei
+    BIT-GLEICHHEIT als synthetisch gewertet (inkl. beider Slippage-Richtungen).
+    Das ist exakt statt heuristisch und gilt fuer JEDES Symbol in JEDER Preislage.
+
+    Bleibt WARNING, nie ERROR: der Detektor nimmt degenerierte Phasen bewusst aus
+    (Basispreis selbst, Amplituden-Extrema), dort bleibt eine schmale Luecke.
     """
-    band_lo, band_hi = 95.0, 105.0
     # Praezisierung V1 (Daily 07-12, nach 2 False Positives AAVE~98$): Fills,
     # deren Loop-Cycle nachweislich mit einer REALEN market_data_source lief,
     # sind kein Mock-Verdacht — sie wandern in die Evidence (band_real_source)
@@ -283,6 +318,16 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     # ``fallback_1h_last`` ist kein Beleg; und ein ``document_id`` ohne
     # auffindbaren Candidate bleibt Verletzung. Aendert sich das document_id-
     # Format, greift der Join nicht mehr und die Warnung kehrt zurueck.
+    from app.learning.bayes_quarantine import corruption_reason
+    from app.market_data.mock_price_forensics import (
+        coverage_tiers,
+        match_mock_price,
+    )
+
+    # Entlastungswege — sie gelten NUR fuer schwache (rohe) Kurventreffer, wo ein
+    # echter Preis zufaellig auf einem 2-Dezimalstellen-Wert liegen kann. Einen
+    # Slippage-Treffer oder ein ``price_source: mock`` koennen sie NICHT
+    # aufweichen: dort ist die Herkunft bewiesen, nicht vermutet.
     source_by_order: dict[str, str] = {}
     for cyc in iter_jsonl_tolerant(ctx.loop_audit):
         oid = cyc.get("order_id")
@@ -292,41 +337,155 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             if isinstance(note, str) and note.startswith("market_data_source:"):
                 source_by_order[str(oid)] = note.split(":", 1)[1]
                 break
-    # Zweiter Belegweg fuer Fills ohne Loop-Zyklus (Screener-Route).
     basis_by_candidate: dict[str, str] = {}
     for cand in iter_jsonl_tolerant(ctx.shadow_candidates):
         cid = cand.get("candidate_id")
         basis = cand.get("entry_price_basis")
         if cid and basis:
             basis_by_candidate[str(cid)] = str(basis)
+
+    # Ein quarantaenierter Close hinterlaesst ZWEI Zeilen: den ``position_closed``
+    # und den ``order_filled`` der schliessenden Order — beide mit demselben
+    # ``order_id`` und demselben Preis. Ohne diese Bruecke meldet der Waechter den
+    # aufgearbeiteten Vorfall ein zweites Mal von der Order-Seite. Live gemessen
+    # 2026-08-26: 4 solche Doppelmeldungen (ord_3bde9b249140, ord_9cea46bd3cac,
+    # ord_a9931db11647, ord_a09f2540ea27) — jede mit einem quarantaenierten
+    # Gegenstueck. Das ist kein neuer Fund, sondern derselbe von hinten.
+    quarantined_orders: set[str] = set()
+    for pre in iter_jsonl_tolerant(ctx.paper_audit):
+        if pre.get("event_type") != "position_closed":
+            continue
+        oid = pre.get("order_id")
+        if oid and corruption_reason(pre):
+            quarantined_orders.add(str(oid))
+
     per_symbol: dict[str, int] = {}
+    offen = 0
+    bereits_erfasst = 0
+    quelle_belegt_mock = 0
+    schwacher_verdacht = 0
     real_source = 0
-    total = 0
+    nicht_unterscheidbar = 0
+    evidence_rows: list[dict[str, Any]] = []
+
     for rec in iter_jsonl_tolerant(ctx.paper_audit):
-        if rec.get("event_type") != "order_filled":
+        event = rec.get("event_type")
+        if event not in ("order_filled", "position_closed", "position_partial_closed"):
             continue
         if not _after_baseline(rec.get("timestamp_utc"), BASELINE_MOCK_GATE_UTC):
             continue
+        raw = rec.get("fill_price") if event == "order_filled" else rec.get("exit_price")
         try:
-            price = float(rec.get("fill_price") or 0.0)
+            price = float(raw or 0.0)
         except (TypeError, ValueError):
             continue
-        if not (band_lo <= price <= band_hi):
+        if price <= 0:
             continue
-        sym = str(rec.get("symbol"))
-        src = source_by_order.get(str(rec.get("order_id") or ""))
-        if src and src != "mock":
-            real_source += 1
+        sym = str(rec.get("symbol") or "")
+
+        # Staerkster Beleg zuerst: die seit #737/#746 persistierte Provenienz. Sie
+        # sagt DIREKT, woher der Preis kam — kein Join, keine Heuristik. Der Weg
+        # existiert erst fuer neue Zeilen; fehlt er, entscheidet die Kurve.
+        source = str(rec.get("price_source") or "").strip().lower()
+        by_source = source.startswith("mock")
+        # ``include_raw`` bewusst AN: ein suchender Waechter soll lieber einen
+        # runden Preis zur Sichtpruefung vorlegen als einen synthetischen Fill
+        # uebersehen. Der Slippage-freie Pfad existiert real
+        # (``fill_at_signal_entry``; drei Live-Fills tragen ``slippage_pct: None``).
+        match = match_mock_price(sym, price, include_raw=True)
+        by_curve = match is not None
+        if not (by_source or by_curve):
             continue
-        # Kein Zyklus-Beleg: Screener-Route ueber document_id -> candidate_id.
-        # Ein ausdrueckliches ``mock`` (src == "mock") ueberspringt diesen Weg —
-        # der Zusatz-Join darf einen Negativ-Befund nie aufweichen.
-        if src is None and _screener_entry_basis(rec, sym, basis_by_candidate) == _BASIS_REAL:
-            real_source += 1
+        if by_source:
+            quelle_belegt_mock += 1
+        # Evidenzstaerke trennen statt in einen Topf werfen: ein Treffer MIT
+        # Slippage stammt aus dem Engine-Standardpfad und ist belastbar; ein roher
+        # Treffer kann auch ein runder echter Preis sein.
+        #
+        # Die Kurven-Abdeckung ist die zweite, WICHTIGERE Bedingung: sie ist die
+        # Falsch-Positiv-Rate eines Treffers, wenn der echte Preis im Mock-Band
+        # liegt. Bei Basis-Default 100 betraegt sie 100 % — die Kurve besetzt jeden
+        # quotierbaren Preis des Bandes, ein Treffer ist ein Muenzwurf. Live belegt
+        # am 26.08.: fuenf AAVE-Fills (100,31 bis 101,72) rechneten bit-exakt auf,
+        # waehrend die Sichtpruefungen unten fuer dieselbe Preislage ECHTEN Handel
+        # belegen. Fuer solche Symbole entscheidet allein die persistierte
+        # ``price_source``.
+        if match is not None and not match.reportable:
+            nicht_unterscheidbar += 1
+            if not by_source:
+                # Nicht "schwaecher melden", sondern GAR NICHT: ein Treffer ohne
+                # Unterscheidungskraft ist kein leiser Verdacht, er ist ein
+                # Muenzwurf. Ihn trotzdem vorzulegen waere exakt das Rauschen des
+                # alten Bands — nur mit mehr Nachkommastellen. Die Zahl bleibt in
+                # der Evidenz sichtbar, damit die Blindstelle nicht verschwindet.
+                continue
+        stark = by_source or (
+            match is not None and match.strong_capable and match.slippage_applied != 0.0
+        )
+        if not stark:
+            # Nur hier greifen die Entlastungswege: belegte reale Quelle im
+            # Loop-Zyklus, oder Screener-Route ueber document_id -> candidate_id.
+            # Ein ausdrueckliches ``mock`` im Zyklus entlastet nie.
+            zyklus_quelle = source_by_order.get(str(rec.get("order_id") or ""))
+            if zyklus_quelle and zyklus_quelle != "mock":
+                real_source += 1
+                continue
+            if (
+                zyklus_quelle is None
+                and _screener_entry_basis(rec, sym, basis_by_candidate) == _BASIS_REAL
+            ):
+                real_source += 1
+                continue
+            schwacher_verdacht += 1
+
+        # Bereits aufgearbeitete Vorfaelle bleiben sichtbar, erzeugen aber keinen
+        # neuen Alarm: sie stehen im Register und sind quarantaeniert. Ein Waechter
+        # soll melden, was NEU ist — sonst ertraenkt der bekannte Bestand den Befund.
+        if event != "order_filled" and corruption_reason(rec):
+            bereits_erfasst += 1
             continue
-        total += 1
+        if event == "order_filled" and str(rec.get("order_id") or "") in quarantined_orders:
+            bereits_erfasst += 1
+            continue
+
+        offen += 1
         per_symbol[sym] = per_symbol.get(sym, 0) + 1
-    if not total:
+        if len(evidence_rows) < _EVIDENCE_CAP:
+            evidence_rows.append(
+                {
+                    "ts": str(rec.get("timestamp_utc") or "")[:19],
+                    "symbol": sym,
+                    "price": price,
+                    "event": event,
+                    "matched_by": (
+                        "price_source"
+                        if by_source
+                        else (
+                            "mock_curve_slippage"
+                            if stark
+                            else (
+                                "mock_curve_not_discriminating"
+                                if match is not None and not match.reportable
+                                else "mock_curve_raw"
+                            )
+                        )
+                    ),
+                }
+            )
+
+    # Immer schreiben, auch bei null Befunden: sonst ist die einzige Spur des
+    # Laufs sein Schweigen, und die strukturelle Blindstelle (Symbole ohne
+    # eigenen Mock-Basispreis) liest sich wie Deckung.
+    ctx.diagnostics["TL-002"] = {
+        "reported": offen,
+        "suppressed_already_quarantined": bereits_erfasst,
+        "suppressed_curve_not_discriminating": nicht_unterscheidbar,
+        "suppressed_real_source": real_source,
+        "proven_by_price_source": quelle_belegt_mock,
+        "coverage_tiers": coverage_tiers(),
+    }
+
+    if not offen:
         return []
     top = sorted(per_symbol.items(), key=lambda kv: -kv[1])[:_EVIDENCE_CAP]
     return [
@@ -335,14 +494,24 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             severity=Severity.WARNING,
             dataset="paper_execution_audit.jsonl",
             message=(
-                f"{total} Fills im Mock-Preisband [{band_lo:.0f},{band_hi:.0f}] seit "
-                f"{BASELINE_MOCK_GATE_UTC[:10]} ohne belegte reale Preisquelle — "
-                f"sichtpruefen ({real_source} weitere im Band mit realer Quelle ausgenommen)"
+                f"{offen} Preise treffen die Mock-Kurve bit-exakt seit "
+                f"{BASELINE_MOCK_GATE_UTC[:10]} und sind NICHT quarantaeniert — "
+                f"pruefen ({offen - schwacher_verdacht} belastbar: Slippage-Pfad oder "
+                f"price_source; {schwacher_verdacht} nur roher Kurventreffer = "
+                f"sichtpruefen; {bereits_erfasst} bekannte Faelle bereits erfasst; "
+                f"{real_source} mit belegter realer Quelle ausgenommen)"
             ),
             evidence={
-                "count": total,
+                "count": offen,
                 "per_symbol": dict(top),
-                "band_real_source_excluded": real_source,
+                "already_quarantined": bereits_erfasst,
+                "proven_by_price_source": quelle_belegt_mock,
+                "strong_evidence": offen - schwacher_verdacht,
+                "raw_curve_only": schwacher_verdacht,
+                "real_source_excluded": real_source,
+                "curve_not_discriminating": nicht_unterscheidbar,
+                "detector": "app.market_data.mock_price_forensics.match_mock_price",
+                "samples": evidence_rows,
             },
         )
     ]
@@ -699,12 +868,12 @@ REGISTRY: tuple[Invariant, ...] = (
     ),
     Invariant(
         "TL-002",
-        "Fills im verdächtigen Mock-Preisband (~100 $)",
+        "Preise aus der Mock-Kurve (bit-exakt, nach Aussagekraft gestaffelt)",
         ("paper_execution_audit.jsonl",),
         Severity.WARNING,
         "truth",
         "active",
-        _check_mock_price_band,
+        _check_mock_curve_prices,
     ),
     Invariant(
         "TL-003",
@@ -818,6 +987,7 @@ def run_lint(artifacts_dir: Path, *, now: datetime | None = None) -> dict[str, A
         "invariants": per_invariant,
         "violations": [v.to_dict() for v in violations],
         "max_severity": max_sev.label if max_sev else None,
+        "diagnostics": dict(ctx.diagnostics),
     }
 
 

@@ -118,6 +118,15 @@ def quarantine_reason(close_row: dict[str, object]) -> str | None:
     # module top — keep the import graph of this module minimal.
     from app.market_data.mock_price_forensics import match_mock_price
 
+    # Bewusst OHNE ``MockPriceMatch.discriminating``-Filter — anders als TL-002.
+    # Der Waechter sucht Unbekanntes und muss deshalb still bleiben, wo die Kurve
+    # nichts unterscheidet (Symbole ohne eigenen Basispreis, Kurvenabstand 0,0100).
+    # Die Quarantaene urteilt dagegen ueber einen BEREITS forensisch belegten
+    # Bestand: fuer die 12 Closes vom 11./12.08. steht der Tick-Kontext fest (in
+    # jedem betroffenen Tick war JEDE Schliessung mock-erzeugt, 0 gemischte bei
+    # 514 Close-Sekunden). Setzt jemand den Filter hier ebenfalls, fallen die
+    # Default-Basis-Symbole aus der Quarantaene und der Scheingewinn kehrt ins
+    # Buch zurueck. Siehe docs/audit/phantom_close_artifact_register.md §5b.
     if match_mock_price(symbol, exit_price) is not None:
         return "mock_synthetic_exit_price"
     return None

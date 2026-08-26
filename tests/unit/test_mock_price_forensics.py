@@ -16,6 +16,10 @@ from app.learning.bayes_quarantine import corruption_reason, quarantine_reason
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter, _mock_price
 from app.market_data.mock_price_forensics import (
+    MAX_REPORTABLE_COVERAGE,
+    MAX_STRONG_COVERAGE,
+    _curve_coverage,
+    coverage_tiers,
     is_mock_derived_price,
     match_mock_price,
 )
@@ -238,3 +242,96 @@ async def test_stale_real_quote_is_preferred_over_synthetic() -> None:
     assert point is not None
     assert point.source == "bybit"
     assert _MOCK_SOURCE not in point.source
+
+
+# --- Aussagekraft der Kurve: Abdeckung statt Bauchgefuehl -------------------------
+
+
+def test_default_basis_kurve_deckt_ihr_band_vollstaendig_ab() -> None:
+    """Bei Basis 100 besetzt die Kurve JEDEN quotierbaren Preis ihres Bandes.
+
+    199 Werte auf 199 Slots = 100 % Abdeckung: ein bit-exakter Treffer ist dort
+    ein Muenzwurf, kein Beleg. Live belegt am 26.08.: fuenf AAVE-Fills (100,31 bis
+    101,72) rechneten bit-exakt auf, z. B. ``100.83 x 1.0005 = 100.880415``. Dass
+    AAVE in genau dieser Preislage ECHT handelt, ist zweimal sichtgeprueft
+    (12.07. und 02.08., zusammen 5 Fills zwischen 97,02 und 99,89 gegen
+    Binance-Kerzen) — die Kurve kann beides dort nicht trennen.
+    """
+    match = match_mock_price("AAVE/USDT", 100.880415)
+    assert match is not None, "die Rechnung geht bit-exakt auf ..."
+    assert match.mock_raw_price == 100.83
+    assert match.coverage == 1.0, "... die Kurve besetzt aber das ganze Band"
+    assert match.reportable is False
+    assert match.strong_capable is False
+
+
+def test_eth_traegt_belastbare_evidenz() -> None:
+    """ETH: 355 Werte auf 6372 Slots = 5,6 % — ein Treffer traegt."""
+    match = match_mock_price("ETH/USDT", ETH_AUG_2026)
+    assert match is not None
+    assert match.coverage < MAX_STRONG_COVERAGE
+    assert match.strong_capable is True
+
+
+def test_mittlere_abdeckung_wird_vorgelegt_aber_nicht_als_beleg() -> None:
+    """BNB: 40,9 % — zu unsicher fuer einen Beleg, zu auffaellig zum Wegwerfen.
+
+    Genau dafuer existiert die mittlere Stufe: binaer waere BNB (43 Live-Zeilen)
+    kommentarlos aus der Deckung gefallen.
+    """
+    match = match_mock_price("BNB/USDT", 403.66, include_raw=True)
+    assert match is not None
+    assert match.reportable is True
+    assert match.strong_capable is False
+
+
+def test_schwellen_liegen_in_gemessenen_luecken() -> None:
+    """Kein Schwellwert darf auf einem Datenpunkt sitzen (Lehre aus #732).
+
+    Gemessene Abdeckungen: 100 / 89,0 / 77,4 / 40,9 / 39,2 / 32,3 / 5,6 / 0,3 %.
+    Die beiden Schwellen muessen in den Luecken 77,4->40,9 und 32,3->5,6 liegen,
+    sonst kippt die Einstufung bei der kleinsten Kurvenaenderung.
+    """
+    from app.market_data.mock_adapter import _BASE_PRICES
+
+    gemessen = sorted(
+        {_curve_coverage(sym, 2.0) for sym in _BASE_PRICES} | {_curve_coverage("ZZZ", 2.0)}
+    )
+    for schwelle in (MAX_STRONG_COVERAGE, MAX_REPORTABLE_COVERAGE):
+        abstand = min(abs(c - schwelle) for c in gemessen)
+        assert abstand > 0.05, (
+            f"Schwelle {schwelle} liegt nur {abstand:.3f} von einer gemessenen "
+            f"Abdeckung entfernt — das ist ein Fit, keine Trennung"
+        )
+
+
+def test_abdeckung_ist_ganzzahlig_gerechnet_nicht_ueber_float_abstaende() -> None:
+    """Bei Basis 100 ist der mittlere Kurvenabstand EXAKT die Preisstufe.
+
+    Ein ``>``/``>=`` auf diesem Float waere Rundungslotterie; die Slot-Rechnung
+    liefert stattdessen die glatte 1,0.
+    """
+    assert _curve_coverage("IRGENDWAS/USDT", 2.0) == 1.0
+
+
+def test_coverage_tiers_ist_abgeleitet_nicht_gepflegt() -> None:
+    """Eine zweite, handgepflegte Liste waere die naechste Doppel-Invariante.
+
+    Kommt im Mock ein Symbol hinzu, muss die Einstufung mitwachsen — sonst
+    entsteht genau die Drift, die #723/#748/#755 dreimal gekostet haben.
+    """
+    from app.market_data import mock_adapter
+
+    vorher = coverage_tiers()
+    assert "ETH/USDT" in vorher["strong"]
+    assert "ZZZ/TEST" not in vorher["strong"]
+
+    _curve_coverage.cache_clear()
+    mock_adapter._BASE_PRICES["ZZZ/TEST"] = 90000.0
+    try:
+        nachher = coverage_tiers()
+    finally:
+        del mock_adapter._BASE_PRICES["ZZZ/TEST"]
+        _curve_coverage.cache_clear()
+    assert "ZZZ/TEST" in nachher["strong"], "die Einstufung muss aus _BASE_PRICES folgen"
+    assert "ZZZ/TEST" not in coverage_tiers()["strong"]
