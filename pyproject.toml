@@ -146,7 +146,6 @@ exclude = ["tests/", "migrations/"]
 module = [
     "app.agents.tools.canonical_read",
     "app.alerts.daily_briefing",
-    "app.alerts.hold_metrics",
     "app.api.main",
     "app.cli.commands.ingestion",
     "app.cli.main",
