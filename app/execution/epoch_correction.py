@@ -39,6 +39,15 @@ class EpochCorrectionNotice:
     measured_booked_usd: float
     measured_contaminated_closes: int
     measured_contaminated_usd: float
+    # Identitaet des Quellzustands, ueber den gemessen wurde. Ohne sie laesst
+    # sich NICHT beweisen, dass eine spaetere Ansicht dieselbe Population
+    # zeigt: die blosse Close-ANZAHL kann zufaellig wieder uebereinstimmen,
+    # waehrend darunter andere Ereignisse liegen (Reset, Requarantaene,
+    # Reparatur einer Zeile). Der Vermerk vom 2026-08-18 wurde ohne Digest
+    # aufgenommen und traegt darum ``None`` — jede Lese-Seite muss seine Zahlen
+    # dann als historisch kennzeichnen, statt Deckung zu unterstellen.
+    # Wer den naechsten Vermerk aufnimmt, setzt ihn.
+    measured_source_sha256: str | None = None
 
     @property
     def measured_corrected_usd(self) -> float:
@@ -65,6 +74,7 @@ class EpochCorrectionNotice:
             "measured_contaminated_closes": self.measured_contaminated_closes,
             "measured_contaminated_usd": round(self.measured_contaminated_usd, 2),
             "measured_corrected_usd": round(self.measured_corrected_usd, 2),
+            "measured_source_sha256": self.measured_source_sha256,
             "flips_sign": self.flips_sign,
         }
 

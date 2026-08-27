@@ -9,9 +9,12 @@ clean epoch stays unannotated.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.execution.epoch_correction import (
     EPOCH_CORRECTION_NOTICES,
     epoch_correction_notice,
+    epoch_correction_payload,
 )
 
 
@@ -82,10 +85,13 @@ def test_as_dict_is_json_safe_and_complete() -> None:
         "measured_contaminated_closes",
         "measured_contaminated_usd",
         "measured_corrected_usd",
+        "measured_source_sha256",
         "flips_sign",
     ):
         assert key in payload, f"missing {key}"
-    assert all(isinstance(v, (str, int, float, bool)) for v in payload.values())
+    # ``None`` ist zugelassen und bedeutet null: ``measured_source_sha256`` ist
+    # bewusst optional, weil der Vermerk vom 18.08. ohne Quell-Digest entstand.
+    assert all(v is None or isinstance(v, (str, int, float, bool)) for v in payload.values())
 
 
 def test_notice_names_the_root_cause_not_just_the_symptom() -> None:
@@ -168,3 +174,60 @@ def test_clean_epoch_snapshot_carries_no_notice() -> None:
     Inhalt rendern; das ist schlimmer als gar keine.
     """
     assert _snapshot("legacy").to_json_dict()["epoch_correction"] is None
+
+
+def test_measured_at_carries_an_explicit_timezone() -> None:
+    """Ein Messzeitpunkt ohne Zone ist kein Messzeitpunkt.
+
+    Die Oberflaeche schneidet daraus ein Datum. Waere die Zone implizit, haetten
+    Leser in verschiedenen Zonen verschiedene "Staende" derselben Messung.
+    """
+    from datetime import datetime
+
+    for notice in EPOCH_CORRECTION_NOTICES.values():
+        for raw in (notice.measured_at_utc, notice.recorded_at_utc):
+            parsed = datetime.fromisoformat(raw)
+            assert parsed.tzinfo is not None, raw
+
+
+def test_a_notice_without_source_identity_is_marked_as_such() -> None:
+    """``measured_source_sha256=None`` ist eine Aussage, kein vergessenes Feld.
+
+    Ohne Quell-Identitaet kann keine Lese-Seite beweisen, dass eine spaetere
+    Ansicht dieselbe Population zeigt — die blosse Close-ANZAHL kann zufaellig
+    wieder uebereinstimmen. Der Vermerk vom 2026-08-18 wurde ohne Digest
+    aufgenommen; das Feld haelt diesen Umstand fest, statt ihn zu verschweigen.
+    """
+    payload = epoch_correction_payload("paper_v2_attested")
+    assert payload is not None
+    assert "measured_source_sha256" in payload
+    assert payload["measured_source_sha256"] is None
+
+
+def test_both_panels_carry_the_correction_and_none_recomputes_it() -> None:
+    """Eine Wahrheit, zwei Oberflaechen — und keine rechnet sie nach.
+
+    Rechnete ein Panel ``booked - contaminated`` selbst, entstuende eine zweite
+    Wahrheit neben dem Backend: sie waere heute zufaellig gleich und morgen
+    still verschieden. Autoritativ ist ``measured_corrected_usd``.
+    """
+    web = Path(__file__).resolve().parents[2] / "web" / "src" / "components" / "panels"
+    panels = ["LivePortfolioTiles.tsx", "ReentryGatePanel.tsx"]
+
+    for name in panels:
+        source = (web / name).read_text(encoding="utf-8")
+        assert "EpochCorrectionLine" in source, f"{name} zeigt den Vermerk nicht"
+
+    # Nirgends im Frontend darf aus den Messfeldern gerechnet werden.
+    for path in sorted(web.parent.rglob("*.tsx")) + sorted(
+        (web.parent.parent / "lib").rglob("*.ts")
+    ):
+        if path.name.endswith(".test.ts") or path.name.endswith(".test.tsx"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for forbidden in (
+            "measured_booked_usd -",
+            "measured_booked_usd-",
+            "- correction.measured_contaminated",
+        ):
+            assert forbidden not in text, f"{path.name} rechnet die Korrektur selbst"

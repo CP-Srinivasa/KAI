@@ -1,5 +1,10 @@
 // @data-source: props (/operator/portfolio-snapshot · /dashboard/api/quality)
-import { epochCorrectionNote, measurementCoversNow, type EpochCorrection } from "@/lib/epochCorrection";
+import {
+  epochCorrectionNote,
+  measurementCoversNow,
+  type EpochCorrection,
+  type SourceIdentity,
+} from "@/lib/epochCorrection";
 import { cn } from "@/lib/utils";
 import { useCurrency } from "@/state/CurrencyProvider";
 
@@ -18,19 +23,23 @@ import { useCurrency } from "@/state/CurrencyProvider";
  */
 export function EpochCorrectionLine({
   correction,
-  liveClosedTotal,
+  live,
   className,
 }: {
   correction: EpochCorrection | null | undefined;
-  /** Aktuelle Close-Zahl der Epoche; ``null``, wenn die Ansicht sie nicht kennt. */
-  liveClosedTotal: number | null | undefined;
+  /**
+   * Identitaet des aktuell angezeigten Quellzustands. Nur wenn sie mit der
+   * Messung uebereinstimmt, darf die bereinigte Zahl als aktuell gelten —
+   * Anzahl allein genuegt dafuer nicht.
+   */
+  live: SourceIdentity | null | undefined;
   className?: string;
 }) {
   const { fmt } = useCurrency();
   const note = epochCorrectionNote(correction);
   if (!note) return null;
 
-  const current = measurementCoversNow(correction, liveClosedTotal);
+  const current = measurementCoversNow(correction, live);
   const measuredDay = note.measuredAtUtc.slice(0, 10);
 
   return (
@@ -62,7 +71,7 @@ export function EpochCorrectionLine({
       <p className="text-2xs text-fg-subtle">
         {current
           ? `Stand ${measuredDay} · ${note.measuredCloses} Closes · ${note.incidentRef}`
-          : `Messung vom ${measuredDay} über ${note.measuredCloses} Closes — die Epoche ist seither weitergelaufen, die bereinigte Zahl ist NICHT der aktuelle Stand · ${note.incidentRef}`}
+          : `Historische Messung vom ${measuredDay} über ${note.measuredCloses} Closes — dass sie den aktuell angezeigten Stand abdeckt, ist nicht nachweisbar; die bereinigte Zahl ist deshalb NICHT als aktueller Stand zu lesen · ${note.incidentRef}`}
       </p>
     </div>
   );

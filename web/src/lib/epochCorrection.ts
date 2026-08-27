@@ -28,7 +28,18 @@ export type EpochCorrection = {
   measured_contaminated_closes: number;
   measured_contaminated_usd: number;
   measured_corrected_usd: number;
+  /**
+   * Identitaet des Quellzustands, ueber den gemessen wurde. ``null`` heisst:
+   * die Deckung ist NICHT beweisbar — dann bleibt die Zahl historisch.
+   */
+  measured_source_sha256?: string | null;
   flips_sign: boolean;
+};
+
+/** Der aktuell sichtbare Quellzustand, gegen den eine Messung geprueft wird. */
+export type SourceIdentity = {
+  closeCount: number | null | undefined;
+  sourceSha256: string | null | undefined;
 };
 
 export type EpochCorrectionNote = {
@@ -91,21 +102,33 @@ export function epochCorrectionNote(
 }
 
 /**
- * Beschreibt der Schnappschuss noch den aktuellen Stand?
+ * Deckt diese Messung exakt den aktuell sichtbaren Quellzustand ab?
  *
- * ``measured_*`` wurde zu ``measured_at_utc`` erhoben; die Epoche sammelt
- * weiter. Sobald die Live-Zahl der Closes abweicht, deckt die Messung eine
- * ANDERE Population ab — die korrigierte Summe ist dann Geschichte, kein
- * Jetzt-Wert, und darf nicht als solcher gelesen werden.
+ * Die naheliegende Antwort — "gleiche Anzahl Closes, also derselbe Stand" —
+ * ist falsch. Eine Anzahl kann zufaellig wieder uebereinstimmen, waehrend
+ * darunter andere Ereignisse liegen: ein Epochen-Reset, eine nachtraegliche
+ * Quarantaene, die Reparatur einer Zeile. Anzahl ist eine Kennzahl, keine
+ * Identitaet.
  *
- * Im Zweifel (unbekannte Live-Zahl) lautet die Antwort ``false``: der
- * vorsichtige Fall ist der, der den Vorbehalt sichtbar laesst.
+ * Verlangt wird darum BEIDES: derselbe Quell-Digest UND dieselbe Anzahl.
+ * Fehlt der Digest — auf einer der beiden Seiten —, lautet die Antwort
+ * ``false``. Nicht "wahrscheinlich noch aktuell", sondern schlicht: nicht
+ * beweisbar, also historisch.
+ *
+ * Praktische Folge heute: der Vermerk vom 2026-08-18 wurde ohne Digest
+ * aufgenommen. Diese Funktion gibt fuer ihn IMMER ``false`` zurueck, und die
+ * Oberflaeche kennzeichnet seine Zahlen ausnahmslos als Messung mit Datum.
+ * Das ist die gewollte Vorsicht, kein Defekt.
  */
 export function measurementCoversNow(
   correction: EpochCorrection | null | undefined,
-  liveClosedTotal: number | null | undefined,
+  live: SourceIdentity | null | undefined,
 ): boolean {
-  if (!correction) return false;
-  if (!isFiniteNumber(liveClosedTotal)) return false;
-  return liveClosedTotal === correction.measured_closes;
+  if (!correction || !live) return false;
+  const measuredSha = correction.measured_source_sha256;
+  if (typeof measuredSha !== "string" || measuredSha.length === 0) return false;
+  if (typeof live.sourceSha256 !== "string" || live.sourceSha256.length === 0) return false;
+  if (measuredSha !== live.sourceSha256) return false;
+  if (!isFiniteNumber(live.closeCount)) return false;
+  return live.closeCount === correction.measured_closes;
 }

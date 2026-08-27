@@ -344,7 +344,12 @@ function PaperEvidenceSplit({
             unter der Zahl, die er betrifft — nicht in einem Nebenpanel. */}
         <EpochCorrectionLine
           correction={ev?.epoch_correction}
-          liveClosedTotal={quality.paper_positions_closed}
+          live={{
+            closeCount: quality.paper_positions_closed,
+            // Kein Quell-Digest im Quality-Payload: Deckung ist damit nicht
+            // beweisbar, die Zahl bleibt ausdruecklich historisch.
+            sourceSha256: null,
+          }}
         />
       </div>
 

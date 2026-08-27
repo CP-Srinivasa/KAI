@@ -149,7 +149,7 @@ function PortfolioTile() {
               stand hier ausgerechnet fuer sie eine beruhigende Meldung. */}
           <EpochCorrectionLine
             correction={q.data.epoch_correction}
-            liveClosedTotal={null}
+            live={{ closeCount: null, sourceSha256: null }}
           />
           {/* Gesamt-Equity = was wirklich drin ist (Cash + Marktwert offener
               Positionen, short-aware), inkl. realisierter + unrealisierter G/V,

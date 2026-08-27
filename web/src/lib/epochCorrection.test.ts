@@ -23,6 +23,7 @@ function notice(over: Partial<EpochCorrection> = {}): EpochCorrection {
     measured_contaminated_closes: 4,
     measured_contaminated_usd: 1701.54,
     measured_corrected_usd: -930.49,
+    measured_source_sha256: null,
     flips_sign: true,
     ...over,
   };
@@ -76,26 +77,81 @@ describe("epochCorrectionNote", () => {
 });
 
 describe("measurementCoversNow", () => {
-  // Der Kern der Ehrlichkeit: measured_* ist ein DATIERTER Schnappschuss, die
-  // Epoche sammelt weiter. Die korrigierte Zahl darf niemals als aktueller
-  // Stand gelesen werden, sobald neue Closes dazugekommen sind.
-  it("gleiche Close-Zahl -> der Schnappschuss beschreibt das Jetzt", () => {
-    expect(measurementCoversNow(notice(), 215)).toBe(true);
+  // Der Kern der Ehrlichkeit: measured_* ist ein DATIERTER Schnappschuss. Ob er
+  // den aktuell sichtbaren Zustand abdeckt, ist eine Frage der IDENTITAET, nicht
+  // der Groesse. Eine Close-Anzahl kann zufaellig wieder uebereinstimmen,
+  // waehrend darunter andere Ereignisse liegen — Reset, nachtraegliche
+  // Quarantaene, reparierte Zeile.
+  const DIGEST = "a".repeat(64);
+
+  it("gleiche Anzahl allein beweist NICHTS", () => {
+    // Genau der Fall, der vorher faelschlich true ergab.
+    expect(
+      measurementCoversNow(notice(), { closeCount: 215, sourceSha256: null }),
+    ).toBe(false);
   });
 
-  it("mehr Closes als gemessen -> Schnappschuss ist veraltet", () => {
-    expect(measurementCoversNow(notice(), 216)).toBe(false);
-    expect(measurementCoversNow(notice(), 400)).toBe(false);
+  it("Digest + Anzahl identisch -> die Messung deckt das Jetzt ab", () => {
+    expect(
+      measurementCoversNow(notice({ measured_source_sha256: DIGEST }), {
+        closeCount: 215,
+        sourceSha256: DIGEST,
+      }),
+    ).toBe(true);
   });
 
-  it("unbekannte Live-Zahl -> im Zweifel veraltet, nicht optimistisch", () => {
+  it("Quelle ist weitergelaufen -> Deckung faellt weg", () => {
+    // Derselbe Digest kann dann nicht mehr gelten; getestet wird beides.
+    expect(
+      measurementCoversNow(notice({ measured_source_sha256: DIGEST }), {
+        closeCount: 216,
+        sourceSha256: DIGEST,
+      }),
+    ).toBe(false);
+    expect(
+      measurementCoversNow(notice({ measured_source_sha256: DIGEST }), {
+        closeCount: 215,
+        sourceSha256: "b".repeat(64),
+      }),
+    ).toBe(false);
+  });
+
+  it("fehlender Digest auf einer der beiden Seiten -> nicht beweisbar", () => {
+    expect(
+      measurementCoversNow(notice({ measured_source_sha256: DIGEST }), {
+        closeCount: 215,
+        sourceSha256: null,
+      }),
+    ).toBe(false);
+    expect(
+      measurementCoversNow(notice({ measured_source_sha256: "" }), {
+        closeCount: 215,
+        sourceSha256: DIGEST,
+      }),
+    ).toBe(false);
+  });
+
+  it("der reale Vermerk vom 18.08. hat keinen Digest -> immer historisch", () => {
+    // Dokumentiert den heutigen Ist-Zustand: gewollte Vorsicht, kein Defekt.
+    expect(notice().measured_source_sha256).toBeNull();
+    expect(
+      measurementCoversNow(notice(), { closeCount: 215, sourceSha256: "x".repeat(64) }),
+    ).toBe(false);
+  });
+
+  it("unbekannter Live-Zustand -> im Zweifel nicht gedeckt", () => {
     expect(measurementCoversNow(notice(), null)).toBe(false);
     expect(measurementCoversNow(notice(), undefined)).toBe(false);
+    expect(measurementCoversNow(null, { closeCount: 215, sourceSha256: DIGEST })).toBe(false);
   });
+});
 
-  it("weniger Closes als gemessen ist kein Beweis fuer Aktualitaet", () => {
-    // Kann bei Epochen-Reset oder gefilterter Ansicht auftreten; die
-    // Messung deckt dann eine ANDERE Population ab.
-    expect(measurementCoversNow(notice(), 100)).toBe(false);
+describe("die Lese-Seite rechnet nichts nach", () => {
+  it("reicht measured_corrected_usd durch, statt es selbst zu bilden", () => {
+    // Absichtlich INKONSISTENT: booked - contaminated waere -930.49, der
+    // Vermerk sagt aber -1.0. Autoritativ ist das Backend; rechnete das
+    // Frontend selbst, entstuende eine zweite Wahrheit.
+    const n = epochCorrectionNote(notice({ measured_corrected_usd: -1.0 }))!;
+    expect(n.correctedUsd).toBe(-1.0);
   });
 });
