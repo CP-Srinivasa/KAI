@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from youtube_transcript_api import (
@@ -30,6 +31,10 @@ _YT_API_BASE = "https://www.googleapis.com/youtube/v3"
 _MAX_RESULTS_PER_CHANNEL = 10
 _MAX_TRANSCRIPT_CHARS = 12_000
 _PREFERRED_LANGUAGES = ["en", "de"]
+
+
+def _string_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 @dataclass(frozen=True)
@@ -115,7 +120,7 @@ async def _resolve_channel_id(
     if resp.status_code == 200:
         items = resp.json().get("items", [])
         if items:
-            return items[0]["id"]
+            return _string_or_none(items[0].get("id"))
 
     # Try as direct channel ID (UC...)
     if clean.startswith("UC"):
@@ -135,7 +140,9 @@ async def _resolve_channel_id(
     if resp.status_code == 200:
         items = resp.json().get("items", [])
         if items:
-            return items[0]["snippet"]["channelId"]
+            snippet = items[0].get("snippet", {})
+            if isinstance(snippet, dict):
+                return _string_or_none(snippet.get("channelId"))
 
     return None
 
@@ -143,7 +150,7 @@ async def _resolve_channel_id(
 def fetch_transcript(video_id: str) -> str | None:
     """Fetch transcript for a video. Returns None if unavailable."""
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_list = YouTubeTranscriptApi().list(video_id)
 
         # Try preferred languages first
         transcript = None
@@ -162,7 +169,7 @@ def fetch_transcript(video_id: str) -> str | None:
                 return None
 
         parts = transcript.fetch()
-        text = " ".join(entry.get("text", "") for entry in parts)
+        text = " ".join(part.text for part in parts)
         return text[:_MAX_TRANSCRIPT_CHARS] if text else None
 
     except (TranscriptsDisabled, NoTranscriptFound):
