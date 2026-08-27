@@ -143,7 +143,11 @@ async def _resolve_channel_id(
 def fetch_transcript(video_id: str) -> str | None:
     """Fetch transcript for a video. Returns None if unavailable."""
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # youtube-transcript-api 1.x: `list_transcripts` (Klassenmethode) ist weg,
+        # es gibt nur noch die Instanzmethode `.list()`. Der alte Aufruf warf einen
+        # AttributeError, den das weite `except Exception` unten verschluckte —
+        # Transkripte kamen seit dem Upgrade nie an, ohne eine Zeile im Log.
+        transcript_list = YouTubeTranscriptApi().list(video_id)
 
         # Try preferred languages first
         transcript = None
@@ -161,8 +165,12 @@ def fetch_transcript(video_id: str) -> str | None:
             except NoTranscriptFound:
                 return None
 
-        parts = transcript.fetch()
-        text = " ".join(entry.get("text", "") for entry in parts)
+        # Zweite Bruchstelle derselben Umstellung: `fetch()` liefert in 1.x ein
+        # `FetchedTranscript` aus Objekten, keine Liste von Dicts mehr.
+        # `entry.get("text")` waere hier erneut still gescheitert.
+        fetched = transcript.fetch()
+        raw = fetched.to_raw_data() if hasattr(fetched, "to_raw_data") else fetched
+        text = " ".join(str(entry.get("text", "")) for entry in raw)
         return text[:_MAX_TRANSCRIPT_CHARS] if text else None
 
     except (TranscriptsDisabled, NoTranscriptFound):
