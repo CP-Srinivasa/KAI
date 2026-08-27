@@ -1,3 +1,26 @@
+## 2026-08-27 - Phantom-Register: was der Cap nicht sieht, was tote Ticker verdecken, welche PnL-Spalte gilt (5e/5f/5g)
+
+Der erste Close-Evidence-Shadow-Lauf (STAB-09b, 612 Closes gegen Binance/Bybit-1m-Kerzen,
+read-only, kein Buch beruehrt) hat drei Dinge gezeigt, die jetzt im Bestandsregister stehen:
+
+**5e — gewinnbasierte Schwellen sind fuer eingefrorene Preise blind.** Vier XRP-Closes tragen ueber
+vier Tage byte-identisch `1,3193400000000002`, jeder mit kleinem VERLUST (-0,31 % bis -0,85 %).
+Der 20-%-Cap haette nie angeschlagen — er misst Rendite, der Bandvergleich misst den Markt.
+Beide Fragen zusammen decken beide Fehlerarten ab; keine ersetzt die andere.
+
+**5f — umbenannte Ticker machen Closes dauerhaft unpruefbar.** 22 Closes lieferten keine Kerzen,
+20 davon MATIC/USDT: der Collector fragt den toten Ticker, POL/SKY liefern im selben Fenster
+sauber. Damit ist das MATIC-Cluster aus §1 erstmals am Markt gegengeprueft (363-368 % ausserhalb
+des POL-Bandes). Warnung mit im Eintrag: MKR->SKY ist eine Redenominierung, ein Alias ohne
+Umrechnungsfaktor erzeugt 185 000 % Scheinbefund.
+
+**5g — zwei PnL-Felder, eines kumulativ.** `realized_pnl_usd` in `paper_execution_audit.jsonl` ist
+der laufende Portfolio-Stand, nicht die Trade-PnL; es zu summieren ueberschaetzt das MATIC-Cluster
+2,8-fach (+204.866 statt +73.5 k). Der Fehler ist beim Nachrechnen am 27.08. selbst passiert und
+steht deshalb mit Zahl im Register. Zitierfaehig ist `trade_pnl_usd` inkl. Teilschliessungen.
+
+Nur Dokumentation: keine Schwellenaenderung, kein `app/`-Code, kein Test, kein Verhalten.
+Die Bandtoleranz 0,05 % bleibt gesetzt und ungemessen — als solche vermerkt, nicht nachjustiert.
 ## 2026-08-27 - STAB-11b: DECISION_LOG-Nachtrag, zweiter Teil (D-250..D-268)
 
 Der Nachtrag vom 26.08. schloss die Zehn-Wochen-Luecke thematisch, aber nicht vollstaendig: er

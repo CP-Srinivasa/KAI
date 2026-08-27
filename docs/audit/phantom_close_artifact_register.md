@@ -268,6 +268,90 @@ volatilitätsnormalisiert (`move/ATR`) oder gar keine feste Grenze richtig ist,
 entscheidet sich an prospektiv erfassten Triggern — präregistriert, nicht
 rückwirkend optimiert.
 
+## 5e. Was eine gewinnbasierte Schwelle strukturell nicht findet (2026-08-27)
+
+Der Cap misst **Rendite**. Ein Phantom, dessen erfundener Preis zufällig nahe am
+Einstieg liegt, hat keine auffällige Rendite — und ist damit für jede Schwelle
+dieser Bauart unsichtbar, egal wie sie kalibriert wird. Gefunden im ersten
+Close-Evidence-Shadow-Lauf (STAB-09b, #776, 612 Closes gegen Binance- und
+Bybit-1m-Kerzen, read-only):
+
+| Close | entry | exit | Rendite | Kerzenband | Verdikt |
+|---|---|---|---|---|---|
+| XRP/USDT 2026-05-28 19:20:46 | 1,32343 | **1,3193400000000002** | −0,31 % | außerhalb | `observed_price_outside_venue_band` |
+| XRP/USDT 2026-05-31 16:43:38 | 1,33066 | **1,3193400000000002** | −0,85 % | außerhalb | dito |
+| XRP/USDT 2026-06-01 01:50:05 | 1,33066 | **1,3193400000000002** | −0,85 % | außerhalb | dito |
+| XRP/USDT 2026-06-01 02:00:05 | 1,33066 | **1,3193400000000002** | −0,85 % | außerhalb | dito |
+
+Byte-identischer Exit über **vier Tage** — kein Marktpreis bewegt sich vier Tage
+lang auf dieselbe fünfzehnte Nachkommastelle. Jeder einzelne Close sieht für
+sich betrachtet unauffällig aus: kleiner Verlust, plausible Größenordnung. Der
+Cap hätte hier **nie** angeschlagen, in keiner Kalibrierung, weil er die falsche
+Frage stellt.
+
+Der Bandvergleich stellt die richtige: *stand dieser Preis zu dieser Minute
+überhaupt am Markt?* Beide Fragen zusammen decken beide Fehlerarten ab —
+unplausible Rendite (Cap) und unplausibler Preis (Band). Keine ersetzt die andere.
+Der Lauf liegt als `KAI-mirror/close_evidence_shadow_pi_audit_20260826.json`
+(Audit-Kopie sha256 `90dbede3a5d7a8dc…`); die Bandtoleranz von 0,05 % ist dabei
+**gesetzt, nicht gemessen** — bei illiquiden Symbolen erzeugt sie Falsch-Negative
+(SLX 1,97 %, per §5c als echt belegt), während die bekannten Artefakte 50- bis
+7000-fach darüber liegen.
+
+## 5f. Umbenannte Ticker machen Closes dauerhaft unprüfbar (2026-08-27)
+
+22 der 612 Closes im Shadow-Lauf lieferten **keine Kerzen** (`window_unavailable`).
+Die Verteilung ist nicht zeitlich, sondern symbolisch: MATIC/USDT (20),
+MKR/USDT (1), FET/USDT (1) — an denselben Tagen wurden 69 andere Closes
+problemlos gesammelt. Direktprobe im Fenster `2026-06-01T03:41Z`:
+
+```
+binance  MATIC/USDT -> 0 Kerzen      bybit  MATIC/USDT -> 0
+binance  POL/USDT   -> 3 Kerzen      bybit  POL/USDT   -> 3
+binance  MKR/USDT   -> 0 Kerzen      bybit  MKR/USDT   -> 0
+binance  SKY/USDT   -> 3 Kerzen      bybit  SKY/USDT   -> 3
+binance  FET/USDT   -> 3 Kerzen      bybit  FET/USDT   -> 0  (bei bybit linear nicht gelistet)
+```
+
+Es sind exakt die Ticker, die das Prä-Reg-Universum bereits kanonisiert
+(MATIC→POL, RNDR→RENDER, MKR→SKY). Für das MATIC-Cluster aus §1 heißt das: der
+Vorfall war seit dem 18.08. beschrieben, aber **bis heute nicht am Markt
+nachprüfbar** — der tote Ticker verdeckte die Gegenprobe. Mit dem Alias steht sie:
+POL-Band 0,0873…0,0886 gegen den erfundenen Exit 0,408545625, also 363–368 %
+außerhalb, exakt die Größenordnung aus §3.
+
+⚠ **Ein Alias ohne Umrechnungsfaktor ist gefährlicher als keiner.** MATIC→POL war
+eine 1:1-Migration, der Bandvergleich gilt. MKR→SKY ist eine **Redenominierung**:
+den MKR-Close (Exit 101,63) gegen ein SKY-Band von 0,0549 zu halten ergibt
+185 000 % und ist ein Maßstabsfehler, kein Befund. Wer die Tabelle einführt, führt
+den Faktor mit ein — oder lässt es und meldet stattdessen einen eigenen Grund
+(`SYMBOL_RENAMED_UNRESOLVABLE`): „keine Kerzen" darf nicht aussehen wie „Markt
+hatte zu", und erst recht nicht wie „geprüft und unauffällig".
+
+## 5g. Zwei PnL-Felder, eines davon kumulativ (2026-08-27)
+
+`artifacts/paper_execution_audit.jsonl` führt bei `position_closed` **beide**:
+
+| Feld | Bedeutung | Summe über die 9 MATIC-Closes aus §1 |
+|---|---|---|
+| `trade_pnl_usd` | PnL **dieses** Trades, netto nach Gebühren | **73.458,59** |
+| `realized_pnl_usd` | **kumulativer** realisierter Portfolio-Stand zur Zeile | 204.866,48 |
+
+Beim Nachrechnen des MATIC-Clusters am 27.08. wurde zuerst `realized_pnl_usd`
+summiert — Ergebnis **+204.866 statt +73.5 k**, eine 2,8-fache Überschätzung,
+bei der nichts rot wird und die Zahl trotzdem plausibel aussieht. Dass das Feld
+kumulativ ist, steht in den Daten: dieselben `order_filled`-Zeilen tragen es
+schon **vor** dem Close (17:41:38 → 3.799,02) und es wächst monoton.
+
+**Regel:** über Paper-PnL wird mit `trade_pnl_usd` gerechnet, inklusive der
+`position_partial_closed`-Zeilen (68 weitere im aktuellen Stream).
+`realized_pnl_usd` gehört in keine Summe.
+
+Gegenprobe zum Registerwert **73.548** aus §1/§3: brutto `(exit−entry)·qty` =
+74.024,32, `fee_usd` = 565,73, netto = 73.458,59. Der Registerwert liegt zwischen
+netto und brutto (0,12 % über netto); welche Rundung die 89,41 erklärt, ist nicht
+rekonstruiert und wird hier **nicht** geraten. Zitierfähig ist `trade_pnl_usd`.
+
 ## 6. Verweise
 
 - `app/execution/phantom_filter.py` — kanonische Schwelle + Kalibrierungs-Kommentar
@@ -282,3 +366,6 @@ rückwirkend optimiert.
 - `tests/unit/test_mock_price_forensics.py` — Bit-Nachweis + Falsch-Positiv-Schutz
 - `app/learning/verified_real_closes.py` — belegte Echt-Trades über dem Cap (§5c), Identität via `fill_id`
 - `app/execution/close_classification.py` — das vierstufige Urteil (§5d)
+- `app/execution/close_evidence_shadow.py` — Shadow-Report Binance/Bybit, read-only (§5e/§5f)
+- `app/execution/venues/candle_fetchers.py` — die beiden Venue-Adapter (§5f)
+- `artifacts/paper_execution_audit.jsonl` — `trade_pnl_usd` ist die Trade-PnL, `realized_pnl_usd` ist kumulativ (§5g)
