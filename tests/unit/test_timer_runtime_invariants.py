@@ -377,3 +377,72 @@ def test_health_endpoint_does_not_map_issues_to_503() -> None:
     ).read_text(encoding="utf-8")
     assert "run_health_check" not in router
     assert "503" not in router
+
+
+def test_the_counts_exist_below_the_presentation_not_inside_it() -> None:
+    """Telegram ist die Darstellung, nicht die Existenz der Information.
+
+    Entstuenden die Abdeckungszahlen erst beim String-Bau, gaebe es sie nur
+    dort: kein JSON-Konsument, kein Test und keine spaetere Auswertung kaeme
+    an sie heran, und eine zweite Oberflaeche muesste sie neu herleiten —
+    womit sie driften koennten.
+
+    Der Vertrag ist deshalb: ``_check_timer_scheduleability`` RECHNET, der
+    Report TRAEGT, der Notifier FORMATIERT nur.
+    """
+    from dataclasses import fields
+
+    from app.alerts.health_check import HealthReport
+
+    # 1. Der Report traegt die Zahlen als eigenes, maschinenlesbares Feld.
+    names = {f.name for f in fields(HealthReport)}
+    assert "timer_cadence" in names
+
+    # 2. Der Notifier leitet nichts her — er liest nur.
+    notify = (
+        Path(__file__).resolve().parents[2] / "app" / "alerts" / "health_notify.py"
+    ).read_text(encoding="utf-8")
+    for derivation in (
+        "expected_intervals_from_unit_dir",
+        "find_stalled_recurring_timers",
+        "parse_systemd_timespan",
+        "systemctl",
+    ):
+        assert derivation not in notify, f"health_notify leitet {derivation} selbst ab"
+
+    # 3. Die Formatierung ist rein: gleiche Eingabe, gleiche Ausgabe, keine Quelle.
+    from app.services.timer_health import format_cadence_coverage
+
+    payload = {"total": 56, "evaluated": 23, "unevaluated": 33, "overdue": 0}
+    assert format_cadence_coverage(payload) == format_cadence_coverage(dict(payload))
+
+
+def test_oncalendar_timers_are_never_counted_as_cadence_healthy() -> None:
+    """Nicht bewertet ist nicht dasselbe wie in Ordnung.
+
+    Die 33 OnCalendar-Units duerfen weder in ``evaluated`` noch stillschweigend
+    in einer Gesundmeldung landen — sie stehen ausdruecklich in ``unevaluated``.
+    """
+    from app.services.timer_health import (
+        expected_intervals_from_unit_dir,
+        format_cadence_coverage,
+    )
+
+    unit_dir = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
+    evaluable = set(expected_intervals_from_unit_dir(unit_dir))
+    all_units = {f.name for f in unit_dir.glob("kai-*.timer")}
+    unevaluable = all_units - evaluable
+    assert unevaluable, "Regression: alles waere bewertbar, das stimmt nicht"
+
+    line = format_cadence_coverage(
+        {
+            "total": len(all_units),
+            "evaluated": len(evaluable),
+            "unevaluated": len(unevaluable),
+            "overdue": 0,
+        }
+    )
+    assert line is not None
+    assert f"{len(evaluable)}/{len(all_units)}" in line
+    assert f"{len(unevaluable)} nicht kadenzbewertet" in line
+    assert f"{len(all_units)}/{len(all_units)}" not in line
