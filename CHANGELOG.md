@@ -1,3 +1,38 @@
+## 2026-08-27 - STAB-06a CLOSED: vier faellige Verdikte verifiziert, attestiert, archiviert
+
+Die Klassifikation vom Vormittag liess vier `MANUAL_IMMEDIATE_VERDICT` offen. Sie sind jetzt
+klauselweise geprueft (**30 Klauseln, 30 erfuellt**), append-only in die Truth-Kette attestiert
+(**seq 102-105**) und unter `artifacts/research/supervision/<id>/` archiviert. Die Kette
+verifiziert (`verify_ledger ok=True`, Tip seq 105); die ersten 101 Zeilen sind byte-identisch mit
+der Sicherung vor dem Lauf - **historical_rows_edited=0**, `truth-attest-verdicts` meldete
+`total=15 attested=4 skipped=11` (idempotent).
+
+**Zwei zuvor ausdruecklich ungeprueft gefuehrte Stellen wurden tatsaechlich nachgemessen:**
+
+`836b1c7e` fuehrte vier Seal-Konstanten und den Ausgabe-Vertrag als offen. Alle sind jetzt im
+Verifier belegt: `runtime_baseline_sha=1d2e565e...`, `truth_lint_registry_version=11-invariants-5-active`,
+`provenance_semantics=pipeline_scoped`, `network/llm/execution_influence=false`, die Vier-Wege-Ausgabe
+PASS=0/FAIL=1/INVALID=2/INCONCLUSIVE=3, sieben Schritte in versiegelter Reihenfolge mit Abbruch beim
+ersten INVALID sowie die lint-in-bundle-Regel (fehlende `signal_path_id`-Provenance = INVALID, T7/T8).
+
+`8b21040a` fuehrte `latest_evidence_sha256: null`. Das Evidenz-Doc ist gefunden:
+`KAI-mirror/reports/KAI_Verifier_v0_1_CleanRoom_2026-07-12.md`, sha256
+`e47eedc41a43a67463991f635d0a47c45e8085a8089ecf0fd64ae10ea689b88f` - exakt der im Seal genannte Wert.
+
+**Ein Detail, das die Attestierung sonst still verfehlt haette:** `_terminal_verdict_class` behandelt
+den Unterstrich NICHT als Token-Grenze. Live geprueft: `"PASS_SAFETY_AXIS_ONLY: ..."` ergibt `UNKNOWN`
+und damit `RESOLUTION_HOLD` statt `RESOLVED`. Der LN-Verdikttext beginnt deshalb
+`"PASS - SAFETY_AXIS_ONLY: ..."`; ein Contract-Test prueft jede Verdikt-Ueberschrift gegen die echte
+Klassifikationsfunktion statt gegen eine Annahme.
+
+Beide Auflagen stehen im attestierten Text selbst, nicht nur im Register: `POST_HOC_SEAL` (Ereignis
+vor Versiegelung, Acceptance statt Falsifikation) und `SAFETY_AXIS_ONLY` (Transition-Achse bleibt
+INSUFFICIENT_N). `81c41ae1` traegt die Konsequenz aus: **Fork B ist bindend** - Q4 ist eingetreten.
+
+Register-Aggregate: `TOTAL=7 WATCH=1 MANUAL=5 SUPERSEDED=1 UNRESOLVED=0 ATTESTED=4
+MANUAL_IMMEDIATE_OPEN=0 stab_06a_closed=true`. Offen bleiben nur die terminierte Wiedervorlage
+`6751bc33` (15.09.) und der Fristwaechter `c4890792` (29.09., ADR-0012-Exit-Review).
+
 ## 2026-08-27 - STAB-06a: Aufsichtsregister statt sieben offener Punkte (1 WATCH / 5 MANUAL / 1 SUPERSEDED)
 
 Sieben versiegelte Prae-Regs standen ohne Aufsicht — kein Watcher, kein Termin, kein Archiv.

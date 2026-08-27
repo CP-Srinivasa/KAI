@@ -124,12 +124,22 @@ def test_watch_nennt_nur_bestehende_watcher(entries: list[dict[str, Any]]) -> No
         assert entry["watcher_id"] in _EXISTING_WATCHERS, entry["prereg_id"]
 
 
-def test_sofort_faellige_verdikte_tragen_due_now(entries: list[dict[str, Any]]) -> None:
+def test_sofort_faellige_verdikte_tragen_due_now_solange_offen(
+    entries: list[dict[str, Any]],
+) -> None:
+    """``DUE_NOW`` ist ein Zustand des OFFENEN Falls.
+
+    Nach der Attestierung waere ein stehengebliebenes ``DUE_NOW`` eine Daueraufgabe
+    fuer eine bereits getroffene Entscheidung — deshalb faellt der Termin dann weg.
+    """
     for entry in entries:
         if entry["decision_state"] != "MANUAL_IMMEDIATE_VERDICT":
             continue
-        assert entry["next_review_utc"] == "DUE_NOW", entry["prereg_id"]
-        assert entry.get("watcher_id") is None
+        assert entry.get("watcher_id") is None, entry["prereg_id"]
+        if entry.get("open") is False:
+            assert entry["next_review_utc"] is None, entry["prereg_id"]
+        else:
+            assert entry["next_review_utc"] == "DUE_NOW", entry["prereg_id"]
 
 
 def test_terminierte_wiedervorlage_hat_ein_echtes_datum(entries: list[dict[str, Any]]) -> None:
@@ -252,8 +262,10 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     assert agg["RETIRE"] == 0 and agg["NO_WATCH_REQUIRED"] == 0
     assert agg["UNRESOLVED"] == 0
     assert agg["WATCH_INSTALLED"] == sum(1 for e in entries if e.get("spec_installed")) == 1
-    assert agg["stab_06a_closed"] is False, (
-        "Die Klassifikation allein schliesst STAB-06a nicht — erst die vier Attestierungen."
+    assert agg["ATTESTED"] == 4
+    assert agg["MANUAL_IMMEDIATE_OPEN"] == 0
+    assert agg["stab_06a_closed"] is True, (
+        "Geschlossen erst mit den vier Attestierungen — die Klassifikation allein reicht nicht."
     )
 
 
@@ -263,3 +275,102 @@ def test_keine_stillen_abschluesse(registry: dict[str, Any], entries: list[dict[
     assert "RETIRE" not in states
     assert "NO_WATCH_REQUIRED" not in states
     assert registry["decision_states"]["RETIRE"] == "Nicht vergeben."
+
+
+# --- Closure: ein Verdikt gilt erst mit Kette UND Archiv ---
+
+
+def test_jedes_sofortige_verdikt_ist_attestiert_und_archiviert(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Attestiert heisst: in der Truth-Kette, mit Sequenz, mit Verifikations-Beleg.
+
+    Ein Register, das ``open=false`` behauptet, ohne auf eine Kettenposition zu
+    zeigen, waere genau die Sorte Selbstauskunft, gegen die STAB-06a gebaut wurde.
+    """
+    seqs = []
+    for entry in entries:
+        if entry["decision_state"] != "MANUAL_IMMEDIATE_VERDICT":
+            continue
+        att = entry.get("attestation") or {}
+        pid = entry["prereg_id"]
+        assert att.get("attested") is True, pid
+        assert isinstance(att.get("truth_seq"), int), pid
+        assert len(str(att.get("attestation_hash", ""))) == 64, pid
+        assert len(str(att.get("verification_sha256", ""))) == 64, pid
+        assert att.get("verdict_class") in {"MET", "NOT_MET", "CLOSED_NO_VERDICT"}, pid
+        assert int(att.get("verification_clauses", 0)) > 0, pid
+        assert entry.get("open") is False, pid
+        assert len(entry.get("archive_contents") or []) >= 2, pid
+        seqs.append(att["truth_seq"])
+    assert sorted(seqs) == [102, 103, 104, 105]
+
+
+def test_closure_belegt_append_only(registry: dict[str, Any]) -> None:
+    """Vier neue Zeilen, keine bearbeitete — mit Zahlen statt Zusicherung."""
+    closure = registry["closure"]
+    assert closure["attestations_appended"] == 4
+    assert closure["historical_rows_edited"] == 0
+    assert closure["ledger_after_lines"] - closure["ledger_before_lines"] == 4
+    assert closure["truth_chain_valid"] is True
+    assert closure["truth_tip_seq"] == 105
+    assert closure["manual_immediate_open"] == 0
+    assert "byte-identisch" in closure["append_only_proof"]
+    assert "skipped=11" in closure["idempotency_proof"]
+
+
+def test_auflagen_stehen_in_der_attestierten_ueberschrift(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Die zwei Vorbehalte muessen im Verdikttext selbst stehen, nicht nur im Register."""
+    by_id = {e["prereg_id"]: e for e in entries}
+    cleanroom = by_id["8b21040ad7935a4a"]["attestation"]["verdict_headline"]
+    assert "POST_HOC_SEAL" in cleanroom
+    ln = by_id["0879a65c5fd01f65"]["attestation"]["verdict_headline"]
+    assert "SAFETY_AXIS_ONLY" in ln
+    assert not ln.startswith("PASS_"), (
+        "Der Unterstrich ist keine Token-Grenze: 'PASS_SAFETY_AXIS_ONLY' wird als UNKNOWN "
+        "klassifiziert und erzeugt RESOLUTION_HOLD statt RESOLVED."
+    )
+
+
+def test_verdikt_ueberschriften_sind_terminal_klassifizierbar(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Gegen die echte Klassifikationsfunktion, nicht gegen eine Annahme."""
+    from app.research.prereg_maturity import _terminal_verdict_class
+
+    for entry in entries:
+        att = entry.get("attestation") or {}
+        if not att.get("attested"):
+            continue
+        headline = att["verdict_headline"]
+        assert _terminal_verdict_class(headline) == att["verdict_class"], (
+            f"{entry['prereg_id']}: {headline[:60]!r} -> {_terminal_verdict_class(headline)}"
+        )
+
+
+def test_der_zuvor_ungeprueften_evidenz_wurde_nachgegangen(
+    entries: list[dict[str, Any]],
+) -> None:
+    """8b21040a fuehrte latest_evidence_sha256=null — das Doc ist jetzt gefunden."""
+    entry = next(e for e in entries if e["prereg_id"] == "8b21040ad7935a4a")
+    resolved = entry["attestation"]["evidence_doc_resolved"]
+    assert resolved["sha256"].startswith("e47eedc41a43a674")
+    assert resolved["path"].endswith("KAI_Verifier_v0_1_CleanRoom_2026-07-12.md")
+
+
+def test_offene_seal_konstanten_sind_jetzt_gemessen(entries: list[dict[str, Any]]) -> None:
+    """836b1c7e fuehrte sie ausdruecklich als NICHT geprueft."""
+    entry = next(e for e in entries if e["prereg_id"] == "836b1c7e28eed49a")
+    measured = entry["attestation"]["previously_open_constants_now_measured"]
+    joined = " ".join(measured)
+    for token in (
+        "runtime_baseline_sha=1d2e565ef847efaa019e58753a65dc8f6531b0dd",
+        "11-invariants-5-active",
+        "pipeline_scoped",
+        "execution_influence=false",
+        "INCONCLUSIVE=3",
+    ):
+        assert token in joined, token
+    assert entry["attestation"]["verification_clauses"] == 14
