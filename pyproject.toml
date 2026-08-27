@@ -148,7 +148,6 @@ module = [
     "app.alerts.daily_briefing",
     "app.alerts.hold_metrics",
     "app.api.main",
-    "app.api.routers.kai",
     "app.cli.commands.ingestion",
     "app.cli.main",
     "app.ingestion.telegram_channel_worker",
