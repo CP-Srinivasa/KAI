@@ -360,15 +360,29 @@ def validate_jsonl_file(path: Path) -> bool:
 
 expected, expected_hashes = audit_expectation()
 expectation_source = "audit_manifest"
+fail_closed_reason = ""
 if not expected:
-    # Rueckfall auf den Live-Zustand. Er ist noetig fuer Archive aus der Zeit
+    # Der Rueckfall auf den Live-Zustand ist noetig fuer Archive aus der Zeit
     # vor dem Manifest (STAB-05c), aber er beantwortet eine SCHWAECHERE Frage:
     # "passt das Archiv zum heutigen Dateisystem?" statt "laesst sich aus
-    # diesem Archiv wiederherstellen?". Der Unterschied gehoert in das
-    # Beweis-Artefakt, sonst sieht ein PASS aus beiden Welten identisch aus
-    # und die Beweiskraft sinkt unbemerkt (STAB-05D, 2026-08-27).
-    expected, expected_hashes = current_expectation()
-    expectation_source = "current_filesystem"
+    # diesem Archiv wiederherstellen?".
+    #
+    # Der Backup-Writer legt das Manifest DOPPELT ab: als Sidecar neben dem
+    # Archiv und als ``file_sha256`` in der Ledger-Zeile. Existiert der Sidecar,
+    # liefert das Ledger aber keine Erwartung, ist das ein Widerspruch — die
+    # Zeile wurde verdraengt oder die beiden Ablagen sind auseinandergelaufen.
+    # Ein Waechter darf einen Widerspruch nicht durch eine schwaechere Pruefung
+    # ersetzen; hier wird fail-closed abgebrochen (STAB-05D, 2026-08-27).
+    sidecar = archive.parent / (archive.name + ".manifest.json")
+    if sidecar.is_file():
+        expectation_source = "ledger_manifest_missing"
+        fail_closed_reason = (
+            "manifest sidecar exists but the ledger yielded no historical "
+            "expectation for this archive"
+        )
+    else:
+        expected, expected_hashes = current_expectation()
+        expectation_source = "current_filesystem"
 
 restored = sorted(rel(path, extract_dir) for path in extract_dir.rglob("*") if path.is_file())
 restored_set = set(restored)
@@ -410,7 +424,7 @@ payload = {
 }
 out.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
-if missing or mismatches:
+if fail_closed_reason or missing or mismatches:
     raise SystemExit(1)
 PY
 then

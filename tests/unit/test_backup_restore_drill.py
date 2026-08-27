@@ -567,3 +567,37 @@ def test_proof_marks_the_fallback_when_no_manifest_exists(tmp_path: Path) -> Non
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert _latest_proof(tmp_path)["expectation_source"] == "current_filesystem"
+
+
+def test_modern_archive_with_orphaned_manifest_fails_closed(tmp_path: Path) -> None:
+    """Ein Widerspruch darf nicht durch eine schwaechere Pruefung ersetzt werden.
+
+    Der Writer legt das Manifest doppelt ab: als Sidecar neben dem Archiv UND
+    als ``file_sha256`` in der Ledger-Zeile. Existiert der Sidecar, liefert das
+    Ledger aber keine Erwartung, ist entweder die Zeile verdraengt worden oder
+    die beiden Ablagen sind auseinandergelaufen. Beides ist ein Befund — ein
+    Rueckfall auf den Live-Zustand wuerde ihn zudecken.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    sidecar = archive.parent / (archive.name + ".manifest.json")
+    assert sidecar.is_file(), "Vorbedingung: der Writer legt einen Sidecar an"
+
+    # Sidecar bleibt, Ledger-Erwartung verschwindet -> Widerspruch.
+    ledger = tmp_path / "artifacts" / "backup_audit.jsonl"
+    rows = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    for row in rows:
+        row.pop("file_sha256", None)
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    result = _run_drill(tmp_path, archive)
+
+    assert result.returncode != 0, "der Widerspruch muss FAIL erzeugen, nicht PASS"
+    proof = _latest_proof(tmp_path)
+    assert proof["expectation_source"] == "ledger_manifest_missing"
+    assert proof["status"] != "PASS"
