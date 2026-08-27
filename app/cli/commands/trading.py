@@ -7,7 +7,6 @@ All commands are read-only or guarded-write (paper/shadow only).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -15,6 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.cli.commands.trading_time import parse_until_utc as _parse_until_utc
 from app.observability.counterfactual_replay_logger import OUTPUT_PATH as _DEFAULT_CF_PATH
 from app.observability.falsification_verdict import (
     DEFAULT_VERDICTS_PATH as _DEFAULT_VERDICTS_PATH,
@@ -505,15 +505,6 @@ def trading_evidence_window(
     # informational (exit 0) — absence of evidence is not a failure of the report.
     if report.safety.live_orders_unexplained > 0:
         raise typer.Exit(2)
-
-
-def _parse_until_utc(value: str) -> datetime:
-    """Parse an ISO-8601 --until value into a tz-aware UTC datetime (naive -> UTC)."""
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise typer.BadParameter(f"--until: not an ISO-8601 datetime: {value!r}") from exc
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 @trading_app.command("canonical-edge")
