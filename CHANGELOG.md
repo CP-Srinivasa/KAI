@@ -1,3 +1,39 @@
+## 2026-08-27 - STAB-06a: Aufsichtsregister statt sieben offener Punkte (2 WATCH / 5 MANUAL)
+
+Sieben versiegelte Prae-Regs standen ohne Aufsicht — kein Watcher, kein Termin, kein Archiv.
+Statt sieben Watcher zu bauen, traegt jetzt EIN versioniertes Register (`config/prereg_supervision.json`)
+je Claim die Operator-Entscheidung mit Pflichtfeldern: Owner, Termin, Evidenz, Archiv, Begruendung.
+**Kein neuer Timer, kein neuer Service** — die beiden WATCH-Faelle laufen im bestehenden
+`kai-prereg-maturity`.
+
+Verteilung: 4x MANUAL_IMMEDIATE_VERDICT (entscheidungsreif JETZT), 1x MANUAL_SCHEDULED_REVIEW
+(datierte Wiedervorlage statt Dauerueberwachung), 2x WATCH. Kein RETIRE, kein NO_WATCH_REQUIRED.
+
+Der Befund hinter der Klassifikation: **drei der sieben waren nie Beobachtungsfaelle, sondern
+faellige Verdikte.** `81c41ae1` — beide Eingangsverdikte sind terminal attestiert (seq 91 / seq 71),
+Quadrant Q4 ist eingetreten und Fork B damit bindend. `836b1c7e` — beide versiegelten Hashes am
+27.08. bit-genau geprueft und identisch. `8b21040a` — Clean-Room-Lauf im Seal selbst dokumentiert,
+mit ausdruecklichem POST_HOC_SEAL-Vorbehalt im Verdikttext. Dazu `0879a65c` (attestieren, nur
+Safety-Achse) und `6751bc33` (17/100, rechnerisch reif erst ~Mai 2027).
+
+Neu in `MATURITY_SPECS`: **`c489079289070a8c`** als Deadline-Waechter. Die Frist ankert am im
+Kriterium GENANNTEN Revisit-Datum **2026-09-29**, nicht an Versiegelung+90d — das waere der 02.10.
+und damit drei Tage nach der Entscheidung, die sie ausloesen soll. Null von drei externen Signalen
+bis dahin loest die ADR-0012-Exit-Review aus; Zweig (c) ist bereits widerlegt (C1 = NO_DEMAND).
+
+**Ein Fall bewusst NICHT mechanisch umgesetzt:** `4a3b1b0c` wurde als WATCH klassifiziert, doch das
+Ledger widerspricht — das Kriterium des Nachfolgers `b20ef1487ccba99d` beginnt woertlich mit
+"SUPERSEDES 4a3b1b0c5a94b73c (estimator sharpened BEFORE out-of-sample data)", und dieser Nachfolger
+ist terminal FAILED. Ein Zaehler wuerde eine ersetzte und beantwortete Frage messen. Der Eintrag
+traegt deshalb `spec_installed: false` mit `blocking_finding` und wartet auf eine Operator-Zeile;
+ein Contract-Test erzwingt genau das.
+
+`tests/unit/test_prereg_supervision_registry.py` pinnt die Invarianten: kein Eintrag bleibt
+unentschieden, Pflichtfelder je Zustand, WATCH nur auf bestehende Watcher, offener Befund verbietet
+die Umsetzung, Register und Wachliste duerfen sich nicht widersprechen. Bekannte Luecke, benannt
+statt behoben: `artifacts/research/supervision/` steht nicht in den Backup-Quellen —
+`scripts/kai_backup_*` liegt unter einem Parallel-Claim.
+
 ## 2026-08-27 - Phantom-Register: was der Cap nicht sieht, was tote Ticker verdecken, welche PnL-Spalte gilt (5e/5f/5g)
 
 Der erste Close-Evidence-Shadow-Lauf (STAB-09b, 612 Closes gegen Binance/Bybit-1m-Kerzen,
