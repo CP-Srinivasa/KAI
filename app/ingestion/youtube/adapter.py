@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from youtube_transcript_api import (
@@ -30,6 +31,10 @@ _YT_API_BASE = "https://www.googleapis.com/youtube/v3"
 _MAX_RESULTS_PER_CHANNEL = 10
 _MAX_TRANSCRIPT_CHARS = 12_000
 _PREFERRED_LANGUAGES = ["en", "de"]
+
+
+def _string_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 @dataclass(frozen=True)
@@ -115,7 +120,7 @@ async def _resolve_channel_id(
     if resp.status_code == 200:
         items = resp.json().get("items", [])
         if items:
-            return items[0]["id"]
+            return _string_or_none(items[0].get("id"))
 
     # Try as direct channel ID (UC...)
     if clean.startswith("UC"):
@@ -135,7 +140,9 @@ async def _resolve_channel_id(
     if resp.status_code == 200:
         items = resp.json().get("items", [])
         if items:
-            return items[0]["snippet"]["channelId"]
+            snippet = items[0].get("snippet", {})
+            if isinstance(snippet, dict):
+                return _string_or_none(snippet.get("channelId"))
 
     return None
 
@@ -166,11 +173,10 @@ def fetch_transcript(video_id: str) -> str | None:
                 return None
 
         # Zweite Bruchstelle derselben Umstellung: `fetch()` liefert in 1.x ein
-        # `FetchedTranscript` aus Objekten, keine Liste von Dicts mehr.
+        # `FetchedTranscript` aus Snippet-Objekten, keine Liste von Dicts mehr.
         # `entry.get("text")` waere hier erneut still gescheitert.
-        fetched = transcript.fetch()
-        raw = fetched.to_raw_data() if hasattr(fetched, "to_raw_data") else fetched
-        text = " ".join(str(entry.get("text", "")) for entry in raw)
+        parts = transcript.fetch()
+        text = " ".join(part.text for part in parts)
         return text[:_MAX_TRANSCRIPT_CHARS] if text else None
 
     except (TranscriptsDisabled, NoTranscriptFound):

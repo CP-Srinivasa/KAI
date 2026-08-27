@@ -1,10 +1,10 @@
 {
-  "app/api/routers/dashboard.py": 3066,
-  "app/cli/commands/trading.py": 3423,
-  "app/cli/main.py": 2436,
+  "app/api/routers/dashboard.py": 3016,
+  "app/cli/commands/trading.py": 3374,
+  "app/cli/main.py": 2435,
   "app/core/settings.py": 1883,
   "app/execution/envelope_to_paper_bridge.py": 1942,
-  "app/execution/paper_engine.py": 1884,
+  "app/execution/paper_engine.py": 1882,
   "app/messaging/telegram_bot.py": 3359,
-  "app/orchestrator/trading_loop.py": 2304
+  "app/orchestrator/trading_loop.py": 2298
 }

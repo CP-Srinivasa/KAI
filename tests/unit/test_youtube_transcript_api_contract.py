@@ -18,6 +18,7 @@ Abhängigkeit, die sich unter uns bewegt.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 
 import pytest
 
@@ -60,8 +61,8 @@ def test_snippets_are_objects_not_dicts() -> None:
     """
     from youtube_transcript_api import FetchedTranscript, FetchedTranscriptSnippet
 
-    assert hasattr(FetchedTranscript, "to_raw_data"), (
-        "FetchedTranscript.to_raw_data() fehlt — der Adapter nutzt es zum Entpacken"
+    assert hasattr(FetchedTranscript, "__iter__"), (
+        "FetchedTranscript ist nicht mehr iterierbar — der Adapter laeuft direkt darueber"
     )
     assert not hasattr(FetchedTranscriptSnippet, "get"), (
         "Snippets sind wieder Dict-artig — dann kann der Adapter vereinfacht werden"
@@ -79,11 +80,13 @@ class _Snippet:
 
 
 class _Fetched:
+    """Verhält sich wie ein FetchedTranscript: iterierbar über Snippet-Objekte."""
+
     def __init__(self, texts: list[str]) -> None:
         self._snippets = [_Snippet(t) for t in texts]
 
-    def to_raw_data(self) -> list[dict[str, str]]:
-        return [{"text": s.text} for s in self._snippets]
+    def __iter__(self) -> Iterator[_Snippet]:
+        return iter(self._snippets)
 
 
 class _Transcript:

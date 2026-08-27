@@ -54,7 +54,13 @@ _RESOLVED = "f676bcf5a7a1bfb6"  # attestiert NOT_MET, in keiner Wachliste
 _WATCHED = "00c75a76a2b0e78b"  # Deadline-Spec, kein Verdikt
 _LN = "0879a65c5fd01f65"  # PASS nur in ln_reconciliation_verdict.jsonl
 _SEC = "6751bc3364d39ec2"  # NOT_MET nur in prereg_verdicts.jsonl
-_NAKED = "c489079289070a8c"  # weder Spec noch Verdikt
+# Synthetische ID: der Fall "weder Spec noch Verdikt" muss unabhaengig davon
+# testbar bleiben, welche Claims die produktive Wachliste gerade fuehrt.
+# Vorher stand hier c489079289070a8c — der bekam am 2026-08-27 per STAB-06a
+# einen Deadline-Spec (M3-Frist 29.09.) und ist seitdem WATCHED, worauf der
+# CLI-Test brach. Ein Fixture, das an der Doktrin haengt, misst die Doktrin,
+# nicht die Zustandsfunktion.
+_NAKED = "deadbeef00000001"
 
 _SPEC: dict[str, Any] = {
     "name": "k1_channel_audit_resonance",
@@ -113,7 +119,7 @@ def _pi_like_artifacts(root: Path) -> None:
     _seal(root, _WATCHED, "k1_channel_audit_resonance", created=_SPEC["since_utc"])
     _seal(root, _LN, "ln_reconciliation_shadow_integrity_v1")
     _seal(root, _SEC, "sec_filing_timing")
-    _seal(root, _NAKED, "m3_external_validation_first_signal")
+    _seal(root, _NAKED, "synthetischer_claim_ohne_aufsicht")
     _attest(root, _RESOLVED, "NOT_MET at pre-registered gate (n=308>=200)")
     _offchain(
         root,
@@ -177,8 +183,8 @@ def test_truth_kette_schlaegt_seitenablage(tmp_path: Path) -> None:
 
 
 def test_doppelte_registrierung_kollabiert_auf_eine_zeile(tmp_path: Path) -> None:
-    _seal(tmp_path, _NAKED, "m3_external_validation_first_signal")
-    _seal(tmp_path, _NAKED, "m3_external_validation_first_signal")
+    _seal(tmp_path, _NAKED, "synthetischer_claim_ohne_aufsicht")
+    _seal(tmp_path, _NAKED, "synthetischer_claim_ohne_aufsicht")
 
     rows = classify_ledger_entries(tmp_path, specs=())
 

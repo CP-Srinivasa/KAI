@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
 from app.api.deps import get_document_repo, get_source_repo, get_source_repo_optional
+from app.api.routers import dashboard_artifacts as _dashboard_artifacts
 from app.api.routers.dashboard_quality_cache import SingleFlightCache
 from app.audit.stream_validation import (
     AuditStreamName,
@@ -143,8 +144,11 @@ _N_OVERVIEW_CACHE_TTL_S = 60.0
 _n_overview_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 _REENTRY_TARGET_DATE = "2026-05-16"
-_ARTIFACT_STALE_WARNING_HOURS = 3.0
-_ARTIFACT_STALE_CRITICAL_HOURS = 24.0
+_artifact_stale_status = _dashboard_artifacts.artifact_stale_status
+_artifact_updated_at = _dashboard_artifacts.artifact_updated_at
+_first_present_ts = _dashboard_artifacts.first_present_ts
+_parse_iso_utc = _dashboard_artifacts.parse_iso_utc
+_stale_status_for_age_hours = _dashboard_artifacts.stale_status_for_age_hours
 
 
 def _warn_on_audit_stream_issues(result: AuditStreamReadResult) -> None:
@@ -174,51 +178,6 @@ def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
     if tail > 0:
         return list(deque(rows, maxlen=tail))
     return list(rows)
-
-
-def _parse_iso_utc(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    raw = value.strip()
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
-def _artifact_updated_at(path: Path) -> str | None:
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
-    except OSError:
-        return None
-
-
-def _artifact_stale_status(path: Path, *, now: datetime | None = None) -> str:
-    updated_at = _artifact_updated_at(path)
-    if updated_at is None:
-        return "unverified"
-    updated_dt = _parse_iso_utc(updated_at)
-    if updated_dt is None:
-        return "unverified"
-    age_hours = ((now or datetime.now(UTC)) - updated_dt).total_seconds() / 3600.0
-    if age_hours >= _ARTIFACT_STALE_CRITICAL_HOURS:
-        return "stale"
-    if age_hours >= _ARTIFACT_STALE_WARNING_HOURS:
-        return "warning"
-    return "ok"
-
-
-def _first_present_ts(row: dict[str, Any], keys: tuple[str, ...]) -> datetime | None:
-    for key in keys:
-        parsed = _parse_iso_utc(row.get(key))
-        if parsed is not None:
-            return parsed
-    return None
 
 
 def _reentry_target_from_settings() -> tuple[str, str]:
@@ -2101,15 +2060,7 @@ async def dashboard_regime_api() -> JSONResponse:
                 "source_artifact_updated_at": _artifact_updated_at(artifact_path),
                 "snapshot_timestamp": snap.timestamp,
                 "snapshot_age_hours": age_hours,
-                "stale_status": (
-                    "unverified"
-                    if age_hours is None
-                    else (
-                        "stale"
-                        if age_hours >= _ARTIFACT_STALE_CRITICAL_HOURS
-                        else ("warning" if age_hours >= _ARTIFACT_STALE_WARNING_HOURS else "ok")
-                    )
-                ),
+                "stale_status": _stale_status_for_age_hours(age_hours),
                 "is_read_only": True,
                 "is_decision_relevant": False,
                 "quality_status": "read_only",

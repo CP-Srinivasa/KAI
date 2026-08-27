@@ -248,6 +248,36 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
             "PASS-Nachweis primär public_showcase, das Log kann Signale nur verschweigen."
         ),
     },
+    # M3-Fristwächter (STAB-06a, Operator-Klassifikation 2026-08-27 = WATCH).
+    # Der einzige der sieben aufsichtsoffenen Claims, bei dem Nichtstun eine
+    # RICHTUNGSENTSCHEIDUNG verschluckt: der Seal bindet ausdrücklich
+    # "Zero of three by revisit means M3 NOT reached, trigger ADR-0012 exit
+    # review". Fenster-Anker ist NICHT Versiegelung + horizon, sondern das im
+    # Kriterium GENANNTE Revisit-Datum 2026-09-29 — 90 d ab Versiegelung
+    # (2026-07-04T09:15:41Z) ergäbe den 2026-10-02 und damit eine Frist, die
+    # drei Tage NACH der Entscheidung liegt, die sie auslösen soll.
+    # Kein Zähler: die drei Zweige sind externe Ereignisse, keine Kohorte.
+    # Zweig (c) ist bereits widerlegt (C1 9cab81fae4823482 = FAIL/NO_DEMAND,
+    # 0 settled Payments); (a) und (b) hängen an unaufgeforderten Dritten —
+    # ⛔ Kalt-Ansprache ist ausgeschlossen, Warten ist die einzige zulässige
+    # Handlung. Läuft im BESTEHENDEN kai-prereg-maturity, kein neuer Timer.
+    {
+        "name": "m3_external_validation_first_signal",
+        "prereg_id": "c489079289070a8c",
+        "kind": "deadline",
+        "since_utc": "2026-07-04T09:15:41.100686+00:00",
+        "window_end_utc": "2026-09-29T09:15:41.100686+00:00",
+        "n_target": 1,
+        "note": (
+            "PASS beim ERSTEN von drei externen Signalen: (a) unabhaengige Partei "
+            "rechnet einen versiegelten canonical-edge-Report nach und meldet VERIFY OK, "
+            "ODER (b) qualifiziertes Fachfeedback zum C3-Methodenpapier von >=1 "
+            "unabhaengigem Praktiker, ODER (c) >=1 zahlende externe Partei ueber das "
+            "C1-Fee-Truth-Listing. Zweig (c) ist bereits widerlegt (C1 FAIL = NO_DEMAND). "
+            "Null von drei bis zum Revisit ⇒ M3 NICHT erreicht ⇒ ADR-0012-Exit-Review. "
+            "⛔ Keine Kalt-Ansprache, um ein Signal zu erzeugen — das Warten IST die Methode."
+        ),
+    },
 )
 
 _COUNT_SQL = """
