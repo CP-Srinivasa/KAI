@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -120,16 +121,109 @@ def test_worktree_claims_report_summary_is_operator_scannable(
     assert "claims_active_expired=1" in result.output
 
 
-def test_worktree_claims_cli_source_has_no_destructive_verbs() -> None:
-    source = Path(worktree_claims_cli.__file__).read_text(encoding="utf-8")
+DESTRUCTIVE_VERBS = (
+    "worktree remove",
+    "worktree prune",
+    "Remove-Item",
+    "unlink(",
+    "rmtree(",
+    ".write_text(",
+)
 
-    forbidden = [
-        "worktree remove",
-        "worktree prune",
-        "Remove-Item",
-        "unlink(",
-        "rmtree(",
-        ".write_text(",
-    ]
-    for token in forbidden:
-        assert token not in source
+
+def _executable_code(source: str) -> str:
+    """Der ausfuehrbare Quelltext, normalisiert fuer die Verb-Suche.
+
+    Zwei Fallen, die eine rohe Textsuche beide nicht ueberlebt:
+
+    1. Sie trifft den erklaerenden Kommentar. Schreibt jemand
+       ``# hier wird nie `worktree prune` aufgerufen``, wird der Waechter rot,
+       obwohl genau das Gegenteil dokumentiert wurde. Kommentare und Docstrings
+       fliegen deshalb raus — echte String-Literale bleiben aber stehen, denn
+       dort steht der gefaehrliche Aufruf ja drin.
+    2. Sie ist blind fuer die argv-Listenform. ``["git", "worktree", "remove"]``
+       enthaelt die Zeichenkette ``worktree remove`` nirgends am Stueck. Jede
+       Liste/Tupel aus String-Literalen wird deshalb zusaetzlich zu einer
+       Kommandozeile zusammengesetzt und mitdurchsucht.
+    """
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+
+    argv_lines = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.List | ast.Tuple):
+            continue
+        parts = [
+            element.value
+            for element in node.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        ]
+        if len(parts) >= 2:
+            argv_lines.append(" ".join(parts))
+
+    return "\n".join([ast.unparse(tree), *argv_lines])
+
+
+def test_worktree_claims_cli_source_has_no_destructive_verbs() -> None:
+    code = _executable_code(Path(worktree_claims_cli.__file__).read_text(encoding="utf-8"))
+
+    for token in DESTRUCTIVE_VERBS:
+        assert token not in code, f"melde-only verletzt: {token}"
+
+
+_DESTRUCTIVE_SOURCE = """
+import shutil
+from pathlib import Path
+
+
+def purge(p: Path) -> None:
+    shutil.rmtree(p)
+"""
+
+_DOCUMENTED_SOURCE = '''
+"""Dieses Modul ruft niemals rmtree( oder worktree prune auf."""
+
+
+def report() -> int:
+    # kein Remove-Item, kein unlink( - nur melden
+    return 0
+'''
+
+_HIDDEN_IN_LITERAL_SOURCE = """
+import subprocess
+
+
+def purge() -> None:
+    subprocess.run(["git", "worktree", "remove", "x"], check=True)
+"""
+
+
+def test_verb_guard_catches_a_destructive_call() -> None:
+    """Positivkontrolle: ohne sie waere der Waechter nicht von einer Tautologie zu unterscheiden."""
+    code = _executable_code(_DESTRUCTIVE_SOURCE)
+
+    assert any(token in code for token in DESTRUCTIVE_VERBS)
+
+
+def test_verb_guard_ignores_comments_and_docstrings() -> None:
+    """Der Kommentar, der die Regel erklaert, darf sie nicht brechen."""
+    code = _executable_code(_DOCUMENTED_SOURCE)
+
+    assert not any(token in code for token in DESTRUCTIVE_VERBS)
+
+
+def test_verb_guard_still_sees_a_command_hidden_in_a_string_literal() -> None:
+    """String-Literale bleiben stehen - sonst waere der gefaehrlichste Fall der blinde Fleck."""
+    code = _executable_code(_HIDDEN_IN_LITERAL_SOURCE)
+
+    assert "worktree remove" in code
