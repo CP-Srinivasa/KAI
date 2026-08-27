@@ -53,13 +53,20 @@ write_log() {
 # we don't pull jq in as a Pi dependency. All values are escaped through
 # printf %s with the quote characters pre-escaped by the caller — keep
 # string values free of newlines and double-quotes.
+# Manifest der archivierten Dateien: {"pfad": "sha256", ...}. Wird nach dem
+# Packen aus dem ARCHIV berechnet (nicht aus den Live-Dateien) und hier
+# eingehaengt, damit die acht bestehenden write_audit-Aufrufe unveraendert
+# bleiben. Leer, solange kein Archiv existiert.
+FILE_SHA_JSON=""
+
 write_audit() {
     local status="$1" archive="$2" sha256="$3" bytes="$4" \
           remote="$5" remote_status="$6" note="$7"
-    local ts
+    local ts manifest=""
     ts=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-    printf '{"ts":"%s","status":"%s","archive":"%s","sha256":"%s","bytes":%s,"remote":"%s","remote_status":"%s","note":"%s"}\n' \
-        "$ts" "$status" "$archive" "$sha256" "$bytes" "$remote" "$remote_status" "$note" \
+    [[ -n "$FILE_SHA_JSON" ]] && manifest=",\"file_sha256\":$FILE_SHA_JSON"
+    printf '{"ts":"%s","status":"%s","archive":"%s","sha256":"%s","bytes":%s,"remote":"%s","remote_status":"%s","note":"%s"%s}\n' \
+        "$ts" "$status" "$archive" "$sha256" "$bytes" "$remote" "$remote_status" "$note" "$manifest" \
         >> "$AUDIT_FILE"
 }
 
@@ -209,6 +216,45 @@ if ! tar -czf "$ARCHIVE_TMP" -C "$ROOT" "${EXISTING[@]}" 2>>"$LOG_FILE"; then
     write_audit "fail_tar" "$ARCHIVE_NAME" "" 0 "" "" "tar exit non-zero"
     exit 4
 fi
+
+# --- Manifest: was liegt WIRKLICH im Archiv? --------------------------------
+#
+# WARUM aus dem Archiv und nicht aus den Quelldateien (2026-08-27, live
+# gefunden): Der erste echte Restore-Drill auf der Pi meldete
+# "content mismatch" fuer trading_loop_audit.jsonl. Das Backup war
+# einwandfrei — der archivierte Inhalt war bit-genau ein PRAEFIX der
+# Live-Datei — nur hatte der Trading-Loop zwischen Backup (08:37) und Drill
+# (08:41) 5.044 Bytes angehaengt. Der Drill verglich gegen die LEBENDE Datei,
+# also gegen ein bewegliches Ziel, und waere ab dem ersten Timer-Lauf jeden
+# Monat rot geworden. Ein Waechter, der immer schlaegt, wird abgeschaltet.
+#
+# Deshalb haelt das Manifest den Zustand fest, der eingepackt WURDE. Der Drill
+# prueft dagegen und beantwortet damit die einzige Frage, die ein Restore-Drill
+# stellen muss: laesst sich aus DIESEM Archiv wiederherstellen?
+#
+# Der Umweg ueber das Entpacken ist Absicht: Hashes vor dem tar zu bilden
+# haette dieselbe Race nur verschoben. Nebenbei beweist der Durchgang, dass
+# das Archiv ueberhaupt lesbar ist — ein Backup, das sich nicht entpacken
+# laesst, ist keines.
+MANIFEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kai-backup-manifest.XXXXXX")" || MANIFEST_DIR=""
+if [[ -n "$MANIFEST_DIR" ]] && tar -xzf "$ARCHIVE_TMP" -C "$MANIFEST_DIR" 2>>"$LOG_FILE"; then
+    FILE_SHA_JSON="$(
+        cd "$MANIFEST_DIR" && find . -type f -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' entry; do
+                  rel="${entry#./}"
+                  printf '%s\t%s\n' "$rel" "$(sha256_of "$entry")"
+              done \
+            | awk -F'\t' 'BEGIN{printf "{"} {printf "%s\"%s\":\"%s\"", (NR>1?",":""), $1, $2} END{printf "}"}'
+    )"
+    write_log "Manifest: $(printf '%s' "$FILE_SHA_JSON" | grep -o '":"' | wc -l | tr -d ' ') file hash(es) recorded from the archive"
+    printf '%s\n' "$FILE_SHA_JSON" > "${ARCHIVE_ENC}.manifest.json"
+else
+    # Fail-soft, aber sichtbar: ohne Manifest faellt der Drill auf den
+    # Live-Vergleich zurueck und wird dadurch unzuverlaessig.
+    write_log "WARN: manifest could not be computed — the restore drill will fall back to comparing against live files."
+fi
+[[ -n "$MANIFEST_DIR" ]] && rm -rf "$MANIFEST_DIR"
 
 # Encrypt with PBKDF2 + AES-256-CBC. -pbkdf2 + a non-trivial iteration count
 # defends against passphrase-bruteforce in case the encrypted blob ends up

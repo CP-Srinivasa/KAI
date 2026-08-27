@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -182,24 +183,93 @@ def test_restore_drill_passes_and_cleans_tmp(tmp_path: Path) -> None:
     assert list((tmp_path / "tmp").glob("kai-backup-restore-drill.*")) == []
 
 
-def test_restore_drill_detects_changed_expected_file(tmp_path: Path) -> None:
+def test_restore_drill_detects_a_corrupted_archive(tmp_path: Path) -> None:
+    """Korruption IM ARCHIV ist ein Befund — das ist die Frage eines Restore-Drills.
+
+    Vorher pruefte dieser Test etwas anderes: er aenderte die LEBENDE Quelldatei
+    und erwartete FAIL. Das kodierte die falsche Frage („entspricht das Archiv
+    dem aktuellen Systemzustand?") statt der richtigen („laesst sich aus diesem
+    Archiv wiederherstellen?"). Live auf der Pi (2026-08-27) fuehrte genau das
+    zum Fehlalarm: ``trading_loop_audit.jsonl`` war zwischen Backup und Drill um
+    5.044 Bytes gewachsen, das Archiv war bit-genau ein Praefix der Live-Datei —
+    also einwandfrei — und der Drill meldete trotzdem ``content mismatch``.
+    Ein Waechter, der bei jedem Lauf schlaegt, wird abgeschaltet.
+    """
     _require_backup_tools()
     _copy_drill_fixture(tmp_path)
     _write_fixture_sources(tmp_path)
     archive = _make_backup(tmp_path)
-    (tmp_path / "artifacts" / "research" / "prereg_ledger.jsonl").write_text(
-        '{"id":"pre","ok":false}\n',
-        encoding="utf-8",
-    )
+
+    # Das verschluesselte Archiv beschaedigen (ein Byte in der Mitte kippen).
+    blob = bytearray(archive.read_bytes())
+    mid = len(blob) // 2
+    blob[mid] ^= 0xFF
+    archive.write_bytes(bytes(blob))
 
     result = _run_drill(tmp_path, archive)
 
-    assert result.returncode == 6
+    assert result.returncode != 0, "ein beschaedigtes Archiv darf nie PASS melden"
     proof = _latest_proof(tmp_path)
     assert proof["status"] == "FAIL"
-    assert proof["reason"] == "content mismatch"
-    assert proof["sha256_mismatch"]
     assert list((tmp_path / "tmp").glob("kai-backup-restore-drill.*")) == []
+
+
+def test_drill_passes_when_a_source_grew_after_the_backup(tmp_path: Path) -> None:
+    """Der Regressionstest zum Vorfall: append-only-Wachstum ist kein Befund.
+
+    Der Trading-Loop haengt im Minutentakt an ``trading_loop_audit.jsonl`` an.
+    Ein Drill, der gegen die lebende Datei vergleicht, wird dadurch ab dem
+    ersten Timer-Lauf JEDEN Monat rot — ohne dass am Backup etwas falsch waere.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+    assert archive.exists()
+
+    grown = tmp_path / "artifacts" / "research" / "hypothesis_ledger.jsonl"
+    with grown.open("a", encoding="utf-8") as fh:
+        fh.write('{"id":"hyp","n":2}\n')
+
+    result = _run_drill(tmp_path, archive)
+    proof = _latest_proof(tmp_path)
+
+    assert proof["status"] == "PASS", (
+        f"append-only-Wachstum darf kein FAIL sein: {proof.get('reason')} "
+        f"/ {proof.get('sha256_mismatch')}"
+    )
+    assert proof["sha256_mismatch"] == []
+    assert result.returncode == 0
+
+
+def test_backup_manifest_describes_the_archive_content(tmp_path: Path) -> None:
+    """Das Manifest beschreibt den ARCHIVINHALT und aendert sich danach nie.
+
+    Genau diese Eigenschaft macht den Drill unabhaengig vom Live-Zustand: er
+    prueft, ob das Wiederhergestellte dem entspricht, was eingepackt wurde.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    _make_backup(tmp_path)
+
+    audit = tmp_path / "artifacts" / "backup_audit.jsonl"
+    entry = json.loads(audit.read_text(encoding="utf-8").strip().splitlines()[-1])
+    hashes = entry.get("file_sha256")
+    assert isinstance(hashes, dict) and hashes, "Audit-Eintrag ohne file_sha256"
+    assert "artifacts/research/prereg_ledger.jsonl" in hashes
+
+    for rel, digest in hashes.items():
+        source = tmp_path / rel
+        if source.is_file():
+            assert digest == hashlib.sha256(source.read_bytes()).hexdigest(), rel
+
+    before = dict(hashes)
+    ledger = tmp_path / "artifacts" / "research" / "hypothesis_ledger.jsonl"
+    with ledger.open("a", encoding="utf-8") as fh:
+        fh.write('{"id":"hyp","n":3}\n')
+    again = json.loads(audit.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert again["file_sha256"] == before, "Manifest darf sich nachtraeglich nicht aendern"
 
 
 def test_restore_drill_missing_passphrase_writes_fail_proof(tmp_path: Path) -> None:
