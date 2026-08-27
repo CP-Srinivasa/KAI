@@ -32,6 +32,7 @@ from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import ASGIApp
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def build_default_csp(extra_script_src: str = "", *, allow_tradingview: bool = F
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Attach a fixed bundle of security headers to every response."""
 
-    def __init__(self, app: FastAPI, policy: SecurityHeadersPolicy) -> None:
+    def __init__(self, app: ASGIApp, policy: SecurityHeadersPolicy) -> None:
         super().__init__(app)
         self._policy = policy
 

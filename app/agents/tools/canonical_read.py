@@ -29,7 +29,7 @@ import json
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app.agents.tools._helpers import (
     ALERT_AUDIT_DEFAULT_DIR,
@@ -185,7 +185,7 @@ async def get_paper_portfolio_snapshot(
         resolved,
         "paper_execution_audit",
     )
-    return payload  # type: ignore[no-any-return]
+    return cast(dict[str, Any], payload)
 
 
 async def get_paper_positions_summary(
@@ -1149,8 +1149,8 @@ def _summarize_approval_latency_24h(
                 ts = _parse_iso_utc(rec.get("timestamp_utc"))
                 if ts is None or ts < cutoff_24h:
                     continue
-                prior = sent_24h.get(env_id)
-                if prior is None or ts > prior:
+                prior_sent_at = sent_24h.get(env_id)
+                if prior_sent_at is None or ts > prior_sent_at:
                     sent_24h[env_id] = ts
     except OSError:
         return {
@@ -1200,8 +1200,8 @@ def _summarize_approval_latency_24h(
                     ts = _parse_iso_utc(rec.get("timestamp_utc"))
                     if ts is None:
                         continue
-                    prior = decisions.get(origin_id)
-                    if prior is None or ts < prior[1]:
+                    prior_decision = decisions.get(origin_id)
+                    if prior_decision is None or ts < prior_decision[1]:
                         decisions[origin_id] = (stage, ts)
         except OSError:
             pass

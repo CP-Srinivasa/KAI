@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -29,7 +30,7 @@ async def dashboard_events(request: Request) -> StreamingResponse:
     hub = get_default_event_hub()
     queue, sub = hub.subscribe()
 
-    async def stream():
+    async def stream() -> AsyncIterator[str]:
         try:
             yield ": connected\n\n"
             while True:

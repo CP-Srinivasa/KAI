@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
@@ -96,7 +96,8 @@ async def get_current_kai_state() -> JSONResponse:
     is_stub = True
     try:
         persona = load_kai_persona()
-        comment = get_kai_phrase("IDLE", persona.language_default, persona=persona)
+        language: Literal["de", "en"] = "de" if persona.language_default == "de" else "en"
+        comment = get_kai_phrase("IDLE", language, persona=persona)
         rt = create_fallback_state("IDLE", comment)
     except KaiPersonaConfigError as exc:
         rt = fail_closed_state(str(exc))

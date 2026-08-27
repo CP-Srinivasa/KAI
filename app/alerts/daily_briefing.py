@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import SupportsFloat, SupportsIndex, cast
 
 from app.alerts.audit import (
     ALERT_AUDIT_JSONL_FILENAME,
@@ -162,8 +163,10 @@ class BriefingData:
                 pnl_pos = pos.get("unrealized_pnl_usd")
                 price = pos.get("market_price")
                 if pnl_pos is not None and price is not None:
-                    s = "+" if float(pnl_pos) >= 0 else ""
-                    lines.append(f"    {sym}: ${float(price):,.2f} ({s}${float(pnl_pos):,.2f})")
+                    pnl_value = float(cast(str | SupportsFloat | SupportsIndex, pnl_pos))
+                    price_value = float(cast(str | SupportsFloat | SupportsIndex, price))
+                    s = "+" if pnl_value >= 0 else ""
+                    lines.append(f"    {sym}: ${price_value:,.2f} ({s}${pnl_value:,.2f})")
         else:
             lines.append("Paper Portfolio: nicht verfuegbar")
 
@@ -220,8 +223,8 @@ def build_daily_briefing(
 
     data.top_assets = sorted(
         asset_counter,
-        key=asset_counter.get,
-        reverse=True,  # type: ignore[arg-type]
+        key=lambda asset: asset_counter.get(asset, 0),
+        reverse=True,
     )[:5]
 
     # ── Outcome annotations ──────────────────────────────────────────

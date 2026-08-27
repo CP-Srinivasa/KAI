@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.alerts.audit import load_alert_audits, load_outcome_annotations
+from app.alerts.audit import AlertAuditRecord, load_alert_audits, load_outcome_annotations
 from app.alerts.eligibility import evaluate_directional_eligibility
 from app.alerts.provenance_metrics import wilson_ci
 from app.storage.jsonl_io import iter_jsonl_tolerant
@@ -188,7 +188,7 @@ def compute_per_source_active_precision(
 
 
 def _build_enriched_source_lookup(
-    latest_directional_by_doc: dict[str, Any],
+    latest_directional_by_doc: dict[str, AlertAuditRecord],
     source_by_doc: dict[str, str] | None,
 ) -> dict[str, str]:
     """Resolve doc_id -> source via DB join -> source_name -> provenance.source.
@@ -226,7 +226,7 @@ def compute_per_source_stability(
     *,
     active_resolved_docs: set[str],
     hit_docs: set[str],
-    latest_directional_by_doc: dict[str, Any],
+    latest_directional_by_doc: dict[str, AlertAuditRecord],
     source_lookup: dict[str, str],
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -337,8 +337,8 @@ def build_hold_metrics_report(
     annotations = load_outcome_annotations(alert_outcomes_path)
 
     non_digest = [r for r in audits if not r.is_digest]
-    directional: list[Any] = []
-    blocked_directional: list[Any] = []
+    directional: list[AlertAuditRecord] = []
+    blocked_directional: list[AlertAuditRecord] = []
     blocked_directional_reasons: list[str] = []
     for rec in non_digest:
         sentiment = (rec.sentiment_label or "").lower()
@@ -378,7 +378,7 @@ def build_hold_metrics_report(
     for ann in annotations:
         latest_ann_by_doc[ann.document_id] = ann.outcome
 
-    latest_directional_by_doc: dict[str, Any] = {}
+    latest_directional_by_doc: dict[str, AlertAuditRecord] = {}
     for rec in directional:
         prev = latest_directional_by_doc.get(rec.document_id)
         if prev is None or rec.dispatched_at > prev.dispatched_at:
@@ -575,12 +575,12 @@ def build_hold_metrics_report(
             low_priority_resolved_docs.add(doc_id)
     # Tier-Buckets nur fuer active_resolved_docs (Active-Quality-Konsistenz).
     for doc_id in active_resolved_docs:
-        latest_record = latest_directional_by_doc.get(doc_id)
-        if latest_record is None or latest_record.priority is None:
+        active_latest_record = latest_directional_by_doc.get(doc_id)
+        if active_latest_record is None or active_latest_record.priority is None:
             continue
-        if latest_record.priority >= high_conviction_tier_threshold:
+        if active_latest_record.priority >= high_conviction_tier_threshold:
             high_conviction_resolved_docs.add(doc_id)
-        elif latest_record.priority >= high_priority_threshold:
+        elif active_latest_record.priority >= high_priority_threshold:
             standard_tier_resolved_docs.add(doc_id)
 
     priority_corr = _pearson_correlation(
@@ -646,21 +646,21 @@ def build_hold_metrics_report(
     fwd_miss_docs: set[str] = set()
     fwd_priority_pairs: list[tuple[float, float]] = []
     for doc_id in resolved_docs:
-        rec = latest_directional_by_doc.get(doc_id)
-        if rec is None:
+        fwd_record = latest_directional_by_doc.get(doc_id)
+        if fwd_record is None:
             continue
         # Prefer fields from audit record; fall back to DB lookup
         src = (
-            rec.source_name
-            or (rec.provenance.source if rec.provenance is not None else None)
+            fwd_record.source_name
+            or (fwd_record.provenance.source if fwd_record.provenance is not None else None)
             or (source_by_doc or {}).get(doc_id)
         )
-        ttl = rec.normalized_title or (title_by_doc or {}).get(doc_id)
+        ttl = fwd_record.normalized_title or (title_by_doc or {}).get(doc_id)
         fwd_check = evaluate_directional_eligibility(
-            sentiment_label=rec.sentiment_label,
-            affected_assets=list(rec.affected_assets or []),
-            priority=rec.priority,
-            actionable=rec.actionable,
+            sentiment_label=fwd_record.sentiment_label,
+            affected_assets=list(fwd_record.affected_assets or []),
+            priority=fwd_record.priority,
+            actionable=fwd_record.actionable,
             source_name=src,
             title=ttl,
         )
@@ -670,9 +670,9 @@ def build_hold_metrics_report(
                 fwd_hit_docs.add(doc_id)
             else:
                 fwd_miss_docs.add(doc_id)
-            if rec.priority is not None:
+            if fwd_record.priority is not None:
                 fwd_priority_pairs.append(
-                    (float(rec.priority), 1.0 if is_hit else 0.0),
+                    (float(fwd_record.priority), 1.0 if is_hit else 0.0),
                 )
     fwd_resolved = len(fwd_hit_docs) + len(fwd_miss_docs)
     fwd_precision = _rate_pct(len(fwd_hit_docs), fwd_resolved)
