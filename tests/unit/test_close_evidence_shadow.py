@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,7 +37,7 @@ def _close(**changes: object) -> dict[str, object]:
     return row
 
 
-def _fetch(low: float, high: float):
+def _fetch(low: float, high: float) -> Callable[..., list[VenueCandle]]:
     def fetch(**_: object) -> list[VenueCandle]:
         return [VenueCandle(BUCKET_MS, low, high, low, high)]
 

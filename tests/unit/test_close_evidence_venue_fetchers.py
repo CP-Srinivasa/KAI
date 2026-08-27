@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -11,8 +12,12 @@ from app.execution.venues.candle_fetchers import (
     CandleFetchError,
 )
 
+FetcherFactory = Callable[..., BinanceCandleFetcher | BybitCandleFetcher]
 
-def _transport(payload: object, *, status: int = 200, seen: list[httpx.Request] | None = None):
+
+def _transport(
+    payload: object, *, status: int = 200, seen: list[httpx.Request] | None = None
+) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
@@ -86,7 +91,9 @@ def test_bybit_fetcher_checks_envelope_and_reverses_newest_first_rows() -> None:
         ),
     ],
 )
-def test_invalid_provider_rows_fail_closed(fetcher, venue: str, payload: object) -> None:
+def test_invalid_provider_rows_fail_closed(
+    fetcher: FetcherFactory, venue: str, payload: object
+) -> None:
     with pytest.raises(CandleFetchError, match="invalid"):
         fetcher(transport=_transport(payload))(
             symbol="BTC/USDT", venue=venue, interval="1m", start_ms=60_000, end_ms=120_000
