@@ -6,6 +6,7 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -156,7 +157,7 @@ def _run_drill(
 def _latest_proof(root: Path) -> dict[str, object]:
     proofs = sorted((root / "artifacts" / "ops" / "backup_drill").glob("*.json"))
     assert proofs
-    return json.loads(proofs[-1].read_text(encoding="utf-8"))
+    return cast(dict[str, object], json.loads(proofs[-1].read_text(encoding="utf-8")))
 
 
 def test_restore_drill_passes_and_cleans_tmp(tmp_path: Path) -> None:
@@ -173,8 +174,9 @@ def test_restore_drill_passes_and_cleans_tmp(tmp_path: Path) -> None:
     assert proof["status"] == "PASS"
     assert proof["archive_sha256"]
     assert proof["files_restored"] == proof["files_expected"]
-    assert "artifacts/research/prereg_ledger.jsonl" in proof["files_expected"]
-    assert "artifacts/research/forecaster_panel/panel.json" in proof["files_expected"]
+    files_expected = cast(list[str], proof["files_expected"])
+    assert "artifacts/research/prereg_ledger.jsonl" in files_expected
+    assert "artifacts/research/forecaster_panel/panel.json" in files_expected
     assert proof["files_missing"] == []
     assert proof["sha256_mismatch"] == []
     assert list((tmp_path / "tmp").glob("kai-backup-restore-drill.*")) == []
@@ -212,7 +214,7 @@ def test_restore_drill_missing_passphrase_writes_fail_proof(tmp_path: Path) -> N
     proof = _latest_proof(tmp_path)
     assert proof["status"] == "FAIL"
     assert proof["reason"] == "passphrase missing"
-    assert proof["archive"].endswith(".tar.gz.enc")
+    assert cast(str, proof["archive"]).endswith(".tar.gz.enc")
 
 
 def test_restore_drill_no_archive_writes_fail_proof(tmp_path: Path) -> None:
