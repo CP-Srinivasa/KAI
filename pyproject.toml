@@ -144,7 +144,6 @@ exclude = ["tests/", "migrations/"]
 # Klar markiert damit es nicht in den Standard-Code-Review-Pfad einsickert.
 [[tool.mypy.overrides]]
 module = [
-    "app.agents.tools.canonical_read",
     "app.alerts.daily_briefing",
     "app.api.main",
     "app.cli.commands.ingestion",
