@@ -148,7 +148,6 @@ module = [
     "app.alerts.daily_briefing",
     "app.alerts.hold_metrics",
     "app.api.main",
-    "app.api.middleware.security_headers",
     "app.api.routers.events",
     "app.api.routers.kai",
     "app.cli.commands.ingestion",
