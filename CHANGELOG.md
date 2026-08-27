@@ -1,3 +1,26 @@
+## 2026-08-27 - STAB-11b: DECISION_LOG-Nachtrag, zweiter Teil (D-250..D-268)
+
+Der Nachtrag vom 26.08. schloss die Zehn-Wochen-Luecke thematisch, aber nicht vollstaendig: er
+fuehrt 13 Entscheidungen, die Rekonstruktion aus ADRs, Artefakten, Git-Historie und Memory ergab
+30. Die fehlenden 19 stehen jetzt als D-250..D-268 im Log — darunter zwei bindende Operator-Regeln,
+die bis heute jede Session steuern und nirgends im Repo standen: **keine Kalt-Ansprache**
+(D-264, 28.07.) und der **Autonomie-/Voll-Gate-Rahmen der Paper-Phase** (D-251, 22.06.). Dazu das
+**14-Punkte-Validierungs-Gate** (D-254, 25.06.), das seither jeden Edge-Claim bindet, die
+NORTH_STAR-Klarstellung „Wegpunkt, nicht Zielersatz" (D-259), der Epochenwechsel des Paper-Buchs
+(D-262), der Forecaster-Pivot (D-263) und die Least-Privilege-Kette bis zum root-owned Broker
+(D-268).
+
+Nur Dokumentation: kein `app/`-Code, kein Test, kein Verhalten. Nummern folgen der
+Vergabereihenfolge, nicht der Chronologie (innerhalb des Blocks steigt die Nummer mit dem Datum);
+Querverweise zeigen auf die endgueltigen Nummern, Ueberschneidungen mit D-237..D-249 wurden
+aufgeloest statt wiederholt.
+
+Zwei Unsicherheiten des Entwurfs wurden vor dem Eintragen **live gemessen** statt geglaettet:
+das Seal-Datum von `81c41ae153e5d427` (2026-07-10T23:40:12Z, aus dem Prae-Reg-Ledger auf dem Pi)
+und der Disarm-Beleg zu D-267 (`APP_LN_PAY_ENABLED=false`, Sicherung vom 06.08. enthaelt noch
+`=true`). Eine dritte blieb bewusst offen und ist als Luecke vermerkt: der L402-Preis steht live
+auf **10 sat**, ADR 0011 versiegelte **100 sat** — die Aenderung ist in keinem Eintrag begruendet.
+
 ## 2026-08-26 - STAB-11: DECISION_LOG-Nachtrag — die zehn Wochen, die nur im Agenten-Gedächtnis standen
 
 Zwischen D-234 (11.06.) und D-235 (25.08.) fehlte im Entscheidungslog jeder Eintrag, obwohl in dieser Zeit der NORTH_STAR wechselte (ADR-0012), der Lightning-Zahlungspfad stillgelegt wurde und die größte Datenkontamination des Projekts gefunden und korrigiert wurde. Neu: **D-237 bis D-249**, rekonstruiert aus ADRs, Artefakten, Git-Historie und Session-Gedächtnis, jeder Eintrag mit Beleg und als Nachtrag gekennzeichnet (Nummern folgen der Vergabereihenfolge, nicht der Chronologie). Inhalte: NORTH_STAR-Pivot · Dreifach-Verdikt „kein Edge" (n=68, P=10,44 %; auf n=208 härter: P=0,204) · ADR-0014 Zielbild · ADR-0015 LLM-Shadow · ADR-0016 Self-Use-Entwurf · LN-Pay disarmed · kein Aggregat ohne Zerlegung · Rotations-Wahrheit · Mock-Adapter im Geldpfad (12 Closes, Epoche +771,05 → −930,49) · Deploy-Urteil und Broker · Wächter-Fehlalarme (55/55 Fakten falsch) · Prä-Reg `rsi_reentry_volume_v1` · Close-Verifikations-Stack (gemergt ≠ live). Der `Current State`-Header stand auf dem 29.05. und nennt jetzt den realen Betriebszustand inklusive Edge-Verdikt und LN-Status.
