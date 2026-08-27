@@ -103,8 +103,9 @@ dieselben Tier-Exits bei **101,55** liegen — dem 2,4-fachen.
 Zwei weitere Auffälligkeiten:
 
 - Stufe 2 und 3 liegen **6 Millisekunden** auseinander und tragen auf acht
-  Stellen **denselben** Exit-Preis. Das ist die Signatur *einer* Preisabfrage,
-  die für beide Tiers wiederverwendet wurde.
+  Stellen **denselben** Exit-Preis. Das ist ein Muster, das mit einer für beide
+  Tiers wiederverwendeten Preisabfrage konsistent ist. Der Erzeugungsmechanismus
+  selbst ist damit **nicht** bewiesen — belegt sind nur die Beobachtungen.
 - `101.5492` liegt im Mock-Default-Band, `42.188895` liegt außerhalb.
 
 ```
@@ -113,8 +114,14 @@ SAME_POSITION_INCONSISTENCY        = YES
 REPEATED_IDENTICAL_EXIT_WITHIN_6MS = YES
 ```
 
-Das ist **kein** Beweis für Mock-Erzeugung. Es ist deutlich mehr als „der Return
-ist groß", und es senkt den Beweisstandard nicht ab.
+**Mechanisch bewiesen sind ausschließlich:** dieselbe Position, derselbe
+Exit-Preis, 6 ms Abstand, zweimal +147,92 %, und ein schwacher (nicht
+diskriminierender) Kurventreffer.
+
+**Nicht bewiesen ist der konkrete Erzeugungsmechanismus.** Das Muster ist
+konsistent mit einer wiederverwendeten Preisabfrage, mit einem eingefrorenen
+Quote und mit weiteren Ursachen. Es ist deutlich mehr als „der Return ist groß",
+und es senkt den Beweisstandard nicht ab.
 
 ## 5. Provenance Status
 
