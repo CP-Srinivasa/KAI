@@ -14,12 +14,16 @@ Diese Tests pinnen deshalb die Invarianten aus dem Register selbst:
 * jeder ``decision_state`` trägt seine Pflichtfelder,
 * ``WATCH`` nennt einen Watcher, der bereits existiert (dieses Register legt
   keine Timer und keine Dienste an),
-* ein offener ``blocking_finding`` verbietet ``spec_installed``.
+* ein offener ``blocking_finding`` verbietet ``spec_installed``,
+* ein ``SUPERSEDED``-Claim bekommt NIE einen Watcher, Termin oder Spec,
+* die Aggregate im Kopf folgen aus den Zeilen, nicht aus Prosa.
 
-Der letzte Punkt ist der wichtigste: er verhindert, dass eine Klassifikation
-mechanisch in einen Zähler übersetzt wird, obwohl die Faktenlage ihr
-widerspricht (``4a3b1b0c5a94b73c`` wurde laut Ledger vor Datenanfall durch
-``b20ef1487ccba99d`` abgelöst).
+Die beiden letzten Punkte sind die wichtigsten: sie verhindern, dass eine
+Klassifikation mechanisch in einen Zähler übersetzt wird, obwohl die Faktenlage
+ihr widerspricht. ``4a3b1b0c5a94b73c`` wurde laut Ledger **vor** dem ersten
+Out-of-Sample-Datenpunkt durch ``b20ef1487ccba99d`` ersetzt; der Operator hat ihn
+am 2026-08-27 als ``SUPERSEDED`` geschlossen. Ein Zähler dort würde eine Frage
+weitermessen, deren Antwort dem Nachfolger gehört — und der ist terminal FAILED.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ _TERMINAL_STATES = {
     "WATCH",
     "MANUAL_IMMEDIATE_VERDICT",
     "MANUAL_SCHEDULED_REVIEW",
+    "SUPERSEDED",
     "RETIRE",
     "NO_WATCH_REQUIRED",
 }
@@ -58,6 +63,15 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "owner",
         "next_review_utc",
         "decision_question",
+        "rationale",
+        "archive_path",
+    ),
+    "SUPERSEDED": (
+        "owner",
+        "superseded_by",
+        "closure_reason",
+        "substantive_verdict",
+        "successor_terminal_verdict",
         "rationale",
         "archive_path",
     ),
@@ -142,13 +156,51 @@ def test_offener_befund_verbietet_die_mechanische_umsetzung(
         assert finding.get("evidence"), "ein Befund ohne Beleg ist eine Behauptung"
 
 
-def test_abgeloester_claim_ist_als_solcher_belegt(entries: list[dict[str, Any]]) -> None:
-    """Regression: 4a3b1b0c wurde laut Ledger VOR Datenanfall durch v2 abgelöst."""
+def test_abgeloester_claim_ist_terminal_geschlossen(entries: list[dict[str, Any]]) -> None:
+    """Operator-Entscheidung 2026-08-27: 4a3b1b0c = SUPERSEDED, terminal, ohne Sachverdikt."""
     entry = next(e for e in entries if e["prereg_id"] == "4a3b1b0c5a94b73c")
-    finding = entry["blocking_finding"]
-    assert finding["type"] == "SUPERSEDED_BEFORE_DATA"
-    assert finding["superseded_by"] == "b20ef1487ccba99d"
-    assert entry["spec_installed"] is False
+    assert entry["decision_state"] == "SUPERSEDED"
+    assert entry["closure_reason"] == "SUPERSEDED_BEFORE_OOS"
+    assert entry["superseded_by"] == "b20ef1487ccba99d"
+    assert entry["superseded_before_oos"] is True
+    assert entry["successor_terminal_verdict"] == "FAILED"
+    assert entry["research_line_status"] == "CLOSED"
+    assert entry["operator_decision_required"] is False
+    assert entry["blocking_finding"] is None
+
+
+def test_superseded_bekommt_niemals_einen_watcher(entries: list[dict[str, Any]]) -> None:
+    """Die Kern-Invariante der Operator-Entscheidung: kein Zaehler auf einer ersetzten Frage.
+
+    Ein vor Out-of-Sample-Daten abgeloester Claim darf NIE eine Reifezaehlung, einen
+    Watcher oder einen Termin bekommen — sonst misst das System eine Frage weiter,
+    deren Antwort dem Nachfolger gehoert.
+    """
+    from app.research.prereg_maturity import MATURITY_SPECS
+
+    spec_ids = {
+        str(s.get("prereg_id")) for s in MATURITY_SPECS if isinstance(s.get("prereg_id"), str)
+    }
+    for entry in entries:
+        if entry["decision_state"] != "SUPERSEDED":
+            continue
+        pid = entry["prereg_id"]
+        assert entry["spec_installed"] is False, pid
+        assert entry.get("spec_required") is False, pid
+        assert entry["watcher_id"] is None, pid
+        assert entry["cadence"] is None, pid
+        assert entry["next_review_utc"] is None, pid
+        assert pid not in spec_ids, f"{pid} darf keinen MATURITY_SPEC haben"
+
+
+def test_superseded_erzeugt_kein_eigenes_sachverdikt(entries: list[dict[str, Any]]) -> None:
+    """SUPERSEDED ist weder FAILED noch RETIRED noch NO_WATCH_REQUIRED."""
+    for entry in entries:
+        if entry["decision_state"] != "SUPERSEDED":
+            continue
+        assert entry["substantive_verdict"] == "NONE", entry["prereg_id"]
+        assert set(entry["not_this"]) == {"FAILED", "RETIRED", "NO_WATCH_REQUIRED"}
+        assert "SUPERSEDES" in entry["successor_criteria_quote"]
 
 
 def test_verdikttext_auflagen_haengen_am_eintrag(entries: list[dict[str, Any]]) -> None:
@@ -181,6 +233,28 @@ def test_m3_frist_ankert_am_revisit_datum_nicht_am_horizont() -> None:
     assert spec["kind"] == "deadline"
     assert spec["window_end_utc"].startswith("2026-09-29")
     assert "Kalt-Ansprache" in spec["note"]
+
+
+def test_aggregate_stimmen_mit_den_eintraegen(
+    registry: dict[str, Any], entries: list[dict[str, Any]]
+) -> None:
+    """Die Zahlen im Kopf muessen aus den Zeilen folgen, nie aus Prosa."""
+    from collections import Counter
+
+    counts = Counter(e["decision_state"] for e in entries)
+    agg = registry["aggregates"]
+    assert agg["TOTAL"] == len(entries) == 7
+    assert agg["WATCH"] == counts.get("WATCH", 0) == 1
+    assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
+    assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4
+    assert agg["MANUAL_SCHEDULED_REVIEW"] == counts.get("MANUAL_SCHEDULED_REVIEW", 0) == 1
+    assert agg["MANUAL"] == 5
+    assert agg["RETIRE"] == 0 and agg["NO_WATCH_REQUIRED"] == 0
+    assert agg["UNRESOLVED"] == 0
+    assert agg["WATCH_INSTALLED"] == sum(1 for e in entries if e.get("spec_installed")) == 1
+    assert agg["stab_06a_closed"] is False, (
+        "Die Klassifikation allein schliesst STAB-06a nicht — erst die vier Attestierungen."
+    )
 
 
 def test_keine_stillen_abschluesse(registry: dict[str, Any], entries: list[dict[str, Any]]) -> None:
