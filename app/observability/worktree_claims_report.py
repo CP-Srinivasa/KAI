@@ -182,7 +182,18 @@ def build_report(
 
 
 def _run(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=False)
+    """Ein Kommando ausfuehren; ein fehlendes Programm ist ein Ergebnis, kein Absturz.
+
+    ``check=False`` faengt nur einen Fehler*code* ab. Ist die Binaerdatei gar nicht
+    da, wirft ``subprocess.run`` ``FileNotFoundError`` — und der Aufrufer, der
+    sauber auf ``returncode != 0`` zurueckfaellt, kommt nie dazu. Genau so brach
+    ``kai audit worktree-claims-report`` auf dem Pi ab: dort ist ``gh`` nicht
+    installiert, der git-ancestry-Rueckfall war gebaut, getestet und unerreichbar.
+    """
+    try:
+        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return subprocess.CompletedProcess(list(args), 127, stdout="", stderr=str(exc))
 
 
 def collect_report(repo: Path, claims_path: Path, *, base_ref: str, now: datetime) -> JsonDict:

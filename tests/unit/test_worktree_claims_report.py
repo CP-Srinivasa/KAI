@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pytest import MonkeyPatch
+
 from app.observability.worktree_claims_report import (
     build_report,
     parse_claims,
@@ -132,3 +134,45 @@ def test_json_output_is_safe_for_legacy_windows_console_encoding() -> None:
 
     assert "\\u2192" in rendered
     assert rendered.encode("cp1252")
+
+
+def test_report_degrades_to_git_ancestry_when_gh_is_not_installed(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Fehlt `gh`, muss der Report auf die git-Abstammung zurueckfallen — nicht abstuerzen.
+
+    `_run` benutzt `check=False`. Das faengt einen Fehler*code* von `gh` ab, aber
+    nicht das Fehlen der Binaerdatei: `subprocess.run` wirft dann `FileNotFoundError`,
+    und der eigens gebaute git-ancestry-Rueckfall wird nie erreicht — ausgerechnet auf
+    dem Host, fuer den er gedacht ist (Pi, 2026-08-27: die CLI brach mit Traceback ab).
+    """
+    import subprocess
+
+    from app.observability import worktree_claims_report as module
+
+    real_run = subprocess.run
+
+    def without_gh(args, **kwargs):  # type: ignore[no-untyped-def]
+        if args and args[0] == "gh":
+            raise FileNotFoundError(2, "No such file or directory", "gh")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", without_gh)
+
+    claims = tmp_path / "ACTIVE_CLAIMS.md"
+    claims.write_text(
+        "| claim_id | owner | worktree | scope | created_at | expires_at | status |\n",
+        encoding="utf-8",
+    )
+
+    report = module.collect_report(
+        Path("."), claims, base_ref="HEAD", now=datetime(2026, 8, 27, tzinfo=UTC)
+    )
+
+    assert report["read_only"] is True
+    assert report["worktrees"]["counts"]["total"] >= 1
+    items = report["worktrees"]["items"]
+    sources = {item.get("merge_status_source") for item in items}
+    assert sources <= {"git_ancestry", "unknown"}, sources
+    # Ohne `gh` gibt es keine PR-Metadaten — der Report sagt das, statt sie zu erfinden.
+    assert all(item.get("pr_number") is None for item in items)
