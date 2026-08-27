@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from app.observability.worktree_claims_report import (
     build_report,
@@ -74,7 +75,7 @@ def test_report_uses_pr_state_before_ancestry_and_never_changes_claims(tmp_path:
         encoding="utf-8",
     )
     before = claims.read_bytes()
-    worktrees = [
+    worktrees: list[dict[str, Any]] = [
         {"path": str(live), "head": "a" * 40, "branch": "feature/squashed", "detached": False},
         {"path": str(old), "head": "b" * 40, "branch": "feature/open", "detached": False},
         {"path": str(tmp_path / "missing"), "head": "c" * 40, "branch": None, "detached": True},
