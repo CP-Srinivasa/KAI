@@ -6,6 +6,7 @@
 // - Einheitliches Error-Objekt, damit Pages konsistent reagieren können.
 
 import { toNum, toNumOr } from "@/lib/num";
+import type { EpochCorrection } from "./epochCorrection";
 
 export type ApiErrorKind =
   | "network"
@@ -571,6 +572,9 @@ export type DashboardQuality = {
   paper_positions_partial_closed?: number;
   paper_evidence?: {
     scope: string;
+    epoch_id?: string | null;
+    epoch_started_at_utc?: string | null;
+    epoch_correction?: EpochCorrection | null;
     since: string | null;
     until: string;
     window_hours: number;
@@ -1517,6 +1521,11 @@ export type PortfolioSnapshot = {
   // (accounting-kontaminiert, nicht als Performance verwendbar).
   epoch_id?: string;
   epoch_started_at_utc?: string | null;
+  // 2026-08-27: Bewiesener Korrektur-Vermerk der Epoche (app/execution/
+  // epoch_correction.py). Der Vorbehalt reist MIT der Zahl — sonst zeigt die
+  // Kachel eine Epoche unbehelligt, deren Ergebnis nach Korrektur das
+  // Vorzeichen wechselt. null = Epoche ohne bekannten Befund.
+  epoch_correction?: EpochCorrection | null;
   // Audit 2026-08-06 (P1-1, P0-03-Nachzug): equity_complete=false heißt
   // total_equity_usd ist eine UNTERGRENZE — unbepreiste offene Positionen
   // tragen 0 bei. total_equity_incl_entry_fallback_usd = inkl. Einstandsbasis.

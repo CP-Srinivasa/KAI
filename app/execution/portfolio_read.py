@@ -18,6 +18,7 @@ from app.execution.audit_replay import (
     last_epoch_reset_info,
     replay_paper_audit,
 )
+from app.execution.epoch_correction import epoch_correction_payload
 from app.learning.bayes_quarantine import is_corrupt_close
 from app.market_data.models import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
@@ -202,6 +203,10 @@ class PortfolioSnapshot:
             "report_type": "paper_portfolio_snapshot",
             "epoch_id": self.epoch_id,
             "epoch_started_at_utc": self.epoch_started_at_utc,
+            # Der Vorbehalt reist MIT der Zahl. Traegt die Epoche einen
+            # bewiesenen Korrektur-Vermerk, muss ihn jede Oberflaeche zeigen
+            # koennen, ohne ihn selbst zu kennen (Operator-Entscheid 2026-08-18).
+            "epoch_correction": epoch_correction_payload(self.epoch_id),
             "generated_at": self.generated_at_utc,
             "source": self.source,
             "audit_path": self.audit_path,

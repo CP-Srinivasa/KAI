@@ -113,3 +113,58 @@ def test_daily_strategy_line_carries_the_notice() -> None:
     notice = daily_strategy.epoch_correction_notice("paper_v2_attested")
     assert notice is not None
     assert notice.incident_ref == "DS-20260818-MOCK-EXIT"
+
+
+def _snapshot(epoch_id: str):
+    """Minimaler Snapshot — nur die Pflichtfelder, der Rest per Default."""
+    from app.execution.portfolio_read import ExposureSummary, PortfolioSnapshot
+
+    return PortfolioSnapshot(
+        generated_at_utc="2026-08-27T00:00:00+00:00",
+        source="test",
+        audit_path="artifacts/paper_execution_audit.jsonl",
+        cash_usd=0.0,
+        realized_pnl_usd=0.0,
+        total_market_value_usd=0.0,
+        total_equity_usd=0.0,
+        position_count=0,
+        positions=(),
+        exposure_summary=ExposureSummary(
+            priced_position_count=0,
+            stale_position_count=0,
+            unavailable_price_count=0,
+            gross_exposure_usd=0.0,
+            net_exposure_usd=0.0,
+            largest_position_symbol=None,
+            largest_position_weight_pct=None,
+            mark_to_market_status="ok",
+        ),
+        available=True,
+        epoch_id=epoch_id,
+    )
+
+
+def test_portfolio_snapshot_carries_the_notice() -> None:
+    """Der Vorbehalt muss MIT der Zahl reisen, nicht neben ihr liegen.
+
+    Der Snapshot ist die Quelle der Kachel, die die Epochen-Zahlen zeigt. Lag
+    der Vermerk nur im Quality-Payload, sah jede Portfolio-Ansicht eine Epoche,
+    deren gebuchtes Ergebnis nach Korrektur das Vorzeichen wechselt, voellig
+    unbehelligt aus.
+    """
+    payload = _snapshot("paper_v2_attested").to_json_dict()
+
+    correction = payload["epoch_correction"]
+    assert isinstance(correction, dict)
+    assert correction["incident_ref"] == "DS-20260818-MOCK-EXIT"
+    assert correction["flips_sign"] is True
+    assert correction["measured_corrected_usd"] < 0 < correction["measured_booked_usd"]
+
+
+def test_clean_epoch_snapshot_carries_no_notice() -> None:
+    """Kein Vermerk heisst ``None`` — nicht ein leeres Objekt.
+
+    Ein leeres Objekt waere im Frontend truthy und wuerde eine Warnung ohne
+    Inhalt rendern; das ist schlimmer als gar keine.
+    """
+    assert _snapshot("legacy").to_json_dict()["epoch_correction"] is None

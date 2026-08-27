@@ -9,6 +9,7 @@ import { useCurrency } from "@/state/CurrencyProvider";
 import type { DashboardQuality, PriorityGateSummary } from "@/lib/api";
 import { resolvePriorityVerdict } from "@/lib/truthStatus";
 import { getMetricContract, getMetricWarning } from "@/lib/labels";
+import { EpochCorrectionLine } from "./EpochCorrectionLine";
 
 // Re-Entry-Gate (TV-Pivot D-125, Ziel 2026-05-16):
 // Entweder ≥200 resolved directional alerts ODER ≥10 paper fills mit PnL.
@@ -339,6 +340,12 @@ function PaperEvidenceSplit({
         <div className="text-2xs text-fg-subtle">
           {quality.paper_positions_closed} closed gesamt
         </div>
+        {/* Traegt die Epoche einen bewiesenen Korrektur-Vermerk, steht er DIREKT
+            unter der Zahl, die er betrifft — nicht in einem Nebenpanel. */}
+        <EpochCorrectionLine
+          correction={ev?.epoch_correction}
+          liveClosedTotal={quality.paper_positions_closed}
+        />
       </div>
 
       {/* Rechts: aktuelle 24h-Lage (Current-Pulse-Anmutung) */}

@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { computeEquityComposition } from "@/lib/portfolio";
+import { EpochCorrectionLine } from "./EpochCorrectionLine";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 // Quick-Win-Tiles: ersetzen die früheren PreparedPanel-Stubs (Portfolio Snapshot,
@@ -142,6 +143,14 @@ function PortfolioTile() {
           ) : (
             <p className="text-2xs text-warn">⚠ {epochWarning(q.data.epoch_id)}</p>
           )}
+          {/* Ein Korrektur-Vermerk gilt UNABHAENGIG von der Epochen-Politur:
+              gerade die attestierte Epoche v2 traegt den Befund, dass vier
+              Closes gegen erfundene Preise gebucht wurden. Ohne diese Zeile
+              stand hier ausgerechnet fuer sie eine beruhigende Meldung. */}
+          <EpochCorrectionLine
+            correction={q.data.epoch_correction}
+            liveClosedTotal={null}
+          />
           {/* Gesamt-Equity = was wirklich drin ist (Cash + Marktwert offener
               Positionen, short-aware), inkl. realisierter + unrealisierter G/V,
               Fees sind bereits abgezogen. equity_complete=false => Untergrenze. */}
