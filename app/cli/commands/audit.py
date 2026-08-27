@@ -304,3 +304,7 @@ def audit_watchdog_report(
     print(_json.dumps(result, indent=2, ensure_ascii=False))
     if not result.get("emitted") and not result.get("dry_run"):
         raise typer.Exit(1)
+
+
+# Register additive read-only audit commands kept outside this godfile.
+from app.cli.commands import worktree_claims_cli as _worktree_claims_cli  # noqa: E402,F401
