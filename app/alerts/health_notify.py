@@ -35,6 +35,8 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.services.timer_health import format_cadence_coverage
+
 __all__ = [
     "HEALTH_NOTIFY_STATE_FILE",
     "build_health_alert_text",
@@ -81,6 +83,12 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
         f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
         f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
     )
+    # Abdeckung der Kadenz-Invariante IMMER nennen, auch ohne Befund: "0
+    # ueberfaellig" ohne Nenner liest sich wie "alle Timer geprueft", obwohl
+    # nur Units mit ableitbarer Kadenz ueberhaupt bewertbar sind.
+    cadence_line = format_cadence_coverage(getattr(report, "timer_cadence", None))
+    if cadence_line:
+        lines.append(cadence_line)
     for issue in report.issues:
         tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
         lines.append(f"[{tag}] {issue.component}: {issue.message}")

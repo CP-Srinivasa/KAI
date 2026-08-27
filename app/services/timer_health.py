@@ -423,6 +423,117 @@ def find_unscheduled_recurring_timers(
     ]
 
 
+# systemd-Zeitspannen, wie sie in ``OnUnitActiveSec=`` vorkommen. Bewusst klein
+# gehalten: nur die Einheiten, die in deploy/systemd/ tatsaechlich auftreten,
+# plus Sekunden fuer die blanke Zahl. Was hier fehlt, wird nicht geraten.
+_TIMESPAN_UNITS: dict[str, float] = {
+    "s": 1.0,
+    "sec": 1.0,
+    "secs": 1.0,
+    "second": 1.0,
+    "seconds": 1.0,
+    "m": 60.0,
+    "min": 60.0,
+    "mins": 60.0,
+    "minute": 60.0,
+    "minutes": 60.0,
+    "h": 3600.0,
+    "hr": 3600.0,
+    "hour": 3600.0,
+    "hours": 3600.0,
+    "d": 86400.0,
+    "day": 86400.0,
+    "days": 86400.0,
+    "w": 604800.0,
+    "week": 604800.0,
+    "weeks": 604800.0,
+}
+
+_TIMESPAN_TOKEN = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z]*)")
+
+
+def parse_systemd_timespan(raw: str | None) -> float | None:
+    """``30min`` / ``1h 30min`` / ``300s`` / ``90`` -> Sekunden, sonst ``None``.
+
+    ``None`` heisst "nicht verstanden", nicht "null". Eine geratene Kadenz
+    waere die schlechtere Antwort: zu kurz geraten erzeugt Daueralarm und
+    entwertet den Kanal, zu lang geraten deckt genau den Stillstand zu, den
+    diese Invariante finden soll. Ein Timer ohne verstandene Erwartung bleibt
+    darum unbewertet.
+    """
+    if not raw:
+        return None
+    text = raw.strip().lower()
+    if not text:
+        return None
+    # Vollstaendig konsumierbar? Sonst ist es keine Zeitspanne, sondern z. B.
+    # ein Kalenderausdruck — und der darf hier nicht als Zahl durchrutschen.
+    total = 0.0
+    consumed = 0
+    for match in _TIMESPAN_TOKEN.finditer(text):
+        if match.start() != consumed and text[consumed : match.start()].strip():
+            return None
+        unit = match.group(2)
+        factor = _TIMESPAN_UNITS.get(unit) if unit else 1.0
+        if factor is None:
+            return None
+        total += float(match.group(1)) * factor
+        consumed = match.end()
+    if consumed == 0 or text[consumed:].strip():
+        return None
+    return total if total > 0 else None
+
+
+def expected_intervals_from_unit_dir(unit_dir: Path) -> dict[str, float]:
+    """Kadenz-Erwartung je Timer, abgeleitet aus ``OnUnitActiveSec=``.
+
+    Bewusst UNVOLLSTAENDIG: ``OnCalendar``-Timer erscheinen nicht, weil ihr
+    Abstand erst aus der Kalender-Expansion folgt. Die Abdeckung wird damit
+    sichtbar begrenzt statt stillschweigend behauptet — wer sie kennen will,
+    vergleicht die Laenge dieser Abbildung mit der Zahl der Unit-Dateien.
+    """
+    intervals: dict[str, float] = {}
+    try:
+        files = sorted(unit_dir.glob("kai-*.timer"))
+    except OSError:
+        return intervals
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"^\s*OnUnitActiveSec=(.+)$", text, re.MULTILINE)
+        if not match:
+            continue
+        seconds = parse_systemd_timespan(match.group(1))
+        if seconds is not None:
+            intervals[path.name] = seconds
+    return intervals
+
+
+def format_cadence_coverage(coverage: Mapping[str, int] | None) -> str | None:
+    """Die Abdeckungszeile — oder ``None``, wenn nichts gemessen wurde.
+
+    Der Nenner gehoert IMMER dazu. "0 ueberfaellig" allein liest sich wie
+    "alle Timer geprueft", obwohl nur die Units mit ableitbarer Kadenz
+    ueberhaupt bewertbar sind; fuer ``OnCalendar`` folgt der Abstand erst aus
+    der Kalender-Expansion und wird hier bewusst nicht geraten.
+
+    Ausgeschrieben statt abgekuerzt, weil diese Zeile im Betrieb ueberflogen
+    wird und die stille Vollstaendigkeits-Behauptung genau dort entsteht.
+    """
+    if not coverage:
+        return None
+    total = coverage.get("total", 0)
+    evaluated = coverage.get("evaluated", 0)
+    unevaluated = coverage.get("unevaluated", max(0, total - evaluated))
+    overdue = coverage.get("overdue", 0)
+    return (
+        f"Timer-Kadenz: {evaluated}/{total} bewertet · {overdue} ueberfaellig · "
+        f"{unevaluated} nicht kadenzbewertet (OnCalendar)"
+    )
+
+
 def find_stalled_recurring_timers(
     facts: Sequence[TimerRuntimeFacts],
     *,

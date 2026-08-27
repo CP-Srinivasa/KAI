@@ -206,6 +206,11 @@ class HealthReport:
     re_entry_mode_active: bool = False
     hostname: str = ""  # P2: lets operator see at a glance where probe ran
     runs_on_pi: bool = False  # P2: True when hostname matches Pi signature
+    # Abdeckung der Kadenz-Invariante. IMMER gefuellt, auch wenn nichts
+    # ueberfaellig ist — sonst liesse sich "0 Befunde" als "alle Timer geprueft"
+    # lesen, obwohl nur ein Teil ueberhaupt deterministisch bewertbar ist.
+    # Schluessel: total / evaluated / unevaluated / overdue.
+    timer_cadence: dict[str, int] = field(default_factory=dict)
 
 
 def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue], bool]:
@@ -642,7 +647,7 @@ def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> l
     ]
 
 
-def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
+def _check_timer_scheduleability(*, runs_on_pi: bool) -> tuple[list[HealthIssue], dict[str, int]]:
     """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
 
     Vorfall 2026-08-19: ``kai-tv-auto-promote.timer`` stand auf ``enabled`` +
@@ -658,11 +663,13 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     Probe ist kein Abbruchgrund (Lehre #718).
     """
     if not runs_on_pi:
-        return []
+        return [], {}
     if os.environ.get("KAI_TIMER_SCHEDULE_PROBE", "").strip().lower() == "off":
-        return []
+        return [], {}
 
     from app.services.timer_health import (
+        expected_intervals_from_unit_dir,
+        find_stalled_recurring_timers,
         find_unscheduled_recurring_timers,
         parse_active_units,
         parse_systemctl_show,
@@ -671,7 +678,7 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     timer_dir = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
     units = sorted(f.name for f in timer_dir.glob("kai-*.timer"))
     if not units:
-        return []
+        return [], {}
     try:
         proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
             [
@@ -703,9 +710,9 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
             env={**os.environ, "TZ": "UTC"},
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return [], {}
     if proc.returncode != 0 or not proc.stdout.strip():
-        return []
+        return [], {}
 
     facts = parse_systemctl_show(proc.stdout)
 
@@ -717,7 +724,7 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     # statt eines geratenen.
     services = sorted({f.triggered_unit for f in facts if f.triggered_unit})
     if not services:
-        return []
+        return [], {}
     try:
         svc_proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
             ["systemctl", "show", *services, "-p", "Id", "-p", "ActiveState"],
@@ -728,28 +735,83 @@ def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
             env={**os.environ, "TZ": "UTC"},
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return [], {}
     if svc_proc.returncode != 0 or not svc_proc.stdout.strip():
-        return []
+        return [], {}
     running = parse_active_units(svc_proc.stdout)
     facts = [f.with_triggered_state(running) for f in facts]
 
+    issues: list[HealthIssue] = []
+
     stuck = find_unscheduled_recurring_timers(facts)
-    if not stuck:
-        return []
-    return [
-        HealthIssue(
-            severity="critical",
-            component="timer_scheduleability",
-            message=(
-                f"{len(stuck)} wiederkehrende Timer laufen ohne naechsten Termin "
-                f"(enabled+active, aber kein NextElapse): {', '.join(sorted(stuck))} "
-                "— sie feuern nie wieder. Reparatur: Unit neu starten, nachdem der "
-                "zugehoerige Service einmal gelaufen ist, und auf einen "
-                "restart-sicheren Trigger umstellen (OnCalendar oder OnActiveSec)."
-            ),
+    if stuck:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="timer_scheduleability",
+                message=(
+                    f"{len(stuck)} wiederkehrende Timer laufen ohne naechsten Termin "
+                    f"(enabled+active, aber kein NextElapse): {', '.join(sorted(stuck))} "
+                    "— sie feuern nie wieder. Reparatur: Unit neu starten, nachdem der "
+                    "zugehoerige Service einmal gelaufen ist, und auf einen "
+                    "restart-sicheren Trigger umstellen (OnCalendar oder OnActiveSec)."
+                ),
+            )
         )
-    ]
+
+    # INVARIANTE 2 (Cadence): Termin vorhanden, trotzdem laeuft nichts. Die
+    # Funktion war seit ihrer Einfuehrung getestet, aber ohne Aufrufer — sie
+    # konnte in Produktion nie etwas finden.
+    #
+    # Abdeckung wird GENANNT, nicht behauptet: ableitbar ist die Kadenz nur aus
+    # ``OnUnitActiveSec=``. ``OnCalendar``-Timer bleiben unbewertet, weil ihr
+    # Abstand erst aus der Kalender-Expansion folgt.
+    #
+    # Severity bewusst ``warning`` und nicht ``critical``: die Schwelle
+    # (grace_factor=3) ist hergeleitet, nicht an der Verteilung echter
+    # Laufabstaende gemessen. Erst wenn sie auf dem Pi ueber mehrere Wochen
+    # keine Unschuldigen meldet, gehoert sie hochgestuft.
+    intervals = expected_intervals_from_unit_dir(timer_dir)
+
+    # Bezugsmenge ist, was systemd tatsaechlich kannte (``facts``) — nicht, was
+    # im Repo liegt. Beide Zahlen koennen auseinanderfallen, wenn eine Unit
+    # definiert, aber nicht installiert ist; die Abdeckung darf sich dann nicht
+    # an der groesseren Menge schoenrechnen.
+    known = {f.unit for f in facts}
+    evaluable = sorted(known & set(intervals))
+    coverage = {
+        "total": len(known),
+        "evaluated": len(evaluable),
+        "unevaluated": len(known) - len(evaluable),
+        "overdue": 0,
+    }
+
+    if evaluable:
+        stalled = find_stalled_recurring_timers(
+            facts,
+            now=datetime.now(UTC),
+            expected_interval_s={u: intervals[u] for u in evaluable},
+        )
+        coverage["overdue"] = len(stalled)
+        if stalled:
+            issues.append(
+                HealthIssue(
+                    severity="warning",
+                    component="timer_cadence",
+                    message=(
+                        f"{len(stalled)} Timer haben einen Termin, sind aber trotzdem "
+                        f"ueberfaellig (>3x der erwarteten Kadenz seit dem letzten "
+                        f"Lauf): {', '.join(sorted(stalled))}. Bewertet wurden "
+                        f"{coverage['evaluated']} von {coverage['total']} Timern; "
+                        f"{coverage['unevaluated']} sind NICHT kadenzbewertet — fuer "
+                        "OnCalendar-Units folgt der Abstand erst aus der "
+                        "Kalender-Expansion und wird hier nicht geraten. "
+                        "Schwelle (3x Kadenz) ist hergeleitet, nicht kalibriert."
+                    ),
+                )
+            )
+
+    return issues, coverage
 
 
 def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
@@ -1000,7 +1062,9 @@ def run_health_check_report(
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
     report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
-    report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
+    timer_issues, timer_coverage = _check_timer_scheduleability(runs_on_pi=report.runs_on_pi)
+    report.issues.extend(timer_issues)
+    report.timer_cadence = timer_coverage
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_prereg_reconciliation(adir))
 
