@@ -28,7 +28,7 @@ import httpx
 import pytest
 
 from app.ingestion.youtube import adapter
-from app.ingestion.youtube.feed import channel_feed_url, parse_channel_feed
+from app.ingestion.youtube.feed import FEED_PARSE_ERRORS, channel_feed_url, parse_channel_feed
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "youtube_channel_feed.xml"
 CHANNEL_ID = "UCAl9Ld79qaZxp9JzEOwd3aA"
@@ -81,10 +81,38 @@ def test_entries_without_a_video_id_are_skipped_not_fatal() -> None:
 
 def test_unparsable_feed_raises_instead_of_looking_empty() -> None:
     """Ein leerer Kanal und ein kaputter Feed duerfen sich nicht gleich anfuehlen."""
-    import xml.etree.ElementTree as ET
-
-    with pytest.raises(ET.ParseError):
+    with pytest.raises(FEED_PARSE_ERRORS):
         parse_channel_feed(b"<feed><unclosed>")
+
+
+def test_xml_bomb_is_refused_not_expanded() -> None:
+    """Der Feed kommt aus dem offenen Netz — ``xml.etree`` allein waere hier wehrlos.
+
+    Die klassische „billion laughs": zehn verschachtelte Entitaeten, die beim
+    Auflösen exponentiell wachsen. ``defusedxml`` verweigert die Entitaets-
+    definition; die Ausnahme ist **keine** ``ParseError``, deshalb faengt der
+    Adapter ``FEED_PARSE_ERRORS`` und nicht nur die.
+    """
+    bomb = (
+        '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">'
+        '<!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
+        '<!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">'
+        "]><feed><title>&lol2;</title></feed>"
+    )
+
+    with pytest.raises(FEED_PARSE_ERRORS):
+        parse_channel_feed(bomb)
+
+
+def test_external_entities_are_refused() -> None:
+    """Kein Dateizugriff ueber einen fremden Feed (XXE)."""
+    xxe = (
+        '<?xml version="1.0"?><!DOCTYPE f [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+        "<feed><title>&x;</title></feed>"
+    )
+
+    with pytest.raises(FEED_PARSE_ERRORS):
+        parse_channel_feed(xxe)
 
 
 def test_feed_url_is_the_free_endpoint() -> None:

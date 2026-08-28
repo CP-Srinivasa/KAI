@@ -13,16 +13,27 @@ Uploads (die letzten ~15) **fuer 0 Einheiten**. Der Feed traegt alles, was
 ``YouTubeVideo`` braucht, und die Beschreibung sogar vollstaendig statt als
 143-Zeichen-Schnipsel wie im API-Snippet.
 
-Bewusst ``xml.etree.ElementTree`` statt ``feedparser``: die gebrauchten Felder
-liegen in YouTube-eigenen Namensraeumen (``yt:videoId``, ``media:description``),
-die hier explizit adressiert werden — und es kommt keine Abhaengigkeit dazu.
+Bewusst ein eigener Parser statt ``feedparser``: die gebrauchten Felder liegen in
+YouTube-eigenen Namensraeumen (``yt:videoId``, ``media:description``) und werden
+hier explizit adressiert. Gelesen wird ueber ``defusedxml`` — der Feed kommt aus
+dem offenen Netz, und ``xml.etree`` ist gegen XML-Bomben und externe Entitaeten
+nicht gehaertet.
 """
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import Element, ParseError
+
+from defusedxml import DefusedXmlException
+from defusedxml.ElementTree import fromstring
 
 from app.ingestion.youtube.models import YouTubeVideo
+
+#: Was beim Lesen eines fremden Feeds schiefgehen darf, ohne ein Programmfehler
+#: zu sein. ``defusedxml`` wirft fuer XML-Bomben und externe Entitaeten eigene
+#: Ausnahmen, die KEINE ``ParseError`` sind — wer nur die faengt, laesst genau
+#: den Angriffsfall durch.
+FEED_PARSE_ERRORS: tuple[type[Exception], ...] = (ParseError, DefusedXmlException)
 
 CHANNEL_FEED_URL = "https://www.youtube.com/feeds/videos.xml"
 
@@ -38,7 +49,7 @@ def channel_feed_url(channel_id: str) -> str:
     return f"{CHANNEL_FEED_URL}?channel_id={channel_id}"
 
 
-def _text(element: ET.Element, path: str) -> str:
+def _text(element: Element, path: str) -> str:
     found = element.find(path, _NS)
     return (found.text or "").strip() if found is not None and found.text else ""
 
@@ -46,12 +57,12 @@ def _text(element: ET.Element, path: str) -> str:
 def parse_channel_feed(payload: bytes | str, *, limit: int | None = None) -> list[YouTubeVideo]:
     """Atom-Feed eines Kanals in Videos uebersetzen.
 
-    Ein unparsbarer Feed wirft ``ET.ParseError`` — der Aufrufer soll das sehen und
+    Ein unbrauchbarer Feed wirft eine der ``FEED_PARSE_ERRORS`` — der Aufrufer soll das sehen und
     nicht auf eine leere Liste hereinfallen, die wie ein ruhiger Kanal aussaehe.
     Einzelne Eintraege **ohne** ``yt:videoId`` werden dagegen uebersprungen: ein
     kaputter Eintrag darf nicht den ganzen Kanal kosten.
     """
-    root = ET.fromstring(payload)
+    root = fromstring(payload)
     feed_channel_id = _text(root, "yt:channelId")
     feed_author = _text(root, "atom:author/atom:name")
 

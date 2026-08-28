@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import re
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,7 +34,7 @@ from youtube_transcript_api import (
 from app.core.domain.document import CanonicalDocument, YouTubeVideoMeta
 from app.core.enums import DocumentType, SourceType
 from app.ingestion.base.interfaces import FetchResult
-from app.ingestion.youtube.feed import channel_feed_url, parse_channel_feed
+from app.ingestion.youtube.feed import FEED_PARSE_ERRORS, channel_feed_url, parse_channel_feed
 from app.ingestion.youtube.models import YouTubeVideo
 
 logger = logging.getLogger(__name__)
@@ -113,7 +112,7 @@ async def _fetch_via_feed(
         return None
     try:
         return parse_channel_feed(resp.content, limit=limit)
-    except ET.ParseError as exc:
+    except FEED_PARSE_ERRORS as exc:
         logger.warning(
             "youtube.feed_unparsable", extra={"channel_id": channel_id, "error": str(exc)}
         )
