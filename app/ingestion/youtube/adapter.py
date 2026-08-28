@@ -1,7 +1,17 @@
 """YouTube channel ingestion adapter.
 
-Uses YouTube Data API v3 to fetch recent videos from monitored channels
-and youtube-transcript-api to extract transcripts as document text.
+Uploads werden nach **Kosten** geholt, nicht nach Bequemlichkeit:
+
+1. oeffentlicher Atom-Feed (``feed.py``) — **0 Einheiten**,
+2. ``playlistItems.list`` auf der Uploads-Playlist — **1 Einheit**,
+3. ``search.list`` — **100 Einheiten**, nur noch letzte Instanz.
+
+Der Grund steht in Zahlen: 22 Kanaele x 12 Zyklen x 100 Einheiten = 26.400 gegen
+ein Tagesbudget von 10.000. Am 2026-08-28 lief die Ingestion deshalb 17 Stunden
+gegen ``429``. Ueber Stufe 2 sind es 528 Einheiten am Tag — 5 % des Budgets.
+
+Jede Stufe faellt nur bei einem **Fehler** weiter, nie bei einem legitim leeren
+Ergebnis; sonst zahlte jeder stille Kanal weiter den vollen Preis.
 
 Produces CanonicalDocuments compatible with the standard pipeline
 (persist_fetch_result → AnalysisPipeline → AlertService).
@@ -10,7 +20,7 @@ Produces CanonicalDocuments compatible with the standard pipeline
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +34,8 @@ from youtube_transcript_api import (
 from app.core.domain.document import CanonicalDocument, YouTubeVideoMeta
 from app.core.enums import DocumentType, SourceType
 from app.ingestion.base.interfaces import FetchResult
+from app.ingestion.youtube.feed import FEED_PARSE_ERRORS, channel_feed_url, parse_channel_feed
+from app.ingestion.youtube.models import YouTubeVideo
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +49,7 @@ def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-@dataclass(frozen=True)
-class YouTubeVideo:
-    video_id: str
-    title: str
-    description: str
-    channel_id: str
-    channel_title: str
-    published_at: str
-    thumbnail_url: str | None = None
+__all__ = ["YouTubeVideo", "fetch_transcript", "fetch_youtube_channel"]
 
 
 async def fetch_channel_videos(
@@ -55,35 +59,162 @@ async def fetch_channel_videos(
     max_results: int = _MAX_RESULTS_PER_CHANNEL,
     timeout: int = 15,
 ) -> list[YouTubeVideo]:
-    """Fetch recent videos from a YouTube channel via Data API v3.
+    """Die letzten Uploads eines Kanals — ueber den Feed, nicht ueber ``search``.
 
-    Accepts @handle, channel ID, or /c/ custom URL handle.
-    Resolves to channel ID first, then fetches recent uploads.
+    Akzeptiert @handle, Kanal-ID oder /c/-URL. Aufloesung zuerst, dann der Feed
+    (0 Einheiten). Die 100-Einheiten-Suche laeuft nur, wenn der Feed **kaputt**
+    ist; ein leerer Feed ist ein leerer Kanal und kostet nichts.
     """
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        # Step 1: Resolve handle to channel ID
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         channel_id = await _resolve_channel_id(client, api_key, channel_handle)
         if not channel_id:
             logger.warning("youtube.channel_not_found", extra={"handle": channel_handle})
             return []
 
-        # Step 2: Search for recent videos
+        videos = await _fetch_via_feed(client, channel_id, max_results)
+        if videos is not None:
+            return videos
+
+        # Der Feed ist nicht erreichbar. Nicht gleich zur 100-Einheiten-Suche:
+        # die Uploads-Playlist liefert dasselbe fuer EINE Einheit.
+        videos = await _fetch_via_uploads_playlist(client, api_key, channel_id, max_results)
+        if videos is not None:
+            return videos
+
+        logger.warning(
+            "youtube.falling_back_to_expensive_search",
+            extra={"channel_id": channel_id, "cost_units": 100},
+        )
+        return await _fetch_via_data_api(client, api_key, channel_id, max_results)
+
+
+async def _fetch_via_feed(
+    client: httpx.AsyncClient, channel_id: str, limit: int
+) -> list[YouTubeVideo] | None:
+    """Der kontingentfreie Weg. ``None`` heisst kaputt, ``[]`` heisst leer.
+
+    Die Unterscheidung ist der ganze Punkt: nur ``None`` rechtfertigt den teuren
+    Rueckfall. Wuerde ein leerer Feed ihn ausloesen, zahlte jeder Kanal ohne
+    frische Uploads weiter 100 Einheiten pro Zyklus.
+    """
+    try:
+        resp = await client.get(channel_feed_url(channel_id))
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "youtube.feed_unreachable", extra={"channel_id": channel_id, "error": str(exc)}
+        )
+        return None
+    if resp.status_code != 200:
+        logger.warning(
+            "youtube.feed_http_error",
+            extra={"channel_id": channel_id, "status": resp.status_code},
+        )
+        return None
+    try:
+        return parse_channel_feed(resp.content, limit=limit)
+    except FEED_PARSE_ERRORS as exc:
+        logger.warning(
+            "youtube.feed_unparsable", extra={"channel_id": channel_id, "error": str(exc)}
+        )
+        return None
+
+
+def uploads_playlist_id(channel_id: str) -> str:
+    """Die Uploads-Playlist eines Kanals: ``UC…`` -> ``UU…``.
+
+    Eine Konvention der YouTube-API, kein Ratespiel: jede Kanal-ID hat eine
+    gleichnamige Uploads-Playlist mit ``UU``-Praefix.
+    """
+    return "UU" + channel_id[2:] if channel_id.startswith("UC") else channel_id
+
+
+async def _fetch_via_uploads_playlist(
+    client: httpx.AsyncClient, api_key: str, channel_id: str, max_results: int
+) -> list[YouTubeVideo] | None:
+    """Uploads ueber ``playlistItems.list`` — **1 Einheit** statt 100.
+
+    Der eigentliche Hebel gegen das Kontingent, und der einzige Weg, der am
+    2026-08-28 nachweislich noch trug: bei erschoepftem Tagesbudget lieferte
+    ``search.list`` ``429``, waehrend derselbe Kanal ueber diesen Aufruf ``200``
+    und dieselben Videos zurueckgab.
+
+    ``None`` heisst wieder: nicht benutzbar, der Aufrufer darf weiterfallen. Eine
+    leere Liste ist dagegen eine Antwort — ein Kanal ohne Uploads.
+    """
+    try:
         resp = await client.get(
-            f"{_YT_API_BASE}/search",
+            f"{_YT_API_BASE}/playlistItems",
             params={
                 "key": api_key,
-                "channelId": channel_id,
+                "playlistId": uploads_playlist_id(channel_id),
                 "part": "snippet",
-                "order": "date",
-                "type": "video",
                 "maxResults": max_results,
             },
         )
-        resp.raise_for_status()
-        data = resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "youtube.uploads_playlist_unreachable",
+            extra={"channel_id": channel_id, "error": str(exc)},
+        )
+        return None
+    if resp.status_code != 200:
+        logger.warning(
+            "youtube.uploads_playlist_http_error",
+            extra={"channel_id": channel_id, "status": resp.status_code},
+        )
+        return None
 
     videos: list[YouTubeVideo] = []
-    for item in data.get("items", []):
+    for item in resp.json().get("items", []):
+        snippet = item.get("snippet", {})
+        vid_id = (snippet.get("resourceId") or {}).get("videoId")
+        if not vid_id:
+            continue
+        thumbnails = snippet.get("thumbnails", {})
+        thumb = (thumbnails.get("high") or thumbnails.get("default") or {}).get("url")
+        videos.append(
+            YouTubeVideo(
+                video_id=vid_id,
+                title=snippet.get("title", ""),
+                description=snippet.get("description", ""),
+                # Bei einem Playlist-Eintrag zeigt `channelId` auf den Besitzer der
+                # PLAYLIST; `videoOwnerChannelId` auf den des Videos. Bei einer
+                # Uploads-Playlist ist beides dasselbe — die genauere Angabe zuerst.
+                channel_id=snippet.get("videoOwnerChannelId")
+                or snippet.get("channelId")
+                or channel_id,
+                channel_title=snippet.get("videoOwnerChannelTitle")
+                or snippet.get("channelTitle", ""),
+                published_at=snippet.get("publishedAt", ""),
+                thumbnail_url=thumb,
+            )
+        )
+    return videos
+
+
+async def _fetch_via_data_api(
+    client: httpx.AsyncClient, api_key: str, channel_id: str, max_results: int
+) -> list[YouTubeVideo]:
+    """Rueckfall ueber ``search.list`` — **100 Einheiten pro Aufruf**.
+
+    Bleibt bestehen, damit ein Feed-Ausfall die Ingestion nicht stilllegt; er
+    soll nur nicht mehr der Normalweg sein.
+    """
+    resp = await client.get(
+        f"{_YT_API_BASE}/search",
+        params={
+            "key": api_key,
+            "channelId": channel_id,
+            "part": "snippet",
+            "order": "date",
+            "type": "video",
+            "maxResults": max_results,
+        },
+    )
+    resp.raise_for_status()
+
+    videos: list[YouTubeVideo] = []
+    for item in resp.json().get("items", []):
         snippet = item.get("snippet", {})
         vid_id = item.get("id", {}).get("videoId")
         if not vid_id:
@@ -109,10 +240,20 @@ async def _resolve_channel_id(
     api_key: str,
     handle: str,
 ) -> str | None:
-    """Resolve a YouTube @handle or custom URL to a channel ID."""
+    """Handle oder Custom-URL zu einer Kanal-ID aufloesen — billigster Weg zuerst.
+
+    Reihenfolge nach Kosten, nicht nach Bequemlichkeit:
+    ``UC…`` direkt (0) → ``channels?forHandle`` (1) → Kanalseite (0) →
+    ``search`` (**100**, letzte Instanz).
+    """
     clean = handle.strip().lstrip("@")
 
-    # Try forHandle (works for @handles)
+    # Steht die ID schon da, kostet nichts — vorher lief hierfuer trotzdem erst
+    # ein API-Aufruf.
+    if clean.startswith("UC"):
+        return clean
+
+    # forHandle: 1 Einheit, autoritativ.
     resp = await client.get(
         f"{_YT_API_BASE}/channels",
         params={"key": api_key, "forHandle": clean, "part": "id"},
@@ -122,9 +263,11 @@ async def _resolve_channel_id(
         if items:
             return _string_or_none(items[0].get("id"))
 
-    # Try as direct channel ID (UC...)
-    if clean.startswith("UC"):
-        return clean
+    # Die Kanalseite nennt ihre eigene ID — 0 Einheiten und funktioniert auch,
+    # wenn das Kontingent bereits erschoepft oder der Schluessel tot ist.
+    from_page = await _channel_id_from_page(client, clean)
+    if from_page:
+        return from_page
 
     # Try search as fallback
     resp = await client.get(
@@ -144,6 +287,51 @@ async def _resolve_channel_id(
             if isinstance(snippet, dict):
                 return _string_or_none(snippet.get("channelId"))
 
+    return None
+
+
+#: Nur autoritative Felder — und ganz bewusst **nicht** ``"channelId"``.
+#: Gemessen am 2026-08-28: in der 2,3-MB-Kanalseite steht der erste
+#: ``"channelId"`` in einem *empfohlenen* Kanal, nicht im eigenen. Das Muster
+#: lieferte fuer @Bankless prompt ``UCCRxYlYOmLE2l5wxs3ckJtg`` statt
+#: ``UCAl9Ld79qaZxp9JzEOwd3aA`` — der Feed lief danach ins Leere und der teure
+#: API-Rueckfall sprang an. Ein Beinahe-Fehlschlag, den erst der Live-Lauf zeigte.
+_CHANNEL_ID_PATTERNS = (
+    re.compile(
+        r'<link\s+rel="canonical"\s+href="https://www\.youtube\.com/channel/(UC[\w-]{20,})"'
+    ),
+    re.compile(r'<meta\s+itemprop="identifier"\s+content="(UC[\w-]{20,})"'),
+    re.compile(r'"externalId"\s*:\s*"(UC[\w-]{20,})"'),
+)
+
+
+async def _channel_id_from_page(client: httpx.AsyncClient, handle: str) -> str | None:
+    """Kanal-ID aus der oeffentlichen Kanalseite lesen — 0 API-Einheiten.
+
+    Bewusst hinter ``forHandle`` (das ist autoritativ) und bewusst **vor** der
+    100-Einheiten-Suche. Schlaegt es fehl, faellt der Aufrufer weiter durch; ein
+    Scrape darf ein Ergebnis liefern, aber keins verhindern.
+
+    Nicht gratis im Sinne von billig: die Kanalseite ist ~2,3 MB. Sie ist der Weg,
+    der auch dann noch traegt, wenn Schluessel oder Kontingent tot sind — genau
+    der Zustand, in dem der Umbau entstanden ist.
+    """
+    try:
+        # Ohne dieses Cookie landet der Abruf aus der EU auf consent.youtube.com,
+        # und die 34 kB Zustimmungsseite enthaelt keine Kanal-ID (gemessen
+        # 2026-08-28). Als Header gesetzt, damit es nicht an der httpx-Version
+        # haengt, die `cookies=` je nach Fassung nicht mehr pro Request annimmt.
+        resp = await client.get(
+            f"https://www.youtube.com/@{handle}", headers={"Cookie": "SOCS=CAI"}
+        )
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    for pattern in _CHANNEL_ID_PATTERNS:
+        match = pattern.search(resp.text)
+        if match:
+            return match.group(1)
     return None
 
 
@@ -197,7 +385,12 @@ def _video_to_document(
 ) -> CanonicalDocument:
     """Convert a YouTube video + transcript into a CanonicalDocument."""
     url = f"https://www.youtube.com/watch?v={video.video_id}"
-    text = transcript or video.description or ""
+    # Die Beschreibung ist der Rueckfall, wenn kein Transkript da ist. Sie wird
+    # auf dieselbe Laenge gekappt wie ein Transkript — der Atom-Feed liefert sie
+    # vollstaendig, nicht mehr als 143-Zeichen-Schnipsel.
+    description = (video.description or "")[:_MAX_TRANSCRIPT_CHARS]
+    text = transcript or description
+    text_source = "transcript" if transcript else ("description" if text else None)
     published = None
     if video.published_at:
         try:
@@ -220,6 +413,7 @@ def _video_to_document(
             channel_id=video.channel_id,
             channel_name=video.channel_title,
             thumbnail_url=video.thumbnail_url,
+            text_source=text_source,
         ),
     )
 
@@ -255,8 +449,12 @@ async def fetch_youtube_channel(
             extra={
                 "channel": channel_url,
                 "videos": len(videos),
+                # Vorher an der Textlaenge geraten (>200) — das zaehlte ab dem
+                # Feed-Umbau volle Beschreibungen mit. Jetzt das explizite Signal.
                 "with_transcript": sum(
-                    1 for d in documents if d.raw_text and len(d.raw_text) > 200
+                    1
+                    for d in documents
+                    if d.youtube_meta and d.youtube_meta.text_source == "transcript"
                 ),
             },
         )

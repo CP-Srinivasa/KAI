@@ -60,6 +60,13 @@ class YouTubeVideoMeta(BaseModel):
     view_count: int | None = None
     like_count: int | None = None
     thumbnail_url: str | None = None
+    #: Woher ``raw_text`` stammt: ``"transcript"`` oder ``"description"``.
+    #: Ohne dieses Feld ist beides nur an der Laenge zu unterscheiden — und seit
+    #: die Uploads aus dem Atom-Feed kommen, liefert der volle Beschreibungstexte
+    #: (~1400 Zeichen statt der 143 des API-Schnipsels). Eine Laengenheuristik
+    #: haelt das nicht mehr auseinander. ``youtube_meta`` ist eine JSON-Spalte,
+    #: das Feld kostet deshalb keine Migration.
+    text_source: str | None = None
 
 
 class PodcastEpisodeMeta(BaseModel):

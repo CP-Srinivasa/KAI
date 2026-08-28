@@ -887,6 +887,36 @@ def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
     )
 
 
+# Zwei VOLLSTAENDIGE Abfragen statt einer zusammengesetzten: SQL per f-String
+# aufzubauen ist auch dann ein schlechtes Muster, wenn die Bausteine konstant
+# sind — der Static-Scan (bandit B608) hat recht, und ein Literal kostet nichts.
+#
+# Vorrangig das explizite Herkunfts-Feld ``youtube_meta.text_source``, das der
+# Adapter seit der Kosten-Leiter schreibt. Die Laengen-Heuristik bleibt NUR fuer
+# Altzeilen ohne dieses Feld: Beschreibungen aus dem Feed sind ~1400 statt 143
+# Zeichen lang und von einem Transkript nicht mehr an der Laenge zu unterscheiden.
+_YT_COVERAGE_SQL_BY_SOURCE = (
+    "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
+    "SUM(CASE "
+    "WHEN json_extract(youtube_meta, '$.text_source') = 'transcript' THEN 1 "
+    "WHEN json_extract(youtube_meta, '$.text_source') IS NULL "
+    "AND length(coalesce(raw_text, '')) >= ? THEN 1 "
+    "ELSE 0 END) "
+    "FROM canonical_documents "
+    "WHERE source_type = ? AND fetched_at >= ? "
+    "GROUP BY 1"
+)
+
+#: Rueckfall fuer SQLite-Builds ohne JSON1 — schwaechere Messung statt gar keiner.
+_YT_COVERAGE_SQL_BY_LENGTH = (
+    "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
+    "SUM(CASE WHEN length(coalesce(raw_text, '')) >= ? THEN 1 ELSE 0 END) "
+    "FROM canonical_documents "
+    "WHERE source_type = ? AND fetched_at >= ? "
+    "GROUP BY 1"
+)
+
+
 def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[HealthIssue]:
     """EINGANGSSTROM #4: kommen YouTube-Videos MIT Inhalt an, oder nur mit Titel?
 
@@ -909,19 +939,23 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         .replace(tzinfo=None)
         .isoformat(sep=" ")
     )
-    try:
+
+    def _query(sql: str) -> list[Any]:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
         try:
-            rows = con.execute(
-                "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
-                "SUM(CASE WHEN length(coalesce(raw_text, '')) >= ? THEN 1 ELSE 0 END) "
-                "FROM canonical_documents "
-                "WHERE source_type = ? AND fetched_at >= ? "
-                "GROUP BY 1",
-                (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start),
+            return con.execute(
+                sql, (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start)
             ).fetchall()
         finally:
             con.close()
+
+    try:
+        try:
+            rows = _query(_YT_COVERAGE_SQL_BY_SOURCE)
+        except sqlite3.OperationalError:
+            # SQLite ohne JSON1 (aeltere Builds): lieber die schwaechere Messung
+            # als gar keine — und sichtbar hier dokumentiert, nicht still.
+            rows = _query(_YT_COVERAGE_SQL_BY_LENGTH)
     except sqlite3.Error as exc:
         return [
             HealthIssue(
