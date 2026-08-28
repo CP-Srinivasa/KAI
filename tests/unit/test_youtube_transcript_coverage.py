@@ -19,6 +19,7 @@ echte Modell.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,17 +43,34 @@ DESCRIPTION = "x" * 143
 SHORTEST_REAL_TRANSCRIPT = "y" * 315
 
 
-def _db(tmp_path: Path, rows: list[tuple[str, str, str, datetime]]) -> Path:
-    """Eine minimale, aber echte SQLite-Datei — kein Mock der Datenbank."""
+def _meta(text_source: str | None) -> str | None:
+    """``youtube_meta`` so, wie SQLAlchemy die JSON-Spalte schreibt."""
+    return None if text_source is None else json.dumps({"text_source": text_source})
+
+
+def _db(
+    tmp_path: Path,
+    rows: list[tuple[str, str, str, datetime]],
+    *,
+    text_source: str | None = None,
+) -> Path:
+    """Eine minimale, aber echte SQLite-Datei — kein Mock der Datenbank.
+
+    ``text_source=None`` erzeugt Altzeilen ohne ``youtube_meta``; dort greift die
+    Laengen-Heuristik. Mit gesetztem Wert greift das explizite Signal.
+    """
     path = tmp_path / "kai.db"
     con = sqlite3.connect(path)
     con.execute(
         "CREATE TABLE canonical_documents ("
-        "author TEXT, raw_text TEXT, source_type TEXT, fetched_at TEXT)"
+        "author TEXT, raw_text TEXT, source_type TEXT, fetched_at TEXT, youtube_meta TEXT)"
     )
     con.executemany(
-        "INSERT INTO canonical_documents VALUES (?, ?, ?, ?)",
-        [(a, t, st, ts.replace(tzinfo=None).isoformat(sep=" ")) for a, t, st, ts in rows],
+        "INSERT INTO canonical_documents VALUES (?, ?, ?, ?, ?)",
+        [
+            (a, t, st, ts.replace(tzinfo=None).isoformat(sep=" "), _meta(text_source))
+            for a, t, st, ts in rows
+        ],
     )
     con.commit()
     con.close()
@@ -261,7 +279,7 @@ def test_query_columns_exist_in_the_real_schema() -> None:
 
     columns = set(CanonicalDocumentModel.__table__.columns.keys())
 
-    assert {"author", "raw_text", "source_type", "fetched_at"} <= columns
+    assert {"author", "raw_text", "source_type", "fetched_at", "youtube_meta"} <= columns
 
 
 def test_probe_is_wired_into_the_health_report() -> None:
@@ -273,3 +291,59 @@ def test_probe_is_wired_into_the_health_report() -> None:
     source = inspect.getsource(health_check.run_health_check_report)
 
     assert "_check_youtube_transcript_coverage(" in source
+
+
+# ── Herkunfts-Signal schlaegt Laenge (Kopplung zum Atom-Feed-Umbau) ──────
+
+
+def test_long_description_is_not_mistaken_for_a_transcript(tmp_path: Path) -> None:
+    """Die Regression, die der Feed-Umbau sonst genau hier ausgeloest haette.
+
+    Der Atom-Feed liefert volle Beschreibungen (~1400 Zeichen). Ohne das
+    ``text_source``-Feld haette die Laengen-Heuristik sie als Transkript gezaehlt
+    und die Wache waere gruen geworden, waehrend nichts ankommt.
+    """
+    long_description = "x" * 1400
+    db = _db(
+        tmp_path,
+        [
+            ("Bankless", long_description, "youtube_channel", NOW - timedelta(hours=1)),
+            ("Coin Bureau", long_description, "youtube_channel", NOW - timedelta(hours=2)),
+            ("CryptosRUs", long_description, "youtube_channel", NOW - timedelta(hours=3)),
+        ],
+        text_source="description",
+    )
+
+    issues = _check_youtube_transcript_coverage(_url(db), NOW)
+
+    assert len(issues) == 1
+    assert "0/3" in issues[0].message
+
+
+def test_short_transcript_is_counted_when_the_source_says_so(tmp_path: Path) -> None:
+    """Umgekehrt: ein kurzes Transkript zaehlt, auch wenn die Laenge dagegen spraeche."""
+    db = _db(
+        tmp_path,
+        [
+            ("Bankless", "kurz, aber echt", "youtube_channel", NOW - timedelta(hours=1)),
+            ("Coin Bureau", "auch kurz", "youtube_channel", NOW - timedelta(hours=2)),
+            ("CryptosRUs", "ebenfalls", "youtube_channel", NOW - timedelta(hours=3)),
+        ],
+        text_source="transcript",
+    )
+
+    assert _check_youtube_transcript_coverage(_url(db), NOW) == []
+
+
+def test_legacy_rows_without_the_field_still_use_the_length_heuristic(tmp_path: Path) -> None:
+    """Altbestand hat kein ``youtube_meta`` — dort bleibt die Laenge das Beste, was da ist."""
+    db = _db(
+        tmp_path,
+        [
+            ("Bankless", SHORTEST_REAL_TRANSCRIPT, "youtube_channel", NOW - timedelta(hours=1)),
+            ("Coin Bureau", "z" * 9000, "youtube_channel", NOW - timedelta(hours=2)),
+            ("CryptosRUs", "z" * 8000, "youtube_channel", NOW - timedelta(hours=3)),
+        ],
+    )
+
+    assert _check_youtube_transcript_coverage(_url(db), NOW) == []

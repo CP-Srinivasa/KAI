@@ -909,12 +909,26 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         .replace(tzinfo=None)
         .isoformat(sep=" ")
     )
-    try:
+    # Vorrangig das explizite Herkunfts-Feld (`youtube_meta.text_source`), das der
+    # Adapter seit dem Atom-Feed-Umbau schreibt. Die Laengen-Heuristik bleibt NUR
+    # fuer Altzeilen ohne dieses Feld: seit die Uploads aus dem Feed kommen, sind
+    # Beschreibungen ~1400 statt 143 Zeichen lang und von einem Transkript nicht
+    # mehr an der Laenge zu unterscheiden.
+    counted_by_source = (
+        "SUM(CASE "
+        "WHEN json_extract(youtube_meta, '$.text_source') = 'transcript' THEN 1 "
+        "WHEN json_extract(youtube_meta, '$.text_source') IS NULL "
+        "AND length(coalesce(raw_text, '')) >= ? THEN 1 "
+        "ELSE 0 END)"
+    )
+    counted_by_length = "SUM(CASE WHEN length(coalesce(raw_text, '')) >= ? THEN 1 ELSE 0 END)"
+
+    def _query(counter: str) -> list[Any]:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
         try:
-            rows = con.execute(
+            return con.execute(
                 "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
-                "SUM(CASE WHEN length(coalesce(raw_text, '')) >= ? THEN 1 ELSE 0 END) "
+                f"{counter} "
                 "FROM canonical_documents "
                 "WHERE source_type = ? AND fetched_at >= ? "
                 "GROUP BY 1",
@@ -922,6 +936,14 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
             ).fetchall()
         finally:
             con.close()
+
+    try:
+        try:
+            rows = _query(counted_by_source)
+        except sqlite3.OperationalError:
+            # SQLite ohne JSON1 (aeltere Builds): lieber die schwaechere Messung
+            # als gar keine — und sichtbar hier dokumentiert, nicht still.
+            rows = _query(counted_by_length)
     except sqlite3.Error as exc:
         return [
             HealthIssue(
