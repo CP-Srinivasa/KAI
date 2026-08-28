@@ -31,6 +31,13 @@ from typing import Any
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
+from app.alerts.youtube_transcript_coverage import (
+    COVERAGE_WINDOW_HOURS,
+    TRANSCRIPT_MIN_CHARS,
+    ChannelCoverage,
+    classify_coverage,
+    render_message,
+)
 from app.audit.stream_validation import AuditStreamName, load_audit_stream
 from app.core.runtime_identity import (
     checkout_stable_for_s,
@@ -811,6 +818,20 @@ def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) ->
     ]
 
 
+def _sqlite_path_or_none(db_url: str) -> Path | None:
+    """Der Dateipfad hinter einer SQLite-URL, sonst ``None``.
+
+    Bewusst geteilt von allen DB-Sonden hier: waere die Ableitung zweimal
+    geschrieben, wuerde eine Haertung nur eine Kopie erreichen und die andere
+    stillschweigend zurueckbleiben.
+    """
+    prefix_pos = db_url.find(":///")
+    if "sqlite" not in db_url.split("://", 1)[0] or prefix_pos == -1:
+        return None
+    db_path = Path(db_url[prefix_pos + 4 :].split("?", 1)[0])
+    return db_path if db_path.exists() else None
+
+
 def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
     """EINGANGSSTROM #3: schreibt ueberhaupt noch jemand nach ``canonical_documents``?
 
@@ -824,12 +845,9 @@ def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
     schweigt dort, statt etwas zu behaupten (dokumentierte Abdeckungsgrenze,
     kein stiller Ausfall: auf dem Pi ist ``DB_URL`` sqlite).
     """
-    prefix_pos = db_url.find(":///")
-    if "sqlite" not in db_url.split("://", 1)[0] or prefix_pos == -1:
-        return []
-    db_path = Path(db_url[prefix_pos + 4 :].split("?", 1)[0])
-    if not db_path.exists():
-        # Frischer Checkout: keine DB ist kein Systembefund.
+    db_path = _sqlite_path_or_none(db_url)
+    if db_path is None:
+        # Nicht-SQLite oder frischer Checkout ohne DB: kein Systembefund.
         return []
 
     def _issue(message: str) -> list[HealthIssue]:
@@ -867,6 +885,65 @@ def _check_document_ingest(db_url: str, now: datetime) -> list[HealthIssue]:
         f"(Schwelle {DOCUMENT_INGEST_MAX_AGE_MIN}min) — kein eingehender Verkehr, "
         "Quelle pruefen (RSS/OKX/NewsData), NICHT die Pi-Synchronisation"
     )
+
+
+def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[HealthIssue]:
+    """EINGANGSSTROM #4: kommen YouTube-Videos MIT Inhalt an, oder nur mit Titel?
+
+    ``_check_document_ingest`` fragt, ob ueberhaupt jemand schreibt. Diese Sonde
+    fragt das Naechste, was vier Monate lang niemand gefragt hat: ob in dem, was
+    geschrieben wird, auch etwas drinsteht. Der Transkript-Abruf war seit einem
+    Bibliotheks-Upgrade tot, fing seinen eigenen Fehler ab und lieferte ``None``;
+    die Pipeline schrieb daraufhin die Video-Beschreibung. Ankunft gruen, Inhalt
+    leer, kein Log, kein Alarm.
+
+    Read-only ueber ``mode=ro`` wie die Nachbarsonde; Nicht-SQLite wird nicht
+    geraten, sondern geschwiegen (dokumentierte Abdeckungsgrenze).
+    """
+    db_path = _sqlite_path_or_none(db_url)
+    if db_path is None:
+        return []
+
+    window_start = (
+        (now.astimezone(UTC) - timedelta(hours=COVERAGE_WINDOW_HOURS))
+        .replace(tzinfo=None)
+        .isoformat(sep=" ")
+    )
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
+                "SUM(CASE WHEN length(coalesce(raw_text, '')) >= ? THEN 1 ELSE 0 END) "
+                "FROM canonical_documents "
+                "WHERE source_type = ? AND fetched_at >= ? "
+                "GROUP BY 1",
+                (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start),
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return [
+            HealthIssue(
+                severity="warning",
+                component="youtube_transcript_coverage",
+                message=f"canonical_documents nicht lesbar ({db_path}): {exc} — "
+                "Transkript-Abdeckung unbelegbar",
+            )
+        ]
+
+    verdict = classify_coverage(
+        [ChannelCoverage(str(name), int(total), int(hits or 0)) for name, total, hits in rows]
+    )
+    if verdict.is_healthy:
+        return []
+    return [
+        HealthIssue(
+            severity="warning",
+            component="youtube_transcript_coverage",
+            message=render_message(verdict, window_hours=COVERAGE_WINDOW_HOURS),
+        )
+    ]
 
 
 def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[HealthIssue]:
@@ -994,7 +1071,10 @@ def run_health_check_report(
     from app.core.settings import DBSettings
 
     try:
-        report.issues.extend(_check_document_ingest(DBSettings().url, now))
+        db_url = DBSettings().url
+        report.issues.extend(_check_document_ingest(db_url, now))
+        # Eingangsstrom #4 — Inhalt statt blosser Ankunft.
+        report.issues.extend(_check_youtube_transcript_coverage(db_url, now))
     except Exception:  # pragma: no cover - Konfigurationsfehler darf die Probe nicht toeten
         pass
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
