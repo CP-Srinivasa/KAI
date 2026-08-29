@@ -70,6 +70,17 @@ def test_a_wrong_prefix_is_a_defect_but_a_valid_one_is_not() -> None:
     assert plan_structural_defects("open_channel", {"node_pubkey_hex": "03" + "b" * 64}) == []
 
 
+def test_recipient_is_not_treated_as_an_address() -> None:
+    """A real false positive, caught in the suite: in the policy engine
+    ``recipient`` holds a PUBKEY. An address check there would reject a valid
+    keysend target, so the guard covers only the field names this codebase
+    actually uses for an on-chain address."""
+    assert plan_structural_defects("keysend", {"recipient": "02aa"}) == []
+    assert plan_structural_defects("send_coins", {"address": "bc1-x"}) == []
+    # ...while the field that IS an address stays covered.
+    assert plan_structural_defects("send_coins", {"addr": "bc1-x"})
+
+
 def test_zero_fee_is_flagged_never_rejected() -> None:
     """sat_per_vbyte=0 is unverified, not impossible — it must not block a call."""
     plan = {"node_pubkey_hex": REAL_PUBKEY, "sat_per_vbyte": 0}

@@ -40,6 +40,15 @@ _MIN_ADDRESS_LEN = 14
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
+#: Exactly the plan fields this codebase actually uses, and no synonyms. The
+#: temptation to also cover ``recipient`` was a false-positive waiting to happen:
+#: in the policy engine ``recipient`` holds a PUBKEY, not an address, so an
+#: address check there would reject a perfectly valid keysend target. A guard that
+#: guesses at field meaning is worse than one with a narrow, verified list.
+_PUBKEY_FIELDS = ("node_pubkey_hex", "dest_pubkey_hex")
+_TXID_FIELDS = ("funding_txid_str", "txid", "closing_txid")
+_ADDRESS_FIELDS = ("addr",)
+
 
 def _is_hex(value: str) -> bool:
     return bool(value) and all(ch in _HEX_DIGITS for ch in value)
@@ -87,17 +96,17 @@ def plan_structural_defects(action: str, plan: dict[str, Any]) -> list[str]:
     policy does not belong in a structural guard.
     """
     defects: list[str] = []
-    for field in ("node_pubkey_hex", "dest_pubkey_hex", "node_pubkey"):
+    for field in _PUBKEY_FIELDS:
         if field in plan:
             defect = _pubkey_defect(field, plan[field])
             if defect:
                 defects.append(defect)
-    for field in ("funding_txid_str", "txid", "closing_txid"):
+    for field in _TXID_FIELDS:
         if field in plan:
             defect = _txid_defect(field, plan[field])
             if defect:
                 defects.append(defect)
-    for field in ("addr", "address", "recipient"):
+    for field in _ADDRESS_FIELDS:
         if field in plan:
             defect = _address_defect(field, plan[field])
             if defect:
