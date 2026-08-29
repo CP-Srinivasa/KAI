@@ -117,10 +117,26 @@ async def test_no_spend_path_opens_when_only_receive_enabled() -> None:
     with patch("app.lightning.value_layer._build_client") as build:
         results = [
             await pay_invoice(payment_request="lnbc1", dry_run=False, confirm=True, cfg=cfg),
-            await keysend(dest_pubkey_hex="02abababababababababababababababababababababababababababababababab", amt_sat=10, dry_run=False, confirm=True, cfg=cfg),
-            await send_coins(addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", amount_sat=10, dry_run=False, confirm=True, cfg=cfg),
+            await keysend(
+                dest_pubkey_hex="02abababababababababababababababababababababababababababababababab",
+                amt_sat=10,
+                dry_run=False,
+                confirm=True,
+                cfg=cfg,
+            ),
+            await send_coins(
+                addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                amount_sat=10,
+                dry_run=False,
+                confirm=True,
+                cfg=cfg,
+            ),
             await open_channel(
-                node_pubkey_hex="02abababababababababababababababababababababababababababababababab", local_funding_sat=10, dry_run=False, confirm=True, cfg=cfg
+                node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
+                local_funding_sat=10,
+                dry_run=False,
+                confirm=True,
+                cfg=cfg,
             ),
             await close_channel(
                 funding_txid="ab", output_index=0, dry_run=False, confirm=True, cfg=cfg

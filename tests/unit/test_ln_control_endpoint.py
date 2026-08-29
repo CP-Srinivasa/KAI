@@ -52,7 +52,11 @@ def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
 def test_plan_mode_returns_plan_decision_and_hash(monkeypatch) -> None:
     _patch(monkeypatch, PolicyEnvelope.default())  # deny everything
     r = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
     assert r.status_code == 200
     b = r.json()
@@ -205,7 +209,11 @@ def test_missing_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> 
     _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
 
     assert response.status_code == 200
@@ -225,7 +233,11 @@ def test_corrupt_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> 
     _use_real_cap_reader(monkeypatch, path)
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
 
     assert response.json()["policy"]["decision"] == "denied"
@@ -244,7 +256,11 @@ def test_existing_empty_v2_cap_is_known_zero(tmp_path, monkeypatch) -> None:
     _use_real_cap_reader(monkeypatch, path)
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
 
     assert response.json()["policy"]["decision"] == "auto_execute"
