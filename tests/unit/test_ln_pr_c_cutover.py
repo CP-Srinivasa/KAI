@@ -200,7 +200,7 @@ def test_bl4_capital_freshness_reads_the_canonical_capital_grade_accessor(monkey
         calls.append("stale")
         return None, 999.0
 
-    params = {"addr": "bc1q", "amount_sat": 1000}
+    params = {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}
     with patch("app.lightning.cache.get_capital_grade_status", _fresh):
         ok = TestClient(_app()).post(_URL, json={"action": "send_coins", "params": params})
     with patch("app.lightning.cache.get_capital_grade_status", _stale):
@@ -314,11 +314,25 @@ def _ln_cfg(**kw: Any) -> LightningSettings:
             payment_request="lnbc10u1x", dry_run=False, confirm=True, cfg=cfg
         ),
         lambda cfg: vl.keysend(
-            dest_pubkey_hex="02ab", amt_sat=10, dry_run=False, confirm=True, cfg=cfg
+            dest_pubkey_hex="02abababababababababababababababababababababababababababababababab",
+            amt_sat=10,
+            dry_run=False,
+            confirm=True,
+            cfg=cfg,
         ),
-        lambda cfg: vl.send_coins(addr="bc1q", amount_sat=10, dry_run=False, confirm=True, cfg=cfg),
+        lambda cfg: vl.send_coins(
+            addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            amount_sat=10,
+            dry_run=False,
+            confirm=True,
+            cfg=cfg,
+        ),
         lambda cfg: vl.open_channel(
-            node_pubkey_hex="02ab", local_funding_sat=10, dry_run=False, confirm=True, cfg=cfg
+            node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
+            local_funding_sat=10,
+            dry_run=False,
+            confirm=True,
+            cfg=cfg,
         ),
         lambda cfg: vl.close_channel(
             funding_txid="ab", output_index=0, dry_run=False, confirm=True, cfg=cfg
@@ -344,7 +358,11 @@ async def test_spend_denied_when_v2_is_missing_but_legacy_v1_still_has_rows(monk
     assert not ln_ops_v2_path().exists()
     with patch("app.lightning.value_layer._build_client") as build:
         result = await vl.send_coins(
-            addr="bc1q", amount_sat=10, dry_run=False, confirm=True, cfg=_ln_cfg(pay_enabled=True)
+            addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            amount_sat=10,
+            dry_run=False,
+            confirm=True,
+            cfg=_ln_cfg(pay_enabled=True),
         )
     assert result.state == "error" and "migration" in result.detail
     build.assert_not_called()
@@ -433,7 +451,11 @@ def test_cockpit_denies_a_spend_early_when_the_money_journal_is_broken(monkeypat
     )
     monkeypatch.setattr(lc, "_fresh_capital_balance_sat", AsyncMock(return_value=1_000_000))
     r = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
     assert r.json()["policy"]["decision"] == "denied"
     assert "money journal" in r.json()["policy"]["reason"]
@@ -560,7 +582,7 @@ def test_mi2_read_path_redacts_legacy_secrets(tmp_path) -> None:
 
 def test_m18_intent_and_outcome_collapse_to_one_panel_row(tmp_path) -> None:
     path = tmp_path / "v2.jsonl"
-    plan = {"amount_sat": 1000, "addr": "bc1q"}
+    plan = {"amount_sat": 1000, "addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"}
     prepare_ln_intent("send_coins", plan=plan, intent_id="i1", path=path, now=_NOW)
     append_ln_outcome("send_coins", "executed", plan=plan, intent_id="i1", path=path, now=_NOW)
     prepare_ln_intent("send_coins", plan=plan, intent_id="open", path=path, now=_NOW)
@@ -602,7 +624,11 @@ def test_m13_envelope_denial_is_not_masked_by_capital_side_denials(monkeypatch) 
     _patch_cockpit(monkeypatch, PolicyEnvelope.default())  # erlaubt nichts
     monkeypatch.setattr(lc, "_fresh_capital_balance_sat", AsyncMock(return_value=None))
     r = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL,
+        json={
+            "action": "send_coins",
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
+        },
     )
     reason = r.json()["policy"]["reason"]
     assert reason == "action not allowed: send_coins"

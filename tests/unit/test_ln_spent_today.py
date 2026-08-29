@@ -166,7 +166,7 @@ def test_v2_ignores_non_spend_actions_and_other_days(tmp_path) -> None:
     prepare_ln_intent("create_invoice", plan={"value_sat": 1000}, intent_id="ci", path=p, now=NOW)
     prepare_ln_intent(
         "send_coins",
-        plan={"amount_sat": 5000, "addr": "bc1-x"},
+        plan={"amount_sat": 5000, "addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
         intent_id="long-past",
         path=p,
         # Outside BOTH windows (calendar day and the m-15 rolling 24 h).
@@ -185,7 +185,7 @@ def test_v2_m15_rolling_window_closes_the_utc_midnight_hop(tmp_path) -> None:
     p = tmp_path / "ops_v2.jsonl"
     before_midnight = datetime(2026, 7, 1, 23, 50, tzinfo=UTC)
     just_after = datetime(2026, 7, 2, 0, 10, tzinfo=UTC)
-    plan = {"amount_sat": 5000, "addr": "bc1-x"}
+    plan = {"amount_sat": 5000, "addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"}
     prepare_ln_intent("send_coins", plan=plan, intent_id="late", path=p, now=before_midnight)
     append_ln_outcome(
         "send_coins", "executed", plan=plan, intent_id="late", path=p, now=before_midnight
@@ -221,7 +221,7 @@ def test_v2_hash_chain_corruption_is_unknown(tmp_path) -> None:
     path = tmp_path / "ops_v2.jsonl"
     prepare_ln_intent(
         "send_coins",
-        plan={"amount_sat": 5000, "addr": "bc1-x"},
+        plan={"amount_sat": 5000, "addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
         intent_id="tampered",
         path=path,
         now=NOW,

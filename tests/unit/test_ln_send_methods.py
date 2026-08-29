@@ -38,7 +38,13 @@ _SENDS = [
     lambda c: close_channel(
         funding_txid="abcd", output_index=0, dry_run=False, confirm=False, cfg=c
     ),
-    lambda c: keysend(dest_pubkey_hex="02ab", amt_sat=100, dry_run=False, confirm=False, cfg=c),
+    lambda c: keysend(
+        dest_pubkey_hex="02abababababababababababababababababababababababababababababababab",
+        amt_sat=100,
+        dry_run=False,
+        confirm=False,
+        cfg=c,
+    ),
 ]
 
 
@@ -242,7 +248,11 @@ async def test_executed_error_is_audited_not_disabled(monkeypatch) -> None:
     # intent either: a non-event leaves no trace in the money journal.
     with patch("app.lightning.value_layer._build_client"):
         r = await send_coins(
-            addr="bc1q", amount_sat=1, dry_run=False, confirm=True, cfg=_cfg(False)
+            addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            amount_sat=1,
+            dry_run=False,
+            confirm=True,
+            cfg=_cfg(False),
         )
     assert audited == [] and r.intent_id == ""
     assert verify_ln_ops_ledger(ln_ops_v2_path())["records"] == 0
@@ -281,7 +291,7 @@ async def test_client_send_coins_wire() -> None:
     c = LndRestClient(
         base_url="https://x:8080", macaroon_hex="ab", transport=httpx.MockTransport(handler)
     )
-    r = await c.send_coins(addr="bc1q", amount_sat=1000)
+    r = await c.send_coins(addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", amount_sat=1000)
     assert r["txid"] == "deadbeef"
 
 

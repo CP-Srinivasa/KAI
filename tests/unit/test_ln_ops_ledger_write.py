@@ -181,7 +181,7 @@ def test_intent_persists_only_allowlisted_authorization(tmp_path) -> None:
     p = tmp_path / "ops.jsonl"
     prepare_ln_intent(
         "send_coins",
-        plan={"amount_sat": 1000, "addr": "bc1-secret"},
+        plan={"amount_sat": 1000, "addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"},
         intent_id="auth-1",
         authorization={
             "policy_decision": "needs_confirm",
@@ -199,7 +199,7 @@ def test_intent_persists_only_allowlisted_authorization(tmp_path) -> None:
         "plan_hash": "ab" * 32,
     }
     assert "must-never-persist" not in text
-    assert "bc1-secret" not in text
+    assert "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4" not in text
 
 
 def test_tamper_is_detected(tmp_path) -> None:

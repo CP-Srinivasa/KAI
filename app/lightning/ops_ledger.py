@@ -41,6 +41,7 @@ from typing import Any
 import portalocker
 
 from app.lightning.jsonl_tail import read_recent_jsonl
+from app.lightning.plan_guards import plan_structural_defects
 from app.truth.attestation import compute_attestation
 
 logger = logging.getLogger(__name__)
@@ -688,6 +689,14 @@ def prepare_ln_intent(
     durable write-ahead record means the caller must not touch the node.
     """
     moment = now or datetime.now(UTC)
+    # G2: reject structurally impossible plan values BEFORE they can be journalled
+    # and sealed. Fail-closed here is safe precisely because the checks admit no
+    # false positive -- see app/lightning/plan_guards for why the split exists.
+    defects = plan_structural_defects(action, plan)
+    if defects:
+        raise LightningOpsLedgerError(
+            f"refusing to journal a structurally impossible {action} plan: {'; '.join(defects)}"
+        )
     public = redact_ln_op_record(
         {
             "ts": moment.isoformat(),
