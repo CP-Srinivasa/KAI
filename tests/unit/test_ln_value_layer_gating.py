@@ -64,7 +64,7 @@ async def test_invoice_executes_only_when_enabled_and_not_dry_run() -> None:
 async def test_open_channel_disabled_when_kill_switch_off() -> None:
     with patch("app.lightning.value_layer._build_client") as build:
         r = await open_channel(
-            node_pubkey_hex="02ab",
+            node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
             local_funding_sat=50000,
             confirm=True,
             dry_run=False,
@@ -80,7 +80,7 @@ async def test_open_channel_needs_confirm_even_when_enabled_and_not_dry_run() ->
     # NOT broadcast — it only plans.
     with patch("app.lightning.value_layer._build_client") as build:
         r = await open_channel(
-            node_pubkey_hex="02ab",
+            node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
             local_funding_sat=50000,
             confirm=False,
             dry_run=False,
@@ -95,7 +95,7 @@ async def test_open_channel_executes_only_with_all_gates() -> None:
     client = _fake_client()
     with patch("app.lightning.value_layer._build_client", return_value=client):
         r = await open_channel(
-            node_pubkey_hex="02ab",
+            node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
             local_funding_sat=50000,
             confirm=True,
             dry_run=False,

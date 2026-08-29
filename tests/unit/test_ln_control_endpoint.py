@@ -52,7 +52,7 @@ def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
 def test_plan_mode_returns_plan_decision_and_hash(monkeypatch) -> None:
     _patch(monkeypatch, PolicyEnvelope.default())  # deny everything
     r = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
     )
     assert r.status_code == 200
     b = r.json()
@@ -68,7 +68,7 @@ def test_execute_denied_for_disallowed_action(monkeypatch) -> None:
         _URL,
         json={
             "action": "send_coins",
-            "params": {"addr": "bc1q", "amount_sat": 1000},
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
             "confirm": {"hotp": "x", "plan_hash": "y", "idempotency_key": "k"},
         },
     )
@@ -81,7 +81,7 @@ def test_execute_auto_within_envelope_is_inert(monkeypatch) -> None:
     )
     _patch(monkeypatch, env)
     client = TestClient(_app())
-    params = {"addr": "bc1q", "amount_sat": 1000}
+    params = {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}
     plan = client.post(_URL, json={"action": "send_coins", "params": params}).json()
     r = client.post(
         _URL,
@@ -116,7 +116,7 @@ def test_execute_auto_wrong_plan_hash_rejected(monkeypatch) -> None:
         _URL,
         json={
             "action": "send_coins",
-            "params": {"addr": "bc1q", "amount_sat": 1000},
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
             "confirm": {"hotp": "x", "plan_hash": "WRONG", "idempotency_key": "k"},
         },
     )
@@ -155,7 +155,7 @@ def test_capital_action_stale_node_state_is_denied(monkeypatch) -> None:
     _patch(monkeypatch, env)
     monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh_bal_none)
     client = TestClient(_app())
-    params = {"addr": "bc1q", "amount_sat": 1000}
+    params = {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}
     plan = client.post(_URL, json={"action": "send_coins", "params": params})
     assert plan.status_code == 200
     assert plan.json()["policy"]["decision"] == "denied"
@@ -205,7 +205,7 @@ def test_missing_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> 
     _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
     )
 
     assert response.status_code == 200
@@ -225,7 +225,7 @@ def test_corrupt_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> 
     _use_real_cap_reader(monkeypatch, path)
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
     )
 
     assert response.json()["policy"]["decision"] == "denied"
@@ -244,7 +244,7 @@ def test_existing_empty_v2_cap_is_known_zero(tmp_path, monkeypatch) -> None:
     _use_real_cap_reader(monkeypatch, path)
 
     response = TestClient(_app()).post(
-        _URL, json={"action": "send_coins", "params": {"addr": "bc1q", "amount_sat": 1000}}
+        _URL, json={"action": "send_coins", "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}}
     )
 
     assert response.json()["policy"]["decision"] == "auto_execute"
@@ -330,7 +330,7 @@ def test_execute_needs_confirm_rejects_bad_plan_hash(monkeypatch) -> None:
         _URL,
         json={
             "action": "send_coins",
-            "params": {"addr": "bc1q", "amount_sat": 1000},
+            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
             "confirm": {"hotp": "x", "plan_hash": "WRONG", "idempotency_key": "k"},
         },
     )

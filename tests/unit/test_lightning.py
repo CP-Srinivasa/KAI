@@ -528,11 +528,11 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
     calls = [
         ("create_invoice", lambda: vl.create_invoice(value_sat=10, dry_run=False, cfg=cfg)),
         ("pay_invoice", lambda: vl.pay_invoice(payment_request="lnbc10u1x", **gates)),
-        ("keysend", lambda: vl.keysend(dest_pubkey_hex="02ab", amt_sat=10, **gates)),
-        ("send_coins", lambda: vl.send_coins(addr="bc1q", amount_sat=10, **gates)),
+        ("keysend", lambda: vl.keysend(dest_pubkey_hex="02abababababababababababababababababababababababababababababababab", amt_sat=10, **gates)),
+        ("send_coins", lambda: vl.send_coins(addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", amount_sat=10, **gates)),
         (
             "open_channel",
-            lambda: vl.open_channel(node_pubkey_hex="02ab", local_funding_sat=10, **gates),
+            lambda: vl.open_channel(node_pubkey_hex="02abababababababababababababababababababababababababababababababab", local_funding_sat=10, **gates),
         ),
         ("close_channel", lambda: vl.close_channel(funding_txid="ab", output_index=0, **gates)),
         ("earnings_booking", lambda: eb.book_oracle_earnings(cfg=cfg)),
@@ -682,7 +682,7 @@ async def test_open_channel_uses_extended_timeout(monkeypatch) -> None:
         {"/v1/channels": httpx.Response(200, json={"funding_txid_bytes": "aa"})}
     )
     client = LndRestClient(base_url="https://x:8080", macaroon_hex="ab", transport=transport)
-    await client.open_channel(node_pubkey_hex="02aa", local_funding_sat=100_000)
+    await client.open_channel(node_pubkey_hex="03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", local_funding_sat=100_000)
     assert _KwargsCapturingAsyncClient.captured[-1]["timeout"] == OPEN_CHANNEL_TIMEOUT_SECONDS
 
 
@@ -710,7 +710,7 @@ async def test_transport_error_message_names_exception_class() -> None:
         base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
     )
     with pytest.raises(LightningUnavailableError, match="ReadTimeout"):
-        await client.open_channel(node_pubkey_hex="02aa", local_funding_sat=100_000)
+        await client.open_channel(node_pubkey_hex="03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", local_funding_sat=100_000)
 
 
 # --- channels: pending-open surfaced, best-effort ---------------------------------
