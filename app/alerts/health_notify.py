@@ -45,6 +45,9 @@ __all__ = [
 
 HEALTH_NOTIFY_STATE_FILE = Path("artifacts") / ".health_check_last_notification"
 
+#: Query-Parameter der Auslöser-ID (siehe app/observability/operator_feedback.py).
+TRIGGER_QUERY_PARAM = "t"
+
 # Ein Daueralarm darf nicht still verschwinden: einmal pro Tag wird auch ein
 # unveränderter Befund wiederholt. 24 h statt 30 min senkt die Last um Faktor
 # ~48, ohne einen Befund je aus dem Kanal zu verlieren.
@@ -105,6 +108,27 @@ def reassert_minutes_for(issues: Any, *, default_minutes: float) -> float:
     return min(windows) if windows else default_minutes
 
 
+def _dashboard_link(trigger_id: str) -> str:
+    """Klickbarer Link mit Auslöser-ID — oder nichts.
+
+    Ohne ihn muss der Operator die ID von Hand an eine URL haengen. Eine
+    Rueckkante, die eine Bastelarbeit verlangt, misst Reibung statt Nutzen:
+    eine Null waere dann nicht die Antwort auf die Frage, sondern die Antwort
+    auf die Umstaendlichkeit ihrer Messung. Fehlt die URL, bleibt es bei der
+    nackten ID — geraten wird nichts.
+    """
+    try:
+        from app.core.settings import get_settings
+
+        base = str(get_settings().operator.telegram_dashboard_url or "").strip()
+    except Exception:  # noqa: BLE001 — ein Alarm darf an der Konfiguration nicht scheitern
+        return ""
+    if not base:
+        return ""
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{TRIGGER_QUERY_PARAM}={trigger_id}"
+
+
 def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
     """Alarmtext aus dem Report. Rein, damit der Inhalt prüfbar ist.
 
@@ -123,11 +147,14 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
         f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
     )
     trigger_id = new_trigger_id(seed=issues_fingerprint(report.issues))
+    link = _dashboard_link(trigger_id)
     # G8, Rueckkante: ohne einen Schluessel, den Befund UND Handlung tragen,
     # ist "der Operator hat nach dem Alarm etwas getan" nicht von "er hat
     # zufaellig etwas getan" zu unterscheiden. Genau daran scheitert jede
     # Nutzenaussage - 141 Stroeme messen KAI, null messen seinen Nutzen.
-    lines.append(f"Trigger: {trigger_id}  (Dashboard-Link anhaengen: ?t={trigger_id})")
+    lines.append(f"Trigger: {trigger_id}")
+    if link:
+        lines.append(link)
     grouped = partition(report.issues)
     for alert_class in sorted(grouped, key=lambda c: c.rank):
         items = grouped[alert_class]
@@ -192,6 +219,36 @@ def _send(text: str, *, sender: Any) -> bool:
     from app.alerts.notify import send_operator_notification
 
     return bool(asyncio.run(send_operator_notification(text)))
+
+
+def _record_emitted(text: str, *, fingerprint: str, finding_count: int) -> None:
+    """Schreibe die ausgesendete Auslöser-ID in den Operator-Strom (G8).
+
+    Best effort: ein Protokollfehler darf einen zugestellten Alarm nicht
+    nachtraeglich entwerten.
+    """
+    try:
+        from datetime import UTC, datetime
+
+        from app.observability.operator_feedback import (
+            OPERATOR_ACTION_STREAM,
+            record_trigger_emitted,
+        )
+
+        line = next((ln for ln in text.splitlines() if ln.startswith("Trigger: ")), "")
+        trigger_id = line.split(" ", 1)[1].strip() if " " in line else ""
+        if not trigger_id:
+            return
+        record_trigger_emitted(
+            Path("artifacts") / OPERATOR_ACTION_STREAM,
+            now=datetime.now(UTC),
+            trigger_id=trigger_id,
+            channel="telegram",
+            finding_count=finding_count,
+            fingerprint=fingerprint,
+        )
+    except Exception:  # noqa: BLE001
+        return
 
 
 def dispatch_health_notification(
@@ -259,6 +316,7 @@ def dispatch_health_notification(
     text = build_health_alert_text(report, lookback_hours=lookback_hours)
     ok = _send(text, sender=sender)
     if ok:
+        _record_emitted(text, fingerprint=fingerprint, finding_count=len(report.issues))
         _write_state(path, now_ts=now, fingerprint=fingerprint)
         console.print("[green]Telegram notification sent.[/green]")
     else:
