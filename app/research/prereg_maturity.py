@@ -495,12 +495,24 @@ def _maturity_deadline(spec: dict[str, Any], now: datetime) -> tuple[int, dict[s
     """
     window_end = _as_dt(spec.get("window_end_utc"))
     if window_end is None:
-        return 0, {"window_end_utc": None, "days_remaining": 0}, STATE_EVAL_CHECK_DUE
+        return (
+            0,
+            {"window_end_utc": None, "days_remaining": 0, "days_overdue": None},
+            STATE_EVAL_CHECK_DUE,
+        )
     remaining = max((window_end - now).total_seconds(), 0.0)
     days_remaining = int(remaining // 86400)
+    # Wie lange ist die Frist schon zu? Ohne diese Zahl liest sich ein Claim am
+    # ersten und am achtundzwanzigsten Tag identisch — K1 (00c75a76) meldete
+    # vom 2026-08-03 bis zum 2026-08-31 taeglich denselben Satz, und genau
+    # deshalb fiel nicht auf, dass er festhing. Eine Frist ohne sichtbares
+    # Alter ist eine Erinnerung, kein Druck.
+    overdue = max((now - window_end).total_seconds(), 0.0)
+    days_overdue = int(overdue // 86400)
     detail: dict[str, Any] = {
         "window_end_utc": str(spec.get("window_end_utc")),
         "days_remaining": days_remaining,
+        "days_overdue": days_overdue,
     }
     state = STATE_EVAL_CHECK_DUE if now >= window_end else STATE_NOT_DUE
     return 0, detail, state
@@ -1261,7 +1273,9 @@ def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
                     f"— in KEINER Wachliste, {where}"
                 )
         elif row.get("kind") == "deadline":
-            evidence = f"Fenster endete {window_end}"
+            overdue = (row.get("per_source") or {}).get("days_overdue")
+            seit = f" (seit {overdue} Tagen)" if isinstance(overdue, int) and overdue > 0 else ""
+            evidence = f"Fenster endete {window_end}{seit}"
         else:
             n_exact = row.get("n_exact")
             n_shown = n_exact if n_exact is not None else row.get("n_proxy")

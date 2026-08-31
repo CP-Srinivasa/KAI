@@ -728,6 +728,87 @@ def _check_resolution_batch_concentration(ctx: LintContext) -> list[Violation]:
     ]
 
 
+def _check_closure_without_substantive_verdict(ctx: LintContext) -> list[Violation]:
+    """TL-013: ein Abschluss OHNE Sachverdikt darf keinen Sachentscheid mitfuehren.
+
+    Operator-Auflage 2026-08-31 zu K1: es soll ausgeschlossen sein, dass aus
+    einem manuellen Abschluss spaeter rueckwirkend ein Messfehler oder eine
+    Unmessbarkeit konstruiert wird. Die Angriffsflaeche dafuer ist strukturell:
+    die Verdikt-KLASSE steckt im fuehrenden Token des Textes, das
+    ``result.substantive_verdict`` daneben ist frei. Widersprechen sich beide,
+    darf jeder spaetere Leser sich aussuchen, welches gilt.
+
+    Geprueft wird deshalb das FELD, nicht die Prosa. Eine Wortsuche im
+    Verdikt-Text waere hier ein Fehlalarm-Generator: der K1-Entwurf sagt
+    ausdruecklich „weder MET noch NOT_MET sind hiermit behauptet" — genau die
+    ehrliche Klarstellung wuerde bestraft. Derselbe Fehlertyp wie bei den
+    bit-genauen Detektoren, die dreimal an runden Zahlen falsch anschlugen.
+
+    Zweistufig (TL-008-Praezedenz): ein WIDERSPRUCH ist ERROR; ein FEHLENDES
+    Feld ist INFO — der H2-Record vom 2026-08-08 traegt es nicht, das ist eine
+    historische Baseline mit erwartetem Neuzuwachs 0 und kein Daueralarm.
+    """
+    vdir = ctx.verdicts_dir
+    if not vdir.is_dir():
+        return []
+    from app.research.prereg_maturity import (
+        VERDICT_CLASS_CLOSED_NO_VERDICT,
+        _terminal_verdict_class,
+    )
+
+    conflicts: list[dict[str, str]] = []
+    missing: list[str] = []
+    for path in sorted(vdir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))["payload"]
+        except (ValueError, KeyError, OSError):
+            continue  # TL-011 wacht ueber die Integritaet der Datei selbst
+        if _terminal_verdict_class(payload.get("verdict")) != VERDICT_CLASS_CLOSED_NO_VERDICT:
+            continue
+        result = payload.get("result")
+        if not isinstance(result, dict) or "substantive_verdict" not in result:
+            missing.append(path.stem)
+            continue
+        stated = str(result.get("substantive_verdict"))
+        if stated != "NONE":
+            conflicts.append({"report": path.stem, "substantive_verdict": stated})
+
+    out: list[Violation] = []
+    if conflicts:
+        out.append(
+            Violation(
+                invariant_id="TL-013",
+                severity=Severity.ERROR,
+                dataset="research/verdicts",
+                message=(
+                    f"{len(conflicts)} Verdict-Report(s) sind als Abschluss OHNE "
+                    "Sachverdikt klassifiziert, tragen im result aber ein "
+                    "substantive_verdict != NONE: "
+                    + ", ".join(f"{c['report']}={c['substantive_verdict']}" for c in conflicts[:5])
+                    + " — Klasse und Feld widersprechen sich; einer von beiden ist unwahr"
+                ),
+                evidence={"count": len(conflicts), "reports": conflicts[:_EVIDENCE_CAP]},
+            )
+        )
+    if missing:
+        out.append(
+            Violation(
+                invariant_id="TL-013",
+                severity=Severity.INFO,
+                dataset="research/verdicts",
+                message=(
+                    f"{len(missing)} Abschluss-Report(s) ohne Feld "
+                    "result.substantive_verdict, alle aus der Zeit vor der Auflage "
+                    "vom 2026-08-31 — historische Baseline, erwarteter Neuzuwachs 0. "
+                    "Die Regel bleibt aktiv: ein einziger neuer Report ohne das Feld "
+                    "gehoert nachgetragen, nicht toleriert"
+                ),
+                evidence={"count": len(missing), "reports": missing[:_EVIDENCE_CAP]},
+            )
+        )
+    return out
+
+
 # ── Registry (Operator-Liste 07-11, Reihenfolge beibehalten) ─────────────────
 
 REGISTRY: tuple[Invariant, ...] = (
@@ -834,6 +915,18 @@ REGISTRY: tuple[Invariant, ...] = (
         "truth",
         "active",
         _check_resolution_batch_concentration,
+    ),
+    # Nachregistrierung 2026-08-31: Auflage des Operators zum K1-Abschluss —
+    # ein Abschluss ohne Sachverdikt darf spaeter nicht zu einem Sachentscheid
+    # oder zu einer Unmessbarkeits-Behauptung umgedeutet werden.
+    Invariant(
+        "TL-013",
+        "Abschluss ohne Sachverdikt traegt widersprechenden substantive_verdict",
+        ("research/verdicts",),
+        Severity.ERROR,
+        "truth",
+        "active",
+        _check_closure_without_substantive_verdict,
     ),
 )
 

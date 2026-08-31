@@ -286,11 +286,43 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     )
 
 
-def test_keine_stillen_abschluesse(registry: dict[str, Any], entries: list[dict[str, Any]]) -> None:
-    """RETIRE/NO_WATCH_REQUIRED sind in dieser Runde ausdrücklich nicht vergeben."""
-    states = {e["decision_state"] for e in entries}
-    assert "RETIRE" not in states
-    assert "NO_WATCH_REQUIRED" not in states
+def test_kein_zustand_ohne_definition_wird_benutzt(
+    registry: dict[str, Any], entries: list[dict[str, Any]]
+) -> None:
+    """Ein Name, dessen Definition woertlich "Nicht vergeben." lautet, ist keine Klasse.
+
+    Vorher stand hier eine feste Liste aus RETIRE und NO_WATCH_REQUIRED. Die
+    Regel dahinter ist aber allgemeiner und wichtiger: wer einen undefinierten
+    Namen benutzt, DEFINIERT ihn dabei — und zwar unter dem Druck, einen Claim
+    schliessen zu wollen. Genau diese Versuchung gab es am 2026-08-31 bei K1,
+    wo RETIRE oberflaechlich gepasst haette ("wegen Irrelevanz beendet").
+    Die Sperre haengt jetzt an der Definition, nicht an zwei Namen.
+    """
+    undefiniert = {
+        name
+        for name, text in registry["decision_states"].items()
+        if text.strip() == "Nicht vergeben."
+    }
+    assert undefiniert, "Erwartet mindestens einen als 'Nicht vergeben.' markierten Zustand"
+
+    benutzt = {e["decision_state"] for e in entries}
+    verletzung = undefiniert & benutzt
+    assert not verletzung, (
+        f"Zustaende ohne Definition in Benutzung: {sorted(verletzung)} - erst definieren "
+        "(Pflichtfelder, Abgrenzung, Praezedenz), dann vergeben."
+    )
+
+
+def test_undefinierte_zustaende_sind_auch_nicht_auswaehlbar(registry: dict[str, Any]) -> None:
+    """Gegenprobe im Code: sie duerfen gar nicht erst zur Wahl stehen."""
+    from app.research.terminal_classes import TERMINAL_CLASSES
+
+    undefiniert = {
+        name
+        for name, text in registry["decision_states"].items()
+        if text.strip() == "Nicht vergeben."
+    }
+    assert not (undefiniert & set(TERMINAL_CLASSES))
     assert registry["decision_states"]["RETIRE"] == "Nicht vergeben."
 
 
