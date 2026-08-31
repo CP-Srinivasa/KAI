@@ -216,6 +216,28 @@ def _check_mock_in_fills(ctx: LintContext) -> list[Violation]:
     ]
 
 
+def _row_names_real_price_source(rec: dict[str, Any]) -> bool:
+    """Traegt die Fill-Zeile selbst den Beleg einer realen Preisquelle?
+
+    Der Paper-Pfad schreibt ``price_source`` samt ``observed_market_price`` und
+    ``market_data_is_stale`` auf den ``order_filled``-Datensatz. Das ist
+    dieselbe Aussage wie die ``market_data_source``-Note im Loop-Audit, nur an
+    der Zeile statt am Zyklus — und fuer Fills ohne Zyklus der EINZIGE Ort, an
+    dem sie steht.
+
+    Fail-closed: leer, fehlend, ``mock`` oder als ``stale`` markiert ist KEIN
+    Beleg. Ein stale Preis kann ein Fallback sein, und ``fallback_1h_last``
+    gilt schon im Screener-Weg nicht als Nachweis.
+    """
+    raw = rec.get("price_source")
+    if not isinstance(raw, str):
+        return False
+    source = raw.strip().lower()
+    if not source or source == "mock":
+        return False
+    return rec.get("market_data_is_stale") is not True
+
+
 def _screener_entry_basis(
     rec: dict[str, Any], symbol: str, basis_by_candidate: dict[str, str]
 ) -> str | None:
@@ -278,11 +300,28 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     # Join auf, 4/4 mit ``binance_1m_decision`` — der maschinelle Join reproduziert
     # die Sichtpruefung oben, statt sie zu ersetzen.
     #
-    # FAIL-CLOSED bleibt in drei Richtungen: ein ausdrueckliches ``mock`` im
-    # Loop-Audit wird NICHT von einem positiven Screener-Beleg ueberstimmt; ein
-    # ``fallback_1h_last`` ist kein Beleg; und ein ``document_id`` ohne
-    # auffindbaren Candidate bleibt Verletzung. Aendert sich das document_id-
-    # Format, greift der Join nicht mehr und die Warnung kehrt zurueck.
+    # V3 (2026-08-31, Sichtpruefung der 3 offenen Faelle): alle drei sind
+    # SOL/USDT, und ZWEI davon tragen den Beleg auf der Fill-Zeile selbst —
+    # ``price_source: "bybit"`` mit ``observed_market_price``,
+    # ``price_observed_at_utc`` und ``market_data_is_stale: false``:
+    #   ord_d5dd3e65eb62  26.08. 22:13   98,859405  observed 98,81  bybit
+    #   ord_1c519cf64261  30.08. 23:41  101,289330  observed 101,34 bybit
+    # Geflaggt blieben sie, weil die Regel den Beleg NUR ueber Loop-Audit
+    # (order_id) und Screener-Candidate (document_id) suchte, waehrend diese
+    # Fills aus der real_analysis-Route mit UUID-``document_id`` kommen und
+    # keinen Loop-Zyklus haben. Exakt derselbe Fehlertyp wie die V2-Korrektur
+    # und wie die Close-Attribution (#621): der Beleg war da, gesucht wurde am
+    # falschen Ort. Der dritte Fill (ord_4481d390e203, 24.08.) traegt gar kein
+    # ``price_source`` und bleibt zu Recht Verletzung.
+    #
+    # FAIL-CLOSED bleibt in fuenf Richtungen: ein ausdrueckliches ``mock`` im
+    # Loop-Audit wird NICHT von einem positiven Screener- oder Zeilen-Beleg
+    # ueberstimmt; ein ``fallback_1h_last`` ist kein Beleg; ein ``document_id``
+    # ohne auffindbaren Candidate bleibt Verletzung; ein leeres oder fehlendes
+    # ``price_source`` ist kein Beleg (live tragen 6 Band-Fills ``""``); und ein
+    # als ``market_data_is_stale`` markierter Preis zaehlt nicht, auch wenn die
+    # Quelle real heisst. Aendert sich das document_id-Format, greift der Join
+    # nicht mehr und die Warnung kehrt zurueck.
     source_by_order: dict[str, str] = {}
     for cyc in iter_jsonl_tolerant(ctx.loop_audit):
         oid = cyc.get("order_id")
@@ -318,9 +357,13 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
         if src and src != "mock":
             real_source += 1
             continue
-        # Kein Zyklus-Beleg: Screener-Route ueber document_id -> candidate_id.
-        # Ein ausdrueckliches ``mock`` (src == "mock") ueberspringt diesen Weg —
-        # der Zusatz-Join darf einen Negativ-Befund nie aufweichen.
+        # Kein Zyklus-Beleg: erst die Zeile selbst, dann die Screener-Route
+        # ueber document_id -> candidate_id. Ein ausdrueckliches ``mock``
+        # (src == "mock") ueberspringt BEIDE Wege — kein Zusatz-Beleg darf
+        # einen Negativ-Befund aufweichen.
+        if src is None and _row_names_real_price_source(rec):
+            real_source += 1
+            continue
         if src is None and _screener_entry_basis(rec, sym, basis_by_candidate) == _BASIS_REAL:
             real_source += 1
             continue
