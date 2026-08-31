@@ -64,17 +64,35 @@ SCAN_ROOT = REPO_ROOT / "app"
 #: Ein Stromname ist ein vollstaendiger Basename, kein Suffix-Fragment.
 STREAM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_]*\.jsonl$")
 
+#: Ueberwachungsformen. GENAU EINE gilt je Strom.
+#:
+#: Bis 31.08. kannte dieses Gate nur ``freshness`` — und zwang damit einen
+#: ereignisgetriebenen Strom in eine Kadenz-Tabelle. Das Ergebnis war eine
+#: Zeile mit der Schwelle ``0``: heute wirkungslos (die Datei steht in keiner
+#: ``files_to_check``-Liste), spaeter eine Landmine (traegt sie jemand ein,
+#: gilt jede vorhandene Datei sofort und dauerhaft als veraltet). Ein Vertrag
+#: muss die ECHTE Ueberwachungssemantik ausdruecken, nicht eine Form
+#: befriedigen, die zufaellig nur Freshness kennt.
+MONITORING_FRESHNESS = "freshness"
+MONITORING_ALTERNATIVE = "alternative_watcher"
+MONITORING_MODES = (MONITORING_FRESHNESS, MONITORING_ALTERNATIVE)
+
 #: Pflichtfelder eines Vertrags. Die letzten drei sind die Reifegrad-Achse
 #: (G4 Task 4): wer merkt den Ausfall, nach welcher Zeit, und welche
 #: Entscheidung waere dann anders.
 REQUIRED_FIELDS = (
     "reader",
     "failure_consequence",
-    "freshness_check",
     "failure_would_be_noticed_by",
     "time_to_notice",
     "decision_that_would_change",
 )
+
+#: Zusaetzliche Pflichtfelder je Ueberwachungsform.
+REQUIRED_BY_MODE: dict[str, tuple[str, ...]] = {
+    MONITORING_FRESHNESS: ("freshness_check",),
+    MONITORING_ALTERNATIVE: ("watcher",),
+}
 
 #: Felder, die eine echte Aussage tragen muessen. ``reader`` und
 #: ``freshness_check`` werden strukturell geprueft, nicht sprachlich.
@@ -110,6 +128,7 @@ EMPTY_ANSWERS = frozenset(
 )
 
 MIN_REFERENCING_MODULES = 2
+
 
 #: Die Freshness-Registry nennt jeden ueberwachten Strom beim Namen. Eine blosse
 #: Schwellen-Zeile zaehlt deshalb NICHT als Konsument — sonst waere die Regel
@@ -228,16 +247,21 @@ def discover_streams(scan_root: Path, repo_root: Path | None = None) -> dict[str
     return streams
 
 
-def freshness_registry(health_check_path: Path) -> set[str]:
-    """Lies die Schluessel von ``_FRESHNESS_PER_FILE_MIN`` per AST.
+def freshness_registry(health_check_path: Path) -> dict[str, float | None]:
+    """Lies ``_FRESHNESS_PER_FILE_MIN`` per AST — Schluessel UND Schwelle.
+
+    Die Schwelle wird mitgelesen, seit klar ist, dass eine Zeile mit dem Wert
+    ``0`` kein Vertrag ist, sondern ein Platzhalter, der eine Form befriedigt
+    (siehe ``THRESHOLD_MUST_BE_POSITIVE``). ``None`` heisst: Wert nicht
+    literal lesbar — das ist ein Befund, keine Erlaubnis.
 
     Bewusst ohne Import: das Gate laeuft in CI vor der App-Installation und
     darf keine App-Seiteneffekte ausloesen.
     """
     if not health_check_path.exists():
-        return set()
+        return {}
     tree = ast.parse(health_check_path.read_text(encoding="utf-8"))
-    keys: set[str] = set()
+    out: dict[str, float | None] = {}
     for node in ast.walk(tree):
         target_names: list[str] = []
         value: ast.expr | None = None
@@ -249,10 +273,53 @@ def freshness_registry(health_check_path: Path) -> set[str]:
             value = node.value
         if "_FRESHNESS_PER_FILE_MIN" not in target_names or not isinstance(value, ast.Dict):
             continue
-        for key in value.keys:
-            if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                keys.add(key.value)
-    return keys
+        for key, val in zip(value.keys, value.values, strict=False):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            threshold: float | None = None
+            if isinstance(val, ast.Constant) and isinstance(val.value, (int, float)):
+                threshold = float(val.value)
+            elif (
+                isinstance(val, ast.UnaryOp)
+                and isinstance(val.op, ast.USub)
+                and isinstance(val.operand, ast.Constant)
+                and isinstance(val.operand.value, (int, float))
+            ):
+                threshold = -float(val.operand.value)
+            out[key.value] = threshold
+    return out
+
+
+def health_probe_wiring(health_check_path: Path) -> set[str]:
+    """Namen der Sonden, die in ``run_health_check_report`` WIRKLICH aufgerufen werden.
+
+    Ein alternativer Waechter, den niemand aufruft, ist eine Behauptung. Die
+    Verdrahtung wird deshalb am Aufrufer geprueft, nicht an der Existenz der
+    Funktion — das ist derselbe Unterschied wie zwischen „gemergt" und „live".
+    """
+    if not health_check_path.exists():
+        return set()
+    tree = ast.parse(health_check_path.read_text(encoding="utf-8"))
+    wired: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "run_health_check_report":
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                wired.add(inner.func.id)
+            elif isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute):
+                for arg in inner.args:
+                    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+                        wired.add(arg.func.id)
+    return wired
+
+
+def defined_functions(path: Path) -> set[str]:
+    """Alle in einer Datei definierten Funktionsnamen."""
+    if not path.exists():
+        return set()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
 
 def _prose_is_empty(text: Any) -> bool:
@@ -323,15 +390,38 @@ def evaluate(
     streams: dict[str, Stream],
     baseline: set[str],
     contracts: dict[str, Any],
-    freshness_keys: set[str],
+    freshness: dict[str, float | None],
     repo_root: Path,
+    *,
+    wired_probes: set[str] | None = None,
+    defined_probes: set[str] | None = None,
 ) -> Verdict:
     """Vergleiche Ist-Bestand gegen Baseline und pruefe die Vertraege des Zuwachses."""
     verdict = Verdict()
     inert = set(contracts.get("intentionally_inert", []))
     entries = contracts.get("streams", {})
+    wired = wired_probes if wired_probes is not None else set()
+    defined = defined_probes if defined_probes is not None else set()
 
     verdict.disappeared = sorted(baseline - set(streams))
+
+    # REPO-WEITE INVARIANTE: jede Schwelle in der Freshness-Tabelle muss echt
+    # sein. Eine 0 ist keine Kadenz, sondern ein Platzhalter — heute
+    # wirkungslos, spaeter ein Daueralarm. Das gilt fuer den BESTAND, nicht nur
+    # fuer den Zuwachs: die Landmine liegt dort, wo sie eingetragen wurde.
+    for fname, threshold in sorted(freshness.items()):
+        if threshold is None:
+            verdict.violations.append(
+                f"{fname}: Freshness-Schwelle ist kein lesbarer Zahlwert — "
+                "eine Schwelle, die das Gate nicht lesen kann, ist keine Zusage"
+            )
+        elif threshold <= 0:
+            verdict.violations.append(
+                f"{fname}: Freshness-Schwelle {threshold:g} ist nicht positiv. "
+                "Ereignisgetriebene Stroeme gehoeren NICHT in _FRESHNESS_PER_FILE_MIN — "
+                f'sie deklarieren "monitoring": "{MONITORING_ALTERNATIVE}" mit einem '
+                "benannten Waechter (docs/runbooks/stream_consumer_contract.md)"
+            )
 
     for name in sorted(set(streams) - baseline):
         stream = streams[name]
@@ -350,7 +440,14 @@ def evaluate(
             continue
 
         problems: list[str] = []
-        missing = [f for f in REQUIRED_FIELDS if f not in entry]
+        mode = entry.get("monitoring", MONITORING_FRESHNESS)
+        if mode not in MONITORING_MODES:
+            problems.append(
+                f"monitoring='{mode}' ist unbekannt — erlaubt: {', '.join(MONITORING_MODES)}"
+            )
+            mode = MONITORING_FRESHNESS
+        required = REQUIRED_FIELDS + REQUIRED_BY_MODE[mode]
+        missing = [f for f in required if f not in entry]
         if missing:
             problems.append(f"Pflichtfelder fehlen: {', '.join(sorted(missing))}")
 
@@ -389,10 +486,9 @@ def evaluate(
                 "nicht dasselbe einzige Modul sein (die Freshness-Registry zaehlt nicht mit)"
             )
 
-        if not stream.dynamic and stream.name not in freshness_keys:
-            problems.append(
-                "kein Eintrag in _FRESHNESS_PER_FILE_MIN (app/alerts/health_check.py) — "
-                "ohne Freshness-Zeile kann der Tod des Stroms nicht auffallen"
+        if not stream.dynamic:
+            problems.extend(
+                _monitoring_problems(stream.name, entry, mode, freshness, wired, defined)
             )
 
         if problems:
@@ -401,6 +497,57 @@ def evaluate(
             verdict.accepted.append(name)
 
     return verdict
+
+
+def _monitoring_problems(
+    name: str,
+    entry: dict[str, Any],
+    mode: str,
+    freshness: dict[str, float | None],
+    wired: set[str],
+    defined: set[str],
+) -> list[str]:
+    """GENAU EINE gueltige Ueberwachungssemantik je Strom — Freshness ODER Waechter.
+
+    Nicht beides: zwei Zusagen fuer dieselbe Sache driften auseinander, und
+    dann kassiert die eine die Reparatur der anderen (dieselbe Lehre wie bei
+    doppelt implementierten Invarianten).
+    """
+    problems: list[str] = []
+    in_registry = name in freshness
+
+    if mode == MONITORING_FRESHNESS:
+        if not in_registry:
+            problems.append(
+                "kein Eintrag in _FRESHNESS_PER_FILE_MIN (app/alerts/health_check.py) — "
+                "ohne Freshness-Zeile kann der Tod des Stroms nicht auffallen; "
+                f'ereignisgetriebene Stroeme deklarieren "monitoring": "{MONITORING_ALTERNATIVE}"'
+            )
+        else:
+            threshold = freshness[name]
+            if threshold is None or threshold <= 0:
+                problems.append(
+                    "Freshness-Schwelle ist nicht positiv — das ist ein Platzhalter, kein Vertrag"
+                )
+        return problems
+
+    watcher = entry.get("watcher")
+    if not isinstance(watcher, str) or not watcher:
+        problems.append("watcher fehlt oder ist leer")
+        return problems
+    if in_registry:
+        problems.append(
+            f"'{name}' hat einen alternativen Waechter UND eine Zeile in "
+            "_FRESHNESS_PER_FILE_MIN — genau eine Semantik, nicht zwei"
+        )
+    if watcher not in defined:
+        problems.append(f"Waechter '{watcher}' ist in app/alerts/health_check.py nicht definiert")
+    elif watcher not in wired:
+        problems.append(
+            f"Waechter '{watcher}' wird in run_health_check_report NICHT aufgerufen — "
+            "ein Waechter, den niemand ruft, ist eine Behauptung"
+        )
+    return problems
 
 
 def load_baseline(path: Path) -> set[str]:
@@ -452,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
         load_contracts(CONTRACTS_PATH),
         freshness_registry(HEALTH_CHECK_PATH),
         REPO_ROOT,
+        wired_probes=health_probe_wiring(HEALTH_CHECK_PATH),
+        defined_probes=defined_functions(HEALTH_CHECK_PATH),
     )
 
     if args.json:
