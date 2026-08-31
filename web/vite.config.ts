@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-import { localDevBanner, resolveApiBase } from "./src/lib/resolveApiBase";
+import { localDevBanner, resolveApiBase } from "./src/lib/resolveApiBase.js";
 
 // Backend base URL fuer den DEV-SERVER-PROXY. Wird NICHT ins Bundle injiziert:
 // produktiv fetcht das Frontend Same-Origin relativ (Asset-Base /dashboard/).
