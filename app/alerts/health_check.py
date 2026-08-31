@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.alerts.youtube_transcript_coverage import (
@@ -114,6 +115,11 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # Verbindungsabbruch, die Schwelle deckt Reconnect-Backoff (max 60 s) und
     # einen Service-Restart bequem ab.
     "liquidation_stream_heartbeat.txt": 30,
+    # G6: der Zustellpfad der Alarme selbst. Er schrieb bisher NICHTS —
+    # 15 von 19 FAIL-Alarmen erreichten den Operator nie, und kein Strom
+    # hielt das fest. Der Healthcheck-Timer setzt jede Stunde ein
+    # Lebenszeichen (HEARTBEAT_INTERVAL_S); 180 min = drei verpasste.
+    "alert_delivery_audit.jsonl": 180,
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
@@ -980,6 +986,42 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
     ]
 
 
+def _check_alert_delivery(adir: Path, now: datetime) -> list[HealthIssue]:
+    """Ist der Alarm ANGEKOMMEN? (G6, A4-017)
+
+    Bis hierher prueft jede Sonde, ob KAI etwas zu melden hat. Keine prueft, ob
+    die Meldung den Operator erreicht. Live gemessen ueber 30 Tage: von 19
+    FAIL-Alarmen des Premium-Healthchecks erreichten **15 den Operator nie**
+    (78,9 %) — alle mit ``Temporary failure in name resolution``, alle im
+    naechtlichen Fenster 01:04-01:25, kein einziger wegen eines fehlenden
+    Tokens. Der Alarm war weg, und nichts sagte es.
+
+    Ein ausstehender Zustellversuch ist ab ``UNDELIVERED_WARN_MIN`` ein Befund
+    und ab ``UNDELIVERED_CRITICAL_MIN`` ein kritischer — letzterer beim
+    Dreifachen der gemessenen DNS-Luecke (10 min am 13.08.), damit die
+    naechtliche Neueinwahl allein ihn nicht ausloest.
+    """
+    verdict = classify_delivery(load_records(adir / DELIVERY_STREAM), now=now)
+    if verdict.status == "ok":
+        return []
+    age = (
+        f"{verdict.oldest_age_min:.0f}min"
+        if verdict.oldest_age_min is not None
+        else "unbekanntes Alter"
+    )
+    reasons = "; ".join(verdict.reasons) or "kein Grund protokolliert"
+    return [
+        HealthIssue(
+            severity="critical" if verdict.status == "critical" else "warning",
+            component="alert_delivery",
+            message=(
+                f"{verdict.undelivered} Alarm(e) nicht zugestellt, aeltester {age} "
+                f"- Grund: {reasons}. Ein Alarm, der nicht ankommt, ist kein Alarm."
+            ),
+        )
+    ]
+
+
 def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[HealthIssue]:
     """Ledger ↔ Aufsicht: jeder versiegelte Claim ist entschieden, beobachtet oder Befund.
 
@@ -1116,6 +1158,7 @@ def run_health_check_report(
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_alert_delivery(adir, now))
     report.issues.extend(_check_prereg_reconciliation(adir))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data

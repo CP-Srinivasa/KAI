@@ -111,9 +111,13 @@ EMPTY_ANSWERS = frozenset(
 
 MIN_REFERENCING_MODULES = 2
 
-#: Die Freshness-Registry nennt jeden ueberwachten Strom beim Namen. Sie zaehlt
-#: deshalb NICHT als Konsument — sonst waere die Regel "mindestens zwei Module"
-#: durch genau die Zeile erfuellt, die dieses Gate ohnehin verlangt.
+#: Die Freshness-Registry nennt jeden ueberwachten Strom beim Namen. Eine blosse
+#: Schwellen-Zeile zaehlt deshalb NICHT als Konsument — sonst waere die Regel
+#: "mindestens zwei Module" durch genau die Zeile erfuellt, die dieses Gate
+#: ohnehin verlangt. Traegt dieselbe Datei aber eine echte Sonde (sie importiert
+#: die Stromkonstante oder ruft einen Leser), dann IST sie ein Konsument — der
+#: Health-Check ist der natuerliche Ort dafuer. Unterschieden wird an genau
+#: dieser Frage, nicht am Dateinamen.
 FRESHNESS_REGISTRY_MODULE = "app/alerts/health_check.py"
 
 
@@ -155,6 +159,13 @@ def discover_streams(scan_root: Path, repo_root: Path | None = None) -> dict[str
     base = repo_root if repo_root is not None else scan_root.parent
     static: dict[str, set[str]] = {}
     dynamic: dict[str, set[str]] = {}
+    # Modul-Konstanten, die einen Stromnamen halten (``DELIVERY_STREAM = "x.jsonl"``),
+    # und die Namen, die ein Modul benutzt — damit ein Leser, der die Konstante
+    # importiert statt das Literal zu wiederholen, als Referenz zaehlt. Ohne das
+    # bestraft das Gate genau das saubere Muster und belohnt kopierte Strings.
+    const_to_stream: dict[str, str] = {}
+    names_used: dict[str, set[str]] = {}
+    trees: dict[str, ast.Module] = {}
 
     for path in sorted(scan_root.rglob("*.py")):
         try:
@@ -162,6 +173,20 @@ def discover_streams(scan_root: Path, repo_root: Path | None = None) -> dict[str
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defekte Datei
             continue
         module = _module_key(path, base)
+        trees[module] = tree
+        for node in tree.body:
+            targets: list[str] = []
+            value: ast.expr | None = None
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                targets, value = [node.target.id], node.value
+            elif isinstance(node, ast.Assign):
+                targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+                value = node.value
+            if not targets or not isinstance(value, ast.Constant):
+                continue
+            if isinstance(value.value, str) and STREAM_NAME_RE.match(value.value):
+                for name in targets:
+                    const_to_stream[name] = value.value
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 if not node.value.endswith(".jsonl"):
@@ -178,6 +203,22 @@ def discover_streams(scan_root: Path, repo_root: Path | None = None) -> dict[str
                 if consts and consts[-1].endswith(".jsonl"):
                     family = f"{module}::*{consts[-1]}"
                     dynamic.setdefault(family, set()).add(module)
+
+    # Zweiter Durchgang: wer eine stromtragende Konstante benutzt, referenziert
+    # den Strom. Der erste Durchgang musste dafuer erst ALLE Konstanten kennen.
+    for module, tree in trees.items():
+        used: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                used.add(node.id)
+            elif isinstance(node, ast.ImportFrom):
+                used.update(alias.asname or alias.name for alias in node.names)
+            elif isinstance(node, ast.Attribute):
+                used.add(node.attr)
+        names_used[module] = used
+        for const_name, stream_name in const_to_stream.items():
+            if const_name in used and stream_name in static:
+                static[stream_name].add(module)
 
     streams = {
         name: Stream(name=name, modules=tuple(sorted(mods))) for name, mods in static.items()
@@ -231,12 +272,51 @@ def _reader_references(reader: str, stream: Stream, repo_root: Path) -> tuple[bo
     except UnicodeDecodeError:  # pragma: no cover - defekte Datei
         return False, f"reader '{reader}' ist nicht lesbar"
     needle = stream.name.split("::", 1)[-1].lstrip("*")
-    if needle not in source:
+    if needle not in source and not _references_via_constant(reader_path, stream, repo_root):
         return False, (
             f"reader '{reader}' nennt '{stream.name}' nicht — "
             "eine Deklaration auf Papier ist kein Konsument"
         )
     return True, ""
+
+
+def _references_via_constant(reader_path: Path, stream: Stream, repo_root: Path) -> bool:
+    """True, wenn der Leser den Strom ueber eine importierte Konstante nennt.
+
+    Das Haus-Muster ist ``from app.x import STREAM`` statt eines wiederholten
+    Literals. Ein Gate, das nur Literale sieht, bestraft genau dieses Muster.
+    """
+    try:
+        tree = ast.parse(reader_path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, OSError):  # pragma: no cover
+        return False
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    for module in stream.modules:
+        source_path = repo_root / module
+        try:
+            source_tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):  # pragma: no cover
+            continue
+        for node in source_tree.body:
+            targets: list[str] = []
+            value: ast.expr | None = None
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                targets, value = [node.target.id], node.value
+            elif isinstance(node, ast.Assign):
+                targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+                value = node.value
+            if not isinstance(value, ast.Constant) or value.value != stream.name:
+                continue
+            if any(t in names for t in targets):
+                return True
+    return False
 
 
 def evaluate(
@@ -280,14 +360,20 @@ def evaluate(
                     f"{field_name} ist leer oder sagt 'niemand/nie/keine' ⇒ NEEDS_CONSUMER_FIRST"
                 )
 
-        consumer_modules = tuple(m for m in stream.modules if m != FRESHNESS_REGISTRY_MODULE)
+        registry_is_consumer = _references_via_constant(
+            repo_root / FRESHNESS_REGISTRY_MODULE, stream, repo_root
+        )
+        consumer_modules = tuple(
+            m for m in stream.modules if m != FRESHNESS_REGISTRY_MODULE or registry_is_consumer
+        )
 
         reader = entry.get("reader")
         if isinstance(reader, str) and reader:
-            if reader.replace("\\", "/") == FRESHNESS_REGISTRY_MODULE:
+            if reader.replace("\\", "/") == FRESHNESS_REGISTRY_MODULE and not registry_is_consumer:
                 problems.append(
-                    "reader ist die Freshness-Registry selbst — eine Ueberwachungszeile "
-                    "ist kein Konsument; der Leser gehoert in ein eigenes Modul"
+                    "reader ist die Freshness-Registry, und dort steht nur die "
+                    "Schwellen-Zeile — eine Ueberwachungszeile ist kein Konsument; "
+                    "der Leser gehoert in ein eigenes Modul oder eine echte Sonde"
                 )
             else:
                 ok, why = _reader_references(reader, stream, repo_root)
