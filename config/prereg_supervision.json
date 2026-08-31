@@ -201,7 +201,7 @@
     }
   ],
   "not_in_this_register": {
-    "00c75a76a2b0e78b": "K1 - bereits in Wachliste (kind=deadline) und am 2026-08-27 von der Parallelsession vollstaendig aufbereitet: KAI-mirror/k1_entscheidungsgrundlage_20260827.md. Verdikt offen, Zaehlung nur durch den Operator moeglich."
+    "00c75a76a2b0e78b": "K1 - TERMINAL GESCHLOSSEN 2026-08-31 als INCONCLUSIVE_BY_TIMEOUT, substantive_verdict=NONE, Truth-seq 114. Kein Registereintrag noetig: die verifizierte Truth-Kette schliesst den Claim, der Zustand ist RESOLVED. Die kontaktabhaengige Messkampagne wurde per Operator-Policy beendet; es wurde nie gezaehlt und wird nicht mehr gezaehlt. Historische Aufbereitung (damaliger Stand, nicht mehr handlungsleitend): KAI-mirror/k1_entscheidungsgrundlage_20260827.md."
   },
   "known_gap": "Dieses Register liegt im Repo und ist damit versioniert und im Git-Backup. Die Laufzeit-Evidenz unter artifacts/research/supervision/ ist es NICHT: kai_backup_artifacts.sh fuehrt diesen Pfad nicht in DEFAULT_SOURCES. Bewusst nicht hier geaendert - scripts/kai_backup_* liegt unter dem Parallel-Claim 20260827-stab-05c-backup-manifest.",
   "aggregates": {

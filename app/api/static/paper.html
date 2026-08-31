@@ -234,7 +234,7 @@
         <a href="#pilot"><span class="n">▚▚</span>Pilot audit</a>
       </nav>
       <div class="ledger boot b4">
-        truth-ledger&nbsp; seq <b>30</b>&nbsp; :: &nbsp;chain <span class="ok">VERIFY OK records=30</span>&nbsp; :: &nbsp;canonical-edge payload <b>a524d6c1…c33c91</b>&nbsp; :: &nbsp;anchored → Bitcoin / OpenTimestamps
+        truth-ledger snapshot 2026-07&nbsp; :: &nbsp;seq <b>30</b>&nbsp; :: &nbsp;chain <span class="ok">VERIFY OK records=30</span>&nbsp; :: &nbsp;canonical-edge payload <b>a524d6c1…c33c91</b>&nbsp; :: &nbsp;anchored → Bitcoin / OpenTimestamps
       </div>
     </div>
   </header>
@@ -407,10 +407,10 @@
         <h3>Verifiability &amp; the pre-sealed criterion</h3>
         <p>The data basis is sha256-sealed (append-only snapshot, 2026-07-02); the per-signal result table is deliberately <strong>not</strong> published — symbol-date pairs would re-identify the channel — but is contained in the sealed <code class="inline">k1_final.json</code> and can be verified on reasoned request.</p>
         <div class="verdict neutral">
-          <span class="chip neutral">Pre-sealed :: seq 30 :: window closed :: verdict outstanding</span>
+          <span class="chip neutral">Pre-sealed :: window closed 2026-08-03 :: sealed 2026-08-31 at seq 114 :: INCONCLUSIVE_BY_TIMEOUT — no substantive verdict</span>
           <p class="big">≥ 5 qualified inbound requests (written, each with a concrete audit wish for a nameable signal provider <em>or</em> a clear willingness-to-pay signal) within 30 days of this publication. If &lt; 5: <strong>kill</strong> for the "public single-channel audit" offering. Not counted: spam, self-promotion by signal providers without an audit mandate, internal requests.</p>
-          <p class="big">The criterion was registered 2026-07-04 with a 30-day horizon, so its window closed on <strong>2026-08-03</strong>. The verdict is <strong>not yet sealed</strong> — and this page will not imply otherwise. A criterion whose window has passed is neither met nor failed until it has been measured and sealed; saying so plainly is the point of the method described above.</p>
-          <p class="meta">prereg_id = 00c75a76a2b0e78b :: truth-ledger seq 30 :: chain <span class="ok">VERIFY OK records=30</span> :: status = window closed 2026-08-03, verdict outstanding</p>
+          <p class="big">The criterion was registered 2026-07-04 with a 30-day horizon, so its window closed on <strong>2026-08-03</strong>. On 2026-08-31 it was sealed as <strong>INCONCLUSIVE_BY_TIMEOUT</strong>: the window elapsed and no substantive verdict was formed within it. That is the whole claim. It states <em>neither</em> that the threshold of five qualified inbound requests was met <em>nor</em> that it was missed, and it does not assert that the criterion was impossible to measure. No count was ever performed, and this page will not imply one. Context, not cause: operational observation of this offering was discontinued by operator policy on the same day — nothing about the truth of the claim follows from that.</p>
+          <p class="meta">prereg_id = 00c75a76a2b0e78b :: truth-ledger seq 114 :: chain <span class="ok">VERIFY OK records=114</span> :: terminal_class = INCONCLUSIVE_BY_TIMEOUT :: substantive_verdict = NONE :: attestation a4f046fe…b831a333</p>
         </div>
       </section>
 
