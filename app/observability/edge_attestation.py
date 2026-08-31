@@ -24,6 +24,8 @@ Read-only: no execution, no capital, no mutation of the audit streams.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -80,6 +82,55 @@ def git_code_state(repo_dir: str | Path | None = None) -> dict[str, Any] | None:
     return {"commit": commit, "dirty": dirty}
 
 
+#: Sentinel: „dieser Aufruf sagt nichts ueber die Konfiguration".
+#:
+#: Braucht es, weil ``_assemble_payload`` BEIDE Wege bedient. Wuerde beim
+#: Verifizieren einer Alt-Attestierung ein ``config``-Schluessel entstehen, den
+#: sie nie hatte, aendert sich ihr Payload — und jede historische Zeile fiele
+#: mit „hash mismatch" durch. Der Schluessel entsteht deshalb nur, wenn er
+#: uebergeben wird; beim Verifizieren wird der GESIEGELTE Wert durchgereicht.
+_CONFIG_ABSENT = object()
+
+#: Repo-verwaltete Konfiguration, die in eine Messung eingeht.
+#: **Nicht** dabei: ``.env``. Geheimnisse gehoeren in kein Payload, auch nicht
+#: als Hash — ein Hash ueber eine kurze, ratbare Menge ist kein Schutz.
+CONFIG_GLOBS: tuple[str, ...] = ("config/*.yaml", "config/*.json")
+
+
+def config_state(repo_dir: str | Path | None = None) -> dict[str, Any] | None:
+    """Hash der repo-verwalteten Konfiguration, oder ``None`` (fail-soft).
+
+    **Der Befund (R2-15).** Attestierungen pinnen heute die Eingaben und den
+    Code — die Konfiguration nirgends. Ein versiegelter Report ist damit nicht
+    reproduzierbar: dieselben Zeilen, derselbe Commit, andere Schwellen in
+    ``config/`` ergeben eine andere Zahl, und nichts im Payload sagt es.
+
+    Liefert ``{"files": {relpath: sha256}, "config_sha256": <rollup>}``.
+    Der Rollup ist der SHA-256 ueber die kanonische Form der Dateiliste, damit
+    ein Verifizierer EINEN Wert vergleichen kann statt acht.
+
+    Fail-soft wie ``git_code_state``: fehlt das Verzeichnis, ist der Stempel
+    ``None`` — eine Attestierung darf an ihrem eigenen Stempel nicht scheitern.
+    """
+    root = Path(repo_dir) if repo_dir is not None else Path.cwd()
+    try:
+        files: dict[str, str] = {}
+        for pattern in CONFIG_GLOBS:
+            for path in sorted(root.glob(pattern)):
+                if not path.is_file():
+                    continue
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                files[path.relative_to(root).as_posix()] = digest
+    except OSError:
+        return None
+    if not files:
+        return None
+    rollup = hashlib.sha256(
+        json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {"files": files, "config_sha256": rollup}
+
+
 def _assemble_payload(
     report: EvidenceWindowReport,
     inputs: list[dict[str, Any]],
@@ -88,6 +139,7 @@ def _assemble_payload(
     min_sample: int,
     p_threshold_bps: float,
     until: str | None,
+    config: Any = _CONFIG_ABSENT,
 ) -> dict[str, Any]:
     """Build the attested payload from parts. ONE assembler for attest AND verify.
 
@@ -102,6 +154,9 @@ def _assemble_payload(
         "until": until,
     }
     payload["code"] = code
+    # Nur setzen, wenn der Aufrufer etwas zu sagen hat (siehe _CONFIG_ABSENT).
+    if config is not _CONFIG_ABSENT:
+        payload["config"] = config
     return payload
 
 
@@ -147,6 +202,7 @@ def build_canonical_edge_payload(
         min_sample=min_sample,
         p_threshold_bps=p_threshold_bps,
         until=until.isoformat() if until is not None else None,
+        config=config_state(repo_dir),
     )
     return report, payload
 
@@ -279,10 +335,46 @@ def _verify_pinned(
         min_sample=min_sample,
         p_threshold_bps=p_threshold_bps,
         until=until_raw if isinstance(until_raw, str) else None,
+        # Durchreichen, nicht neu bilden: die Konfiguration von HEUTE hat mit
+        # der versiegelten Zeile nichts zu tun. Und war kein config-Schluessel
+        # versiegelt, darf auch keiner entstehen.
+        config=payload["config"] if "config" in payload else _CONFIG_ABSENT,
     )
     recomputed_hash = compute_attestation(recomputed_payload)["hash"]
     if recomputed_hash == stored_hash:
         return VerifyResult(True, seq, f"VERIFY OK seq={seq}", "ok")
+
+    # Ein Mismatch hat ZWEI sehr verschiedene Ursachen, und sie zu vermengen
+    # macht die Verifikation unbrauchbar:
+    #
+    #   (a) das Siegel ist gebrochen              -> echter Befund
+    #   (b) die Zeile ist mit ANDEREM Code gesiegelt worden und laesst sich mit
+    #       dem heutigen nicht mehr nachrechnen   -> Aussage ueber uns, nicht
+    #                                                ueber die Zeile
+    #
+    # Live gemessen am 2026-09-01 auf dem Pi: von 64 canonical-edge-Zeilen
+    # verifizieren 17, 47 nicht — und KEIN gesiegelter Commit kommt in beiden
+    # Mengen vor. Die Trennlinie ist exakt der Code-Stand, nicht die Zeile.
+    #
+    # Beide bleiben ``ok=False`` — nachgerechnet ist nachgerechnet, und ein
+    # nicht reproduzierbarer Beweis ist kein Beweis. Aber der Grund sagt jetzt,
+    # WAS zu tun ist: Siegel pruefen oder mit dem gesiegelten Commit nachrechnen.
+    sealed_commit = ""
+    code_block = payload.get("code")
+    if isinstance(code_block, dict):
+        sealed_commit = str(code_block.get("commit") or "")
+    current = git_code_state(root)
+    current_commit = str(current.get("commit") or "") if isinstance(current, dict) else ""
+    if sealed_commit and current_commit and sealed_commit != current_commit:
+        return VerifyResult(
+            False,
+            seq,
+            f"VERIFY FAIL seq={seq}: nicht nachrechenbar mit dem heutigen Code "
+            f"(gesiegelt unter {sealed_commit[:8]}, geprueft unter {current_commit[:8]}). "
+            "Die Eingaben-Pins stimmen; der Payload wurde von anderem Code gebildet. "
+            "Zum Nachweis mit dem gesiegelten Commit nachrechnen.",
+            "code_version_drift",
+        )
     return VerifyResult(
         False,
         seq,
@@ -294,10 +386,12 @@ def _verify_pinned(
 
 __all__ = [
     "CANONICAL_EDGE_KIND",
+    "CONFIG_GLOBS",
     "EXEC_ROLE",
     "LOOP_ROLE",
     "VerifyResult",
     "build_canonical_edge_payload",
+    "config_state",
     "git_code_state",
     "verify_canonical_edge_seq",
 ]
