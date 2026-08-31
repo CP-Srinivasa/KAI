@@ -415,3 +415,67 @@ def test_unknown_age_is_not_reported_stale() -> None:
     curated = {"todos": [{"text": "offen"}], "improvements": [], "phases": []}
 
     assert curated_is_stale(curated, age_days=None) is False
+
+
+# --------------------------------------------------------------------------- #
+# SUPERVISED — Aufsicht durch einen Menschen mit Termin (2026-08-31)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_supervised_claim_is_neither_maturing_nor_evaluator_due() -> None:
+    """Ohne eigenen Zustand log das Board: kein Zaehler reift, kein Evaluator laeuft."""
+    board = build_live_board(
+        ledger=[_reg("6751bc3364d39ec2", "sec_filing_timing", 100)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "sec_filing_timing",
+                "state": "SUPERVISED",
+                "n_proxy": None,
+                "n_target": 100,
+                "due": False,
+                "supervision": {
+                    "decision_state": "MANUAL_SCHEDULED_REVIEW",
+                    "owner": "operator",
+                    "next_review_utc": "2026-09-15T00:00:00+00:00",
+                    "due": False,
+                },
+                "per_source": {},
+            }
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "supervised"
+    assert "MANUAL_SCHEDULED_REVIEW" in row["action"]
+    assert "operator" in row["action"]
+    assert "2026-09-15" in row["action"]
+    assert "Noch nicht faellig" in row["action"]
+
+
+def test_a_due_supervised_claim_asks_for_the_sealed_rule() -> None:
+    board = build_live_board(
+        ledger=[_reg("6751bc3364d39ec2", "sec_filing_timing", 100)],
+        verdicts=[],
+        maturity_rows=[
+            {
+                "name": "sec_filing_timing",
+                "state": "SUPERVISED",
+                "n_proxy": None,
+                "n_target": 100,
+                "due": True,
+                "supervision": {
+                    "decision_state": "MANUAL_IMMEDIATE_VERDICT",
+                    "owner": "operator",
+                    "next_review_utc": "DUE_NOW",
+                    "due": True,
+                },
+                "per_source": {},
+            }
+        ],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["state"] == "supervised"
+    assert "Termin faellig" in row["action"]
+    assert "attestieren" in row["action"]

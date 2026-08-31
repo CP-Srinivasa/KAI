@@ -62,11 +62,18 @@ STATE_NO_COUNTER = "no_counter"
 # sondern eine Luecke in der Ueberwachung selbst — und deshalb dringlicher
 # als jeder reifende Claim: er laeuft unbeobachtet aus.
 STATE_UNWATCHED = "unwatched"
+# Versiegelt, kein Zaehler, kein Verdikt — aber im Operator-Aufsichtsregister
+# mit Zustand, Eigentuemer und Termin gefuehrt. Ohne eigenen Board-Zustand
+# fiel so ein Claim auf den Default zurueck und behauptete eines von zwei
+# falschen Dingen: "reifend" (es gibt keinen Zaehler) oder "Evaluator faellig"
+# (die Handlung ist eine Entscheidung, kein Lauf).
+STATE_SUPERVISED = "supervised"
 
 _STATE_RANK = {
     STATE_UNWATCHED: 0,
     STATE_EVIDENCE_HOLD: 0,
     STATE_JUDGEABLE: 1,
+    STATE_SUPERVISED: 2,
     STATE_EVAL_CHECK: 2,
     STATE_MATURING: 3,
     STATE_NO_COUNTER: 4,
@@ -91,6 +98,8 @@ def _board_state(mat: dict[str, Any]) -> str:
     SCHWÄCHERE Zustand angenommen — nie der stärkere.
     """
     raw = mat.get("state")
+    if raw == "SUPERVISED":
+        return STATE_SUPERVISED
     if raw in ("UNWATCHED", "VERDICT_UNATTESTED"):
         # Unattestiert ist so dringlich wie unbeobachtet: der Claim steht
         # ausserhalb der Truth-Kette. Der Handlungstext unterscheidet die
@@ -213,7 +222,20 @@ def build_live_board(
                 progress = round(min(100.0, 100.0 * n_proxy / n_target), 1)
             state = _board_state(mat)
 
-        if state == STATE_UNWATCHED:
+        if state == STATE_SUPERVISED:
+            sup = (mat or {}).get("supervision") or {}
+            when = sup.get("next_review_utc") or "offen"
+            action = (
+                f"AUFSICHT — {sup.get('decision_state') or '?'} bei "
+                f"{sup.get('owner') or 'unbekannt'}, Termin {when}. "
+                + (
+                    "Termin faellig: die versiegelte Regel anwenden und das Verdikt attestieren."
+                    if sup.get("due")
+                    else "Noch nicht faellig — bis dahin ist Nichtstun die "
+                    "vorgesehene Handlung, kein Versaeumnis."
+                )
+            )
+        elif state == STATE_UNWATCHED:
             offchain = bool((mat or {}).get("per_source", {}).get("offchain_verdict"))
             action = "UNBEOBACHTET — versiegelt, aber in keiner Wachliste. " + (
                 "Verdikt liegt off-chain vor: attestieren."
@@ -329,6 +351,7 @@ __all__ = [
     "STATE_JUDGEABLE",
     "STATE_MATURING",
     "STATE_NO_COUNTER",
+    "STATE_SUPERVISED",
     "STATE_UNWATCHED",
     "CURATED_STALE_DAYS",
     "TERMINAL_VERDICTS",

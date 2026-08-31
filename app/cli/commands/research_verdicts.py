@@ -55,6 +55,12 @@ def _render_maturity_state(row: dict[str, Any]) -> str:
             "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
         ),
         "JUDGEABLE": "[green]URTEILBAR — Verdikt-Kette fahren (prereg-check --report)[/green]",
+        # Kein Zaehler und kein Verdikt, aber ein Eigentuemer mit Termin. Ohne
+        # eigene Zeile las sich das wie ein roher Zustandsname.
+        "SUPERVISED": (
+            "[cyan]UNTER OPERATOR-AUFSICHT — Termin im Register "
+            "(config/prereg_supervision.json); KEINE Aufsichtsluecke[/cyan]"
+        ),
     }
     return renders.get(raw, raw)
 
