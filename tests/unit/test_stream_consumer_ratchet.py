@@ -86,12 +86,15 @@ def _add_freshness_entry(repo: Path, name: str, minutes: int = 60) -> None:
 
 def _run(repo: Path) -> ratchet.Verdict:
     streams = ratchet.discover_streams(repo / "app", repo)
+    health = repo / "app" / "alerts" / "health_check.py"
     return ratchet.evaluate(
         streams,
         ratchet.load_baseline(repo / "scripts" / "stream_baseline.json"),
         ratchet.load_contracts(repo / "config" / "stream_contracts.json"),
-        ratchet.freshness_registry(repo / "app" / "alerts" / "health_check.py"),
+        ratchet.freshness_registry(health),
         repo,
+        wired_probes=ratchet.health_probe_wiring(health),
+        defined_probes=ratchet.defined_functions(health),
     )
 
 
@@ -355,3 +358,122 @@ def test_health_check_with_a_real_probe_is_a_consumer(repo: Path) -> None:
     _write_contracts(repo, {"new_audit.jsonl": contract})
     verdict = _run(repo)
     assert verdict.violations == []
+
+
+# --------------------------------------------------------------------------
+# GENAU EINE Ueberwachungssemantik (Operator-Entscheidung 31.08.,
+# #817_MERGE_HOLD=REMOVE_ZERO_SENTINELS_AND_FIX_RATCHET_CONTRACT)
+# --------------------------------------------------------------------------
+
+
+def _with_alt_watcher(repo: Path, *, wired: bool = True, defined: bool = True) -> None:
+    """Health-Check mit einem echten alternativen Waechter ausstatten."""
+    body = "_FRESHNESS_PER_FILE_MIN: dict[str, int] = {\n    'legacy_audit.jsonl': 480,\n}\n\n\n"
+    if defined:
+        body += (
+            "def _check_new_stream(adir):\n    return list((adir / 'new_audit.jsonl').open())\n\n\n"
+        )
+    body += "def run_health_check_report():\n    report = []\n"
+    if wired and defined:
+        body += "    report.extend(_check_new_stream(None))\n"
+    body += "    return report\n"
+    (repo / "app" / "alerts" / "health_check.py").write_text(body, encoding="utf-8")
+
+
+ALT_CONTRACT = dict(
+    VALID_CONTRACT,
+    monitoring="alternative_watcher",
+    watcher="_check_new_stream",
+)
+ALT_CONTRACT.pop("freshness_check", None)
+
+
+def test_event_driven_stream_passes_with_a_wired_alternative_watcher(repo: Path) -> None:
+    """Ein Reject-Strom hat keine Kadenz — Stille ist dort der gesunde Zustand."""
+    _add_new_stream(repo)
+    _with_alt_watcher(repo)
+    _write_contracts(repo, {"new_audit.jsonl": dict(ALT_CONTRACT)})
+    verdict = _run(repo)
+    assert verdict.violations == []
+    assert verdict.accepted == ["new_audit.jsonl"]
+
+
+def test_alternative_watcher_must_exist(repo: Path) -> None:
+    _add_new_stream(repo)
+    _with_alt_watcher(repo, defined=False)
+    _write_contracts(repo, {"new_audit.jsonl": dict(ALT_CONTRACT)})
+    assert any("nicht definiert" in v for v in _run(repo).violations)
+
+
+def test_alternative_watcher_must_be_wired_into_the_health_path(repo: Path) -> None:
+    """Ein Waechter, den niemand ruft, ist eine Behauptung — nicht 'gemergt = live'."""
+    _add_new_stream(repo)
+    _with_alt_watcher(repo, wired=False)
+    _write_contracts(repo, {"new_audit.jsonl": dict(ALT_CONTRACT)})
+    assert any("NICHT aufgerufen" in v for v in _run(repo).violations)
+
+
+def test_watcher_field_is_required_in_alternative_mode(repo: Path) -> None:
+    _add_new_stream(repo)
+    _with_alt_watcher(repo)
+    contract = dict(ALT_CONTRACT)
+    contract.pop("watcher")
+    _write_contracts(repo, {"new_audit.jsonl": contract})
+    assert any("watcher" in v for v in _run(repo).violations)
+
+
+def test_exactly_one_semantics_not_both(repo: Path) -> None:
+    """Zwei Zusagen fuer dieselbe Sache driften auseinander."""
+    _add_new_stream(repo)
+    _with_alt_watcher(repo)
+    _add_freshness_entry(repo, "new_audit.jsonl")
+    _write_contracts(repo, {"new_audit.jsonl": dict(ALT_CONTRACT)})
+    assert any("genau eine Semantik" in v for v in _run(repo).violations)
+
+
+def test_unknown_monitoring_mode_is_rejected(repo: Path) -> None:
+    _add_new_stream(repo)
+    _add_freshness_entry(repo, "new_audit.jsonl")
+    _write_contracts(repo, {"new_audit.jsonl": dict(VALID_CONTRACT, monitoring="egal")})
+    assert any("unbekannt" in v for v in _run(repo).violations)
+
+
+# --------------------------------------------------------------------------
+# Die Landmine: eine Schwelle, die keine ist
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("threshold", [0, -1])
+def test_non_positive_freshness_threshold_is_a_violation(repo: Path, threshold: int) -> None:
+    """Wert 0 ist heute wirkungslos und spaeter ein Daueralarm: traegt jemand
+    die Datei in ``files_to_check`` ein, gilt sie sofort als veraltet."""
+    _add_freshness_entry(repo, "sentinel_audit.jsonl", minutes=threshold)
+    assert any("nicht positiv" in v for v in _run(repo).violations)
+
+
+def test_positive_thresholds_stay_green(repo: Path) -> None:
+    """Positivkontrolle: der Bestand mit echten Schwellen bleibt unberuehrt."""
+    assert _run(repo).violations == []
+
+
+def test_unreadable_threshold_is_a_violation(repo: Path) -> None:
+    path = repo / "app" / "alerts" / "health_check.py"
+    path.write_text(
+        "MINUTES = 480\n_FRESHNESS_PER_FILE_MIN: dict[str, int] = {\n"
+        "    'legacy_audit.jsonl': MINUTES,\n}\n",
+        encoding="utf-8",
+    )
+    assert any("kein lesbarer Zahlwert" in v for v in _run(repo).violations)
+
+
+def test_repo_has_no_zero_thresholds() -> None:
+    """Bindung ans echte Repo: die Landmine darf nirgends liegen."""
+    registry = ratchet.freshness_registry(ratchet.HEALTH_CHECK_PATH)
+    assert registry, "Freshness-Tabelle nicht gefunden"
+    bad = {k: v for k, v in registry.items() if v is None or v <= 0}
+    assert bad == {}, f"nicht-positive Schwellen: {bad}"
+
+
+def test_real_health_check_wiring_is_readable() -> None:
+    wired = ratchet.health_probe_wiring(ratchet.HEALTH_CHECK_PATH)
+    assert "_check_data_freshness" in wired

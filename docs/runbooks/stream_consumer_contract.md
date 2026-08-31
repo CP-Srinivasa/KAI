@@ -29,7 +29,9 @@ mergefaehig, wenn `config/stream_contracts.json` ihn deklariert:
 |---|---|
 | `reader` | Repo-relativer Modulpfad. Muss **existieren** und den Stromnamen **nennen**. Darf nicht `app/alerts/health_check.py` sein. |
 | `failure_consequence` | Nicht leer, nicht „nichts". |
-| `freshness_check` | Der Strom braucht eine Zeile in `_FRESHNESS_PER_FILE_MIN` (`app/alerts/health_check.py`). |
+| `monitoring` | `freshness` (Standard) **oder** `alternative_watcher`. **Genau eine** Semantik je Strom, nie beide. |
+| `freshness_check` | Nur bei `freshness`: eine Zeile in `_FRESHNESS_PER_FILE_MIN` (`app/alerts/health_check.py`) mit einer **positiven** Schwelle. |
+| `watcher` | Nur bei `alternative_watcher`: Name einer Sonde, die in `health_check.py` **definiert** UND in `run_health_check_report` **aufgerufen** wird. |
 | `failure_would_be_noticed_by` | **Wer** merkt den Ausfall. „niemand" ⇒ `NEEDS_CONSUMER_FIRST`. |
 | `time_to_notice` | **Nach welcher Zeit**. „nie" ⇒ `NEEDS_CONSUMER_FIRST`. |
 | `decision_that_would_change` | **Welche Entscheidung** ohne den Strom anders ausfaellt. „keine" ⇒ `NEEDS_CONSUMER_FIRST`. |
@@ -79,3 +81,30 @@ begruendet. Bindend dazu:
   erzeugt, sieht das Gate nicht.
 - **Umgehbar** durch `"".join([...])`-Konstruktionen. Das ist keine Sicherheits-,
   sondern eine Disziplin-Schranke.
+
+
+## Nachtrag 2026-08-31 — der Fehler lag im Gate
+
+Bis heute kannte dieses Gate **nur** Freshness. Ein ereignisgetriebener Strom —
+ein Reject-Ledger, bei dem lange Stille der *gesunde* Zustand ist — hatte damit
+keine ehrliche Form, seine Ueberwachung zu erklaeren. Der erste solche Strom
+(PR #817, G5-Eingangsvertraege) loeste das mit einer Zeile
+`"…rejections.jsonl": 0` in der Kadenz-Tabelle.
+
+Diese Null ist **heute wirkungslos** (die Datei steht in keiner
+`files_to_check`-Liste, der Wert wird nie ausgewertet) und **spaeter eine
+Landmine**: traegt sie jemand dort ein, gilt jede vorhandene Datei sofort und
+dauerhaft als veraltet — ein Daueralarm aus einem Platzhalter. Ein Test, der die
+Null festpinnt, macht aus dem Provisorium einen scheinbar autoritativen Vertrag.
+
+Deshalb gilt jetzt:
+
+* `_FRESHNESS_PER_FILE_MIN` enthaelt **ausschliesslich** Stroeme mit einer echten,
+  positiven Schreibkadenz. Kein 0-Sentinel, kein negativer, kein Platzhalter —
+  das Gate prueft das **repo-weit**, nicht nur fuer den Zuwachs.
+* Ereignisgetriebene Stroeme deklarieren `"monitoring": "alternative_watcher"`
+  und benennen ihre Sonde. Das Gate prueft, dass sie existiert **und**
+  aufgerufen wird: ein Waechter, den niemand ruft, ist eine Behauptung.
+
+Die Erkenntnis kam aus dem Review von #817 — und gehoert deshalb **vor** dessen
+Merge in die Invariante, nicht danach als naechste technische Schuld.
