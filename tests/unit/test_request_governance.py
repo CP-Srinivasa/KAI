@@ -201,3 +201,35 @@ def test_error_response_defaults() -> None:
     )
     assert err.execution_enabled is False
     assert err.write_back_allowed is False
+
+
+# ------------------------------------------------------------------
+# G8: die Rueckkante — der Klick traegt die Auslöser-ID mit
+# ------------------------------------------------------------------
+
+
+def test_trigger_id_from_query_param_lands_in_the_audit(tmp_path: Path) -> None:
+    """Ohne diesen Schluessel ist eine Handlung nach dem Alarm nicht von
+    einer zufaelligen Handlung zu unterscheiden (G8 / R2-12)."""
+    from app.observability.operator_feedback import new_trigger_id
+
+    app, audit_path = _app_with_middleware(tmp_path)
+    trigger = new_trigger_id(seed="probe")
+    TestClient(app).get(f"/test?t={trigger}")
+    record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert record["trigger_id"] == trigger
+
+
+def test_request_without_trigger_has_no_trigger_field(tmp_path: Path) -> None:
+    app, audit_path = _app_with_middleware(tmp_path)
+    TestClient(app).get("/test")
+    record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert "trigger_id" not in record
+
+
+def test_malformed_trigger_param_is_not_recorded(tmp_path: Path) -> None:
+    """Negativkontrolle: der Parameter ist Fremdeingabe aus der URL."""
+    app, audit_path = _app_with_middleware(tmp_path)
+    TestClient(app).get("/test?t=%3Cscript%3Ealert(1)%3C/script%3E")
+    record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert "trigger_id" not in record
