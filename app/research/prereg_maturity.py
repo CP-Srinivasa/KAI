@@ -259,6 +259,13 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         "window_end_utc": "2026-08-03T12:51:11.469459+00:00",
         "n_target": 5,
         "note": (
+            "GESCHLOSSEN 2026-08-31 als INCONCLUSIVE_BY_TIMEOUT (Truth-seq 114), "
+            "substantive_verdict=NONE: Fenster abgelaufen, kein Sachverdikt gebildet. "
+            "Weder MET noch NOT_MET, keine Unmessbarkeits-Aussage. Es wurde NIE "
+            "gezaehlt, und es wird nicht mehr gezaehlt - die kontaktabhaengige "
+            "Messkampagne ist per Operator-Policy beendet. Der Spec bleibt stehen, "
+            "damit der Claim als abgeschlossen SICHTBAR ist statt unsichtbar. "
+            "Historischer Wortlaut der versiegelten Regel: "
             "Zaehlung ist NICHT maschinell: >=5 qualifizierte schriftliche Anfragen "
             "(je ein konkret benannter zu auditierender Signalanbieter ODER ein klares "
             "Zahlungsbereitschafts-Signal) im Fenster; Spam, Selbstbewerbung ohne "
