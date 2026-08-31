@@ -1268,7 +1268,7 @@ async def get_daily_operator_summary(
     """
     from app.alerts.audit import load_alert_audits, load_outcome_annotations
     from app.alerts.blocked_audit import load_blocked_alerts
-    from app.orchestrator.trading_loop import load_trading_loop_cycles
+    from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
     now_utc = (now or datetime.now(UTC)).astimezone(UTC)
     cutoff_24h = now_utc - timedelta(hours=24)
