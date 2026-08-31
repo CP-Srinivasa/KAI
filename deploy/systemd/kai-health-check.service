@@ -21,5 +21,17 @@ TimeoutStartSec=90
 # 256M → der health-check lief OOM (Result=oom-kill, exit 2). Auf dem Pi war
 # /etc bereits live auf 512M gehoben+verifiziert ("All systems healthy"); hier
 # nachgezogen, damit ein Repo→/etc-Redeploy nicht auf 256M zurückregressiert.
-MemoryMax=512M
+#
+# 512M→768M (2026-08-31): dieselbe Wand zum zweiten Mal. Gemessen mit exakt dem
+# ExecStart oben: Maximum RSS 540 MB gegen MemoryMax=512M ⇒ oom-kill ab 20:00,
+# letzter Erfolg 19:45. Zerlegt: App-Import 79,6 MB · load_alert_audits +33,5 ·
+# paper_execution_audit +2,0 · **bayes_confidence_audit +248,0** (31 MB Datei).
+#
+# Diese Erhöhung ist die Sofortmassnahme, NICHT die Reparatur: die Ursache war,
+# dass die Schema-Sonde jede Datei ganz einlas. Sie liest jetzt nur noch die
+# juengsten SCHEMA_PROBE_TAIL=2000 Saetze (app/alerts/health_check.py), womit
+# der Speicher an der Fenstergroesse haengt statt an der Dateigroesse. 768M ist
+# damit Reserve fuer den App-Import, kein Puffer fuer unbegrenztes Wachstum —
+# waechst der Bedarf erneut, ist die Frage NICHT die naechste Anhebung.
+MemoryMax=768M
 CPUQuota=50%

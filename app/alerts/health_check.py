@@ -180,6 +180,22 @@ _PAPER_EXECUTION_SILENCE_MIN = 180  # 3h — informative threshold for the messa
 # Hostname substrings that identify the Pi-side authoritative host. Override
 # via env KAI_PI_HOSTNAME_MARKER for non-default deployments.
 _PI_HOSTNAME_MARKERS = ("kai-pi", "kai-pi5", "pi5", "kai_pi")
+#: Wie viele der JUENGSTEN Saetze die Schema-Sonde prueft.
+#:
+#: Vorher: alle. ``bayes_confidence_audit.jsonl`` (31 MB, 17.831 Saetze) kostete
+#: dabei allein **+248 MB** — der Dienst laeuft mit ``MemoryMax=512M`` und wurde
+#: am 31.08. ab 20:00 vom OOM-Killer erschlagen (gemessener Spitzenwert des
+#: Unit-Kommandos: 540 MB). Gemessene Kadenz desselben Stroms: 72–230 Saetze/Tag
+#: (Median ~130), laengste Zeile 2.632 Bytes. 2.000 deckt damit **ueber acht
+#: Tage** ab, selbst am dichtesten gemessenen Tag — und begrenzt den Speicher
+#: auf die Fenstergroesse statt auf die Dateigroesse.
+#:
+#: Was das Fenster NICHT mehr sieht: eine Schema-Verletzung, die aelter als das
+#: Fenster ist. Die war zum Zeitpunkt ihres Entstehens im Fenster und ist damit
+#: bereits gemeldet worden; eine dauerhafte Wiederholung derselben Altlast war
+#: ohnehin nie der Zweck dieser Sonde.
+SCHEMA_PROBE_TAIL = 2000
+
 _AUDIT_STREAM_SCHEMA_FILES: tuple[tuple[AuditStreamName, str], ...] = (
     ("alert_audit", "alert_audit.jsonl"),
     ("blocked_alerts", "blocked_alerts.jsonl"),
@@ -401,7 +417,7 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
 def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
     issues: list[HealthIssue] = []
     for stream, filename in _AUDIT_STREAM_SCHEMA_FILES:
-        result = load_audit_stream(adir / filename, stream)
+        result = load_audit_stream(adir / filename, stream, tail=SCHEMA_PROBE_TAIL)
         if not result.issues:
             continue
         first = result.issues[0]
