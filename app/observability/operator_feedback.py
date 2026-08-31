@@ -170,6 +170,49 @@ def _parse_ts(raw: object) -> datetime | None:
     return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
+def record_trigger_emitted(
+    path: Path,
+    *,
+    now: datetime,
+    trigger_id: str,
+    channel: str,
+    finding_count: int,
+    fingerprint: str = "",
+) -> dict[str, Any]:
+    """Halte fest, DASS ein Befund ausgesendet wurde — die linke Seite der Kette.
+
+    Ohne diesen Satz gaebe es zu einer Handlung keinen Nenner: man saehe, dass
+    jemand geklickt hat, aber nicht, wie viele Befunde ungeklickt blieben. Eine
+    Quote ohne Nenner ist keine Aussage.
+    """
+    record = {
+        "timestamp_utc": now.astimezone(UTC).isoformat(),
+        "record_type": "alert_emitted",
+        "trigger_id": trigger_id,
+        "channel": channel,
+        "finding_count": int(finding_count),
+        "fingerprint": fingerprint,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def emitted_triggers(records: list[dict[str, Any]]) -> list[tuple[str, datetime]]:
+    """(trigger_id, Sendezeitpunkt) je ausgesendetem Befund, aelteste zuerst."""
+    out: list[tuple[str, datetime]] = []
+    for rec in records:
+        if rec.get("record_type") != "alert_emitted":
+            continue
+        trigger = rec.get("trigger_id")
+        ts = _parse_ts(rec.get("timestamp_utc"))
+        if isinstance(trigger, str) and is_trigger_id(trigger) and ts is not None:
+            out.append((trigger, ts))
+    out.sort(key=lambda pair: pair[1])
+    return out
+
+
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     """Lies einen JSONL-Strom; defekte Zeilen werden uebersprungen, nie geraten."""
     if not path.exists():

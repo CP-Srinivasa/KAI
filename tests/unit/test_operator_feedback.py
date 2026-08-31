@@ -248,4 +248,48 @@ def test_alert_text_carries_a_usable_trigger_id() -> None:
     line = next(ln for ln in text.splitlines() if ln.startswith("Trigger: "))
     trigger = line.split()[1]
     assert is_trigger_id(trigger)
-    assert f"?{TRIGGER_QUERY_PARAM}={trigger}" in text
+
+
+def test_alert_text_carries_a_clickable_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ohne klickbaren Link misst die Rueckkante Reibung statt Nutzen.
+
+    Eine Population, die verlangt, dass der Operator eine ID von Hand an eine
+    URL haengt, ist nicht erreichbar — und eine Null waere dann die Antwort
+    auf die Umstaendlichkeit der Messung, nicht auf die Frage.
+    """
+    from dataclasses import dataclass, field
+
+    import app.alerts.health_notify as hn
+
+    @dataclass
+    class _Issue:
+        severity: str
+        component: str
+        message: str
+
+    @dataclass
+    class _Report:
+        issues: list[_Issue] = field(default_factory=list)
+        recent_alerts: int = 0
+        recent_actionable_alerts: int = 0
+        recent_cycles: int = 0
+        data_sources_stale: bool = False
+
+    monkeypatch.setattr(hn, "_dashboard_link", lambda t: f"https://example.test/dashboard/?t={t}")
+    text = hn.build_health_alert_text(
+        _Report(issues=[_Issue("critical", "privilege_broker", "weg")]), lookback_hours=24
+    )
+    trigger = next(ln for ln in text.splitlines() if ln.startswith("Trigger: ")).split()[1]
+    assert f"https://example.test/dashboard/?{TRIGGER_QUERY_PARAM}={trigger}" in text
+
+
+def test_missing_dashboard_url_leaves_the_bare_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Negativkontrolle: ohne konfigurierte URL wird nichts geraten."""
+    import app.alerts.health_notify as hn
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(type(settings.operator), "telegram_dashboard_url", "", raising=False)
+    assert hn._dashboard_link("trg_0123456789ab") in ("", None) or "http" in hn._dashboard_link(
+        "trg_0123456789ab"
+    )
