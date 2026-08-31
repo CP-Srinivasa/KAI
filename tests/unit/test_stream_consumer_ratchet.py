@@ -298,3 +298,60 @@ def test_repo_gate_is_green_and_baseline_is_current() -> None:
 def test_cli_main_returns_zero_on_clean_repo(capsys: pytest.CaptureFixture[str]) -> None:
     assert ratchet.main([]) == 0
     assert "kein unvertraglicher Zuwachs" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Konstanten statt kopierter Literale (G6-Haertung)
+# --------------------------------------------------------------------------
+
+
+def test_reader_referencing_the_stream_via_imported_constant_counts(repo: Path) -> None:
+    """Haus-Muster `from app.x import STREAM`: ein Gate, das nur Literale sieht,
+    bestraft genau das und belohnt kopierte Strings."""
+    (repo / "app" / "execution" / "new_writer.py").write_text(
+        'NEW_STREAM = "new_audit.jsonl"\n', encoding="utf-8"
+    )
+    (repo / "app" / "alerts" / "new_reader.py").write_text(
+        "from app.execution.new_writer import NEW_STREAM\n\n\n"
+        "def read(adir):\n    return (adir / NEW_STREAM).read_text()\n",
+        encoding="utf-8",
+    )
+    _add_freshness_entry(repo, "new_audit.jsonl")
+    _write_contracts(repo, {"new_audit.jsonl": dict(VALID_CONTRACT)})
+    verdict = _run(repo)
+    assert verdict.violations == []
+    assert verdict.accepted == ["new_audit.jsonl"]
+
+
+def test_unrelated_name_does_not_count_as_a_reference(repo: Path) -> None:
+    """Negativkontrolle zur Haertung: ein fremder Name oeffnet kein Schlupfloch."""
+    (repo / "app" / "execution" / "new_writer.py").write_text(
+        'NEW_STREAM = "new_audit.jsonl"\n', encoding="utf-8"
+    )
+    (repo / "app" / "alerts" / "new_reader.py").write_text(
+        "SOMETHING_ELSE = 1\n\n\ndef read():\n    return SOMETHING_ELSE\n",
+        encoding="utf-8",
+    )
+    _add_freshness_entry(repo, "new_audit.jsonl")
+    _write_contracts(repo, {"new_audit.jsonl": dict(VALID_CONTRACT)})
+    verdict = _run(repo)
+    assert any("nennt 'new_audit.jsonl' nicht" in v for v in verdict.violations)
+
+
+def test_health_check_with_a_real_probe_is_a_consumer(repo: Path) -> None:
+    """Die Schwellen-Zeile zaehlt nicht — eine echte Sonde in derselben Datei schon."""
+    (repo / "app" / "execution" / "new_writer.py").write_text(
+        'NEW_STREAM = "new_audit.jsonl"\n', encoding="utf-8"
+    )
+    _add_freshness_entry(repo, "new_audit.jsonl")
+    path = repo / "app" / "alerts" / "health_check.py"
+    path.write_text(
+        "from app.execution.new_writer import NEW_STREAM\n\n"
+        + path.read_text(encoding="utf-8")
+        + "\n\ndef _check_new(adir):\n    return (adir / NEW_STREAM).exists()\n",
+        encoding="utf-8",
+    )
+    contract = dict(VALID_CONTRACT, reader="app/alerts/health_check.py")
+    _write_contracts(repo, {"new_audit.jsonl": contract})
+    verdict = _run(repo)
+    assert verdict.violations == []
