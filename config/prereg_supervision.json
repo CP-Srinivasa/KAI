@@ -11,7 +11,7 @@
     "SUPERSEDED": "Terminal geschlossen, weil die Frage VOR Anfall der Out-of-Sample-Daten durch eine Nachfolge-Registrierung ersetzt wurde. Traegt KEIN eigenes Sachverdikt - das gehoert dem Nachfolger. SUPERSEDED ist NICHT FAILED (kein Sachverdikt), NICHT RETIRED (nicht wegen Irrelevanz beendet) und NICHT NO_WATCH_REQUIRED (keine Verzichtsentscheidung ueber Aufsicht). Pflicht: superseded_by, closure_reason, substantive_verdict=NONE, successor_terminal_verdict. Kein Watcher, kein Termin, keine Reifezaehlung.",
     "RETIRE": "Nicht vergeben.",
     "NO_WATCH_REQUIRED": "Nicht vergeben.",
-    "REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden und endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Neu am 2026-08-31: vorher konnte das Register diesen Zustand nicht ausdruecken - ein vollzogener Review haette entweder ein Fantasie-Datum in der Zukunft tragen muessen oder next_review_utc=null, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). REVIEW_COMPLETED ist NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet) und NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung."
+    "SCHEDULED_REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden UND endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Genau diese Kette und keine andere: MANUAL_SCHEDULED_REVIEW -> Review durchgefuehrt -> Truth-Kette terminalisiert den Claim -> SCHEDULED_REVIEW_COMPLETED. Neu am 2026-08-31, weil das Register den Zustand vorher nicht ausdruecken konnte: ein vollzogener Review haette entweder ein Datum in der Zukunft luegen oder next_review_utc=null tragen muessen, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). Der Name ist bewusst ENG (Operator-Entscheidung 2026-08-31): das kuerzere 'REVIEW_COMPLETED' haette gelesen werden koennen als 'irgendein Review ist fertig'. Ein Review kann aber sehr wohl abgeschlossen werden und als Ergebnis 'weiter beobachten, neuer Termin' tragen - das ist WATCH oder erneut MANUAL_SCHEDULED_REVIEW mit einem echten Datum, niemals dieser Zustand. NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet), NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, previous_decision_state, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Aufsichtsstatus ist NICHT das Sachverdikt: decision_state sagt, wer wann hingesehen hat; outcome/substantive_verdict/terminal_verdict_class sagen, was dabei herauskam."
   },
   "invariants": [
     "Jede prereg_id in diesem Register existiert im versiegelten Ledger.",
@@ -20,7 +20,10 @@
     "MANUAL_IMMEDIATE_VERDICT setzt next_review_utc auf DUE_NOW.",
     "Ein Eintrag mit blocking_finding traegt spec_installed=false, bis der Operator entschieden hat.",
     "Ein Eintrag mit decision_state SUPERSEDED bekommt NIE einen Watcher, Termin oder MATURITY_SPEC und traegt substantive_verdict=NONE.",
-    "Ein Eintrag mit decision_state REVIEW_COMPLETED bekommt NIE einen Watcher oder Termin und nennt die Truth-seq seines Abschlusses."
+    "SCHEDULED_REVIEW_COMPLETED entsteht NUR aus MANUAL_SCHEDULED_REVIEW - der Uebergang steht explizit in previous_decision_state, er wird nicht erzaehlt.",
+    "SCHEDULED_REVIEW_COMPLETED braucht einen terminalen Truth-Chain-Beleg: truth_seq und eine terminale terminal_verdict_class (MET, NOT_MET oder CLOSED_NO_VERDICT). Die Form prueft der Vertragstest, die Uebereinstimmung mit der echten Kette der Health-Check auf dem Pi.",
+    "Ein durchgefuehrter Review OHNE terminalen Abschluss wird NICHT SCHEDULED_REVIEW_COMPLETED. Er geht ueber in WATCH, in ein erneutes MANUAL_SCHEDULED_REVIEW mit echtem Termin oder in einen anderen ausdruecklichen Aufsichtszustand.",
+    "SCHEDULED_REVIEW_COMPLETED bekommt NIE einen Watcher, eine Kadenz oder einen Termin."
   ],
   "entries": [
     {
@@ -101,7 +104,7 @@
     {
       "prereg_id": "6751bc3364d39ec2",
       "name": "sec_filing_timing",
-      "decision_state": "REVIEW_COMPLETED",
+      "decision_state": "SCHEDULED_REVIEW_COMPLETED",
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
@@ -131,8 +134,10 @@
       "not_this": {
         "FAILED": "kein Sachverdikt erzeugt - das Kriterium konnte nie angewandt werden",
         "SUPERSEDED": "nicht ersetzt, sondern ausgewertet und geschlossen",
-        "RETIRED": "nicht wegen fehlender Relevanz beendet, sondern wegen unerreichbarer Population"
-      }
+        "RETIRED": "nicht wegen fehlender Relevanz beendet, sondern wegen unerreichbarer Population",
+        "MANUAL_SCHEDULED_REVIEW": "der Termin ist nicht offen, er wurde am 2026-08-31 wahrgenommen"
+      },
+      "previous_decision_state": "MANUAL_SCHEDULED_REVIEW"
     },
     {
       "prereg_id": "4a3b1b0c5a94b73c",
@@ -213,6 +218,6 @@
     "SUPERSEDED_CLOSED": 1,
     "stab_06a_closed": false,
     "stab_06a_closure_condition": "Erst wenn die vier MANUAL_IMMEDIATE_VERDICT-Faelle tatsaechlich attestiert und archiviert sind. Die Klassifikation allein schliesst STAB-06a NICHT.",
-    "REVIEW_COMPLETED": 1
+    "SCHEDULED_REVIEW_COMPLETED": 1
   }
 }
