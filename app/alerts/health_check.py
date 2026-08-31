@@ -995,11 +995,14 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
     """
     from app.research.prereg_maturity import MATURITY_SPECS
     from app.research.prereg_reconciliation import (
+        DEFAULT_SUPERVISION_REGISTER,
         RECON_STATE_RESOLVED,
+        RECON_STATE_SUPERVISED,
         RECON_STATE_UNWATCHED,
         RECON_STATE_VERDICT_UNATTESTED,
         RECON_STATE_WATCHED,
         classify_ledger_entries,
+        load_supervision_register,
     )
 
     if not (adir / "research" / "prereg_ledger.jsonl").exists():
@@ -1046,19 +1049,51 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
         for state in (
             RECON_STATE_RESOLVED,
             RECON_STATE_WATCHED,
+            RECON_STATE_SUPERVISED,
             RECON_STATE_VERDICT_UNATTESTED,
             RECON_STATE_UNWATCHED,
         )
     }
+    # Spiegelbild zu ``ghost_specs``: auch das Aufsichtsregister kann auf eine
+    # nie versiegelte ID zeigen. Ein solcher Eintrag sieht wie Aufsicht aus,
+    # beaufsichtigt aber nichts — er gehoert gemeldet, nicht geglaubt.
+    ghost_supervision = sorted(
+        pid for pid in load_supervision_register(DEFAULT_SUPERVISION_REGISTER) if pid not in sealed
+    )
+    if ghost_supervision:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    "supervision drift: prereg_supervision.json references prereg_id(s) "
+                    f"not in the sealed ledger: {', '.join(ghost_supervision)}"
+                ),
+            )
+        )
     unattested = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_VERDICT_UNATTESTED]
     unwatched = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_UNWATCHED]
-    if unattested or unwatched:
+    # Beaufsichtigt UND faellig ist eine offene Entscheidung des Eigentuemers,
+    # keine Aufsichtsluecke. Beaufsichtigt und noch nicht faellig ist gar kein
+    # Befund — sonst meldete der Waechter einen Termin taeglich vor, den der
+    # Operator bewusst in die Zukunft gelegt hat.
+    supervised_due = [
+        r["prereg_id"]
+        for r in rows
+        if r["state"] == RECON_STATE_SUPERVISED and (r.get("supervision") or {}).get("due")
+    ]
+    if unattested or unwatched or supervised_due:
         breakdown = " ".join(f"{k}={v}" for k, v in counts.items())
         parts = [f"ledger={len(rows)} {breakdown}"]
         if unattested:
             parts.append("attestieren (Verdikt nur in Seitenablage): " + ", ".join(unattested))
         if unwatched:
             parts.append("Aufsichtsluecke (weder Spec noch Verdikt): " + ", ".join(unwatched))
+        if supervised_due:
+            parts.append(
+                "Aufsichtstermin faellig (Operator-Register, KEINE Luecke): "
+                + ", ".join(supervised_due)
+            )
         issues.append(
             HealthIssue(
                 severity="warning",

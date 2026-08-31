@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.research.prereg_maturity import compute_maturity
+from app.research.prereg_maturity import (
+    STATE_SUPERVISED,
+    STATE_UNWATCHED,
+    build_maturity_alert,
+    compute_maturity,
+    find_unwatched_preregs,
+)
 from app.storage.db.session import Base
 from app.storage.models.document import CanonicalDocumentModel
 
@@ -288,3 +297,120 @@ async def test_states_proxy_caps_at_eval_check_due(session_factory, tmp_path) ->
     assert by["proxy_not_reached"]["state"] == STATE_NOT_DUE
     assert by["proxy_not_reached"]["due"] is False
     assert by["exact_reached"]["state"] == STATE_JUDGEABLE
+
+
+# ---------------------------------------------------------------------------
+# Aufsichtsregister im Reifeblick — Befund 2026-08-31
+#
+# ``find_unwatched_preregs`` klassifiziert ein zweites Mal selbst; sie speist
+# den taeglichen Operator-Alarm. Haette ich nur ``classify_ledger_entries``
+# repariert, kassierte diese Kopie die Reparatur ([[feedback_duplicated_
+# invariants_drift]]): der Alarm haette ``6751bc33`` weiter als
+# Aufsichtsluecke gemeldet, waehrend die Ledger-Sicht SUPERVISED zeigt.
+# ---------------------------------------------------------------------------
+
+
+def _register(path: Path, *entries: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": "prereg_supervision/v1", "entries": list(entries)}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _sealed(root: Path, prereg_id: str, name: str) -> None:
+    path = root / "research" / "prereg_ledger.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "schema": "prereg/v1",
+                    "prereg_id": prereg_id,
+                    "name": name,
+                    "direction": "neutral",
+                    "horizon": "24h",
+                    "success_criteria": "irrelevant fuer diesen Test",
+                    "sample_size_target": 100,
+                    "created_at_utc": "2026-07-01T12:32:46+00:00",
+                }
+            )
+            + "\n"
+        )
+
+
+_SUP_ID = "6751bc3364d39ec2"
+_SUP_NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+
+
+def test_a_supervised_claim_is_not_reported_as_an_oversight_gap(tmp_path: Path) -> None:
+    _sealed(tmp_path, _SUP_ID, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUP_ID,
+            "decision_state": "MANUAL_SCHEDULED_REVIEW",
+            "owner": "operator",
+            "next_review_utc": "2026-09-15T00:00:00+00:00",
+        },
+    )
+    (row,) = find_unwatched_preregs(tmp_path, specs=(), supervision_register=reg, now=_SUP_NOW)
+    assert row["state"] == STATE_SUPERVISED
+    assert row["due"] is False
+    assert "Keine Aufsichtsluecke" in row["note"]
+    assert "MANUAL_SCHEDULED_REVIEW" in row["note"]
+
+
+def test_without_the_register_it_is_an_oversight_gap_again(tmp_path: Path) -> None:
+    """Positivkontrolle: der Zustand kommt aus dem Register, nicht aus Nachsicht."""
+    _sealed(tmp_path, _SUP_ID, "sec_filing_timing")
+    (row,) = find_unwatched_preregs(
+        tmp_path,
+        specs=(),
+        supervision_register=tmp_path / "config" / "absent.json",
+        now=_SUP_NOW,
+    )
+    assert row["state"] == STATE_UNWATCHED
+    assert row["due"] is True
+
+
+def test_an_overdue_supervised_claim_still_nags(tmp_path: Path) -> None:
+    """Das Register darf keine Frist verschlucken — nur eine falsche Anklage."""
+    _sealed(tmp_path, _SUP_ID, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUP_ID,
+            "decision_state": "MANUAL_IMMEDIATE_VERDICT",
+            "owner": "operator",
+            "next_review_utc": "DUE_NOW",
+        },
+    )
+    (row,) = find_unwatched_preregs(tmp_path, specs=(), supervision_register=reg, now=_SUP_NOW)
+    assert row["state"] == STATE_SUPERVISED
+    assert row["due"] is True
+    alert = build_maturity_alert([row])
+    assert alert is not None
+    assert STATE_SUPERVISED in alert
+    # Der Alarm nennt den Zustand ausdruecklich als NICHT-Luecke; eine blosse
+    # Abwesenheit des Wortes waere schwaecher und liesse Schweigen durchgehen.
+    assert "keine Aufsichtsluecke" in alert
+
+
+def test_the_alert_never_calls_a_supervised_claim_unobserved(tmp_path: Path) -> None:
+    """Der alte Text behauptete 'in KEINER Wachliste' — das war schlicht unwahr."""
+    _sealed(tmp_path, _SUP_ID, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUP_ID,
+            "decision_state": "MANUAL_IMMEDIATE_VERDICT",
+            "owner": "operator",
+            "next_review_utc": "DUE_NOW",
+        },
+    )
+    rows = find_unwatched_preregs(tmp_path, specs=(), supervision_register=reg, now=_SUP_NOW)
+    alert = build_maturity_alert(rows) or ""
+    assert "in KEINER Wachliste" not in alert
+    assert "unbeobachtet" not in alert
