@@ -46,7 +46,7 @@ from app.core.runtime_identity import (
     evaluate_runtime_drift,
     read_runtime_identity_artifact,
 )
-from app.orchestrator.trading_loop import load_trading_loop_cycles
+from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
 
@@ -1212,6 +1212,49 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
     return issues
 
 
+#: Fenster fuer den Zyklus-Strom im Health-Check.
+#:
+#: ``load_trading_loop_cycles`` laedt sonst die GESAMTE Historie: am 31.08.
+#: waren das 128.501 Saetze aus 79 MB = **+320 MB**, der groesste Einzelposten
+#: des Dienstes, der ab 20:00 vom OOM-Killer erschlagen wurde. Diese Sonde
+#: braucht davon nur das ``lookback_hours``-Fenster (sie filtert ohnehin auf
+#: ``cutoff``).
+#:
+#: 10.000 Saetze decken **4,6 Tage** ab — gemessen an der hoechsten je
+#: beobachteten Tagesrate (2.178 am dichtesten Tag; Median 1.126, zuletzt
+#: 1.000-1.300). Das ist ein Vielfaches des 24-h-Fensters.
+CYCLE_PROBE_TAIL = 10_000
+
+
+def _load_cycles_for_window(path: Path, cutoff: datetime) -> list[dict[str, object]]:
+    """Lies die Zyklen des Fensters — begrenzt, aber nachweislich vollstaendig.
+
+    Der Schnitt darf die Zahlen dieser Sonde NICHT veraendern. Deshalb wird
+    geprueft, ob das Fenster ueberhaupt erreicht wurde: ist der aelteste
+    gelesene Satz JUENGER als der Cutoff, koennte das Fenster abgeschnitten
+    sein — dann wird ungekuerzt nachgelesen. Damit kostet die Begrenzung im
+    Normalfall Speicher und im Ausnahmefall nichts an Wahrheit.
+    """
+    cycles = load_trading_loop_cycles(path, tail=CYCLE_PROBE_TAIL)
+    if len(cycles) < CYCLE_PROBE_TAIL:
+        return cycles  # ganze Datei gelesen, nichts abgeschnitten
+    oldest = _cycle_started_at(cycles[0])
+    if oldest is not None and oldest <= cutoff:
+        return cycles  # das Fenster liegt vollstaendig im gelesenen Ausschnitt
+    return load_trading_loop_cycles(path)
+
+
+def _cycle_started_at(record: dict[str, object]) -> datetime | None:
+    raw = record.get("started_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+
 def run_health_check_report(
     artifacts_dir: Path | None = None,
     lookback_hours: int = 24,
@@ -1345,9 +1388,7 @@ def run_health_check_report(
 
     # ── Trading loop freshness (+ P1 status breakdown) ───────────────
     try:
-        cycles = load_trading_loop_cycles(
-            adir / "trading_loop_audit.jsonl",
-        )
+        cycles = _load_cycles_for_window(adir / "trading_loop_audit.jsonl", cutoff)
     except Exception:
         report.issues.append(
             HealthIssue(

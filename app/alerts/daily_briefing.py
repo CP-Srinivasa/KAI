@@ -23,7 +23,7 @@ from app.alerts.audit import (
     load_outcome_annotations,
 )
 from app.observability.outcome_dedupe_report import build_episode_dedupe_report
-from app.orchestrator.trading_loop import load_trading_loop_cycles
+from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
 
