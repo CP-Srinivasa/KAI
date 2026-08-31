@@ -671,3 +671,92 @@ def test_health_meldet_ein_register_das_auf_ein_phantom_zeigt(
     assert [i.severity for i in issues] == ["critical"]
     assert "supervision drift" in issues[0].message
     assert "deadbeef00000009" in issues[0].message
+
+
+# ---------------------------------------------------------------------------
+# Invariante 2/3 mechanisch: das Register darf keinen Abschluss BEHAUPTEN,
+# den die verifizierte Truth-Kette nicht traegt (Operator-Vorgabe 2026-08-31).
+#
+# Der Vertragstest im Repo prueft nur die FORM des Eintrags (truth_seq, Klasse)
+# — ``artifacts/`` ist nicht im Repo, eine CI-Pruefung gegen die echte Kette
+# waere Theater. Hier, auf dem Pi, liegen beide Seiten nebeneinander, und nur
+# hier faellt eine Luege auf.
+# ---------------------------------------------------------------------------
+
+
+def test_health_meldet_einen_behaupteten_abschluss_ohne_ketten_beleg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert any(i.severity == "critical" for i in issues)
+    message = " ".join(i.message for i in issues)
+    assert "claims a completed scheduled review" in message
+    assert _SUPERVISED in message
+
+
+def test_health_schweigt_wenn_die_kette_den_abschluss_traegt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positivkontrolle: mit Ketten-Beleg ist derselbe Eintrag kein Befund."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    _attest(tmp_path, _SUPERVISED, "CLOSED_UNMEASURABLE - keine auswertbare Population")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    assert _check_prereg_reconciliation(tmp_path, specs=()) == []
+
+
+def test_health_meldet_auch_einen_abschluss_der_nur_off_chain_liegt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seitenablage ist kein Abschluss — sonst genuegte eine Datei ohne Kette."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    _offchain(
+        tmp_path,
+        "prereg_verdicts.jsonl",
+        {"prereg_id": _SUPERVISED, "verdict": "NOT_MET", "passed": False},
+    )
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert any(
+        i.severity == "critical" and "claims a completed scheduled review" in i.message
+        for i in issues
+    )

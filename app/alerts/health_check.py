@@ -1122,9 +1122,36 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
     # Spiegelbild zu ``ghost_specs``: auch das Aufsichtsregister kann auf eine
     # nie versiegelte ID zeigen. Ein solcher Eintrag sieht wie Aufsicht aus,
     # beaufsichtigt aber nichts — er gehoert gemeldet, nicht geglaubt.
-    ghost_supervision = sorted(
-        pid for pid in load_supervision_register(DEFAULT_SUPERVISION_REGISTER) if pid not in sealed
+    register = load_supervision_register(DEFAULT_SUPERVISION_REGISTER)
+    ghost_supervision = sorted(pid for pid in register if pid not in sealed)
+    # Invariante 2/3 des Zustands SCHEDULED_REVIEW_COMPLETED (Operator 2026-08-31):
+    # er behauptet, die terminierte Wiedervorlage sei durchgefuehrt UND habe in
+    # einem terminalen Abschluss der verifizierten Truth-Kette geendet. Der
+    # Vertragstest im Repo kann nur die Form pruefen — ``artifacts/`` liegt nicht
+    # im Repo. Hier liegen beide Seiten nebeneinander: behauptet das Register
+    # einen Abschluss, den die Kette nicht traegt, ist das eine Falschaussage
+    # ueber die Aufsicht selbst, kein Schoenheitsfehler. Ein Off-Chain-Verdikt
+    # zaehlt ausdruecklich NICHT (RECON_STATE_VERDICT_UNATTESTED bleibt offen).
+    state_by_id = {r["prereg_id"]: r["state"] for r in rows}
+    unbacked_closures = sorted(
+        pid
+        for pid, entry in register.items()
+        if str(entry.get("decision_state")) == "SCHEDULED_REVIEW_COMPLETED"
+        and pid in sealed
+        and state_by_id.get(pid) != RECON_STATE_RESOLVED
     )
+    if unbacked_closures:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    "supervision drift: prereg_supervision.json claims a completed scheduled "
+                    "review without a terminal resolution in the verified truth chain: "
+                    f"{', '.join(unbacked_closures)}"
+                ),
+            )
+        )
     if ghost_supervision:
         issues.append(
             HealthIssue(
