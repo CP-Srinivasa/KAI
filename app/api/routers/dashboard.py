@@ -2924,7 +2924,7 @@ async def _live_operator_board(session_factory: Any | None) -> dict[str, Any]:
     if cached is not None and (now - _operator_board_cache["at"]) < _OPERATOR_BOARD_CACHE_TTL_S:
         return cast(dict[str, Any], cached)
 
-    from app.observability.operator_board_live import build_live_board
+    from app.observability.operator_board_live import build_live_board_from_disk
 
     ledger = _load_jsonl(_PREREG_LEDGER)
     verdicts = _load_jsonl(_PREREG_VERDICTS)
@@ -2943,7 +2943,9 @@ async def _live_operator_board(session_factory: Any | None) -> dict[str, Any]:
             logger.warning("operator_board_maturity_failed: %s", exc)
             maturity_state = "unavailable"
 
-    live = build_live_board(ledger=ledger, verdicts=verdicts, maturity_rows=maturity_rows)
+    live = build_live_board_from_disk(
+        ledger=ledger, verdicts=verdicts, maturity_rows=maturity_rows, artifacts_dir=_ARTIFACTS
+    )
     live["maturity_state"] = maturity_state
     live["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     _operator_board_cache["live"] = live

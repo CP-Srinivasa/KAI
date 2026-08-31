@@ -10,7 +10,8 @@
     "MANUAL_SCHEDULED_REVIEW": "Fachlich relevant, aber NICHT entscheidungsreif. Bewusst terminierte Wiedervorlage statt Dauerueberwachung. Pflicht: owner, next_review_utc, decision_question, archive_path.",
     "SUPERSEDED": "Terminal geschlossen, weil die Frage VOR Anfall der Out-of-Sample-Daten durch eine Nachfolge-Registrierung ersetzt wurde. Traegt KEIN eigenes Sachverdikt - das gehoert dem Nachfolger. SUPERSEDED ist NICHT FAILED (kein Sachverdikt), NICHT RETIRED (nicht wegen Irrelevanz beendet) und NICHT NO_WATCH_REQUIRED (keine Verzichtsentscheidung ueber Aufsicht). Pflicht: superseded_by, closure_reason, substantive_verdict=NONE, successor_terminal_verdict. Kein Watcher, kein Termin, keine Reifezaehlung.",
     "RETIRE": "Nicht vergeben.",
-    "NO_WATCH_REQUIRED": "Nicht vergeben."
+    "NO_WATCH_REQUIRED": "Nicht vergeben.",
+    "REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden und endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Neu am 2026-08-31: vorher konnte das Register diesen Zustand nicht ausdruecken - ein vollzogener Review haette entweder ein Fantasie-Datum in der Zukunft tragen muessen oder next_review_utc=null, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). REVIEW_COMPLETED ist NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet) und NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung."
   },
   "invariants": [
     "Jede prereg_id in diesem Register existiert im versiegelten Ledger.",
@@ -18,7 +19,8 @@
     "WATCH-Eintraege nennen einen watcher_id, der bereits existiert - dieses Register legt keine Timer und keine Services an.",
     "MANUAL_IMMEDIATE_VERDICT setzt next_review_utc auf DUE_NOW.",
     "Ein Eintrag mit blocking_finding traegt spec_installed=false, bis der Operator entschieden hat.",
-    "Ein Eintrag mit decision_state SUPERSEDED bekommt NIE einen Watcher, Termin oder MATURITY_SPEC und traegt substantive_verdict=NONE."
+    "Ein Eintrag mit decision_state SUPERSEDED bekommt NIE einen Watcher, Termin oder MATURITY_SPEC und traegt substantive_verdict=NONE.",
+    "Ein Eintrag mit decision_state REVIEW_COMPLETED bekommt NIE einen Watcher oder Termin und nennt die Truth-seq seines Abschlusses."
   ],
   "entries": [
     {
@@ -99,24 +101,38 @@
     {
       "prereg_id": "6751bc3364d39ec2",
       "name": "sec_filing_timing",
-      "decision_state": "MANUAL_SCHEDULED_REVIEW",
+      "decision_state": "REVIEW_COMPLETED",
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
-      "next_review_utc": "2026-09-15T00:00:00+00:00",
+      "next_review_utc": null,
       "decision_question": "Frist rueckwirkend setzen und als unmessbar schliessen, oder Population verbreitern (weitere Filing-Quellen) und Frist nach vorn setzen?",
-      "rationale": "Reife 17/100 - gemessen 2026-08-27: Quelle sec_edgar liefert 17 Dokumente seit der Registrierung (47 insgesamt), letztes am 2026-08-18. Rate rund 0,35/Tag ergibt n=100 erst etwa Mai 2027, und ein Dokument ist noch kein auswertbares Signal. Permanente technische Aufsicht waere hier ineffizient: ein Zaehler meldete bis 2027 'noch nicht reif'. Kein RETIRE - das wuerde den Claim stillschweigend verschwinden lassen, statt seine Unerreichbarkeit zu belegen. Der Claim traegt bis heute KEIN window_end_utc; genau daran ist H2 unbegrenzt weitergereift.",
-      "current_maturity": "17/100",
-      "measured_at_utc": "2026-08-27T08:50:00+00:00",
+      "rationale": "GESCHLOSSEN 2026-08-31 als CLOSED_UNMEASURABLE (Truth-seq 113), kein Sachverdikt. Der Abschluss steht NICHT auf der Langsamkeit des Zulaufs: am 2026-08-31 live nachgemessen liefert sec_edgar seit der Versiegelung 19 Dokumente, davon 0 mit Richtung und 0 mit Ticker - die auswertbare Population ist 0. Das versiegelte Kriterium verlangt einen post-filing aligned entry mit Richtung UND Symbol; die Quelle liefert Regulierer-Pressemitteilungen (Klagen, Regelvorschlaege), die per Konstruktion keines von beidem tragen. Auch bei n=100 Dokumenten waere die auswertbare Population 0. Positivkontrolle im selben Fenster: fuenf andere Quellen liefern durchweg direktionale Dokumente mit Ticker - die Messung ist intakt. Die Notiz vom 2026-08-27 ('Reife 17/100, n=100 etwa Mai 2027') war zu milde: sie unterstellte, Warten wuerde helfen.",
+      "current_maturity": "19/100 Dokumente, davon 0 auswertbar",
+      "measured_at_utc": "2026-08-31T14:02:21+00:00",
       "offchain_verdict": "INSUFFICIENT_N (prereg_verdicts.jsonl) - nicht-terminal, schliesst korrekt nicht",
       "evidence_path": "data/dev.db canonical_documents WHERE source_name='sec_edgar'",
       "latest_evidence_sha256": null,
       "evidence_note": "Zaehlung gegen den Dokumentenstore, kein Datei-Artefakt - deshalb kein Hash statt eines erfundenen.",
       "archive_path": "artifacts/research/supervision/6751bc3364d39ec2/",
-      "reactivation_condition": "neue Prae-Registrierung mit belegbar erreichbarer Population",
+      "reactivation_condition": "NUR ueber eine neue Prae-Registrierung mit belegbar erreichbarer Population (eine Filing-Quelle, die Symbol UND Richtung traegt) und einem window_end_utc. Die Population dieses Claims nachtraeglich zu verbreitern waere eine Kriteriumsaenderung nach Sicht der Daten.",
       "spec_installed": false,
       "spec_required": false,
-      "blocking_finding": null
+      "blocking_finding": null,
+      "review_completed_utc": "2026-08-31T14:02:21+00:00",
+      "outcome": "CLOSED_UNMEASURABLE",
+      "substantive_verdict": "NONE",
+      "truth_seq": 113,
+      "operator_decision_utc": "2026-08-31T14:00:00+00:00",
+      "operator_decision": "A - rueckwirkend als unmessbar schliessen (statt Population verbreitern)",
+      "no_window_end_finding": "Der Claim trug bis zuletzt KEIN window_end_utc - derselbe Mechanismus, an dem H2 (0c7ead764621dd17) unbegrenzt weiterreifte. Nachfolger brauchen eine Frist.",
+      "closure_reason": "UNMEASURABLE_POPULATION",
+      "terminal_verdict_class": "CLOSED_NO_VERDICT",
+      "not_this": {
+        "FAILED": "kein Sachverdikt erzeugt - das Kriterium konnte nie angewandt werden",
+        "SUPERSEDED": "nicht ersetzt, sondern ausgewertet und geschlossen",
+        "RETIRED": "nicht wegen fehlender Relevanz beendet, sondern wegen unerreichbarer Population"
+      }
     },
     {
       "prereg_id": "4a3b1b0c5a94b73c",
@@ -192,10 +208,11 @@
     "NO_WATCH_REQUIRED": 0,
     "UNRESOLVED": 0,
     "MANUAL_IMMEDIATE_VERDICT": 4,
-    "MANUAL_SCHEDULED_REVIEW": 1,
+    "MANUAL_SCHEDULED_REVIEW": 0,
     "WATCH_INSTALLED": 1,
     "SUPERSEDED_CLOSED": 1,
     "stab_06a_closed": false,
-    "stab_06a_closure_condition": "Erst wenn die vier MANUAL_IMMEDIATE_VERDICT-Faelle tatsaechlich attestiert und archiviert sind. Die Klassifikation allein schliesst STAB-06a NICHT."
+    "stab_06a_closure_condition": "Erst wenn die vier MANUAL_IMMEDIATE_VERDICT-Faelle tatsaechlich attestiert und archiviert sind. Die Klassifikation allein schliesst STAB-06a NICHT.",
+    "REVIEW_COMPLETED": 1
   }
 }

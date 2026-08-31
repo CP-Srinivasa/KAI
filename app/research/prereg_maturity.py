@@ -97,6 +97,10 @@ SUPERVISING_DECISION_STATES = frozenset(
         "MANUAL_IMMEDIATE_VERDICT",
         "MANUAL_SCHEDULED_REVIEW",
         "SUPERSEDED",
+        # Vollzogene Wiedervorlage. Steht hier, damit ein solcher Eintrag auch
+        # dann nicht als Aufsichtsluecke gilt, wenn die Truth-Kette einmal nicht
+        # lesbar ist — der Operator HAT hingesehen, das bleibt wahr.
+        "REVIEW_COMPLETED",
     }
 )
 
