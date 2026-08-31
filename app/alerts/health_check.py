@@ -128,6 +128,29 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # stattdessen ``monitoring: alternative_watcher`` mit
     # ``_check_input_contract_rejection_streams`` (config/stream_contracts.json,
     # erzwungen von scripts/stream_consumer_ratchet.py seit #820).
+    #
+    # ── G6 Task 6 (31.08.): elf bis dahin UNBEWACHTE, aber nachweislich
+    # taktgetriebene Stroeme. Jede Schwelle ist rund das Doppelte des
+    # GROESSTEN je gemessenen Abstands dieses Stroms (Pi, 31.08., ueber die
+    # volle Historie) — nicht geraten, nicht aus einem Vorfall abgeleitet.
+    #
+    # Bewusst NICHT aufgenommen: die uebrigen unbewachten Stroeme. Sie sind
+    # ereignisgetrieben oder seit Monaten still (operator_commands 2.629 h,
+    # mcp_write_audit 2.650 h, decision_journal 3.013 h). Eine Schwelle waere
+    # dort ab der ersten Minute ein Daueralarm, kein Waechter — dieselbe Falle
+    # wie ein 0-Sentinel. Wer sie bewachen will, braucht einen alternativen
+    # Waechter (monitoring=alternative_watcher, #820).
+    "shadow_real_feed_funnel.jsonl": 120,  # groesster Abstand 0,5 h
+    "ln_reputation.jsonl": 240,  # groesster Abstand 1,6 h
+    "funding_evidence_shadow.jsonl": 960,  # groesster Abstand 6,6 h
+    "oi_evidence_shadow.jsonl": 960,  # groesster Abstand 6,6 h
+    "momentum_evidence_shadow.jsonl": 1560,  # groesster Abstand 12,2 h
+    "momentum_crosscheck.jsonl": 1560,  # groesster Abstand 12,0 h
+    "momentum_universe_candidates.jsonl": 3000,  # groesster Abstand 24,1 h
+    "symbol_eligibility_audit.jsonl": 3000,  # groesster Abstand 24,1 h
+    "kai_audit.jsonl": 3000,  # groesster Abstand 24,0 h
+    "timer_health_audit.jsonl": 3000,  # groesster Abstand 24,0 h
+    "onchain_fee_shadow.jsonl": 6480,  # groesster Abstand 52,2 h
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
@@ -203,6 +226,24 @@ _PI_HOSTNAME_MARKERS = ("kai-pi", "kai-pi5", "pi5", "kai_pi")
 #: bereits gemeldet worden; eine dauerhafte Wiederholung derselben Altlast war
 #: ohnehin nie der Zweck dieser Sonde.
 SCHEMA_PROBE_TAIL = 2000
+
+#: G6 Task 6: (Dateiname, Komponentenname) der elf neu bewachten Stroeme.
+#: Der Komponentenname wird zu ``<component>_freshness`` und erbt damit
+#: automatisch die Alarmklasse P1 (app/alerts/alert_classes.py) — stilles
+#: Versagen, kein Kapitalbefund.
+_G6_TASK6_WATCHED: tuple[tuple[str, str], ...] = (
+    ("shadow_real_feed_funnel.jsonl", "shadow_real_feed_funnel"),
+    ("ln_reputation.jsonl", "ln_reputation"),
+    ("funding_evidence_shadow.jsonl", "funding_evidence_shadow"),
+    ("oi_evidence_shadow.jsonl", "oi_evidence_shadow"),
+    ("momentum_evidence_shadow.jsonl", "momentum_evidence_shadow"),
+    ("momentum_crosscheck.jsonl", "momentum_crosscheck"),
+    ("momentum_universe_candidates.jsonl", "momentum_universe_candidates"),
+    ("symbol_eligibility_audit.jsonl", "symbol_eligibility_audit"),
+    ("kai_audit.jsonl", "kai_audit"),
+    ("timer_health_audit.jsonl", "timer_health_audit"),
+    ("onchain_fee_shadow.jsonl", "onchain_fee_shadow"),
+)
 
 _AUDIT_STREAM_SCHEMA_FILES: tuple[tuple[AuditStreamName, str], ...] = (
     ("alert_audit", "alert_audit.jsonl"),
@@ -340,6 +381,13 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             "liquidation_ingress",
             False,
         ),
+        # G6 Task 6: die elf gemessenen Stroeme von oben. Ohne diese Zeilen
+        # waere die Schwelle daneben wirkungslos — ``_FRESHNESS_PER_FILE_MIN``
+        # ist nur eine Nachschlagetabelle, ausgewertet wird ausschliesslich,
+        # was HIER steht. Genau diese Luecke machte den 0-Sentinel in #817 so
+        # tueckisch: eine Zusage, die nie gelesen wird.
+        # required=False durchgehend — ein frischer Checkout hat keinen davon.
+        *((adir / fname, fname, component, False) for fname, component in _G6_TASK6_WATCHED),
     ]
     # Prä-Reg-Ledger (Blindstelle #5): NUR Existenz, keine mtime-Schwelle —
     # Prä-Regs dürfen Wochen legitim ruhen (Stille ≠ Defekt), aber ein
