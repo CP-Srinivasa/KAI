@@ -913,6 +913,18 @@ _YT_COVERAGE_SQL_BY_SOURCE = (
     "GROUP BY 1"
 )
 
+#: Die Zerlegung des AUSFALLS, nicht der Abdeckung: warum kein Transkript da ist.
+#: Ohne sie meldet die Wache eine Zahl ohne Ursache — und die einzige Diagnose
+#: waere ein neuer Abruf bei YouTube gewesen, also genau die Handlung, die am
+#: 2026-08-28 den IP-Block ausgeloest hat.
+_YT_REASON_SQL = (
+    "SELECT coalesce(json_extract(youtube_meta, '$.transcript_status'), '(nicht aufgezeichnet)'), "
+    "COUNT(*) "
+    "FROM canonical_documents "
+    "WHERE source_type = ? AND fetched_at >= ? "
+    "GROUP BY 1"
+)
+
 #: Rueckfall fuer SQLite-Builds ohne JSON1 — schwaechere Messung statt gar keiner.
 _YT_COVERAGE_SQL_BY_LENGTH = (
     "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
@@ -946,22 +958,31 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         .isoformat(sep=" ")
     )
 
-    def _query(sql: str) -> list[Any]:
+    def _query(sql: str, params: tuple[Any, ...]) -> list[Any]:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
         try:
-            return con.execute(
-                sql, (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start)
-            ).fetchall()
+            return con.execute(sql, params).fetchall()
         finally:
             con.close()
 
+    coverage_params = (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start)
+    degraded = False
+    reasons: tuple[tuple[str, int], ...] = ()
     try:
         try:
-            rows = _query(_YT_COVERAGE_SQL_BY_SOURCE)
+            rows = _query(_YT_COVERAGE_SQL_BY_SOURCE, coverage_params)
+            reasons = tuple(
+                (str(name), int(count))
+                for name, count in _query(_YT_REASON_SQL, ("youtube_channel", window_start))
+            )
         except sqlite3.OperationalError:
             # SQLite ohne JSON1 (aeltere Builds): lieber die schwaechere Messung
-            # als gar keine — und sichtbar hier dokumentiert, nicht still.
-            rows = _query(_YT_COVERAGE_SQL_BY_LENGTH)
+            # als gar keine — aber ausdruecklich als schwaecher gekennzeichnet.
+            # Seit dem Feed-Umbau liegen Beschreibungen regelmaessig ueber
+            # TRANSCRIPT_MIN_CHARS (47 von 76 am 2026-08-31), die Laengen-
+            # Heuristik zaehlt sie also als Transkript und meldete still gruen.
+            degraded = True
+            rows = _query(_YT_COVERAGE_SQL_BY_LENGTH, coverage_params)
     except sqlite3.Error as exc:
         return [
             HealthIssue(
@@ -973,7 +994,9 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         ]
 
     verdict = classify_coverage(
-        [ChannelCoverage(str(name), int(total), int(hits or 0)) for name, total, hits in rows]
+        [ChannelCoverage(str(name), int(total), int(hits or 0)) for name, total, hits in rows],
+        by_status=reasons,
+        degraded_length_proxy=degraded,
     )
     if verdict.is_healthy:
         return []

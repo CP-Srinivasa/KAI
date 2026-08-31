@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,7 +50,26 @@ def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-__all__ = ["YouTubeVideo", "fetch_transcript", "fetch_youtube_channel"]
+#: Der Abruf hat genau vier Ausgaenge, und jeder bekommt einen Namen. Vorher
+#: waren zwei davon nicht unterscheidbar — beide ``None``, beide ohne Log.
+TRANSCRIPT_STATUS_OK = "ok"
+TRANSCRIPT_STATUS_DISABLED = "transcripts_disabled"
+TRANSCRIPT_STATUS_NONE_FOUND = "none_found"
+#: Alles andere traegt seinen Ausnahmetyp mit: ``error:IpBlocked`` ist eine
+#: voellig andere Handlung als ``none_found`` — die eine heisst warten, die
+#: andere heisst, dass die Videos schlicht keine Untertitel haben.
+TRANSCRIPT_STATUS_ERROR_PREFIX = "error:"
+
+__all__ = [
+    "TRANSCRIPT_STATUS_DISABLED",
+    "TRANSCRIPT_STATUS_ERROR_PREFIX",
+    "TRANSCRIPT_STATUS_NONE_FOUND",
+    "TRANSCRIPT_STATUS_OK",
+    "YouTubeVideo",
+    "fetch_transcript",
+    "fetch_transcript_with_reason",
+    "fetch_youtube_channel",
+]
 
 
 async def fetch_channel_videos(
@@ -336,7 +356,25 @@ async def _channel_id_from_page(client: httpx.AsyncClient, handle: str) -> str |
 
 
 def fetch_transcript(video_id: str) -> str | None:
-    """Fetch transcript for a video. Returns None if unavailable."""
+    """Nur der Text — duenner Wrapper um :func:`fetch_transcript_with_reason`.
+
+    Bleibt fuer bestehende Aufrufer erhalten; wer den Grund braucht, nimmt die
+    Variante mit ``reason``.
+    """
+    return fetch_transcript_with_reason(video_id)[0]
+
+
+def fetch_transcript_with_reason(video_id: str) -> tuple[str | None, str]:
+    """Transkript UND der Grund, falls keines kommt.
+
+    Der Grund ist der eigentliche Punkt. Vorher gab es drei Ausgaenge, von
+    denen zwei still ``None`` lieferten (``TranscriptsDisabled`` /
+    ``NoTranscriptFound`` und die erfolglose Suche nach einem generierten
+    Transkript) — im Journal stand bei 0/12 Transkripten keine einzige
+    ``transcript_error``-Zeile. „Kein Transkript" und „YouTube blockt uns" sahen
+    identisch aus, und der einzige Weg, sie zu unterscheiden, war eine neue
+    Anfrage an YouTube: genau die Handlung, die den IP-Block erzeugt hat.
+    """
     try:
         # youtube-transcript-api 1.x: `list_transcripts` (Klassenmethode) ist weg,
         # es gibt nur noch die Instanzmethode `.list()`. Der alte Aufruf warf einen
@@ -358,23 +396,30 @@ def fetch_transcript(video_id: str) -> str | None:
             try:
                 transcript = transcript_list.find_generated_transcript(_PREFERRED_LANGUAGES)
             except NoTranscriptFound:
-                return None
+                return None, TRANSCRIPT_STATUS_NONE_FOUND
 
         # Zweite Bruchstelle derselben Umstellung: `fetch()` liefert in 1.x ein
         # `FetchedTranscript` aus Snippet-Objekten, keine Liste von Dicts mehr.
         # `entry.get("text")` waere hier erneut still gescheitert.
         parts = transcript.fetch()
         text = " ".join(part.text for part in parts)
-        return text[:_MAX_TRANSCRIPT_CHARS] if text else None
+        if not text:
+            return None, TRANSCRIPT_STATUS_NONE_FOUND
+        return text[:_MAX_TRANSCRIPT_CHARS], TRANSCRIPT_STATUS_OK
 
-    except (TranscriptsDisabled, NoTranscriptFound):
-        return None
+    except TranscriptsDisabled:
+        return None, TRANSCRIPT_STATUS_DISABLED
+    except NoTranscriptFound:
+        return None, TRANSCRIPT_STATUS_NONE_FOUND
     except Exception as exc:
+        # Der Typ gehoert IN den Status, nicht nur ins Log: ein Log ist weg,
+        # sobald niemand hinschaut — der Status steht am Dokument.
+        status = f"{TRANSCRIPT_STATUS_ERROR_PREFIX}{type(exc).__name__}"
         logger.warning(
             "youtube.transcript_error",
-            extra={"video_id": video_id, "error": str(exc)},
+            extra={"video_id": video_id, "error": str(exc), "status": status},
         )
-        return None
+        return None, status
 
 
 def _video_to_document(
@@ -382,6 +427,7 @@ def _video_to_document(
     transcript: str | None,
     source_id: str,
     source_name: str,
+    transcript_status: str | None = None,
 ) -> CanonicalDocument:
     """Convert a YouTube video + transcript into a CanonicalDocument."""
     url = f"https://www.youtube.com/watch?v={video.video_id}"
@@ -414,6 +460,7 @@ def _video_to_document(
             channel_name=video.channel_title,
             thumbnail_url=video.thumbnail_url,
             text_source=text_source,
+            transcript_status=transcript_status,
         ),
     )
 
@@ -440,8 +487,10 @@ async def fetch_youtube_channel(
 
         documents: list[CanonicalDocument] = []
         for video in videos:
-            transcript = fetch_transcript(video.video_id)
-            doc = _video_to_document(video, transcript, source_id, source_name)
+            transcript, transcript_status = fetch_transcript_with_reason(video.video_id)
+            doc = _video_to_document(
+                video, transcript, source_id, source_name, transcript_status=transcript_status
+            )
             documents.append(doc)
 
         logger.info(
@@ -455,6 +504,13 @@ async def fetch_youtube_channel(
                     1
                     for d in documents
                     if d.youtube_meta and d.youtube_meta.text_source == "transcript"
+                ),
+                # Zerlegung statt Summe: "0 mit Transkript" allein sagt nicht,
+                # ob geblockt, ohne Untertitel oder kaputt.
+                "transcript_status": Counter(
+                    d.youtube_meta.transcript_status or "unknown"
+                    for d in documents
+                    if d.youtube_meta
                 ),
             },
         )

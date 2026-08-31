@@ -67,6 +67,17 @@ class YouTubeVideoMeta(BaseModel):
     #: haelt das nicht mehr auseinander. ``youtube_meta`` ist eine JSON-Spalte,
     #: das Feld kostet deshalb keine Migration.
     text_source: str | None = None
+    #: WARUM kein Transkript da ist — ``"ok"``, ``"transcripts_disabled"``,
+    #: ``"none_found"`` oder ``"error:<Typ>"``. Ohne dieses Feld hinterlaesst ein
+    #: fehlgeschlagener Abruf gar nichts: zwei der drei Ausgaenge von
+    #: ``fetch_transcript`` schrieben nicht einmal eine Log-Zeile. Der
+    #: Health-Check konnte deshalb vier Tage lang „0 Transkripte" melden, ohne
+    #: dass irgendwer sagen konnte, ob YouTube blockt, ob die Videos keine
+    #: Untertitel haben oder ob der Code kaputt ist — und die einzige Antwort
+    #: waere eine neue Anfrage an YouTube gewesen, also genau das, was den
+    #: IP-Block ausgeloest hat. Steht der Grund am Dokument, ist die naechste
+    #: Diagnose eine DB-Abfrage. JSON-Spalte, keine Migration.
+    transcript_status: str | None = None
 
 
 class PodcastEpisodeMeta(BaseModel):
