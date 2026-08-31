@@ -414,3 +414,65 @@ def test_the_alert_never_calls_a_supervised_claim_unobserved(tmp_path: Path) -> 
     alert = build_maturity_alert(rows) or ""
     assert "in KEINER Wachliste" not in alert
     assert "unbeobachtet" not in alert
+
+
+# ── Ueberfaelligkeit sichtbar machen (Befund 2026-08-31) ────────────────────
+#
+# K1 (00c75a76) meldete vom 2026-08-03 bis zum 2026-08-31 **taeglich denselben
+# Satz**: "Fenster endete 2026-08-03T12:51:11 -> EVAL_CHECK_DUE". Am ersten und
+# am achtundzwanzigsten Tag identisch. Eine Frist ohne sichtbares Alter ist
+# eine Erinnerung, kein Druck — und genau deshalb fiel nicht auf, dass der
+# Claim festhaengt.
+
+
+def test_ein_geschlossenes_fenster_traegt_sein_alter(tmp_path: Path) -> None:
+    from app.research.prereg_maturity import _maturity_deadline
+
+    spec = {"window_end_utc": "2026-08-03T12:51:11.469459+00:00"}
+    _n, detail, state = _maturity_deadline(spec, datetime(2026, 8, 31, 12, 0, tzinfo=UTC))
+
+    assert state == "EVAL_CHECK_DUE"
+    assert detail["days_overdue"] == 27
+    assert detail["days_remaining"] == 0
+
+
+def test_ein_offenes_fenster_ist_nicht_ueberfaellig(tmp_path: Path) -> None:
+    from app.research.prereg_maturity import _maturity_deadline
+
+    spec = {"window_end_utc": "2026-09-29T09:15:41+00:00"}
+    _n, detail, state = _maturity_deadline(spec, datetime(2026, 8, 31, 12, 0, tzinfo=UTC))
+
+    assert state == "NOT_DUE"
+    assert detail["days_overdue"] == 0
+    assert detail["days_remaining"] == 28
+
+
+def test_der_alarm_nennt_das_alter_der_frist() -> None:
+    row = {
+        "name": "k1_channel_audit_resonance",
+        "prereg_id": "00c75a76a2b0e78b",
+        "kind": "deadline",
+        "state": "EVAL_CHECK_DUE",
+        "due": True,
+        "window_end_utc": "2026-08-03T12:51:11+00:00",
+        "per_source": {"window_end_utc": "2026-08-03T12:51:11+00:00", "days_overdue": 27},
+    }
+    alert = build_maturity_alert([row]) or ""
+
+    assert "seit 27 Tagen" in alert
+
+
+def test_ohne_ueberfaelligkeit_bleibt_der_text_unveraendert() -> None:
+    """Positivkontrolle: der Zusatz erscheint nur, wenn die Frist wirklich zu ist."""
+    row = {
+        "name": "irgendein_claim",
+        "prereg_id": "aaa",
+        "kind": "deadline",
+        "state": "EVAL_CHECK_DUE",
+        "due": True,
+        "window_end_utc": "2026-09-29T09:15:41+00:00",
+        "per_source": {"window_end_utc": "2026-09-29T09:15:41+00:00", "days_overdue": 0},
+    }
+    alert = build_maturity_alert([row]) or ""
+
+    assert "seit" not in alert.split("Fenster endete")[1][:40]
