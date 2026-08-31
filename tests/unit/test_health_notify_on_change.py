@@ -201,3 +201,75 @@ def test_legacy_timestamp_state_is_accepted(tmp_path: Path) -> None:
     sent: list[str] = []
     assert _dispatch(_Report(issues=[_tv_stale(1000)]), state, sent, now_ts=99999.0)
     assert len(sent) == 1
+
+
+# ---------------------------------------------------------------------------
+# G6 Task 1: die Klasse entscheidet, wie lange Bekanntes schweigen darf
+# ---------------------------------------------------------------------------
+
+
+def _p0() -> _Issue:
+    return _Issue("critical", "privilege_broker", "Broker fehlt — kein passwortfreier Pfad")
+
+
+def _p2() -> _Issue:
+    return _Issue("warning", "annotations", "12 unannotierte Alarme")
+
+
+def test_p0_reasserts_hourly_not_daily(tmp_path: Path) -> None:
+    """Ein Kapital-/Truth-Befund darf nicht 24 h aus dem Kanal verschwinden."""
+    state = tmp_path / "s.json"
+    sent: list[str] = []
+    _dispatch(_Report(issues=[_p0()]), state, sent, now_ts=0.0)
+    _dispatch(_Report(issues=[_p0()]), state, sent, now_ts=59 * 60.0)
+    assert len(sent) == 1, "vor 60 min darf nichts wiederholt werden"
+    _dispatch(_Report(issues=[_p0()]), state, sent, now_ts=61 * 60.0)
+    assert len(sent) == 2
+
+
+def test_p1_reasserts_after_six_hours(tmp_path: Path) -> None:
+    """Stilles Versagen: 4x taeglich statt 1x — das ist A4-024/026."""
+    state = tmp_path / "s.json"
+    sent: list[str] = []
+    _dispatch(_Report(issues=[_tv_stale(1000)]), state, sent, now_ts=0.0)
+    _dispatch(_Report(issues=[_tv_stale(1355)]), state, sent, now_ts=355 * 60.0)
+    assert len(sent) == 1
+    _dispatch(_Report(issues=[_tv_stale(1365)]), state, sent, now_ts=365 * 60.0)
+    assert len(sent) == 2
+
+
+def test_digest_only_report_keeps_the_daily_window(tmp_path: Path) -> None:
+    """Negativkontrolle: P2 bleibt beim 24-h-Fenster — der Fatigue-Schutz haelt.
+
+    Ohne diesen Test waere die Aenderung nur eine Absenkung ALLER Schwellen und
+    haette den 30-Alarme-Tag vom 18.08. zurueckgeholt.
+    """
+    state = tmp_path / "s.json"
+    sent: list[str] = []
+    _dispatch(_Report(issues=[_p2()]), state, sent, now_ts=0.0)
+    for hours in (1, 6, 12, 23):
+        _dispatch(_Report(issues=[_p2()]), state, sent, now_ts=hours * 3600.0)
+    assert len(sent) == 1
+    _dispatch(_Report(issues=[_p2()]), state, sent, now_ts=1441 * 60.0)
+    assert len(sent) == 2
+
+
+def test_the_most_urgent_class_sets_the_window(tmp_path: Path) -> None:
+    """Eine P0 neben zehn P2 macht die Meldung stuendlich, nicht taeglich."""
+    state = tmp_path / "s.json"
+    sent: list[str] = []
+    issues = [_p2(), _p0(), _p2()]
+    _dispatch(_Report(issues=issues), state, sent, now_ts=0.0)
+    _dispatch(_Report(issues=issues), state, sent, now_ts=61 * 60.0)
+    assert len(sent) == 2
+
+
+def test_alert_text_is_grouped_by_class(tmp_path: Path) -> None:
+    """35 Komponenten reisten bisher ohne Rangordnung in EINER Nachricht."""
+    from app.alerts.health_notify import build_health_alert_text
+
+    text = build_health_alert_text(_Report(issues=[_p2(), _p0()]), lookback_hours=24)
+    assert "== P0 (1) ==" in text
+    assert "== P2 (1) ==" in text
+    assert text.index("== P0 (1) ==") < text.index("== P2 (1) ==")
+    assert "privilege_broker" in text and "annotations" in text
