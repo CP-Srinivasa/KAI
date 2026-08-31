@@ -13,6 +13,8 @@ die Stale-Semantik. Die Reife-Zahlen kommen als Rohwerte herein — genau wie be
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.observability.operator_board_live import (
     build_live_board,
     curated_is_stale,
@@ -38,11 +40,17 @@ def _reg(pid: str, name: str, target: int, created: str = "2026-07-01T00:00:00+0
 
 
 def test_open_preregs_excludes_resolved_claims() -> None:
-    """Ein aufgelöster Claim ist kein offener Punkt mehr."""
+    """Ein aufgelöster Claim ist kein offener Punkt mehr.
+
+    Bis 2026-08-31 schloss hier ein blosses ``NOT_MET`` in der Seitenablage.
+    Das war die Abweichung von der Doktrin: off-chain heisst "attestieren",
+    nicht "erledigt". Der Abschluss kommt jetzt aus der verifizierten
+    Truth-Kette — das Verdikt daneben bleibt Anzeige.
+    """
     ledger = [_reg("aaa", "claim_a", 100), _reg("bbb", "claim_b", 200)]
     verdicts = [{"prereg_id": "aaa", "verdict": "NOT_MET"}]
 
-    rows = open_preregs(ledger, verdicts)
+    rows = open_preregs(ledger, verdicts, resolved_ids=frozenset({"aaa"}))
 
     assert [r["prereg_id"] for r in rows] == ["bbb"]
 
@@ -479,3 +487,165 @@ def test_a_due_supervised_claim_asks_for_the_sealed_rule() -> None:
     assert row["state"] == "supervised"
     assert "Termin faellig" in row["action"]
     assert "attestieren" in row["action"]
+
+
+# --------------------------------------------------------------------------- #
+# Terminal ist die Truth-Kette — Befund 2026-08-31
+#
+# Das Board hielt bisher NUR ``MET``/``NOT_MET`` aus der Seitenablage
+# ``prereg_verdicts.jsonl`` fuer terminal. Ein Claim, der als
+# ``CLOSED_UNMEASURABLE`` in der verifizierten Truth-Kette geschlossen ist,
+# fiel da durch — er blieb nur deshalb unsichtbar, weil ``compute_maturity``
+# ihn als ``RESOLVED`` markiert zurueckgab.
+#
+# Genau diese Reife darf aber ausfallen: der Endpunkt setzt dann
+# ``maturity_state = "unavailable"`` und uebergibt eine LEERE Zeilenliste.
+# Live gemessen am 2026-08-31 mit ``maturity_rows=[]``: **16 offene Claims
+# statt 4**, darunter alle drei am selben Tag geschlossenen (``6751bc33``,
+# ``6aa4d85d``, ``4a3b1b0c``). Ein Ausfall der Reife machte aus entschiedenen
+# Claims wieder offene — auf genau dem Board, das die Handlungsliste ist.
+#
+# Die Seitenablage schliesst laut Doktrin ohnehin NICHT
+# (``prereg_reconciliation``: Off-Chain = VERDICT_UNATTESTED, "attestieren
+# statt auswerten"). Das Board widersprach dem.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_attested_closure_survives_a_maturity_outage() -> None:
+    """Der eigentliche Befund: ohne Reife-Zeilen blieb ein geschlossener Claim offen."""
+    board = build_live_board(
+        ledger=[_reg("6751bc3364d39ec2", "sec_filing_timing", 100)],
+        verdicts=[],
+        maturity_rows=[],
+        resolved_ids=frozenset({"6751bc3364d39ec2"}),
+    )
+
+    assert board["open_preregs"] == []
+
+
+def test_without_the_truth_chain_the_same_claim_is_open_again() -> None:
+    """Positivkontrolle: der Abschluss kommt aus der Kette, nicht aus Nachsicht."""
+    board = build_live_board(
+        ledger=[_reg("6751bc3364d39ec2", "sec_filing_timing", 100)],
+        verdicts=[],
+        maturity_rows=[],
+    )
+
+    assert [r["prereg_id"] for r in board["open_preregs"]] == ["6751bc3364d39ec2"]
+
+
+def test_a_side_file_verdict_alone_does_not_close_a_claim() -> None:
+    """Doktrin: off-chain heisst 'attestieren', nicht 'erledigt'.
+
+    Vorher schloss ein blosses ``MET`` in ``prereg_verdicts.jsonl`` den Claim
+    auf dem Board — waehrend der Reifeblick fuer denselben Claim
+    ``VERDICT_UNATTESTED`` meldete. Zwei Bildschirme, zwei Wahrheiten.
+    """
+    board = build_live_board(
+        ledger=[_reg("aaa", "irgendein_claim", 100)],
+        verdicts=[{"prereg_id": "aaa", "verdict": "MET"}],
+        maturity_rows=[],
+    )
+
+    (row,) = board["open_preregs"]
+    assert row["prereg_id"] == "aaa"
+    assert row["last_verdict"] == "MET"
+    assert "attestieren" in row["action"]
+
+
+def test_the_board_says_when_the_truth_chain_could_not_be_read() -> None:
+    """Fail-loud statt fail-silent: eine unlesbare Kette ist ein Befund."""
+    board = build_live_board(
+        ledger=[_reg("aaa", "irgendein_claim", 100)],
+        verdicts=[],
+        maturity_rows=[],
+        resolutions_state="unavailable",
+    )
+
+    assert board["resolutions_state"] == "unavailable"
+    assert board["open_preregs_are_upper_bound"] is True
+
+
+def test_load_resolved_ids_reads_the_chain(tmp_path: Path) -> None:
+    """Die Extraktion aus dem Router hat eigene Tests — sonst waere sie nur verschoben."""
+    from app.observability.operator_board_live import load_resolved_ids
+    from app.research.prereg_maturity import TRUTH_LEDGER_RELPATH
+    from app.truth.attestation import compute_attestation
+    from app.truth.ledger import append_attestation
+
+    payload = {
+        "schema_version": 1,
+        "prereg_id": "6751bc3364d39ec2",
+        "verdict": "CLOSED_UNMEASURABLE - x",
+    }
+    append_attestation(
+        "verdict",
+        compute_attestation(payload)["hash"],
+        payload,
+        path=tmp_path / TRUTH_LEDGER_RELPATH,
+        mirror_audit=False,
+        attested_at_utc="2026-08-31T14:02:21+00:00",
+    )
+
+    ids, state = load_resolved_ids(tmp_path)
+
+    assert state == "ok"
+    assert "6751bc3364d39ec2" in ids
+
+
+def test_load_resolved_ids_is_empty_and_loud_on_a_broken_chain(tmp_path: Path) -> None:
+    """Eine kaputte Kette darf nicht wie 'nichts ist geschlossen' aussehen."""
+    from app.observability.operator_board_live import load_resolved_ids
+    from app.research.prereg_maturity import TRUTH_LEDGER_RELPATH
+
+    path = tmp_path / TRUTH_LEDGER_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"kind": "verdict", "payload": {}, "prev_hash": "luege"}\n', encoding="utf-8")
+
+    ids, state = load_resolved_ids(tmp_path)
+
+    assert ids == frozenset()
+    assert state != "ok"
+
+
+def test_load_resolved_ids_without_a_chain_is_ok_and_empty(tmp_path: Path) -> None:
+    """Kein Ledger ist kein Fehler — nur nichts geschlossen."""
+    from app.observability.operator_board_live import load_resolved_ids
+
+    assert load_resolved_ids(tmp_path) == (frozenset(), "ok")
+
+
+def test_the_seam_closes_a_claim_even_without_maturity_rows(tmp_path: Path) -> None:
+    """Ende zu Ende genau der Live-Fall: Reife ausgefallen, Abschluss haelt trotzdem."""
+    from app.observability.operator_board_live import build_live_board_from_disk
+    from app.research.prereg_maturity import TRUTH_LEDGER_RELPATH
+    from app.truth.attestation import compute_attestation
+    from app.truth.ledger import append_attestation
+
+    payload = {
+        "schema_version": 1,
+        "prereg_id": "6751bc3364d39ec2",
+        "verdict": "CLOSED_UNMEASURABLE - keine auswertbare Population",
+    }
+    append_attestation(
+        "verdict",
+        compute_attestation(payload)["hash"],
+        payload,
+        path=tmp_path / TRUTH_LEDGER_RELPATH,
+        mirror_audit=False,
+        attested_at_utc="2026-08-31T14:02:21+00:00",
+    )
+
+    board = build_live_board_from_disk(
+        ledger=[
+            _reg("6751bc3364d39ec2", "sec_filing_timing", 100),
+            _reg("bbb", "noch_offen", 200),
+        ],
+        verdicts=[],
+        maturity_rows=[],
+        artifacts_dir=tmp_path,
+    )
+
+    assert [r["prereg_id"] for r in board["open_preregs"]] == ["bbb"]
+    assert board["resolutions_state"] == "ok"
+    assert board["open_preregs_are_upper_bound"] is False

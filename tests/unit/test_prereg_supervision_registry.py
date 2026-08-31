@@ -41,6 +41,12 @@ _TERMINAL_STATES = {
     "MANUAL_IMMEDIATE_VERDICT",
     "MANUAL_SCHEDULED_REVIEW",
     "SUPERSEDED",
+    # Neu 2026-08-31: die terminierte Wiedervorlage HAT stattgefunden und endete
+    # in einem Abschluss in der Truth-Kette. Ohne diesen Zustand konnte das
+    # Register einen vollzogenen Review gar nicht ausdruecken — er haette ein
+    # Datum in der Zukunft luegen oder ``next_review_utc: null`` tragen muessen,
+    # was dieser Vertrag zu Recht zurueckweist.
+    "REVIEW_COMPLETED",
     "RETIRE",
     "NO_WATCH_REQUIRED",
 }
@@ -63,6 +69,15 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "owner",
         "next_review_utc",
         "decision_question",
+        "rationale",
+        "archive_path",
+    ),
+    "REVIEW_COMPLETED": (
+        "owner",
+        "closure_reason",
+        "substantive_verdict",
+        "terminal_verdict_class",
+        "truth_seq",
         "rationale",
         "archive_path",
     ),
@@ -247,7 +262,12 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     assert agg["WATCH"] == counts.get("WATCH", 0) == 1
     assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
     assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4
-    assert agg["MANUAL_SCHEDULED_REVIEW"] == counts.get("MANUAL_SCHEDULED_REVIEW", 0) == 1
+    # 2026-08-31: die einzige terminierte Wiedervorlage (6751bc33) wurde
+    # durchgefuehrt und endete in CLOSED_UNMEASURABLE (Truth-seq 113). Sie
+    # zaehlt seitdem als REVIEW_COMPLETED — die Summe der manuellen Faelle
+    # bleibt 5, nur ihre Verteilung hat sich verschoben.
+    assert agg["MANUAL_SCHEDULED_REVIEW"] == counts.get("MANUAL_SCHEDULED_REVIEW", 0) == 0
+    assert agg["REVIEW_COMPLETED"] == counts.get("REVIEW_COMPLETED", 0) == 1
     assert agg["MANUAL"] == 5
     assert agg["RETIRE"] == 0 and agg["NO_WATCH_REQUIRED"] == 0
     assert agg["UNRESOLVED"] == 0
@@ -263,3 +283,40 @@ def test_keine_stillen_abschluesse(registry: dict[str, Any], entries: list[dict[
     assert "RETIRE" not in states
     assert "NO_WATCH_REQUIRED" not in states
     assert registry["decision_states"]["RETIRE"] == "Nicht vergeben."
+
+
+def test_ein_vollzogener_review_traegt_keinen_offenen_termin(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Abgeschlossen heisst abgeschlossen — kein Watcher, kein Datum, keine Reifezaehlung.
+
+    Spiegelbild zur SUPERSEDED-Regel. Ohne diese Invariante koennte ein
+    geschlossener Claim wieder auf der Handlungsliste auftauchen, sobald jemand
+    versehentlich ein Datum ergaenzt.
+    """
+    for entry in entries:
+        if entry["decision_state"] != "REVIEW_COMPLETED":
+            continue
+        assert entry.get("next_review_utc") is None, entry["prereg_id"]
+        assert entry.get("watcher_id") is None, entry["prereg_id"]
+        assert entry.get("spec_installed") is False, entry["prereg_id"]
+        assert entry["substantive_verdict"] == "NONE", entry["prereg_id"]
+        assert isinstance(entry["truth_seq"], int), entry["prereg_id"]
+
+
+def test_der_geschlossene_sec_claim_nennt_seine_unerreichbare_population(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Der Abschluss muss den GRUND tragen, nicht nur den Zustand.
+
+    'Zu langsam' und 'unmessbar' sind verschiedene Dinge: das erste laedt zum
+    Warten ein, das zweite verbietet es. Live gemessen am 2026-08-31: 19
+    Dokumente seit der Versiegelung, davon **0** mit Richtung und **0** mit
+    Ticker — auch n=100 haette 0 auswertbare Ereignisse ergeben.
+    """
+    entry = next(e for e in entries if e["prereg_id"] == "6751bc3364d39ec2")
+
+    assert entry["decision_state"] == "REVIEW_COMPLETED"
+    assert entry["closure_reason"] == "UNMEASURABLE_POPULATION"
+    assert "0 mit Richtung und 0 mit Ticker" in entry["rationale"]
+    assert "neue Prae-Registrierung" in entry["reactivation_condition"]
