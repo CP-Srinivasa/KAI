@@ -555,3 +555,140 @@ def test_tl012_silent_below_min_n_and_dedups_documents(tmp_path: Path) -> None:
     rows = [_resolved_row(f"doc{i % 10}", f"2026-07-27T07:07:{i:02d}+00:00") for i in range(30)]
     _write_jsonl(art / "alert_outcomes.jsonl", rows)
     assert _tl012(run_lint(art)) == []
+
+
+# ── TL-002 V3: der Beleg steht auf der Fill-Zeile selbst (2026-08-31) ─────────
+#
+# Live gemessen auf dem Pi: 3 Band-Fills geflaggt, alle SOL/USDT. Zwei davon
+# tragen ``price_source: "bybit"`` MIT ``observed_market_price``,
+# ``price_observed_at_utc`` und ``market_data_is_stale: false`` — direkt auf
+# der Zeile, die die Regel ohnehin liest. Geflaggt blieben sie nur, weil
+# TL-002 den Beleg ausschliesslich ueber Loop-Audit (order_id) und
+# Screener-Candidate (document_id) suchte. Derselbe Fehlertyp wie #621 und wie
+# die V2-Korrektur: der Beleg war da, gesucht wurde am falschen Ort.
+# Der dritte Fill (24.08.) traegt gar kein ``price_source`` und bleibt
+# zu Recht Verletzung.
+
+
+def test_tl002_excludes_band_fill_whose_own_row_names_a_real_source(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {  # Beleg auf der Zeile -> ausgenommen
+                "event_type": "order_filled",
+                "order_id": "ord_own_source",
+                "symbol": "SOL/USDT",
+                "fill_price": 98.859405,
+                "timestamp_utc": "2026-08-26T22:13:34+00:00",
+                "price_source": "bybit",
+                "observed_market_price": 98.81,
+                "market_data_is_stale": False,
+            },
+            {  # kein price_source -> bleibt Verletzung (fail-closed)
+                "event_type": "order_filled",
+                "order_id": "ord_no_source",
+                "symbol": "SOL/USDT",
+                "fill_price": 98.81057,
+                "timestamp_utc": "2026-08-24T23:59:18+00:00",
+            },
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+    assert v[0]["evidence"]["band_real_source_excluded"] == 1
+
+
+def test_tl002_an_empty_price_source_is_no_proof(tmp_path: Path) -> None:
+    """Live liegen 6 Band-Fills mit ``price_source: ""`` — leer ist kein Beleg."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_empty",
+                "symbol": "SOL/USDT",
+                "fill_price": 99.0,
+                "timestamp_utc": "2026-08-26T22:13:34+00:00",
+                "price_source": "",
+            }
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+
+
+def test_tl002_a_mock_price_source_on_the_row_is_a_violation(tmp_path: Path) -> None:
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_row_mock",
+                "symbol": "SOL/USDT",
+                "fill_price": 100.5,
+                "timestamp_utc": "2026-08-26T22:13:34+00:00",
+                "price_source": "mock",
+            }
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+
+
+def test_tl002_a_stale_price_is_no_proof_either(tmp_path: Path) -> None:
+    """``fallback_1h_last`` zaehlt nicht — eine als stale markierte Quelle ebenso wenig."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_stale",
+                "symbol": "SOL/USDT",
+                "fill_price": 99.9,
+                "timestamp_utc": "2026-08-26T22:13:34+00:00",
+                "price_source": "bybit",
+                "market_data_is_stale": True,
+            }
+        ],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
+
+
+def test_tl002_explicit_mock_in_the_loop_audit_beats_the_row(tmp_path: Path) -> None:
+    """Fail-closed in der dritten Richtung: ein Negativ-Befund wird nicht ueberstimmt."""
+    art = _artifacts(tmp_path)
+    _write_jsonl(
+        art / "paper_execution_audit.jsonl",
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_conflict",
+                "symbol": "SOL/USDT",
+                "fill_price": 100.0,
+                "timestamp_utc": "2026-08-26T22:13:34+00:00",
+                "price_source": "bybit",
+                "market_data_is_stale": False,
+            }
+        ],
+    )
+    _write_jsonl(
+        art / "trading_loop_audit.jsonl",
+        [{"order_id": "ord_conflict", "notes": ["market_data_source:mock"]}],
+    )
+    result = run_lint(art)
+    v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
+    assert len(v) == 1
+    assert v[0]["evidence"]["count"] == 1
