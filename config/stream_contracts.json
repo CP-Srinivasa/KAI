@@ -31,6 +31,24 @@
       "time_to_notice": "5 Minuten fuer einen ausstehenden Alarm (warning), 30 Minuten fuer kritisch, 180 Minuten fuer einen toten Zustellpfad",
       "decision_that_would_change": "Der Operator wuerde nicht erfahren, dass die Pipeline steht — und keinen Neustart ausloesen; ohne den Strom sieht ein tauber Kanal aus wie ein ruhiger.",
       "monitoring": "freshness"
+    },
+    "ln_input_contract_rejections.jsonl": {
+      "reader": "app/audit/input_contract_rejections.py",
+      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund; der Geldpfad bleibt zwar fail-closed, aber der Operator koennte Caller-Fehler und Vertragsverletzung nicht auseinanderhalten.",
+      "failure_would_be_noticed_by": "Der Writer kennzeichnet einen fehlgeschlagenen Reject-Append sofort in LightningOpsLedgerError; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
+      "time_to_notice": "Im selben abgelehnten Writer-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder fehlerhaften Money-Caller vor einem erneuten Intent, statt die Ablehnung als Journal- oder Node-Ausfall zu behandeln.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_input_contract_rejection_streams"
+    },
+    "analysis_input_contract_rejections.jsonl": {
+      "reader": "app/audit/input_contract_rejections.py",
+      "failure_consequence": "Eine vor dem LLM abgelehnte Quelle waere nicht dauerhaft von Provider-Ausfall oder normalem Analysefehler unterscheidbar.",
+      "failure_would_be_noticed_by": "Der PipelineResult kennzeichnet einen fehlgeschlagenen Reject-Append sofort; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
+      "time_to_notice": "Im selben abgelehnten Analyse-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder die betroffene Inhaltsquelle, bevor diese Quelle erneut fuer LLM-Klassifikation freigegeben wird.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_input_contract_rejection_streams"
     }
   }
 }

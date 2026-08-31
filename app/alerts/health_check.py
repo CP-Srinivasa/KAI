@@ -120,6 +120,13 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # hielt das fest. Der Healthcheck-Timer setzt jede Stunde ein
     # Lebenszeichen (HEARTBEAT_INTERVAL_S); 180 min = drei verpasste.
     "alert_delivery_audit.jsonl": 180,
+    # G5: reine Reject-Stroeme haben absichtlich KEINE Schreibkadenz — fehlt
+    # eine Ablehnung, ist Stille der gesunde Zustand. 0 ist der ausdrueckliche
+    # Sentinel fuer synchrone Erkennung: der jeweilige Writer meldet einen
+    # Append-Fehler im selben abgelehnten Aufruf; der Health-Check validiert
+    # vorhandene Records mit ``_check_input_contract_rejection_streams``.
+    "ln_input_contract_rejections.jsonl": 0,
+    "analysis_input_contract_rejections.jsonl": 0,
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
@@ -432,6 +439,23 @@ def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
             )
         )
     return issues
+
+
+def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
+    """Validate existing G5 reject streams without inventing a write cadence."""
+    from app.audit.input_contract_rejections import inspect_input_rejection_streams
+
+    return [
+        HealthIssue(
+            severity="warning",
+            component="input_contract_rejection_stream",
+            message=f"{problem.stream}: {problem.detail}",
+        )
+        for problem in inspect_input_rejection_streams(
+            ln_path=adir / "ln_input_contract_rejections.jsonl",
+            analysis_path=adir / "analysis_input_contract_rejections.jsonl",
+        )
+    ]
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -1285,6 +1309,7 @@ def run_health_check_report(
     report.issues.extend(freshness_issues)
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
+    report.issues.extend(_check_input_contract_rejection_streams(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).
