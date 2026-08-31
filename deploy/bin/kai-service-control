@@ -36,7 +36,7 @@
 #
 # INVARIANTEN (jede einzeln getestet in tests/unit/test_kai_service_control.py)
 #   1. exakt zwei Argumente — kein drittes, kein leeres
-#   2. verb aus {start, stop, restart, reload}
+#   2. verb aus {start, stop, restart, reload, status}
 #   3. genau EIN Unit-Name, streng verankert auf ^kai-...\.service$
 #      => keine Optionen (`--no-block`, `--machine=`), keine Pfade, keine
 #         Leerzeichen, kein Glob, kein `..`
@@ -57,13 +57,13 @@ die() {
     exit 64
 }
 
-[ "$#" -eq 2 ] || die "genau 2 Argumente erwartet: <start|stop|restart|reload> <kai-unit.service> (bekam $#)"
+[ "$#" -eq 2 ] || die "genau 2 Argumente erwartet: <start|stop|restart|reload|status> <kai-unit.service> (bekam $#)"
 
 verb=$1
 unit=$2
 
 case "$verb" in
-    start | stop | restart | reload) ;;
+    start | stop | restart | reload | status) ;;
     *) die "verb nicht erlaubt: '$verb'" ;;
 esac
 

@@ -45,7 +45,8 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 ## Architektur-Schichtenmodell
 
 ### A. Input- / Signalquellen
-- **LIVE:** RSS-Feeds, TradingView, Telegram (MTProto), NewsData, X/Twitter, CoinGecko, YouTube-Transcripts.
+- **LIVE:** RSS-Feeds, TradingView (Webhooks), Telegram-Kanäle (MTProto Ingestion), CoinGecko, YouTube-Ingestion (Kostenleiter Feed/playlistItems/search mit Transkript-Abdeckungswache nach #801/#802).
+- **EXPERIMENTELL / BEGRENZT:** NewsData (kontingentiert), X/Twitter (Polling-basiert, kontingentiert; kein kontinuierlicher Live-Strom).
 - **VORBEREITET:** weitere Börsen-/Marktdaten-Provider (Provider-Symmetrie via `app/market_data/`).
 - **ZIELBILD:** Social-Media-Breite (Reddit, Discord, Foren), globaler Web-Crawl, öffentlich erreichbare Tor-Quellen im **rechtlich sauberen Beobachtungsrahmen** (keine Interaktion mit illegalen Märkten/Angeboten), frei verfügbare Dokumente, CoinMarketCap, On-Chain-/DEX-/DeFi-Signale, Whale-/Wallet-/KYT-relevante Bewegungen (soweit rechtlich und technisch sauber).
 
@@ -57,8 +58,8 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **VORBEREITET/lernend:** adaptive Lernschicht (`app/learning/`), Bayes-Confidence (SHADOW_ONLY).
 
 ### D. Entscheidungs- und Audit-Schicht
-- **LIVE:** Entscheidungsjournal (`app/decisions/`), AuditStream (append-only JSONL, `correlation_id`-Kette), tamper-evidente Audit-Primitiven (`app/audit/`), strukturiertes Reasoning ohne rohe Chain-of-Thought + PII/Secret-Redaction (`app/audit/structured_reasoning.py`, `sanitization.py`), Begründungsketten, Human-in-the-loop-Approval, Paper-Trading-Protokolle. **Recording ≠ Executing.** Keine Blackbox-Entscheidungen.
-- **VORBEREITET/Ausbau:** **Truth-Layer / formale Metric-Registry** — jede kritische Kennzahl (PnL, Exposure, Drawdown, VaR/CVaR, Sharpe/Sortino, Attribution) hat genau **eine** autoritative Berechnungsquelle mit `metric_id` + `calculation_version` + Owner + Toleranz; das Frontend zeigt nur an, berechnet nichts. Begonnen mit Dashboard-Truth-Layer (#147).
+- **LIVE:** AuditStream (append-only JSONL, `correlation_id`-Kette), tamper-evidente Hash-Chain und Attestierungs-Ledger (`app/audit/`, `app/truth/`, `artifacts/truth/attestation_ledger.jsonl`), strukturiertes Reasoning ohne rohe Chain-of-Thought + PII/Secret-Redaction (`app/audit/structured_reasoning.py`, `sanitization.py`), Begründungsketten, Human-in-the-loop-Approval, Paper-Trading-Protokolle. **Recording ≠ Executing.** Keine Blackbox-Entscheidungen.
+- **VORBEREITET/Ausbau:** **Truth-Layer / formale Metric-Registry** — jede kritische Kennzahl (PnL, Exposure, Drawdown, VaR/CVaR, Sharpe/Sortino, Attribution) hat genau **eine** autoritative Berechnungsquelle mit `metric_id` + `calculation_version` + Owner + Toleranz; das Frontend zeigt nur an, berechnet nichts. Begonnen mit Dashboard-Truth-Layer (#147, #804).
 
 ### E. Risiko-, Sicherheits- und Compliance-Schicht
 - **LIVE:** RiskEngine + Gate-Chain (`app/risk/`, non-bypassable), Kill-Switch (manueller Reset), Fail-closed-Prinzip, Security-Layer (`app/security/`: Idempotency, Rate-Limit, Brute-Force-Guard, Auth-Guards), **SENTR** (Security & Inspection, Agent) und **Watchdog** (Health & Drift, **Read-Only-Prüfer**), Secret-Management außerhalb Repo.
