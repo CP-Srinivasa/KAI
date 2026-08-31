@@ -1,3 +1,28 @@
+## 2026-08-31 - G4: kein neuer Strom ohne Abnehmer (Stream-Consumer-Ratchet)
+
+Vierzehn der 22 Integrations-Gaps des Master-Audits `KMA-20260827` sind **ein** Defekt: KAI baut
+Produzenten und nennt sie Systeme (R2-19). `telegram_webhook_rejections.jsonl` hat 85 Schreibstellen
+und 0 Leser (A1-022); der Reconciler meldete 1.902-mal gruen, ohne je etwas verglichen zu haben
+(A12-081); fuenf Komponenten sind ausgefallen, ohne dass es jemand bemerkt hat (R2-10). Die
+Meta-Ursache: **niemand zahlt einen Preis, wenn ein Strom stirbt** (R2-21).
+
+Neu ist deshalb kein vierzehnfacher Einzelfix, sondern ein CI-Gate fuer den **Zuwachs**:
+`scripts/stream_consumer_ratchet.py`. Ein Stromname, der nicht in `scripts/stream_baseline.json`
+steht (Baseline: **110** im Code deklarierte Stroeme — 108 Literale + 2 dynamische Familien), ist
+nur mergefaehig, wenn `config/stream_contracts.json` einen Leser nennt (der existieren **und** den
+Strom referenzieren muss), eine Ausfallkonsequenz benennt und eine Zeile in
+`_FRESHNESS_PER_FILE_MIN` hat. Dazu die Reifegrad-Achse `failure_would_be_noticed_by` /
+`time_to_notice` / `decision_that_would_change`: „niemand / nie / keine" ⇒ `NEEDS_CONSUMER_FIRST`.
+
+Strukturell beisst die Regel „mindestens zwei Module nennen den Strom" — **die Freshness-Registry
+zaehlt dabei nicht mit**, sonst haette genau die Zeile, die das Gate ohnehin verlangt, die
+Konsumenten-Regel selbst erfuellt. Genau diese Falle fiel beim ersten Testlauf auf.
+
+Der Bestand wird **nicht** rueckwirkend erzwungen, es wird kein Strom geloescht oder abgeschaltet.
+Grenzen benannt (`docs/runbooks/stream_consumer_contract.md`): das Gate misst Referenzen, keine
+Lesevorgaenge, und `INTENTIONALLY_INERT`-Anker (R2-11) duerfen in keiner Reifegradaussage als
+„vorhanden" gezaehlt werden.
+
 ## 2026-08-27 - STAB-06a: Aufsichtsregister statt sieben offener Punkte (1 WATCH / 5 MANUAL / 1 SUPERSEDED)
 
 Sieben versiegelte Prae-Regs standen ohne Aufsicht — kein Watcher, kein Termin, kein Archiv.
