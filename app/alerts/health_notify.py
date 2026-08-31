@@ -113,6 +113,7 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
     derselben Dringlichkeit wie ein ``annotations``-Rueckstand (A4-005).
     """
     from app.alerts.alert_classes import partition
+    from app.observability.operator_feedback import new_trigger_id
 
     lines = ["KAI Health Alert"]
     if report.data_sources_stale:
@@ -121,6 +122,12 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
         f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
         f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
     )
+    trigger_id = new_trigger_id(seed=issues_fingerprint(report.issues))
+    # G8, Rueckkante: ohne einen Schluessel, den Befund UND Handlung tragen,
+    # ist "der Operator hat nach dem Alarm etwas getan" nicht von "er hat
+    # zufaellig etwas getan" zu unterscheiden. Genau daran scheitert jede
+    # Nutzenaussage - 141 Stroeme messen KAI, null messen seinen Nutzen.
+    lines.append(f"Trigger: {trigger_id}  (Dashboard-Link anhaengen: ?t={trigger_id})")
     grouped = partition(report.issues)
     for alert_class in sorted(grouped, key=lambda c: c.rank):
         items = grouped[alert_class]
