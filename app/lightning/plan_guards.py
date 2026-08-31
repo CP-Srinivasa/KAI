@@ -48,6 +48,7 @@ _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _PUBKEY_FIELDS = ("node_pubkey_hex", "dest_pubkey_hex")
 _TXID_FIELDS = ("funding_txid_str", "txid", "closing_txid")
 _ADDRESS_FIELDS = ("addr",)
+_PAYMENT_REQUEST_FIELDS = ("payment_request",)
 
 
 def _is_hex(value: str) -> bool:
@@ -58,13 +59,15 @@ def _pubkey_defect(field: str, value: Any) -> str | None:
     text = str(value or "")
     if not text:
         return None  # absence is another layer's business, not this one's
-    if len(text) != _PUBKEY_HEX_LEN or not _is_hex(text):
+    if len(text) != _PUBKEY_HEX_LEN:
         return (
-            f"{field} is not a 33-byte compressed pubkey "
-            f"({len(text)} chars, expected {_PUBKEY_HEX_LEN} hex)"
+            f"{field}:invalid_pubkey_length "
+            f"(observed_chars={len(text)}, expected_chars={_PUBKEY_HEX_LEN})"
         )
+    if not _is_hex(text):
+        return f"{field}:invalid_pubkey_hex"
     if text[:2] not in ("02", "03"):
-        return f"{field} has prefix {text[:2]!r}; a compressed pubkey starts 02 or 03"
+        return f"{field}:invalid_pubkey_prefix (expected compressed prefix 02 or 03)"
     return None
 
 
@@ -72,8 +75,13 @@ def _txid_defect(field: str, value: Any) -> str | None:
     text = str(value or "")
     if not text:
         return None
-    if len(text) != _TXID_HEX_LEN or not _is_hex(text):
-        return f"{field} is not a txid ({len(text)} chars, expected {_TXID_HEX_LEN} hex)"
+    if len(text) != _TXID_HEX_LEN:
+        return (
+            f"{field}:invalid_txid_length "
+            f"(observed_chars={len(text)}, expected_chars={_TXID_HEX_LEN})"
+        )
+    if not _is_hex(text):
+        return f"{field}:invalid_txid_hex"
     return None
 
 
@@ -81,10 +89,24 @@ def _address_defect(field: str, value: Any) -> str | None:
     text = str(value or "").strip()
     if not text:
         return None
+    # Mainnet addresses start bc1 / 1 / 3.  Testnet and signet use tb1 / m / n / 2;
+    # regtest uses bcrt1.  The input contract is deliberately mainnet-only.
+    if text.lower().startswith(("tb1", "bcrt1", "m", "n", "2")):
+        return f"{field}:testnet_prefix"
     if len(text) < _MIN_ADDRESS_LEN:
         return (
-            f"{field} is too short to be an address ({len(text)} chars, minimum {_MIN_ADDRESS_LEN})"
+            f"{field}:invalid_address_length "
+            f"(observed_chars={len(text)}, minimum_chars={_MIN_ADDRESS_LEN})"
         )
+    return None
+
+
+def _payment_request_defect(field: str, value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text.startswith(("lntb", "lnbcrt")):
+        return f"{field}:testnet_prefix"
     return None
 
 
@@ -109,6 +131,11 @@ def plan_structural_defects(action: str, plan: dict[str, Any]) -> list[str]:
     for field in _ADDRESS_FIELDS:
         if field in plan:
             defect = _address_defect(field, plan[field])
+            if defect:
+                defects.append(defect)
+    for field in _PAYMENT_REQUEST_FIELDS:
+        if field in plan:
+            defect = _payment_request_defect(field, plan[field])
             if defect:
                 defects.append(defect)
     return defects

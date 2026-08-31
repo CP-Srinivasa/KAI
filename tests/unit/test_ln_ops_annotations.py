@@ -50,12 +50,101 @@ def test_the_four_values_that_reached_production_are_rejected() -> None:
     assert plan_structural_defects("keysend", {"dest_pubkey_hex": FIXTURE_PUBKEY})
 
 
+@pytest.mark.parametrize(
+    ("action", "plan", "reason_code", "fixture_value"),
+    [
+        (
+            "open_channel",
+            {"node_pubkey_hex": FIXTURE_PUBKEY, "local_funding_sat": 50_000},
+            "invalid_pubkey_length",
+            FIXTURE_PUBKEY,
+        ),
+        (
+            "open_channel",
+            {"funding_txid_str": FIXTURE_TXID, "local_funding_sat": 50_000},
+            "invalid_txid_length",
+            FIXTURE_TXID,
+        ),
+        (
+            "send_coins",
+            {"addr": FIXTURE_ADDR, "amount_sat": 21_000},
+            "invalid_address_length",
+            FIXTURE_ADDR,
+        ),
+        (
+            "keysend",
+            {"dest_pubkey_hex": FIXTURE_PUBKEY, "amt_sat": 21_000},
+            "invalid_pubkey_length",
+            FIXTURE_PUBKEY,
+        ),
+    ],
+)
+def test_money_writer_rejects_each_fixture_before_sealing_and_records_safe_reason(
+    tmp_path: Path,
+    action: str,
+    plan: dict[str, object],
+    reason_code: str,
+    fixture_value: str,
+) -> None:
+    journal = tmp_path / "ln_ops_ledger_v2.jsonl"
+    rejects = tmp_path / "ln_input_contract_rejections.jsonl"
+
+    with pytest.raises(LightningOpsLedgerError, match=reason_code):
+        prepare_ln_intent(action, plan=plan, path=journal, rejection_path=rejects)
+
+    assert not journal.exists(), "fixture input must be rejected before the sealed journal"
+    rows = [json.loads(line) for line in rejects.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["contract"] == "money_journal_input/v1"
+    assert rows[0]["action"] == action
+    assert any(reason_code in reason for reason in rows[0]["reasons"])
+    assert fixture_value not in rejects.read_text(encoding="utf-8")
+    assert "plan" not in rows[0]
+
+
+@pytest.mark.parametrize(
+    ("action", "plan"),
+    [
+        ("send_coins", {"addr": "tb1q" + "a" * 38, "amount_sat": 21_000}),
+        ("send_coins", {"addr": "bcrt1q" + "a" * 38, "amount_sat": 21_000}),
+        ("send_coins", {"addr": "m" + "a" * 33, "amount_sat": 21_000}),
+        ("send_coins", {"addr": "n" + "a" * 33, "amount_sat": 21_000}),
+        ("send_coins", {"addr": "2" + "a" * 33, "amount_sat": 21_000}),
+        ("pay_invoice", {"payment_request": "lntb1" + "a" * 40}),
+        ("pay_invoice", {"payment_request": "lnbcrt1" + "a" * 40}),
+    ],
+)
+def test_money_writer_rejects_testnet_prefixes(
+    tmp_path: Path, action: str, plan: dict[str, object]
+) -> None:
+    with pytest.raises(LightningOpsLedgerError, match="testnet_prefix"):
+        prepare_ln_intent(
+            action,
+            plan=plan,
+            path=tmp_path / "ln_ops_ledger_v2.jsonl",
+            rejection_path=tmp_path / "ln_input_contract_rejections.jsonl",
+        )
+
+
+def test_money_writer_rejects_non_hex_txid(tmp_path: Path) -> None:
+    with pytest.raises(LightningOpsLedgerError, match="invalid_txid_hex"):
+        prepare_ln_intent(
+            "open_channel",
+            plan={"funding_txid_str": "g" * 64, "local_funding_sat": 50_000},
+            path=tmp_path / "ln_ops_ledger_v2.jsonl",
+            rejection_path=tmp_path / "ln_input_contract_rejections.jsonl",
+        )
+
+
 def test_positive_control_the_real_plans_pass() -> None:
     """The three actions the G2 forensics proved real must not be blocked."""
     assert plan_structural_defects("open_channel", {"node_pubkey_hex": REAL_PUBKEY}) == []
     assert plan_structural_defects("open_channel", {"funding_txid_str": REAL_TXID}) == []
     assert plan_structural_defects("send_coins", {"addr": REAL_ADDR}) == []
+    assert plan_structural_defects("send_coins", {"addr": "1" + "a" * 33}) == []
+    assert plan_structural_defects("send_coins", {"addr": "3" + "a" * 33}) == []
     assert plan_structural_defects("pay_invoice", {"amount_sat": 2100, "fee_limit_sat": 50}) == []
+    assert plan_structural_defects("pay_invoice", {"payment_request": "lnbc1" + "a" * 40}) == []
 
 
 def test_guard_is_silent_about_fields_it_cannot_decide() -> None:
@@ -96,19 +185,39 @@ def test_the_writer_refuses_a_fixture_plan_and_journals_nothing(tmp_path: Path) 
             "open_channel",
             plan={"node_pubkey_hex": FIXTURE_PUBKEY, "local_funding_sat": 50_000},
             path=journal,
+            rejection_path=tmp_path / "ln_input_contract_rejections.jsonl",
         )
     assert not journal.exists(), "a rejected plan must leave no trace in the money journal"
 
 
+def test_money_writer_stays_fail_closed_when_reject_stream_is_unwritable(tmp_path: Path) -> None:
+    journal = tmp_path / "ln_ops_ledger_v2.jsonl"
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("block", encoding="utf-8")
+
+    with pytest.raises(LightningOpsLedgerError, match="rejection_audit_failed"):
+        prepare_ln_intent(
+            "open_channel",
+            plan={"node_pubkey_hex": FIXTURE_PUBKEY, "local_funding_sat": 50_000},
+            path=journal,
+            rejection_path=blocker / "ln_input_contract_rejections.jsonl",
+        )
+
+    assert not journal.exists()
+
+
 def test_the_writer_accepts_a_real_plan(tmp_path: Path) -> None:
     journal = tmp_path / "ln_ops_ledger_v2.jsonl"
+    rejects = tmp_path / "ln_input_contract_rejections.jsonl"
     record = prepare_ln_intent(
         "open_channel",
         plan={"node_pubkey_hex": REAL_PUBKEY, "local_funding_sat": 50_000},
         path=journal,
+        rejection_path=rejects,
     )
     assert record["state"] == "intent"
     assert verify_ln_ops_ledger(journal)["ok"] is True
+    assert not rejects.exists(), "a valid plan must not manufacture a rejection"
 
 
 # --------------------------------------------------------------------------- #
