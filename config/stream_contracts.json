@@ -20,5 +20,14 @@
     "die im PR-Body begruendet werden muss."
   ],
   "intentionally_inert": [],
-  "streams": {}
+  "streams": {
+    "alert_delivery_audit.jsonl": {
+      "reader": "app/alerts/alert_delivery.py",
+      "failure_consequence": "Ein nicht zugestellter Alarm bleibt unbemerkt verloren; genau so gingen 15 von 19 FAIL-Alarmen in 30 Tagen verloren (A4-017).",
+      "freshness_check": "_FRESHNESS_PER_FILE_MIN",
+      "failure_would_be_noticed_by": "_check_alert_delivery in app/alerts/health_check.py (Sonde) und die 180-min-Freshness-Zeile fuer den stuendlichen Heartbeat",
+      "time_to_notice": "5 Minuten fuer einen ausstehenden Alarm (warning), 30 Minuten fuer kritisch, 180 Minuten fuer einen toten Zustellpfad",
+      "decision_that_would_change": "Der Operator wuerde nicht erfahren, dass die Pipeline steht — und keinen Neustart ausloesen; ohne den Strom sieht ein tauber Kanal aus wie ein ruhiger."
+    }
+  }
 }
