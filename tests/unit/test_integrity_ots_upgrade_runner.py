@@ -56,3 +56,45 @@ def test_runner_reports_missing_library_as_error(monkeypatch) -> None:
     monkeypatch.setattr(runner, "upgrade_pending_proofs", _boom)
     rc = main(IntegritySettings(enabled=True, stamper="opentimestamps"))
     assert rc == 1
+
+
+def test_runner_fails_when_a_proof_could_not_be_upgraded(monkeypatch, tmp_path, capsys) -> None:
+    """G6/A7-017: der Lauf meldete monatelang ``failed=1`` und endete mit 0.
+
+    Die Unit blieb dadurch gruen und ``OnFailure`` feuerte nie — ein Beweis,
+    der nicht mehr fortgeschrieben werden kann, sah aus wie ein
+    fortgeschriebener. Ein ``SuccessExitStatus`` gab es in der Unit nie; der
+    Fehler sass in der letzten Zeile des Skripts.
+    """
+    monkeypatch.setattr(
+        runner,
+        "upgrade_pending_proofs",
+        lambda proofs_dir: UpgradeReport(scanned=143, upgraded=0, already_confirmed=142, failed=1),
+    )
+    rc = main(
+        IntegritySettings(
+            enabled=True, stamper="opentimestamps", proofs_dir=str(tmp_path / "proofs")
+        )
+    )
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "failed=1" in out
+    assert "FAILED" in out
+
+
+def test_runner_stays_green_when_nothing_failed(monkeypatch, tmp_path) -> None:
+    """Negativkontrolle: nach der Uebereignung am 31.08. lief derselbe Bestand
+    mit ``failed=0`` durch — die Verschaerfung darf keinen Dauer-Alarm erzeugen."""
+    monkeypatch.setattr(
+        runner,
+        "upgrade_pending_proofs",
+        lambda proofs_dir: UpgradeReport(scanned=143, upgraded=1, already_confirmed=142, failed=0),
+    )
+    assert (
+        main(
+            IntegritySettings(
+                enabled=True, stamper="opentimestamps", proofs_dir=str(tmp_path / "proofs")
+            )
+        )
+        == 0
+    )
