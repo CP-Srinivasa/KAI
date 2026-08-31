@@ -294,6 +294,11 @@ def test_repo_gate_is_green_and_baseline_is_current() -> None:
         ratchet.load_contracts(ratchet.CONTRACTS_PATH),
         ratchet.freshness_registry(ratchet.HEALTH_CHECK_PATH),
         ratchet.REPO_ROOT,
+        # Muss dieselben Eingaben bekommen wie das CLI-Gate — sonst misst der
+        # Test strenger als das, was in CI wirklich laeuft, und ein korrekt
+        # deklarierter alternativer Waechter faellt hier faelschlich durch.
+        wired_probes=ratchet.health_probe_wiring(ratchet.HEALTH_CHECK_PATH),
+        defined_probes=ratchet.defined_functions(ratchet.HEALTH_CHECK_PATH),
     )
     assert verdict.violations == []
 

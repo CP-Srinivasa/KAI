@@ -120,13 +120,14 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # hielt das fest. Der Healthcheck-Timer setzt jede Stunde ein
     # Lebenszeichen (HEARTBEAT_INTERVAL_S); 180 min = drei verpasste.
     "alert_delivery_audit.jsonl": 180,
-    # G5: reine Reject-Stroeme haben absichtlich KEINE Schreibkadenz — fehlt
-    # eine Ablehnung, ist Stille der gesunde Zustand. 0 ist der ausdrueckliche
-    # Sentinel fuer synchrone Erkennung: der jeweilige Writer meldet einen
-    # Append-Fehler im selben abgelehnten Aufruf; der Health-Check validiert
-    # vorhandene Records mit ``_check_input_contract_rejection_streams``.
-    "ln_input_contract_rejections.jsonl": 0,
-    "analysis_input_contract_rejections.jsonl": 0,
+    # G5: die beiden Reject-Stroeme stehen bewusst NICHT hier. Sie haben keine
+    # Schreibkadenz — fehlt eine Ablehnung, ist Stille der gesunde Zustand —
+    # und eine Schwelle 0 waere kein Vertrag, sondern ein Platzhalter: heute
+    # wirkungslos (die Dateien stehen in keiner ``files_to_check``-Liste),
+    # spaeter ein Daueralarm, sobald sie jemand dort eintraegt. Sie deklarieren
+    # stattdessen ``monitoring: alternative_watcher`` mit
+    # ``_check_input_contract_rejection_streams`` (config/stream_contracts.json,
+    # erzwungen von scripts/stream_consumer_ratchet.py seit #820).
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern

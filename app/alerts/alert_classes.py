@@ -95,6 +95,12 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     "timer_scheduleability": AlertClass.P1,
     "document_ingest": AlertClass.P1,
     "youtube_transcript_coverage": AlertClass.P1,
+    # G5-Eingangsvertraege: der Reject-Strom traegt den GRUND einer Ablehnung.
+    # Faellt er aus, bleibt der Geldpfad fail-closed (deshalb nicht P0), aber
+    # der Operator kann Caller-Fehler nicht mehr von Vertragsverletzung
+    # unterscheiden — eine Ablehnung ohne lesbaren Grund ist ein stilles
+    # Versagen der Beweisfuehrung.
+    "input_contract_rejection_stream": AlertClass.P1,
     "alerts": AlertClass.P1,
     "alerts_actionable": AlertClass.P1,
     "trading_loop": AlertClass.P1,

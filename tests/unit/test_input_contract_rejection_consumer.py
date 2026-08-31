@@ -138,6 +138,52 @@ def test_health_probe_reports_malformed_existing_stream_without_requiring_silenc
     assert issues[0].component == "input_contract_rejection_stream"
 
 
-def test_reject_stream_freshness_entries_are_synchronous_sentinels() -> None:
-    assert _FRESHNESS_PER_FILE_MIN["ln_input_contract_rejections.jsonl"] == 0
-    assert _FRESHNESS_PER_FILE_MIN["analysis_input_contract_rejections.jsonl"] == 0
+REJECT_STREAMS = (
+    "ln_input_contract_rejections.jsonl",
+    "analysis_input_contract_rejections.jsonl",
+)
+
+
+def test_reject_streams_are_not_in_the_freshness_map() -> None:
+    """G5_REJECT_STREAMS_NOT_IN_FRESHNESS_MAP.
+
+    Diese Stroeme haben keine Schreibkadenz — Stille ist der gesunde Zustand.
+    Eine Zeile mit Schwelle 0 waere heute wirkungslos und spaeter ein
+    Daueralarm; der Vertrag drueckt die Ueberwachung jetzt direkt aus.
+    """
+    for stream in REJECT_STREAMS:
+        assert stream not in _FRESHNESS_PER_FILE_MIN
+
+
+def test_all_freshness_thresholds_are_positive() -> None:
+    """ALL_FRESHNESS_THRESHOLDS_POSITIVE — kein Sentinel, kein Platzhalter."""
+    non_positive = {k: v for k, v in _FRESHNESS_PER_FILE_MIN.items() if v <= 0}
+    assert non_positive == {}
+
+
+def test_reject_streams_declare_an_alternative_watcher() -> None:
+    """G5_ALTERNATIVE_WATCHER_DECLARED + G5_WATCHER_EXISTS."""
+    import json
+    from pathlib import Path
+
+    contracts = json.loads(
+        (Path(__file__).resolve().parents[2] / "config" / "stream_contracts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    for stream in REJECT_STREAMS:
+        entry = contracts["streams"][stream]
+        assert entry["monitoring"] == "alternative_watcher"
+        assert entry["watcher"] == "_check_input_contract_rejection_streams"
+        assert "freshness_check" not in entry
+    assert callable(_check_input_contract_rejection_streams)
+
+
+def test_watcher_is_called_from_the_health_report() -> None:
+    """G5_WATCHER_CALLED_FROM_HEALTH — ein Waechter, den niemand ruft, ist eine Behauptung."""
+    import inspect
+
+    from app.alerts.health_check import run_health_check_report
+
+    source = inspect.getsource(run_health_check_report)
+    assert "_check_input_contract_rejection_streams(" in source
