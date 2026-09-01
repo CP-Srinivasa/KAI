@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -109,8 +110,73 @@ SUPERVISING_DECISION_STATES = frozenset(
         # Waechter ihn als Aufsichtsluecke — bei einem 14-Tage-Fenster taeglich,
         # und genau dieser Selbstbefund hat den ersten G8-Akt vergiftet.
         "INVALIDATED_BEFORE_MEASUREMENT",
+        # STAB-2026-09-01: derselbe Zustand, aber der Nachfolger ist noch NICHT
+        # bestimmbar. ``INVALIDATED_BEFORE_MEASUREMENT`` verlangt ``replaced_by``;
+        # beim Abbruch des zweiten G8-Akts existiert die Nachfolger-ID noch gar
+        # nicht, weil sie deterministisch aus dem DEPLOYTEN Code faellt
+        # (Mainline-SHA + evaluator_sha256 + health_notify_sha256 + Config-SHA)
+        # und der Deploy noch aussteht.
+        #
+        # Die Alternative waere eine vorausberechnete Platzhalter-ID gewesen —
+        # exakt der Fehler, den #843 teuer nachgewiesen hat: die erste
+        # Vorausberechnung ergab b7f9a8e204e40e23 und traf nicht, weil der
+        # gepinnte Evaluator danach noch einmal bearbeitet wurde. Eine erfundene
+        # ``replaced_by`` waere eine Behauptung ueber einen Zustand, den es noch
+        # nicht gibt.
+        #
+        # Der Entscheid selbst ist damit NICHT aufgeschoben: er ist getroffen,
+        # datiert und gehasht. Nur die Verkettung zum Nachfolger fehlt noch.
+        "INVALIDATED_PENDING_SUCCESSOR",
     }
 )
+
+#: Zustaende, die eine Messung formal beenden, ohne ein Sachverdikt zu tragen.
+#: Beide MUESSEN ``substantive_verdict = NONE`` fuehren: das Verdikt gehoert dem
+#: Nachfolge-Akt, nie dem abgebrochenen.
+INVALIDATED_STATES = frozenset({"INVALIDATED_BEFORE_MEASUREMENT", "INVALIDATED_PENDING_SUCCESSOR"})
+
+#: Der einzige zulaessige Folgeuebergang. Erst wenn die Nachfolger-ID gegen den
+#: deployten Code berechnet ist, darf der Eintrag weiterwandern — und
+#: ``invalidated_at_utc`` bleibt dabei der urspruengliche Entscheid-Zeitpunkt.
+INVALIDATION_SUCCESSOR_TRANSITION = (
+    "INVALIDATED_PENDING_SUCCESSOR",
+    "INVALIDATED_BEFORE_MEASUREMENT",
+)
+
+
+def validate_invalidated_entry(entry: Mapping[str, Any]) -> list[str]:
+    """Pflichtsemantik der beiden Invalidierungs-Zustaende. Leer = in Ordnung.
+
+    Fail-CLOSED: ein Abbruch darf niemals ein Sachverdikt, einen Watcher oder
+    einen Termin tragen — sonst wuerde eine tote Messung weiterbeobachtet oder,
+    schlimmer, ein Ergebnis behauptet, das nie gemessen wurde.
+    """
+    state = str(entry.get("decision_state") or "")
+    if state not in INVALIDATED_STATES:
+        return []
+    errors: list[str] = []
+    if entry.get("substantive_verdict") not in (None, "NONE"):
+        errors.append(f"{state}: substantive_verdict must be NONE")
+    if not entry.get("invalidation_reason"):
+        errors.append(f"{state}: invalidation_reason is required")
+    if not entry.get("invalidated_at_utc"):
+        errors.append(f"{state}: invalidated_at_utc is required")
+    for forbidden in ("watcher_id", "cadence", "next_review_utc"):
+        if entry.get(forbidden):
+            errors.append(f"{state}: {forbidden} must be absent")
+    if entry.get("MATURITY_SPEC") not in (None, "none"):
+        errors.append(f"{state}: MATURITY_SPEC must be none")
+
+    if state == "INVALIDATED_PENDING_SUCCESSOR":
+        if entry.get("replaced_by") is not None:
+            errors.append("INVALIDATED_PENDING_SUCCESSOR: replaced_by must be null")
+        if entry.get("replacement_pending") is not True:
+            errors.append("INVALIDATED_PENDING_SUCCESSOR: replacement_pending must be true")
+    else:  # INVALIDATED_BEFORE_MEASUREMENT
+        if not entry.get("replaced_by"):
+            errors.append("INVALIDATED_BEFORE_MEASUREMENT: replaced_by is required")
+    return errors
+
 
 # ``MANUAL_IMMEDIATE_VERDICT`` traegt laut Register-Invariante diesen Wert
 # statt eines Datums — er bedeutet faellig, nicht "kein Termin".
