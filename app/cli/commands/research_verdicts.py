@@ -302,6 +302,62 @@ def trading_k1_inbox_count(
     console.print(f"[dim]{report['distinct_contacts_note']}[/dim]")
 
 
+@trading_app.command("runtime-provenance")
+def trading_runtime_provenance(
+    expected_sha: str = typer.Option(
+        "", "--expected-sha", help="Erwartete Revision (leer: HEAD des Checkouts)"
+    ),
+    repo: str = typer.Option(".", "--repo", help="Checkout-Wurzel"),
+    json_out: bool = typer.Option(False, "--json", help="Rohurteil als JSON"),
+) -> None:
+    """ONE_PRODUCTION_REVISION: laeuft jeder Dienst auf dem behaupteten Stand?
+
+    Misst vom laufenden PROZESS aus (``/proc/<pid>``), nicht von der Unit-Datei:
+    ``ExecStart`` sagt, womit gestartet werden SOLLTE, ``/proc`` sagt, was
+    laeuft — inklusive aufgeloester Symlinks.
+
+    Exit 0 = OK · Exit 10 = HOLD (Code- oder Abhaengigkeits-Drift).
+    """
+    import subprocess
+
+    from app.observability.runtime_provenance import (
+        DEFAULT_MARKER_RELPATH,
+        collect_runtime_services,
+        evaluate_provenance,
+        read_marker,
+        render_verdict,
+        sha256_of,
+    )
+
+    root = Path(repo).resolve()
+    head = (
+        expected_sha
+        or subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+    )
+
+    verdict = evaluate_provenance(
+        collect_runtime_services(),
+        expected_sha=head,
+        marker=read_marker(root / DEFAULT_MARKER_RELPATH),
+        checkout_sha=head,
+        checkout_lock_sha256=sha256_of(root / "requirements.lock"),
+    )
+
+    if json_out:
+        from dataclasses import asdict
+
+        print(json.dumps(asdict(verdict), indent=2, ensure_ascii=False))
+    else:
+        color = "green" if verdict.ok else "red"
+        console.print(f"[{color}]{render_verdict(verdict)}[/{color}]")
+    raise typer.Exit(code=0 if verdict.ok else 10)
+
+
 @trading_app.command("prereg-list")
 def trading_prereg_list(
     ledger_path: str = typer.Option(
