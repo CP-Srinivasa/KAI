@@ -92,7 +92,7 @@ freezegun==1.5.5
     # via ai-analyst-trading-bot (pyproject.toml)
 google-auth==2.57.0
     # via google-genai
-google-genai==2.20.0
+google-genai==2.21.0
     # via ai-analyst-trading-bot (pyproject.toml)
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via sqlalchemy
@@ -271,7 +271,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.8.31
+regex==2026.9.3
     # via
     #   dateparser
     #   tiktoken
@@ -346,20 +346,15 @@ typing-extensions==4.16.0
     # via
     #   alembic
     #   anthropic
-    #   anyio
     #   beautifulsoup4
     #   fastapi
     #   google-genai
-    #   httpx2
     #   mcp
     #   mypy
     #   openai
     #   pydantic
     #   pydantic-core
-    #   pytest-asyncio
-    #   referencing
     #   sqlalchemy
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
     # via
