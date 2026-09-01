@@ -2343,6 +2343,16 @@ export type SignalSummary = {
   signal_timestamp: string | null;
 };
 
+/** The backend's canonical lifecycle stages — see app/premium/state_machine.py. */
+export type LifecycleBucket =
+  | "recognised"
+  | "eligible"
+  | "rejected"
+  | "review"
+  | "submitted_paper"
+  | "opened_paper"
+  | "closed_paper";
+
 export type EnvelopeRecord = {
   timestamp_utc: string | null;
   event: string | null;
@@ -2355,6 +2365,13 @@ export type EnvelopeRecord = {
   premium_state?: string | null;
   premium_state_label?: string | null;
   premium_state_tone?: "pos" | "warn" | "neg" | "neutral" | string | null;
+  /**
+   * STAB-2026-09-01 §10 — the ONE lifecycle bucket, computed by the backend's
+   * total partition. The panel used to derive its own buckets with six
+   * independent `if` statements, so 21 of 45 states landed in no column while
+   * still counting in the header total (207 of 3890 live rows, 5.3%).
+   */
+  lifecycle_bucket?: LifecycleBucket | string | null;
   bridge_stage?: string | null;
   bridge_reason?: string | null;
   stage: string | null;

@@ -3,12 +3,17 @@
 # the digest computes from the same sources directly). Installed but NOT
 # enabled by default — enabling is a deliberate operator step.
 [Unit]
-Description=KAI Operator-Digest — daily 07:30 (off by default)
+Description=KAI Operator-Digest — daily 07:30 UTC (off by default)
 # Kein Requires= auf Timern (Kaskaden-Lehre #414, kai_timer_requires_cascade_20260624):
 # ein Stop/Fehler der .service darf den Timer nicht bis zum Reboot stranden.
 
 [Timer]
-OnCalendar=*-*-* 07:30:00
+# STAB-2026-09-01 §4 — an explicit UTC suffix, unlike before.
+# Both anchor timers pin UTC; this one did not, so on the Europe/Berlin host it
+# actually fired at 05:30 UTC. That is how the digest ended up sampling the truth
+# anchor inside the only window in which it looked anchored. It must run AFTER
+# kai-truth-anchor (06:35 UTC), which 07:30 UTC does and 05:30 UTC did not.
+OnCalendar=*-*-* 07:30:00 UTC
 Persistent=true
 AccuracySec=5min
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.alerts.audit import AlertAuditRecord, load_alert_audits, load_outcome_annotations
-from app.alerts.eligibility import evaluate_directional_eligibility
+from app.alerts.eligibility import BLOCK_REASON_NAKED_ASSET, evaluate_directional_eligibility
 from app.alerts.provenance_metrics import wilson_ci
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
@@ -580,6 +580,44 @@ def build_hold_metrics_report(
             blocked_directional_reasons.append(current_check.directional_block_reason or "unknown")
 
     blocked_directional_reason_counts = Counter(blocked_directional_reasons)
+
+    # STAB-2026-09-01 §5 — MATURE_BUT_PAIR_INELIGIBLE.
+    #
+    # "0/15 Quellen-Treffsicherheit" was true but misleading, because the source
+    # with by far the most evidence is not in the denominator at all.
+    # tradingview_webhook carries 2679 audit records and ~2570 hard outcomes; every
+    # one of them re-evaluates to naked_asset_no_trading_pair, because the rows
+    # persist a bare asset ("ETH") and never a pair ("ETH/USDT").
+    #
+    # THE DECISION, and it is deliberate: those historical rows are NOT admitted
+    # retroactively. Without a persisted pair there is no unambiguous historical
+    # pair attribution, and inventing one after the fact would be fabricating the
+    # very provenance the outcome depends on. HISTORICAL_NAKED_ASSET_ROWS =
+    # INELIGIBLE_FOR_PAIR_ACCURACY.
+    #
+    # What changes is that the exclusion stops being invisible. The population is
+    # counted and published, so a reader sees "0 of 15 pair-eligible sources
+    # passed, and one mature source sits outside the population for a stated
+    # structural reason" instead of an unqualified 0/15.
+    pair_ineligible_by_source: Counter[str] = Counter()
+    for rec, reason in zip(blocked_directional, blocked_directional_reasons, strict=False):
+        if reason != BLOCK_REASON_NAKED_ASSET:
+            continue
+        ineligible_src = canonical_source_id(rec.source_name)
+        pair_ineligible_by_source[ineligible_src] += 1
+    mature_but_pair_ineligible = {
+        src: {
+            "records": n,
+            "reason": "HISTORICAL_NAKED_ASSET_ROWS",
+            "detail": (
+                "rows persist a bare asset and no trading pair; no unambiguous "
+                "historical pair attribution exists, so they are ineligible for "
+                "pair accuracy and are NOT admitted retroactively"
+            ),
+            "eligible_for_pair_accuracy": False,
+        }
+        for src, n in sorted(pair_ineligible_by_source.items())
+    }
     directional_doc_ids = {r.document_id for r in directional}
 
     # Alert audits are channel-level (email + telegram). For gate evidence we
@@ -1036,6 +1074,8 @@ def build_hold_metrics_report(
             "sources_passing": sources_passing_precision,
         },
         "per_source_stability": per_source_stability,
+        # §5: the excluded-but-mature population, named rather than silently absent.
+        "mature_but_pair_ineligible": mature_but_pair_ineligible,
         # §5: the populations are reconciled in the payload, so a reader never
         # has to guess why one card says 15 and the next says 12.
         "source_population_reconciliation": reconcile_source_populations(

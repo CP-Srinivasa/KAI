@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 OrderIntent = ExecutableOrderIntent
 
 
+#: STAB-2026-09-01 §3: the fail-closed default venue for a fill whose execution
+#: venue was never declared. Deliberately NOT a paper venue — an undeclared fill
+#: must surface as unexplained, never inherit an exemption meant for two
+#: specific, forensically classified 2026-05-04 rows.
+FEE_VENUE_UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class PaperOrder:
     """Immutable order record. Never mutated after creation."""
@@ -122,7 +129,22 @@ class PaperFill:
     position_side: str = "long"  # "long" | "short"
     # NEO-P-106 Phase 1: additive Audit-Felder fuer Fee-Provenienz (Backwards-compat
     # weil Defaults; Konsumenten lesen via .get() oder ignorieren unbekannte Keys).
-    fee_venue: str = "legacy"
+    #
+    # STAB-2026-09-01 §3 — der Default war ``"legacy"``, und das war der letzte
+    # lebende Rest des Non-Paper-Fill-Befunds. ``"legacy"`` ist genau die Marke,
+    # die die beiden historischen Fills vom 2026-05-04 tragen; solange eine neu
+    # gebaute Fill-Zeile ohne explizites ``fee_venue`` diese Marke erbt, erbt sie
+    # eine historische Befreiung, die ihr nicht zusteht. Die Identitaets- und
+    # Epochenbindung in ``evidence_window.is_documented_benign_non_paper``
+    # verhindert die Befreiung inzwischen — aber ein Default, der ueberhaupt erst
+    # in die Naehe einer Befreiung fuehrt, ist die falsche Voreinstellung.
+    #
+    # ``FEE_VENUE_UNKNOWN`` ist bewusst KEIN Paper-Venue: eine Zeile ohne erklaerte
+    # Venue zaehlt damit als non-paper und UNEXPLAINED, faellt also laut auf,
+    # statt still durchzugehen. Jeder Produktionspfad setzt das Feld explizit
+    # (paper_engine.py: ``fee_venue=fee_meta[0]``), der Default ist also nur die
+    # fail-closed Auffanglinie.
+    fee_venue: str = FEE_VENUE_UNKNOWN
     fee_role: str = "taker"
     fee_bps_applied: float = 0.0
     fee_table_version: str = "unknown"

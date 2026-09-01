@@ -157,3 +157,51 @@ def test_note_does_not_hardcode_the_may_close_sentence() -> None:
     note = _describe_benign_non_paper(safety)
     assert "epoch-fremde Mai-Closes" not in note
     assert "1 of 1" in note
+
+
+# --------------------------------------------------------------------------
+# STAB-2026-09-01 §3 — the default must not carry an exemption
+# --------------------------------------------------------------------------
+def test_fill_fee_venue_no_longer_defaults_to_legacy() -> None:
+    """The last live remnant of this finding.
+
+    ``PaperFill.fee_venue`` defaulted to ``"legacy"`` — the exact marker the two
+    historical 2026-05-04 rows carry. A newly constructed fill without an explicit
+    venue therefore inherited the label of an exempted pair. The identity/epoch
+    binding above already denies the exemption, but a default that leads toward one
+    at all is the wrong starting value.
+    """
+    import dataclasses
+
+    from app.execution.models import FEE_VENUE_UNKNOWN, PaperFill
+
+    default = next(f.default for f in dataclasses.fields(PaperFill) if f.name == "fee_venue")
+    assert default != "legacy"
+    assert default == FEE_VENUE_UNKNOWN
+
+
+def test_the_default_venue_is_not_a_paper_venue() -> None:
+    """NEGATIVE CONTROL: an undeclared venue must surface, not pass silently.
+
+    If ``unknown`` counted as a paper venue the fill would vanish from
+    ``live_orders_attempted`` entirely — quieter than the old bug and worse.
+    """
+    from app.execution.models import FEE_VENUE_UNKNOWN
+    from app.observability.evidence_window import _is_paper_venue
+
+    assert _is_paper_venue(FEE_VENUE_UNKNOWN) is False
+
+
+def test_a_default_constructed_fill_is_unexplained_not_benign() -> None:
+    """End to end: no explicit venue => counted AND unexplained."""
+    from app.execution.models import FEE_VENUE_UNKNOWN
+
+    row = _paper_fill(
+        fill_id="fill_no_declared_venue",
+        order_id="ord_no_declared_venue",
+        fee_venue=FEE_VENUE_UNKNOWN,
+    )
+    assert is_documented_benign_non_paper(row) is False
+    safety = _build_safety([], [row])
+    assert safety.live_orders_attempted == 1
+    assert safety.live_orders_unexplained == 1
