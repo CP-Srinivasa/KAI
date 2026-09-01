@@ -135,7 +135,10 @@ export function NOverviewPanel() {
           <div className="flex items-center gap-2">
             <LiveDot
               state={state.state}
-              generatedAt={state.state === "ready" ? new Date(state.fetchedAt).toISOString() : null}
+              // STAB-2026-09-01 §30: this endpoint ships no data timestamp, so the
+          // badge must say so rather than report the fetch time as freshness.
+          generatedAt={null}
+          dataTimestampKnown={false}
               staleAfterMs={90_000}
               downAfterMs={240_000}
             />

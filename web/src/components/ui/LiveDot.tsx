@@ -8,19 +8,34 @@ import { useSharedNow } from "@/lib/useSharedNow";
 
 type Props = {
   state: "loading" | "ready" | "error";
+  /**
+   * When the DATA was produced — never when it was fetched.
+   *
+   * STAB-2026-09-01 §30: several panels passed their own fetch time here
+   * (`new Date(state.fetchedAt).toISOString()`), which makes `now - generatedAt`
+   * zero by construction, so the badge said "live" no matter how old the payload
+   * behind it was. A request timestamp cannot measure data freshness; it only
+   * measures that a request happened.
+   */
   generatedAt: string | null;
+  /**
+   * Set false when the caller cannot supply a real data timestamp. The badge
+   * then reads "unbekannt" instead of claiming liveness it cannot support.
+   */
+  dataTimestampKnown?: boolean;
   staleAfterMs?: number;
   downAfterMs?: number;
   className?: string;
 };
 
-type Phase = "live" | "stale" | "down" | "loading";
+type Phase = "live" | "stale" | "down" | "loading" | "unknown";
 
 const PHASE_DOT: Record<Phase, string> = {
   live: "bg-pos",
   stale: "bg-warn",
   down: "bg-neg",
   loading: "bg-fg-subtle",
+  unknown: "bg-fg-subtle",
 };
 
 const PHASE_LABEL: Record<Phase, string> = {
@@ -28,6 +43,7 @@ const PHASE_LABEL: Record<Phase, string> = {
   stale: "stale",
   down: "offline",
   loading: "lädt",
+  unknown: "unbekannt",
 };
 
 function relativeAge(ms: number): string {
@@ -43,6 +59,7 @@ function relativeAge(ms: number): string {
 export function LiveDot({
   state,
   generatedAt,
+  dataTimestampKnown = true,
   staleAfterMs = 60_000,
   downAfterMs = 300_000,
   className,
@@ -58,7 +75,10 @@ export function LiveDot({
   let phase: Phase;
   if (state === "loading") phase = "loading";
   else if (state === "error") phase = "down";
-  else if (ageMs == null) phase = "loading";
+  // §30: no usable data timestamp => UNKNOWN. Previously this fell through to
+  // "live" whenever a caller handed in its own fetch time.
+  else if (!dataTimestampKnown) phase = "unknown";
+  else if (ageMs == null) phase = "unknown";
   else if (ageMs > downAfterMs) phase = "down";
   else if (ageMs > staleAfterMs) phase = "stale";
   else phase = "live";
@@ -72,7 +92,9 @@ export function LiveDot({
           ? `offline · letzter Tick ${relativeAge(ageMs)}`
           : phase === "down"
             ? "offline"
-            : "lädt …";
+            : phase === "unknown"
+              ? "Datenalter unbekannt"
+              : "lädt …";
 
   return (
     <span
