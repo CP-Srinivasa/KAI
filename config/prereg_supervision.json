@@ -11,7 +11,8 @@
     "SUPERSEDED": "Terminal geschlossen, weil die Frage VOR Anfall der Out-of-Sample-Daten durch eine Nachfolge-Registrierung ersetzt wurde. Traegt KEIN eigenes Sachverdikt - das gehoert dem Nachfolger. SUPERSEDED ist NICHT FAILED (kein Sachverdikt), NICHT RETIRED (nicht wegen Irrelevanz beendet) und NICHT NO_WATCH_REQUIRED (keine Verzichtsentscheidung ueber Aufsicht). Pflicht: superseded_by, closure_reason, substantive_verdict=NONE, successor_terminal_verdict. Kein Watcher, kein Termin, keine Reifezaehlung.",
     "RETIRE": "Nicht vergeben.",
     "NO_WATCH_REQUIRED": "Nicht vergeben.",
-    "SCHEDULED_REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden UND endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Genau diese Kette und keine andere: MANUAL_SCHEDULED_REVIEW -> Review durchgefuehrt -> Truth-Kette terminalisiert den Claim -> SCHEDULED_REVIEW_COMPLETED. Neu am 2026-08-31, weil das Register den Zustand vorher nicht ausdruecken konnte: ein vollzogener Review haette entweder ein Datum in der Zukunft luegen oder next_review_utc=null tragen muessen, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). Der Name ist bewusst ENG (Operator-Entscheidung 2026-08-31): das kuerzere 'REVIEW_COMPLETED' haette gelesen werden koennen als 'irgendein Review ist fertig'. Ein Review kann aber sehr wohl abgeschlossen werden und als Ergebnis 'weiter beobachten, neuer Termin' tragen - das ist WATCH oder erneut MANUAL_SCHEDULED_REVIEW mit einem echten Datum, niemals dieser Zustand. NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet), NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, previous_decision_state, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Aufsichtsstatus ist NICHT das Sachverdikt: decision_state sagt, wer wann hingesehen hat; outcome/substantive_verdict/terminal_verdict_class sagen, was dabei herauskam."
+    "SCHEDULED_REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden UND endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Genau diese Kette und keine andere: MANUAL_SCHEDULED_REVIEW -> Review durchgefuehrt -> Truth-Kette terminalisiert den Claim -> SCHEDULED_REVIEW_COMPLETED. Neu am 2026-08-31, weil das Register den Zustand vorher nicht ausdruecken konnte: ein vollzogener Review haette entweder ein Datum in der Zukunft luegen oder next_review_utc=null tragen muessen, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). Der Name ist bewusst ENG (Operator-Entscheidung 2026-08-31): das kuerzere 'REVIEW_COMPLETED' haette gelesen werden koennen als 'irgendein Review ist fertig'. Ein Review kann aber sehr wohl abgeschlossen werden und als Ergebnis 'weiter beobachten, neuer Termin' tragen - das ist WATCH oder erneut MANUAL_SCHEDULED_REVIEW mit einem echten Datum, niemals dieser Zustand. NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet), NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, previous_decision_state, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Aufsichtsstatus ist NICHT das Sachverdikt: decision_state sagt, wer wann hingesehen hat; outcome/substantive_verdict/terminal_verdict_class sagen, was dabei herauskam.",
+    "INVALIDATED_BEFORE_MEASUREMENT": "Eine versiegelte Messung wurde VOR ihrem Ende formal invalidiert, weil ihre Messoberflaeche nachweislich kontaminiert war - nicht weil die Frage ersetzt wurde (das waere SUPERSEDED) und nicht weil sie beantwortet wurde (das waere ein Sachverdikt). Neu am 2026-09-01: der erste G8-Akt fiel darunter, und das Register konnte den Zustand nicht ausdruecken; ihn als SUPERSEDED zu fuehren haette den Grund verfaelscht, ihn als WATCH zu lassen haette eine tote Messung weiterbeobachtet. Pflicht: owner, invalidation_reason, invalidated_at_utc, replaced_by, substantive_verdict=NONE, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Das Sachverdikt gehoert dem Nachfolge-Akt; dieser Eintrag traegt ausdruecklich KEINES."
   },
   "invariants": [
     "Jede prereg_id in diesem Register existiert im versiegelten Ledger.",
@@ -23,7 +24,8 @@
     "SCHEDULED_REVIEW_COMPLETED entsteht NUR aus MANUAL_SCHEDULED_REVIEW - der Uebergang steht explizit in previous_decision_state, er wird nicht erzaehlt.",
     "SCHEDULED_REVIEW_COMPLETED braucht einen terminalen Truth-Chain-Beleg: truth_seq und eine terminale terminal_verdict_class (MET, NOT_MET oder CLOSED_NO_VERDICT). Die Form prueft der Vertragstest, die Uebereinstimmung mit der echten Kette der Health-Check auf dem Pi.",
     "Ein durchgefuehrter Review OHNE terminalen Abschluss wird NICHT SCHEDULED_REVIEW_COMPLETED. Er geht ueber in WATCH, in ein erneutes MANUAL_SCHEDULED_REVIEW mit echtem Termin oder in einen anderen ausdruecklichen Aufsichtszustand.",
-    "SCHEDULED_REVIEW_COMPLETED bekommt NIE einen Watcher, eine Kadenz oder einen Termin."
+    "SCHEDULED_REVIEW_COMPLETED bekommt NIE einen Watcher, eine Kadenz oder einen Termin.",
+    "INVALIDATED_BEFORE_MEASUREMENT traegt substantive_verdict=NONE, nennt replaced_by und invalidation_reason, und bekommt NIE einen Watcher, Termin oder MATURITY_SPEC."
   ],
   "entries": [
     {
@@ -294,17 +296,36 @@
     {
       "prereg_id": "f0803d911744e0c2",
       "name": "operator_back_edge_v1",
+      "decision_state": "INVALIDATED_BEFORE_MEASUREMENT",
+      "owner": "operator",
+      "watcher_id": null,
+      "cadence": null,
+      "next_review_utc": null,
+      "invalidation_reason": "POST_T0_INSTRUMENTATION_CONTAMINATION",
+      "invalidated_at_utc": "2026-09-01T12:05:00+00:00",
+      "replaced_by": "b7f9a8e204e40e23",
+      "substantive_verdict": "NONE",
+      "decision_question": "entfaellt - die Frage gehoert dem Nachfolge-Akt b7f9a8e204e40e23",
+      "rationale": "Zwei belegte Kontaminationen im selben Akt. (1) Im Setup-Fenster [T0, Marker-Refresh] wurde genau eine Emission geschrieben; ihr Fingerprint 82b348f1903dbfc2 loest auf zu {youtube_transcript_coverage, prereg_reconciliation} - der zweite Befund war die Aufsichtsluecke der Messung selbst. (2) Der Emissions-Schreiber hing an Path('artifacts') relativ zum Arbeitsverzeichnis: ein Testlauf in der Repo-Wurzel erzeugte 19 echte alert_emitted-Saetze, auf dem Pi fuenf in neun Millisekunden. min_emitted=5 waere von Testartefakten erfuellt worden. Beides ist behoben (#840). Es wurde KEINE nachtraegliche Ausschlussregel erfunden - das Fenster wird ersetzt, nicht gefiltert.",
+      "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
+      "archive_path": "artifacts/research/supervision/f0803d911744e0c2/",
+      "spec_installed": false
+    },
+    {
+      "prereg_id": "b7f9a8e204e40e23",
+      "name": "operator_back_edge_v2",
       "decision_state": "WATCH",
       "owner": "operator",
       "watcher_id": "kai-prereg-maturity",
-      "cadence": "kein Zaehler, ein Frist-Waechter: eine Wiedervorlage zum Fensterende",
-      "next_review_utc": "2026-09-15T08:24:15+00:00",
+      "cadence": "kein Zaehler, ein Frist-Waechter: genau eine Wiedervorlage zum Fensterende",
+      "next_review_utc": "2026-09-15T13:11:32+00:00",
       "decision_question": "Hat im Fenster T0..T0+14d mindestens ein zugestellter Health-Befund eine protokollierte Operator-Handlung mit derselben trigger_id ausgeloest - und welches der drei mechanischen Verdikte (MET / NOT_MET / INVALID) folgt daraus?",
-      "rationale": "G8: die Rueckkante Operator->Truth war nie instrumentiert; 141 Stroeme messen KAI, null messen seinen Nutzen. Das Verdikt faellt mechanisch aus app.research.back_edge_evaluator, nicht aus Auslegung. Aufsicht heisst hier: EINE Wiedervorlage am Fensterende - kein Zwischenstand, kein Optional Stopping. Ein Blick vor dem 15.09. waere selbst eine Verletzung der versiegelten Regel.",
+      "rationale": "Zweiter G8-Akt nach der Invalidierung von f0803d911744e0c2. Dieser Eintrag steht ABSICHTLICH VOR der Registrierung im Ledger: die prereg_id ist deterministisch ueber den Kriterientext und damit vorab berechenbar. Beim ersten Akt entstand zwischen Registrierung und Aufsicht eine Luecke, in der der Health-Check die eigene Aufsichtsluecke meldete und damit die Population vergiftete. Ein Blick auf den Zwischenstand vor dem 15.09. waere Optional Stopping.",
       "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
-      "archive_path": "artifacts/research/supervision/f0803d911744e0c2/",
-      "window_start_utc": "2026-09-01T08:24:15+00:00",
-      "window_end_utc": "2026-09-15T08:24:15+00:00",
+      "archive_path": "artifacts/research/supervision/b7f9a8e204e40e23/",
+      "window_start_utc": "2026-09-01T13:11:32+00:00",
+      "window_end_utc": "2026-09-15T13:11:32+00:00",
+      "replaces": "f0803d911744e0c2",
       "spec_installed": false
     }
   ],
@@ -313,7 +334,7 @@
   },
   "known_gap": "Dieses Register liegt im Repo und ist damit versioniert und im Git-Backup. Die Laufzeit-Evidenz unter artifacts/research/supervision/ ist es NICHT: kai_backup_artifacts.sh fuehrt diesen Pfad nicht in DEFAULT_SOURCES. Bewusst nicht hier geaendert - scripts/kai_backup_* liegt unter dem Parallel-Claim 20260827-stab-05c-backup-manifest.",
   "aggregates": {
-    "TOTAL": 8,
+    "TOTAL": 9,
     "WATCH": 2,
     "MANUAL": 5,
     "SUPERSEDED": 1,
@@ -326,6 +347,7 @@
     "SUPERSEDED_CLOSED": 1,
     "stab_06a_closed": false,
     "stab_06a_closure_condition": "Erst wenn die vier MANUAL_IMMEDIATE_VERDICT-Faelle tatsaechlich attestiert und archiviert sind. Die Klassifikation allein schliesst STAB-06a NICHT.",
-    "SCHEDULED_REVIEW_COMPLETED": 1
+    "SCHEDULED_REVIEW_COMPLETED": 1,
+    "INVALIDATED_BEFORE_MEASUREMENT": 1
   }
 }
