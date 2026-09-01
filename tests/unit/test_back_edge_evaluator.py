@@ -148,7 +148,7 @@ def test_verdict_is_machine_readable_json(tmp_path: Path) -> None:
     triggers = _emit(tmp_path, MIN_EMITTED)
     _act(tmp_path, triggers[1], at=T0 + timedelta(hours=1, minutes=30))
     payload = json.loads(_run(tmp_path).to_json())
-    assert payload["prereg"] == "operator_back_edge_v1"
+    assert payload["prereg"] == "operator_back_edge_v2"
     assert payload["verdict"] == "MET"
     assert payload["window_start_utc"].startswith("2026-09-01")
     assert payload["measured_at_utc"]

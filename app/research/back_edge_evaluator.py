@@ -50,8 +50,12 @@ from app.observability.operator_feedback import (
     summarise,
 )
 
-#: Praereg-Kennung; wird beim Versiegeln im Ledger vergeben.
-PREREG_NAME = "operator_back_edge_v1"
+#: Praereg-Kennung. **v2** seit 2026-09-01: der erste Akt (f0803d911744e0c2) wurde
+#: formal invalidiert (POST_T0_INSTRUMENTATION_CONTAMINATION) — eine Emission im
+#: Setup-Fenster trug die Aufsichtsluecke der Messung selbst, und der
+#: Emissions-Schreiber hing am Arbeitsverzeichnis. Beides behoben; das Fenster
+#: wurde ERSETZT, nicht nachtraeglich gefiltert.
+PREREG_NAME = "operator_back_edge_v2"
 
 #: Untergrenze der Population. Unter fuenf zugestellten Befunden ist das
 #: Fenster keine Probe, sondern ein Zufall — dann lautet das Verdikt INVALID

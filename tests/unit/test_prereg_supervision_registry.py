@@ -57,6 +57,9 @@ _TERMINAL_STATES = {
     "SCHEDULED_REVIEW_COMPLETED",
     "RETIRE",
     "NO_WATCH_REQUIRED",
+    # 2026-09-01: eine vor ihrem Ende formal invalidierte Messung ist terminal —
+    # sie wird nicht weiterbeobachtet und traegt kein Sachverdikt.
+    "INVALIDATED_BEFORE_MEASUREMENT",
 }
 _FORBIDDEN_STATES = {"UNWATCHED", "UNRESOLVED", "PENDING", None, ""}
 
@@ -368,8 +371,18 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     # meldete der Health-Check sofort eine Aufsichtsluecke, und diese
     # selbstverschuldete Meldung waere in die 14-Tage-Population der Praereg
     # eingegangen, die sie beobachten soll. TOTAL 7 -> 8, WATCH 1 -> 2.
-    assert agg["TOTAL"] == len(entries) == 8
+    # 2026-09-01, zweiter G8-Akt: der erste (f0803d911744e0c2) wurde formal
+    # invalidiert (POST_T0_INSTRUMENTATION_CONTAMINATION) und der Nachfolger
+    # b7f9a8e204e40e23 bekam seine Aufsicht VOR der Registrierung — sonst
+    # meldet der Health-Check die Aufsichtsluecke der Messung selbst in ihre
+    # eigene Population. TOTAL 8 -> 9, WATCH bleibt 2 (v1 raus, v2 rein).
+    assert agg["TOTAL"] == len(entries) == 9
     assert agg["WATCH"] == counts.get("WATCH", 0) == 2
+    assert (
+        agg["INVALIDATED_BEFORE_MEASUREMENT"]
+        == counts.get("INVALIDATED_BEFORE_MEASUREMENT", 0)
+        == 1
+    )
     assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
     assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4
     # 2026-08-31: die einzige terminierte Wiedervorlage (6751bc33) wurde
