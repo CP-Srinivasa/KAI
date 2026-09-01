@@ -163,13 +163,14 @@ def mock_curve_coverage(symbol: str, *, amplitude_pct: float = _DEFAULT_AMPLITUD
     hit is a fingerprint. This is what makes the TL-002 verdict evidence-weighted
     instead of a single global rule.
     """
-    base = _BASE_PRICES.get(str(symbol).strip(), _DEFAULT_BASE_PRICE)
-    amplitude = base * (amplitude_pct / 100)
-    representable = 2 * amplitude * (10**_PRICE_DECIMALS)
+    base: float = float(_BASE_PRICES.get(str(symbol).strip(), _DEFAULT_BASE_PRICE))
+    amplitude: float = base * (amplitude_pct / 100.0)
+    representable: float = 2.0 * amplitude * float(10 ** int(_PRICE_DECIMALS))
     if representable <= 0:
         return 1.0
-    distinct = len(_mock_candidates(str(symbol).strip(), amplitude_pct))
-    return min(1.0, distinct / representable)
+    distinct: int = len(_mock_candidates(str(symbol).strip(), amplitude_pct))
+    coverage: float = float(distinct) / representable
+    return coverage if coverage < 1.0 else 1.0
 
 
 def is_high_coverage_symbol(symbol: str, *, amplitude_pct: float = _DEFAULT_AMPLITUDE_PCT) -> bool:
