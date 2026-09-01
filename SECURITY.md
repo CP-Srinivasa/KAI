@@ -16,6 +16,7 @@ Kurzfassung des Threat-Models und der umgesetzten Schutzschichten. Dieses Dokume
 6. **Ingress nur über Cloudflare Tunnel.** Der API-Server bindet an `127.0.0.1` (LAN-Bind nur als explizites Opt-in); Remote-Zugang ausschließlich über den Named Tunnel, Single-Origin-Regel: genau EIN Connector (Pi 5). Dashboard-Auth via Email-Allowlist; Service-Tokens werden auf `/dashboard/*` abgelehnt.
 7. **systemd-Hardening + Watchdogs.** Dienste/Timer laufen mit gehärteten Unit-Files (`deploy/systemd/`); Liveness-Watchdogs prüfen echte Service-Zeitstempel statt Timer-Trigger; Post-Deploy-Smoke (failed-units-Check) ist Pflicht.
 8. **Operator-Trust-Boundary `monitor/*`.** Operator-kuratierte Dateien (Trusted-Author-Bypass, Whitelists) sind über File-System-ACL geschützt — die ACL ist die Vertrauenslinie (siehe `AGENTS.md`).
+9. **Akteur-Modellierung & Workstation-Kanal (R3-004 / G7).** Die Windows-Workstation hält den vollständigen Administrationszugang (SSH zum Pi, Admin-SSH zur Node, GitHub-Push, DPAPI-Schlüssel aller 2,9 GB Offline-Sicherungen, KeePass). Die Sicherheitsarchitektur modelliert die Workstation als Hochprivileg-Akteur; Bedrohungsgrenzen (HOTP für Kapitalaktionen, DPAPI für ruhende Daten, Broker-Isolation auf dem Pi) verhindern, dass ein Einzelausfall unbemerkt Integrität oder Geldmittel gefährdet.
 
 ## Audit- & Attestation-Kette
 

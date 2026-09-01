@@ -72,7 +72,7 @@ def run(tmp_path: Path):
 # --- erlaubt --------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("verb", ["start", "stop", "restart", "reload"])
+@pytest.mark.parametrize("verb", ["start", "stop", "restart", "reload", "status"])
 def test_erlaubte_verben_auf_ubuntu_unit(run, verb: str) -> None:
     code, err, calls = run(verb, "kai-server.service")
     assert code == 0, err
