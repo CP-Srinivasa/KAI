@@ -290,6 +290,22 @@
       "spec_installed": true,
       "spec_required": true,
       "blocking_finding": null
+    },
+    {
+      "prereg_id": "f0803d911744e0c2",
+      "name": "operator_back_edge_v1",
+      "decision_state": "WATCH",
+      "owner": "operator",
+      "watcher_id": "kai-prereg-maturity",
+      "cadence": "kein Zaehler, ein Frist-Waechter: eine Wiedervorlage zum Fensterende",
+      "next_review_utc": "2026-09-15T08:24:15+00:00",
+      "decision_question": "Hat im Fenster T0..T0+14d mindestens ein zugestellter Health-Befund eine protokollierte Operator-Handlung mit derselben trigger_id ausgeloest - und welches der drei mechanischen Verdikte (MET / NOT_MET / INVALID) folgt daraus?",
+      "rationale": "G8: die Rueckkante Operator->Truth war nie instrumentiert; 141 Stroeme messen KAI, null messen seinen Nutzen. Das Verdikt faellt mechanisch aus app.research.back_edge_evaluator, nicht aus Auslegung. Aufsicht heisst hier: EINE Wiedervorlage am Fensterende - kein Zwischenstand, kein Optional Stopping. Ein Blick vor dem 15.09. waere selbst eine Verletzung der versiegelten Regel.",
+      "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
+      "archive_path": "artifacts/research/supervision/f0803d911744e0c2/",
+      "window_start_utc": "2026-09-01T08:24:15+00:00",
+      "window_end_utc": "2026-09-15T08:24:15+00:00",
+      "spec_installed": false
     }
   ],
   "not_in_this_register": {
@@ -297,8 +313,8 @@
   },
   "known_gap": "Dieses Register liegt im Repo und ist damit versioniert und im Git-Backup. Die Laufzeit-Evidenz unter artifacts/research/supervision/ ist es NICHT: kai_backup_artifacts.sh fuehrt diesen Pfad nicht in DEFAULT_SOURCES. Bewusst nicht hier geaendert - scripts/kai_backup_* liegt unter dem Parallel-Claim 20260827-stab-05c-backup-manifest.",
   "aggregates": {
-    "TOTAL": 7,
-    "WATCH": 1,
+    "TOTAL": 8,
+    "WATCH": 2,
     "MANUAL": 5,
     "SUPERSEDED": 1,
     "RETIRE": 0,
