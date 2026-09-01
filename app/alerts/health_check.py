@@ -1006,8 +1006,39 @@ _YT_COVERAGE_SQL_BY_SOURCE = (
 #: Ohne sie meldet die Wache eine Zahl ohne Ursache — und die einzige Diagnose
 #: waere ein neuer Abruf bei YouTube gewesen, also genau die Handlung, die am
 #: 2026-08-28 den IP-Block ausgeloest hat.
+#: STAB-2026-09-01 §16: zwei Platzhalter statt einem. Zeilen von VOR dem
+#: transcript_status-Deploy (#814) koennen das Feld nicht tragen und sind ein
+#: schrumpfender Altbestand; eine Zeile DANACH ohne Feld ist ein Defekt. Ein
+#: gemeinsamer Platzhalter machte beide ununterscheidbar ("+4 Zeilen ohne Grund").
+#: Same instant as TRANSCRIPT_STATUS_EPOCH_UTC, in the naive-UTC shape the
+#: ``fetched_at`` column stores, so the SQL comparison is apples to apples.
+#: One tick of ``kai-auto-annotate.timer`` (``OnUnitActiveSec=6h``). An item that
+#: is due but has not yet been offered to a single annotator run is in grace, not
+#: overdue — the annotator is not late until it has had a chance.
+_ANNOTATOR_TICK_HOURS = 6.0
+
+
+def _parse_iso_utc(value: object) -> datetime | None:
+    """Parse an ISO timestamp to aware UTC. ``None`` when unusable."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+_YT_STATUS_EPOCH_SQL = "2026-08-31 13:47:12"
+
 _YT_REASON_SQL = (
-    "SELECT coalesce(json_extract(youtube_meta, '$.transcript_status'), '(nicht aufgezeichnet)'), "
+    "SELECT coalesce("
+    "  json_extract(youtube_meta, '$.transcript_status'), "
+    "  CASE WHEN fetched_at < ? THEN '(vor Instrumentierung)' "
+    "       ELSE '(nicht aufgezeichnet)' END"
+    "), "
     "COUNT(*) "
     "FROM canonical_documents "
     "WHERE source_type = ? AND fetched_at >= ? "
@@ -1062,7 +1093,12 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
             rows = _query(_YT_COVERAGE_SQL_BY_SOURCE, coverage_params)
             reasons = tuple(
                 (str(name), int(count))
-                for name, count in _query(_YT_REASON_SQL, ("youtube_channel", window_start))
+                for name, count in _query(
+                    _YT_REASON_SQL,
+                    # §16: the epoch discriminates "could not carry a reason"
+                    # from "should have and did not".
+                    (_YT_STATUS_EPOCH_SQL, "youtube_channel", window_start),
+                )
             )
         except sqlite3.OperationalError:
             # SQLite ohne JSON1 (aeltere Builds): lieber die schwaechere Messung
@@ -1652,20 +1688,66 @@ def run_health_check_report(
             )
 
     # ── Annotation backlog ───────────────────────────────────────────
+    # STAB-2026-09-01 §19. This block had NO age filter: an alert dispatched one
+    # minute ago counted as backlog, although the auto-annotator is contractually
+    # forbidden to touch it for four hours. The warning therefore measured the
+    # ARRIVAL RATE of directional alerts, not the health of the annotator.
+    #
+    # Replayed against the real Pi ledgers, 1441 hourly samples over 60 days:
+    #     warning (>20) fired in 199 hours
+    #     genuinely overdue (age >= due+grace) in those hours: never above 5
+    #     at the 2026-08-31 21:00Z warning: 32 of 32 items were NOT YET DUE
+    # Every one of those 199 warning-hours was a false alarm, and each item was
+    # annotated the moment it crossed 4h. Raising the >20 gate would have been
+    # the wrong fix: the overdue count never came near it.
+    #
+    # The maturity clock comes from the PRODUCER's own constants so probe and
+    # annotator cannot drift apart:
+    #     due_at      = dispatched_at + auto_annotator min age      (4h)
+    #     grace_until = due_at        + one annotator tick          (6h)
+    from app.alerts.auto_annotator import _DEFAULT_MIN_AGE_HOURS
+
+    annotation_due_hours = _DEFAULT_MIN_AGE_HOURS
+    annotation_grace_hours = _ANNOTATOR_TICK_HOURS
+
     annotated_ids = {a.document_id for a in annotations}
-    unique_unannotated = len(
-        {
-            rec.document_id
-            for rec in audits
-            if rec.directional_eligible is True and rec.document_id not in annotated_ids
-        }
-    )
-    if unique_unannotated > 20:
+    not_due: set[str] = set()
+    in_grace: set[str] = set()
+    due_unannotated: set[str] = set()
+    undated: set[str] = set()
+
+    for rec in audits:
+        if rec.directional_eligible is not True:
+            continue
+        if rec.document_id in annotated_ids:
+            continue
+        signal_time = _parse_iso_utc(getattr(rec, "dispatched_at", None))
+        if signal_time is None:
+            # Fail-CLOSED: an item whose age cannot be established is treated as
+            # due, never silently excused.
+            undated.add(rec.document_id)
+            continue
+        age_hours = (now - signal_time).total_seconds() / 3600.0
+        if age_hours < annotation_due_hours:
+            not_due.add(rec.document_id)
+        elif age_hours < annotation_due_hours + annotation_grace_hours:
+            in_grace.add(rec.document_id)
+        else:
+            due_unannotated.add(rec.document_id)
+
+    overdue = due_unannotated | undated
+    unique_unannotated = len(not_due) + len(in_grace) + len(overdue)
+    if len(overdue) > 20:
         report.issues.append(
             HealthIssue(
                 severity="warning",
                 component="annotations",
-                message=(f"{unique_unannotated} directional alerts unannotated"),
+                message=(
+                    f"{len(overdue)} directional alerts overdue for annotation "
+                    f"(faellig nach {annotation_due_hours:.0f}h + {annotation_grace_hours:.0f}h "
+                    f"Karenz); {len(in_grace)} in Karenz, {len(not_due)} noch nicht faellig, "
+                    f"{unique_unannotated} unannotiert gesamt"
+                ),
             )
         )
 
