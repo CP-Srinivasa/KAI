@@ -26,6 +26,7 @@ darueber wuerde nie greifen und die Wiederholung nicht bremsen.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -273,3 +274,46 @@ def test_alert_text_is_grouped_by_class(tmp_path: Path) -> None:
     assert "== P2 (1) ==" in text
     assert text.index("== P0 (1) ==") < text.index("== P2 (1) ==")
     assert "privilege_broker" in text and "annotations" in text
+
+
+# ---------------------------------------------------------------------------
+# P0 (2026-09-01): ein Testlauf darf die versiegelte Population nicht fuellen
+# ---------------------------------------------------------------------------
+
+
+def test_emission_stream_follows_the_injected_state_path(tmp_path: Path) -> None:
+    """Der Emissions-Satz landet dort, wohin der Zustand gelenkt wurde.
+
+    Vorher stand im Schreiber ein hartkodiertes ``Path("artifacts")`` — relativ
+    zum ``cwd``. Jeder Testlauf in der Repo-Wurzel schrieb damit echte
+    ``alert_emitted``-Saetze in den PRODUKTIONS-Strom; auf dem Pi erzeugte der
+    Post-Deploy-Testlauf so fuenf Emissionen in neun Millisekunden.
+    """
+    state = tmp_path / "state.json"
+    sent: list[str] = []
+    _dispatch(_Report(issues=[_tv_stale(1000)]), state, sent, now_ts=0.0)
+
+    stream = tmp_path / "operator_commands.jsonl"
+    assert stream.exists(), "Emission muss neben dem injizierten Zustand liegen"
+    records = [json.loads(line) for line in stream.read_text(encoding="utf-8").splitlines()]
+    assert [r["record_type"] for r in records] == ["alert_emitted"]
+
+
+def test_no_write_outside_the_injected_path(tmp_path: Path, monkeypatch) -> None:
+    """Negativkontrolle: auch mit cwd=Repo-Wurzel darf nichts nach ./artifacts gehen.
+
+    Das ist die eigentliche Zusage. Ohne sie ist eine versiegelte Messung durch
+    einen beliebigen Testlauf faelschbar.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    monkeypatch.chdir(repo_root)
+    production = repo_root / "artifacts" / "operator_commands.jsonl"
+    before = production.read_bytes() if production.exists() else None
+
+    state = tmp_path / "state.json"
+    sent: list[str] = []
+    _dispatch(_Report(issues=[_tv_stale(1000)]), state, sent, now_ts=0.0)
+
+    after = production.read_bytes() if production.exists() else None
+    assert after == before, "Der Produktionsstrom wurde durch einen Testlauf veraendert"
+    assert (tmp_path / "operator_commands.jsonl").exists()
