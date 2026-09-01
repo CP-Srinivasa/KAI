@@ -1601,14 +1601,9 @@ def trading_paper_portfolio_snapshot(
         help="Append-only paper execution audit JSONL path",
     ),
     provider: str | None = typer.Option(
-        # STAB-2026-09-01 §24: None => the system provider
-        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
-        # source the canonical operator payload reads. A hard-coded "coingecko"
-        # here made the CLI a narrower population than the dashboard while both
-        # were labelled "the paper portfolio". --provider still overrides.
         None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1649,14 +1644,9 @@ def trading_paper_positions_summary(
         help="Append-only paper execution audit JSONL path",
     ),
     provider: str | None = typer.Option(
-        # STAB-2026-09-01 §24: None => the system provider
-        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
-        # source the canonical operator payload reads. A hard-coded "coingecko"
-        # here made the CLI a narrower population than the dashboard while both
-        # were labelled "the paper portfolio". --provider still overrides.
         None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1725,14 +1715,9 @@ def trading_positions_risk_snapshot(
         help="Append-only paper execution audit JSONL path",
     ),
     provider: str | None = typer.Option(
-        # STAB-2026-09-01 §24: None => the system provider
-        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
-        # source the canonical operator payload reads. A hard-coded "coingecko"
-        # here made the CLI a narrower population than the dashboard while both
-        # were labelled "the paper portfolio". --provider still overrides.
         None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1968,14 +1953,9 @@ def trading_paper_exposure_summary(
         help="Append-only paper execution audit JSONL path",
     ),
     provider: str | None = typer.Option(
-        # STAB-2026-09-01 §24: None => the system provider
-        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
-        # source the canonical operator payload reads. A hard-coded "coingecko"
-        # here made the CLI a narrower population than the dashboard while both
-        # were labelled "the paper portfolio". --provider still overrides.
         None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
