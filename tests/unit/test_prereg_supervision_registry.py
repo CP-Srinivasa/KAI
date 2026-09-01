@@ -149,11 +149,107 @@ def test_watch_nennt_nur_bestehende_watcher(entries: list[dict[str, Any]]) -> No
 
 
 def test_sofort_faellige_verdikte_tragen_due_now(entries: list[dict[str, Any]]) -> None:
+    """Praezisiert 2026-09-01: DUE_NOW gilt fuer OFFENE Sofortverdikte.
+
+    Vorher forderte diese Regel DUE_NOW fuer *jeden* MANUAL_IMMEDIATE_VERDICT —
+    auch fuer laengst attestierte. Vier Eintraege standen dadurch als faellige
+    Aufgabe im Register, obwohl ihre Verdikte am 2026-08-27 attestiert wurden
+    (Truth-seq 102-105). Ein Aufsichtsregister, das erledigte Arbeit als offen
+    fuehrt, ist genauso falsch wie eines, das offene Arbeit verschweigt.
+    """
     for entry in entries:
         if entry["decision_state"] != "MANUAL_IMMEDIATE_VERDICT":
             continue
-        assert entry["next_review_utc"] == "DUE_NOW", entry["prereg_id"]
-        assert entry.get("watcher_id") is None
+        pid = entry["prereg_id"]
+        assert entry.get("watcher_id") is None, pid
+        if entry.get("open") is False:
+            assert entry["next_review_utc"] is None, pid
+            att = entry.get("attestation") or {}
+            assert att.get("truth_seq"), pid
+            assert att.get("verification_sha256"), pid
+        else:
+            assert entry["next_review_utc"] == "DUE_NOW", pid
+
+
+# --- STAB-06a-Reconciliation 2026-09-01 -------------------------------------
+# Die vier Verdikte wurden am 2026-08-27 attestiert (Truth-seq 102-105), aber das
+# Aufsichtsregister wusste bis 2026-09-01 nichts davon. Es fuehrte sie als
+# DUE_NOW-Aufgaben. Diese Tests pinnen die Reconciliation — sie erzeugen KEINE
+# neue Attestierung, sie halten fest, dass Register und Kette uebereinstimmen.
+
+_STAB06A_ATTESTIERT = {
+    "81c41ae153e5d427": 102,
+    "836b1c7e28eed49a": 103,
+    "8b21040ad7935a4a": 104,
+    "0879a65c5fd01f65": 105,
+}
+
+
+def test_stab06a_verdikte_sind_im_register_geschlossen(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Alle vier tragen ihre Truth-seq und gelten als geschlossen."""
+    by_id = {e["prereg_id"]: e for e in entries}
+    for pid, seq in _STAB06A_ATTESTIERT.items():
+        entry = by_id[pid]
+        att = entry.get("attestation") or {}
+        assert att.get("attested") is True, pid
+        assert att.get("truth_seq") == seq, f"{pid}: {att.get('truth_seq')} statt {seq}"
+        assert att.get("verification_sha256"), pid
+        assert entry.get("open") is False, pid
+
+
+def test_kein_attestiertes_verdikt_bleibt_als_aufgabe_stehen(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Keine DUE_NOW-Zombies: attestiert und trotzdem faellig gibt es nicht."""
+    zombies = [
+        e["prereg_id"]
+        for e in entries
+        if (e.get("attestation") or {}).get("attested") is True
+        and e.get("next_review_utc") == "DUE_NOW"
+    ]
+    assert zombies == [], f"attestiert, aber weiterhin faellig: {zombies}"
+
+
+def test_die_verdikt_besonderheiten_bleiben_am_eintrag(
+    entries: list[dict[str, Any]],
+) -> None:
+    """POST_HOC_SEAL und SAFETY_AXIS_ONLY duerfen nicht zu blossem PASS verflachen."""
+    by_id = {e["prereg_id"]: e for e in entries}
+    assert "POST_HOC_SEAL" in (by_id["8b21040ad7935a4a"]["attestation"]["verdict_headline"])
+    assert "SAFETY_AXIS_ONLY" in (by_id["0879a65c5fd01f65"]["attestation"]["verdict_headline"])
+
+
+def test_die_821_invarianten_bleiben_vollstaendig_erhalten(
+    registry: dict[str, Any],
+) -> None:
+    """Die Reconciliation darf #821 nicht zurueckdrehen.
+
+    Ein naiver Merge des alten Closure-PRs #794 haette genau diese vier Regeln
+    geloescht: er trug den Stand VOR #821 (7 Invarianten statt 10).
+    """
+    text = " ".join(registry["invariants"])
+    for fragment in (
+        "SCHEDULED_REVIEW_COMPLETED entsteht NUR aus MANUAL_SCHEDULED_REVIEW",
+        "terminalen Truth-Chain-Beleg",
+        "Ein durchgefuehrter Review OHNE terminalen Abschluss",
+        "SCHEDULED_REVIEW_COMPLETED bekommt NIE einen Watcher",
+    ):
+        assert fragment in text, f"#821-Invariante verloren: {fragment}"
+    assert len(registry["invariants"]) >= 10
+
+
+def test_die_uebrigen_claims_bleiben_unberuehrt(entries: list[dict[str, Any]]) -> None:
+    """Nur die vier STAB-06a-Eintraege aendern sich — sonst nichts."""
+    by_id = {e["prereg_id"]: e for e in entries}
+    assert by_id["6751bc3364d39ec2"]["decision_state"] == "SCHEDULED_REVIEW_COMPLETED"
+    assert by_id["6751bc3364d39ec2"].get("next_review_utc") is None
+    assert by_id["4a3b1b0c5a94b73c"]["decision_state"] == "SUPERSEDED"
+    assert by_id["c489079289070a8c"]["decision_state"] == "WATCH"
+    assert by_id["c489079289070a8c"]["next_review_utc"] not in (None, "DUE_NOW")
+    for pid in ("6751bc3364d39ec2", "4a3b1b0c5a94b73c", "c489079289070a8c"):
+        assert pid not in _STAB06A_ATTESTIERT
 
 
 def test_terminierte_wiedervorlage_hat_ein_echtes_datum(entries: list[dict[str, Any]]) -> None:
