@@ -221,11 +221,29 @@ def _send(text: str, *, sender: Any) -> bool:
     return bool(asyncio.run(send_operator_notification(text)))
 
 
-def _record_emitted(text: str, *, fingerprint: str, finding_count: int) -> None:
+def _record_emitted(
+    text: str, *, fingerprint: str, finding_count: int, artifacts_dir: Path
+) -> None:
     """Schreibe die ausgesendete Auslöser-ID in den Operator-Strom (G8).
 
-    Best effort: ein Protokollfehler darf einen zugestellten Alarm nicht
-    nachtraeglich entwerten.
+    ``artifacts_dir`` wird vom Aufrufer aus dem **injizierten** Zustandspfad
+    abgeleitet — nicht aus dem Arbeitsverzeichnis.
+
+    **Warum das ein P0 war (2026-09-01).** Vorher stand hier ein hartkodiertes
+    ``Path("artifacts")``. Das ist relativ zum ``cwd``: jeder Testlauf und jeder
+    CLI-Aufruf in der Repo-Wurzel schrieb damit **echte** ``alert_emitted``-Saetze
+    in den PRODUKTIONS-Strom. Live nachgewiesen: der Post-Deploy-Testlauf auf dem
+    Pi erzeugte fuenf Emissionen in neun Millisekunden, und ein Lauf von
+    ``test_health_notify_on_change.py`` erzeugt neunzehn.
+
+    Fuer eine versiegelte Messung ist das toedlich: die Population der Praereg
+    ``operator_back_edge_v1`` haette sich allein durch einen Deploy fuellen
+    lassen — ``min_emitted=5`` waere von Testartefakten erfuellt worden, ohne dass
+    je ein Alarm einen Operator erreicht haette.
+
+    Die Bindung an den Zustandspfad ist eine Sicherung durch Konstruktion, keine
+    durch Disziplin: wer den Zustand nach ``tmp_path`` lenkt, lenkt den Strom
+    automatisch mit.
     """
     try:
         from datetime import UTC, datetime
@@ -240,7 +258,7 @@ def _record_emitted(text: str, *, fingerprint: str, finding_count: int) -> None:
         if not trigger_id:
             return
         record_trigger_emitted(
-            Path("artifacts") / OPERATOR_ACTION_STREAM,
+            artifacts_dir / OPERATOR_ACTION_STREAM,
             now=datetime.now(UTC),
             trigger_id=trigger_id,
             channel="telegram",
@@ -316,7 +334,12 @@ def dispatch_health_notification(
     text = build_health_alert_text(report, lookback_hours=lookback_hours)
     ok = _send(text, sender=sender)
     if ok:
-        _record_emitted(text, fingerprint=fingerprint, finding_count=len(report.issues))
+        _record_emitted(
+            text,
+            fingerprint=fingerprint,
+            finding_count=len(report.issues),
+            artifacts_dir=path.parent,
+        )
         _write_state(path, now_ts=now, fingerprint=fingerprint)
         console.print("[green]Telegram notification sent.[/green]")
     else:
