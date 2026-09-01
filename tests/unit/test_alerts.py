@@ -307,12 +307,50 @@ def test_format_email_subject_contains_priority():
     assert "KAI Alert" in subject
 
 
-# ── D-150: P10 high-conviction tier markers ──────────────────────────────────
+# ── D-150 marker, re-gated on evidence by STAB-2026-09-01 §3 ─────────────────
+#
+# D-150 granted the marker on priority >= 10 alone, on the strength of a
+# then-current measurement (P10 69.57% on n=46 vs P7-P9 27.87% on n=183). The
+# live tier lift is now about -7.4pp — high priority UNDER-performs standard
+# priority — and the repo's own dashboard contract already says so
+# ("do not present it as a validated quality label"). The formatters kept
+# stamping a positive label anyway, so the alert surface contradicted the
+# dashboard.
+#
+# The marker now requires a current, positive, measured lift and fails closed on
+# both "not measured" and "measured non-positive". Priority itself is unchanged:
+# still computed, stored, routed and observed. It simply earns no positive
+# adornment while the evidence points the other way.
+
+POSITIVE_LIFT = 12.5  # pp — a lift that would justify the label
+NEGATIVE_LIFT = -7.4  # pp — the lift actually measured today
+
+
+def test_p10_marker_is_withheld_while_the_measured_lift_is_negative():
+    """THE regression: -7.4pp must not render as a positive quality label."""
+    msg = _make_alert_msg(priority=10, title="BTC Break", priority_tier_lift_pct=NEGATIVE_LIFT)
+    text = format_telegram_message(msg)
+    assert "HIGH-CONVICTION" not in text
+    assert "🔥" not in text
+    # The priority itself is untouched — only the adornment is gone.
+    assert "Priority 10/10" in text
+
+
+def test_p10_marker_is_withheld_when_there_is_no_measurement():
+    """Fail-closed: absent evidence is not favourable evidence."""
+    msg = _make_alert_msg(priority=10, title="BTC Break")
+    assert msg.priority_tier_lift_pct is None
+    assert "HIGH-CONVICTION" not in format_telegram_message(msg)
+
+
+def test_p10_marker_is_withheld_on_a_zero_lift():
+    msg = _make_alert_msg(priority=10, title="BTC Break", priority_tier_lift_pct=0.0)
+    assert "HIGH-CONVICTION" not in format_telegram_message(msg)
 
 
 def test_format_telegram_message_p10_prefix():
-    """Priority=10 alerts prepend the HIGH-CONVICTION marker line."""
-    msg = _make_alert_msg(priority=10, title="BTC Break")
+    """POSITIVE CONTROL: with a positive measured lift the marker returns."""
+    msg = _make_alert_msg(priority=10, title="BTC Break", priority_tier_lift_pct=POSITIVE_LIFT)
     text = format_telegram_message(msg)
     assert "HIGH-CONVICTION" in text
     assert "🔥" in text
@@ -322,34 +360,57 @@ def test_format_telegram_message_p10_prefix():
 
 def test_format_telegram_message_p9_no_prefix():
     """Priority=9 (critical but sub-threshold) does NOT trigger the marker."""
-    msg = _make_alert_msg(priority=9, title="ETH Surge")
+    msg = _make_alert_msg(priority=9, title="ETH Surge", priority_tier_lift_pct=POSITIVE_LIFT)
     text = format_telegram_message(msg)
     assert "HIGH-CONVICTION" not in text
 
 
 def test_format_telegram_digest_p10_item_prefix():
-    """P10 entries in the digest are prefixed with 🔥."""
-    msgs = [
-        _make_alert_msg(priority=7, title="Regular alert"),
-        _make_alert_msg(priority=10, title="Conviction alert"),
-    ]
-    text = format_telegram_digest(msgs, "last hour")
+    """P10 entries in the digest are prefixed with 🔥 — given the evidence."""
+    regular = _make_alert_msg(
+        priority=7, title="Regular alert", priority_tier_lift_pct=POSITIVE_LIFT
+    )
+    conviction = _make_alert_msg(
+        priority=10, title="Conviction alert", priority_tier_lift_pct=POSITIVE_LIFT
+    )
+    text = format_telegram_digest([regular, conviction], "last hour")
     conviction_line = next(line for line in text.splitlines() if "Conviction alert" in line)
     regular_line = next(line for line in text.splitlines() if "Regular alert" in line)
     assert conviction_line.startswith("🔥")
     assert not regular_line.startswith("🔥")
 
 
+def test_digest_marker_is_withheld_on_a_negative_lift():
+    conviction = _make_alert_msg(
+        priority=10, title="Conviction alert", priority_tier_lift_pct=NEGATIVE_LIFT
+    )
+    text = format_telegram_digest([conviction], "last hour")
+    assert "🔥" not in text
+
+
 def test_format_email_subject_p10_tag():
-    """P10 email subjects include [HIGH-CONVICTION] tag."""
-    msg = _make_alert_msg(priority=10, title="Deep-conviction event")
+    """P10 email subjects include [HIGH-CONVICTION] tag — given the evidence."""
+    msg = _make_alert_msg(
+        priority=10, title="Deep-conviction event", priority_tier_lift_pct=POSITIVE_LIFT
+    )
     subject = format_email_subject(msg)
     assert "[HIGH-CONVICTION]" in subject
     assert "P10" in subject
 
 
+def test_email_subject_tag_is_withheld_on_a_negative_lift():
+    msg = _make_alert_msg(
+        priority=10, title="Deep-conviction event", priority_tier_lift_pct=NEGATIVE_LIFT
+    )
+    subject = format_email_subject(msg)
+    assert "HIGH-CONVICTION" not in subject
+    assert "P10" in subject
+
+
 def test_format_email_subject_p9_no_tag():
-    msg = _make_alert_msg(priority=9, title="Normal high-priority")
+    msg = _make_alert_msg(
+        priority=9, title="Normal high-priority", priority_tier_lift_pct=POSITIVE_LIFT
+    )
     subject = format_email_subject(msg)
     assert "HIGH-CONVICTION" not in subject
 

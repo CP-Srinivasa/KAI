@@ -173,6 +173,12 @@ def compute_per_source_active_precision(
         ci_high = _wilson_high_pct(hits, n)
         n_ok = n >= MIN_PER_SOURCE_RESOLVED
         wilson_ok = ci_low is not None and ci_low >= MIN_PER_SOURCE_WILSON_LOW_PCT
+        gate_reason = classify_gate_reason(
+            resolved=n,
+            ci_low_pct=ci_low,
+            min_n=MIN_PER_SOURCE_RESOLVED,
+            min_wilson_pct=MIN_PER_SOURCE_WILSON_LOW_PCT,
+        )
         out[source] = {
             "resolved": n,
             "hits": hits,
@@ -183,8 +189,69 @@ def compute_per_source_active_precision(
             "n_threshold_met": n_ok,
             "wilson_low_threshold_met": wilson_ok,
             "passes_gate": n_ok and wilson_ok,
+            # §4: the reason travels WITH the verdict instead of being guessed
+            # at by the consumer. §7: immature is not the same as failed.
+            "gate_reason": gate_reason,
+            "gate_is_immature": gate_reason in GATE_IMMATURE_REASONS,
+            "gate_min_n": MIN_PER_SOURCE_RESOLVED,
+            "gate_min_wilson_pct": MIN_PER_SOURCE_WILSON_LOW_PCT,
         }
     return out
+
+
+#: STAB-2026-09-01 §4/§7/§9 — the typed gate verdict.
+#:
+#: The producers used to emit three raw booleans (``n_threshold_met``,
+#: ``wilson_low_threshold_met``, ``passes_gate``) and the UI re-derived a human
+#: reason from them in TypeScript. The reason was therefore not part of the truth
+#: contract at all, and the ``(False, False)`` corner is genuinely ambiguous in
+#: live data: a source with ``resolved: 0`` and one with ``resolved: 5`` render
+#: identically, although "no evidence yet" and "thin evidence" are different
+#: statements about the world. §7 requires the difference to be visible, and §9
+#: requires INSUFFICIENT_HISTORY never to be displayed as failure.
+GATE_PASS = "PASS"
+GATE_INSUFFICIENT_N = "INSUFFICIENT_N"
+GATE_LOW_WILSON = "LOW_WILSON"
+GATE_NO_HARD_OUTCOMES = "NO_HARD_OUTCOMES"
+GATE_NO_RESOLVED_OUTCOMES = "NO_RESOLVED_OUTCOMES"
+GATE_WINDOW_INCOMPLETE = "WINDOW_INCOMPLETE"
+GATE_SOURCE_DISABLED = "SOURCE_DISABLED"
+
+#: Reasons that mean "not enough evidence yet", as opposed to "measured and
+#: failed". §7: these are INFO/immature, never an acute problem.
+GATE_IMMATURE_REASONS = frozenset(
+    {GATE_INSUFFICIENT_N, GATE_NO_RESOLVED_OUTCOMES, GATE_NO_HARD_OUTCOMES, GATE_WINDOW_INCOMPLETE}
+)
+
+
+def classify_gate_reason(
+    *,
+    resolved: int,
+    ci_low_pct: float | None,
+    min_n: int,
+    min_wilson_pct: float,
+    window_complete: bool = True,
+    source_enabled: bool = True,
+) -> str:
+    """The single typed verdict for one source in one window.
+
+    Ordered so the NARROWEST true statement wins: a source with no resolved
+    outcomes is not "thin", it is unmeasured; a source with enough n but a low
+    lower bound has genuinely underperformed and must not be excused as immature.
+    """
+    if not source_enabled:
+        return GATE_SOURCE_DISABLED
+    if not window_complete:
+        return GATE_WINDOW_INCOMPLETE
+    if resolved <= 0:
+        return GATE_NO_RESOLVED_OUTCOMES
+    if ci_low_pct is None:
+        return GATE_NO_HARD_OUTCOMES
+    if resolved < min_n:
+        return GATE_INSUFFICIENT_N
+    if ci_low_pct < min_wilson_pct:
+        return GATE_LOW_WILSON
+    return GATE_PASS
 
 
 def _build_enriched_source_lookup(
@@ -286,6 +353,12 @@ def compute_per_source_stability(
             window_pass = n_ok and wilson_ok
             if not window_pass:
                 all_pass = False
+            gate_reason = classify_gate_reason(
+                resolved=n,
+                ci_low_pct=ci_low,
+                min_n=MIN_PER_SOURCE_RESOLVED_PER_WINDOW,
+                min_wilson_pct=MIN_PER_SOURCE_WILSON_LOW_PCT,
+            )
             window_results.append(
                 {
                     "window_start": window["start"].isoformat(),
@@ -298,6 +371,14 @@ def compute_per_source_stability(
                     "n_threshold_met": n_ok,
                     "wilson_low_threshold_met": wilson_ok,
                     "passes_window": window_pass,
+                    # §9: PASS | FAIL | INSUFFICIENT_N per window, so a young
+                    # source is not silently rendered as a failing one.
+                    "gate_reason": gate_reason,
+                    "window_state": (
+                        "PASS"
+                        if gate_reason == GATE_PASS
+                        else ("FAIL" if gate_reason == GATE_LOW_WILSON else "INSUFFICIENT_N")
+                    ),
                     "fail_reason": (
                         None
                         if window_pass
@@ -305,7 +386,30 @@ def compute_per_source_stability(
                     ),
                 }
             )
-        by_source[source] = {"windows": window_results, "stable": all_pass}
+        # §9 — THE THREE-VALUED VERDICT.
+        #
+        # Three 30-day windows each needing n>=20 is unreachable for a young or
+        # rare source, so ``stable=False`` was inevitable there and read exactly
+        # like a source that had been measured and had underperformed. Those are
+        # different statements. A source is only UNSTABLE when a window was
+        # actually measured and missed the Wilson bound; when the only obstacle
+        # is missing history it is INSUFFICIENT_HISTORY, which is INFO, not a fault.
+        measured_failure = any(w["gate_reason"] == GATE_LOW_WILSON for w in window_results)
+        thin = any(w["window_state"] == "INSUFFICIENT_N" for w in window_results)
+        if all_pass:
+            stability_state = "STABLE"
+        elif measured_failure:
+            stability_state = "UNSTABLE"
+        elif thin:
+            stability_state = "INSUFFICIENT_HISTORY"
+        else:
+            stability_state = "INSUFFICIENT_HISTORY"
+        by_source[source] = {
+            "windows": window_results,
+            "stable": all_pass,
+            "stability_state": stability_state,
+            "stability_is_immature": stability_state == "INSUFFICIENT_HISTORY",
+        }
 
     return {
         "window_days": STABILITY_WINDOW_DAYS,
@@ -314,6 +418,98 @@ def compute_per_source_stability(
         "min_wilson_low_pct": MIN_PER_SOURCE_WILSON_LOW_PCT,
         "anchor_at": anchor.isoformat(),
         "by_source": by_source,
+    }
+
+
+#: §6 — alias families we canonicalise on the READER side. No historical row is
+#: ever rewritten; only aggregation keys are normalised, and only where the two
+#: spellings provably denote one real-world source.
+#:
+#: Measured on the Pi over the live audit: the distinct source ids are already
+#: single-spelling per source, so this map is currently EMPTY of real merges and
+#: exists as the enforcement point plus a regression guard. The normalisation is
+#: applied BEFORE aggregation so a future second spelling cannot silently split a
+#: source's n across two rows and drop it under the gate.
+SOURCE_ALIASES: dict[str, str] = {
+    "tradingview": "tradingview_webhook",
+    "tv": "tradingview_webhook",
+    "tradingview-webhook": "tradingview_webhook",
+}
+
+
+def canonical_source_id(raw: str | None) -> str:
+    """Fold a raw source label onto its canonical id.
+
+    Case- and whitespace-insensitive, separator-normalised, then alias-mapped.
+    Applied before aggregation so one event can never be counted under two ids.
+    """
+    value = (raw or "").strip().lower()
+    if not value:
+        return LEGACY_UNKNOWN_SOURCE
+    value = value.replace(" ", "_").replace("-", "_")
+    while "__" in value:
+        value = value.replace("__", "_")
+    return SOURCE_ALIASES.get(value, value)
+
+
+def reconcile_source_populations(
+    *,
+    accuracy: dict[str, object],
+    stability: dict[str, object],
+    reliability: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Explain every difference between the source populations. §5.
+
+    The dashboard published "0/15" next to "0/12" with both labelled simply
+    "Quellen", as though the two denominators described the same set. They do
+    not, and the difference was nowhere stated. This returns the three sets, the
+    exact differences, and a mechanical reason for each element of each
+    difference — so UNEXPLAINED_SOURCE_POPULATION_DIFF can be asserted to be 0
+    rather than assumed.
+    """
+    acc = {canonical_source_id(k) for k in (accuracy or {})}
+    stab = {canonical_source_id(k) for k in (stability or {})}
+    rel = {canonical_source_id(k) for k in (reliability or {})}
+
+    def _why(source: str, present_in: str, absent_from: str) -> str:
+        return (
+            f"{source}: outcome-bearing in {present_in}, absent from {absent_from} "
+            f"(the two models read different ledgers over different windows)"
+        )
+
+    accuracy_only = sorted(acc - stab - rel)
+    stability_only = sorted(stab - acc - rel)
+    reliability_only = sorted(rel - acc - stab)
+    common = sorted(acc & stab) if not rel else sorted(acc & stab & rel)
+
+    reasons: dict[str, str] = {}
+    for src in accuracy_only:
+        reasons[src] = _why(src, "accuracy", "reliability/stability")
+    for src in stability_only:
+        reasons[src] = _why(src, "stability", "accuracy/reliability")
+    for src in reliability_only:
+        reasons[src] = _why(src, "reliability", "accuracy/stability")
+
+    unexplained = sorted(
+        s for s in (set(accuracy_only) | set(stability_only) | set(reliability_only))
+        if s not in reasons
+    )
+
+    return {
+        # §5: the two counts are NAMED, never both just "Quellen".
+        "outcome_bearing_source_count": len(acc),
+        "reliability_managed_source_count": len(rel),
+        "stability_evaluated_source_count": len(stab),
+        "source_accuracy_set": sorted(acc),
+        "source_reliability_set": sorted(rel),
+        "source_stability_set": sorted(stab),
+        "accuracy_only": accuracy_only,
+        "reliability_only": reliability_only,
+        "stability_only": stability_only,
+        "common": common,
+        "difference_reasons": reasons,
+        "unexplained_population_diff": unexplained,
+        "unexplained_population_diff_count": len(unexplained),
     }
 
 
@@ -821,6 +1017,12 @@ def build_hold_metrics_report(
             "sources_passing": sources_passing_precision,
         },
         "per_source_stability": per_source_stability,
+        # §5: the populations are reconciled in the payload, so a reader never
+        # has to guess why one card says 15 and the next says 12.
+        "source_population_reconciliation": reconcile_source_populations(
+            accuracy=per_source_active_precision,
+            stability=(per_source_stability or {}).get("by_source", {}),
+        ),
         "hold_gate_evaluation": {
             "alert_hit_rate_condition_met": alert_hit_rate_condition_met,
             "active_precision_condition_met": active_precision_condition_met,
