@@ -491,7 +491,8 @@ def reconcile_source_populations(
         reasons[src] = _why(src, "reliability", "accuracy/stability")
 
     unexplained = sorted(
-        s for s in (set(accuracy_only) | set(stability_only) | set(reliability_only))
+        s
+        for s in (set(accuracy_only) | set(stability_only) | set(reliability_only))
         if s not in reasons
     )
 

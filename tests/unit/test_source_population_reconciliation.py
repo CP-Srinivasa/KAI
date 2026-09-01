@@ -29,8 +29,16 @@ from app.alerts.hold_metrics import (
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "raw",
-    ["tradingview", "TradingView", "TRADINGVIEW", " tv ", "TV", "tradingview-webhook",
-     "tradingview_webhook", "tradingview  webhook"],
+    [
+        "tradingview",
+        "TradingView",
+        "TRADINGVIEW",
+        " tv ",
+        "TV",
+        "tradingview-webhook",
+        "tradingview_webhook",
+        "tradingview  webhook",
+    ],
 )
 def test_alias_spellings_fold_onto_one_canonical_id(raw: str) -> None:
     """NEGATIVE TEST from the brief: two aliases must be indistinguishable after
@@ -58,7 +66,7 @@ def test_canonicalisation_is_idempotent() -> None:
 # §5 — the reconciliation
 # --------------------------------------------------------------------------
 def test_the_two_counts_are_named_separately() -> None:
-    """"15 outcome-bearing sources" and "12 reliability-managed sources" — never
+    """ "15 outcome-bearing sources" and "12 reliability-managed sources" — never
     twice just "Quellen"."""
     rec = reconcile_source_populations(
         accuracy={f"src_{i}": {} for i in range(15)},
