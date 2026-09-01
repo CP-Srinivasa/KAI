@@ -303,7 +303,7 @@
       "next_review_utc": null,
       "invalidation_reason": "POST_T0_INSTRUMENTATION_CONTAMINATION",
       "invalidated_at_utc": "2026-09-01T12:05:00+00:00",
-      "replaced_by": "b7f9a8e204e40e23",
+      "replaced_by": "ebbf451f432cbc80",
       "substantive_verdict": "NONE",
       "decision_question": "entfaellt - die Frage gehoert dem Nachfolge-Akt b7f9a8e204e40e23",
       "rationale": "Zwei belegte Kontaminationen im selben Akt. (1) Im Setup-Fenster [T0, Marker-Refresh] wurde genau eine Emission geschrieben; ihr Fingerprint 82b348f1903dbfc2 loest auf zu {youtube_transcript_coverage, prereg_reconciliation} - der zweite Befund war die Aufsichtsluecke der Messung selbst. (2) Der Emissions-Schreiber hing an Path('artifacts') relativ zum Arbeitsverzeichnis: ein Testlauf in der Repo-Wurzel erzeugte 19 echte alert_emitted-Saetze, auf dem Pi fuenf in neun Millisekunden. min_emitted=5 waere von Testartefakten erfuellt worden. Beides ist behoben (#840). Es wurde KEINE nachtraegliche Ausschlussregel erfunden - das Fenster wird ersetzt, nicht gefiltert.",
@@ -312,19 +312,19 @@
       "spec_installed": false
     },
     {
-      "prereg_id": "b7f9a8e204e40e23",
+      "prereg_id": "ebbf451f432cbc80",
       "name": "operator_back_edge_v2",
       "decision_state": "WATCH",
       "owner": "operator",
       "watcher_id": "kai-prereg-maturity",
       "cadence": "kein Zaehler, ein Frist-Waechter: genau eine Wiedervorlage zum Fensterende",
-      "next_review_utc": "2026-09-15T13:11:32+00:00",
+      "next_review_utc": "2026-09-15T14:00:00+00:00",
       "decision_question": "Hat im Fenster T0..T0+14d mindestens ein zugestellter Health-Befund eine protokollierte Operator-Handlung mit derselben trigger_id ausgeloest - und welches der drei mechanischen Verdikte (MET / NOT_MET / INVALID) folgt daraus?",
-      "rationale": "Zweiter G8-Akt nach der Invalidierung von f0803d911744e0c2. Dieser Eintrag steht ABSICHTLICH VOR der Registrierung im Ledger: die prereg_id ist deterministisch ueber den Kriterientext und damit vorab berechenbar. Beim ersten Akt entstand zwischen Registrierung und Aufsicht eine Luecke, in der der Health-Check die eigene Aufsichtsluecke meldete und damit die Population vergiftete. Ein Blick auf den Zwischenstand vor dem 15.09. waere Optional Stopping.",
+      "rationale": "Zweiter G8-Akt nach der Invalidierung von f0803d911744e0c2. Dieser Eintrag steht ABSICHTLICH VOR der Registrierung im Ledger: die prereg_id ist deterministisch ueber den Kriterientext und damit vorab berechenbar. Beim ersten Akt entstand zwischen Registrierung und Aufsicht eine Luecke, in der der Health-Check die eigene Aufsichtsluecke meldete und damit die Population vergiftete. Ein Blick auf den Zwischenstand vor dem 15.09. waere Optional Stopping. NACHTRAG 2026-09-01: die erste Vorausberechnung ergab b7f9a8e204e40e23 und traf nicht - der Kriterientext pinnt evaluator_sha256, und die Datei wurde nach der Berechnung noch einmal bearbeitet. Der Pin hat genau das geleistet, wofuer er da ist. Lehre: die prereg_id wird als LETZTER Schritt gegen den DEPLOYTEN Code berechnet, nie gegen einen Arbeitsstand. Es wurde nichts gemessen, als das auffiel; T0 ist auf 2026-09-01T14:00:00Z gesetzt, damit das Register VOR dem Fensterbeginn stimmt.",
       "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
       "archive_path": "artifacts/research/supervision/b7f9a8e204e40e23/",
-      "window_start_utc": "2026-09-01T13:11:32+00:00",
-      "window_end_utc": "2026-09-15T13:11:32+00:00",
+      "window_start_utc": "2026-09-01T14:00:00+00:00",
+      "window_end_utc": "2026-09-15T14:00:00+00:00",
       "replaces": "f0803d911744e0c2",
       "spec_installed": false
     }
