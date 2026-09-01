@@ -363,8 +363,13 @@ def test_aggregate_stimmen_mit_den_eintraegen(
 
     counts = Counter(e["decision_state"] for e in entries)
     agg = registry["aggregates"]
-    assert agg["TOTAL"] == len(entries) == 7
-    assert agg["WATCH"] == counts.get("WATCH", 0) == 1
+    # 2026-09-01: G8 setzte T0 fuer operator_back_edge_v1 (f0803d911744e0c2).
+    # Der neue Claim bekam im selben Zug seinen Aufsichtseintrag — ohne ihn
+    # meldete der Health-Check sofort eine Aufsichtsluecke, und diese
+    # selbstverschuldete Meldung waere in die 14-Tage-Population der Praereg
+    # eingegangen, die sie beobachten soll. TOTAL 7 -> 8, WATCH 1 -> 2.
+    assert agg["TOTAL"] == len(entries) == 8
+    assert agg["WATCH"] == counts.get("WATCH", 0) == 2
     assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
     assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4
     # 2026-08-31: die einzige terminierte Wiedervorlage (6751bc33) wurde
