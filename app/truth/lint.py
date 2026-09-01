@@ -259,69 +259,53 @@ def _screener_entry_basis(
 
 
 def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
-    """TL-002: Fills im verdächtigen Mock-Preisband (~100 $) nach Gate-Baseline.
+    """TL-002: fills priced off the synthetic mock curve, after the gate baseline.
 
-    Der Mock-Adapter preist um ~100 (SUMR 100,76 · SKYAI 101,94). Reale Assets
-    KÖNNEN dort handeln — darum WARNING (Hinweis auf Sichtprüfung), nie ERROR.
+    STAB-2026-09-01 §25 — WHAT CHANGED AND WHY.
+
+    This rule used to be a fixed price window: ``band_lo, band_hi = 95.0, 105.0``,
+    "flag every fill whose price lands near 100". That is not a corruption test,
+    it is a coincidence test, and it behaved like one. AAVE genuinely trades in
+    the nineties; SOL genuinely trades near 100. Every one of those real fills
+    landed in the band, and each had to be cleared by hand — the module's own
+    history records three separate rounds of sight-checks (12.07., 02.08., 31.08.)
+    that ended the same way every time: REAL PRICES, EXPLAINED_FALSE_POSITIVE.
+    A rule whose findings are refuted every time it fires is measuring the wrong
+    thing.
+
+    The detector is now the one the rest of the repo already uses:
+    ``app.market_data.mock_price_forensics.match_mock_price`` reconstructs the
+    mock adapter's own deterministic sine curve and accepts a price ONLY on
+    bit-identical equality with a reconstructed candidate (slippage included).
+    That is recognition, not suspicion.
+
+    PROOF STRENGTH IS COVERAGE-DEPENDENT, and this is the substantive part of the
+    section. A bit-exact hit is not automatically evidence of synthetic origin —
+    it depends on how much of the representable price space the curve occupies:
+
+        BTC/USDT  coverage 0.0014   ETH/USDT coverage 0.0277  -> a fingerprint
+        SOL/USDT  coverage 0.4433   AAVE/USDT       0.4975    -> meaningless alone
+
+    On a symbol riding the DEFAULT base price (100.0) the 360 candidate values
+    cover ~50 % of every two-decimal price in [98, 102]. Calling such a hit
+    MOCK_SYNTHETIC would re-create the old false-positive machine with extra
+    steps. Those rows are classified REQUIRES_VERIFICATION instead: worth a look,
+    not a corruption claim.
+
+    There is no single global threshold that decides corruption on its own, and
+    the rule reports its OWN detection coverage so the reader can weigh it.
     """
-    band_lo, band_hi = 95.0, 105.0
-    # Praezisierung V1 (Daily 07-12, nach 2 False Positives AAVE~98$): Fills,
-    # deren Loop-Cycle nachweislich mit einer REALEN market_data_source lief,
-    # sind kein Mock-Verdacht — sie wandern in die Evidence (band_real_source)
-    # statt in die Verletzung. FAIL-CLOSED: mock oder fehlender Join bleibt
-    # WARNING; die Warnung darf nie stiller werden als der Roh-Band-Check.
-    #
-    # SICHTPRUEFUNG 2026-08-02 — die vom Message-Text geforderte, hier als Beleg
-    # festgehalten, damit sie niemand wiederholen muss. Fortsetzung des Praezedenz-
-    # falls vom 12.07. (EXPLAINED_FALSE_POSITIVE, AAVE 98,769 vs. Binance 98,70,
-    # `KAI-mirror/reports/KAI_TL002_sightcheck_2026-07-12.md`); jener Fill
-    # (ord_5f6b3d967b89) ist inzwischen ueber market_data_source:bybit ausgenommen,
-    # die vier hier sind neue Faelle derselben Klasse. Die 4 offenen Fills sind
-    # alle AAVE/USDT aus der technical_paper-Route. Gegen echte Binance-1h-Kerzen
-    # zum jeweiligen Fill-Zeitpunkt geprueft — 4/4 INNERHALB der Kerze:
-    #   ord_638307306e85  26.07. 22:22   99,890 in [97,59 · 101,00]
-    #   ord_de87455e0488  27.07. 15:26   98,431 in [98,43 · 100,06]
-    #   ord_08ae3d42bce8  27.07. 23:00   97,021 in [96,94 ·  98,27]
-    #   ord_f4bc64c6fd2a  29.07. 04:18   97,621 in [97,51 ·  98,63]
-    # Es sind also REALE Preise; AAVE handelt schlicht im Mock-Band [95,105].
-    # Geflaggt blieben sie nur, weil der technical_paper-Pfad ohne Loop-Zyklus
-    # laeuft und damit nie eine ``market_data_source``-Note traegt (9 der 13
-    # Band-Fills sind ueber market_data_source:bybit ausgenommen, diese 4 haben
-    # gar keinen Zyklus).
-    #
-    # V2 (2026-08-05, nach dem C1-Verdikt): die frueher hier notierte Annahme,
-    # der Screener persistiere seinen Beleg "in keinem Artefakt", war FALSCH.
-    # ``technical_screener_feed`` schreibt ``entry_price_basis`` seit jeher in den
-    # Shadow-Candidate, und ``document_id = f"technical_paper_{symbol}_{cid}"``
-    # (technical_paper_feeder.py) traegt den ``candidate_id`` mit. Der Beleg war
-    # also da — er wurde nur ueber ``order_id`` gesucht, wo ``document_id`` der
-    # tragende Schluessel ist. Exakt derselbe Fehlertyp wie die Close-Attribution
-    # (#621). Live-Gegenprobe 2026-08-05: alle 4 offenen Fills loesen ueber diesen
-    # Join auf, 4/4 mit ``binance_1m_decision`` — der maschinelle Join reproduziert
-    # die Sichtpruefung oben, statt sie zu ersetzen.
-    #
-    # V3 (2026-08-31, Sichtpruefung der 3 offenen Faelle): alle drei sind
-    # SOL/USDT, und ZWEI davon tragen den Beleg auf der Fill-Zeile selbst —
-    # ``price_source: "bybit"`` mit ``observed_market_price``,
-    # ``price_observed_at_utc`` und ``market_data_is_stale: false``:
-    #   ord_d5dd3e65eb62  26.08. 22:13   98,859405  observed 98,81  bybit
-    #   ord_1c519cf64261  30.08. 23:41  101,289330  observed 101,34 bybit
-    # Geflaggt blieben sie, weil die Regel den Beleg NUR ueber Loop-Audit
-    # (order_id) und Screener-Candidate (document_id) suchte, waehrend diese
-    # Fills aus der real_analysis-Route mit UUID-``document_id`` kommen und
-    # keinen Loop-Zyklus haben. Exakt derselbe Fehlertyp wie die V2-Korrektur
-    # und wie die Close-Attribution (#621): der Beleg war da, gesucht wurde am
-    # falschen Ort. Der dritte Fill (ord_4481d390e203, 24.08.) traegt gar kein
-    # ``price_source`` und bleibt zu Recht Verletzung.
-    #
-    # FAIL-CLOSED bleibt in fuenf Richtungen: ein ausdrueckliches ``mock`` im
-    # Loop-Audit wird NICHT von einem positiven Screener- oder Zeilen-Beleg
-    # ueberstimmt; ein ``fallback_1h_last`` ist kein Beleg; ein ``document_id``
-    # ohne auffindbaren Candidate bleibt Verletzung; ein leeres oder fehlendes
-    # ``price_source`` ist kein Beleg (live tragen 6 Band-Fills ``""``); und ein
-    # als ``market_data_is_stale`` markierter Preis zaehlt nicht, auch wenn die
-    # Quelle real heisst. Aendert sich das document_id-Format, greift der Join
-    # nicht mehr und die Warnung kehrt zurueck.
+    from app.market_data.mock_price_forensics import (
+        HIGH_COVERAGE_THRESHOLD,
+        is_high_coverage_symbol,
+        match_mock_price,
+        mock_curve_coverage,
+        uses_default_base_price,
+    )
+
+    # Price-source evidence, unchanged: a fill whose cycle ran against a REAL
+    # market_data_source is not a mock suspect whatever its price looks like.
+    # (V2/V3 join paths kept verbatim — they were correct and hard-won.)
     source_by_order: dict[str, str] = {}
     for cyc in iter_jsonl_tolerant(ctx.loop_audit):
         oid = cyc.get("order_id")
@@ -331,16 +315,19 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             if isinstance(note, str) and note.startswith("market_data_source:"):
                 source_by_order[str(oid)] = note.split(":", 1)[1]
                 break
-    # Zweiter Belegweg fuer Fills ohne Loop-Zyklus (Screener-Route).
     basis_by_candidate: dict[str, str] = {}
     for cand in iter_jsonl_tolerant(ctx.shadow_candidates):
         cid = cand.get("candidate_id")
         basis = cand.get("entry_price_basis")
         if cid and basis:
             basis_by_candidate[str(cid)] = str(basis)
-    per_symbol: dict[str, int] = {}
+
+    synthetic: list[dict[str, Any]] = []
+    requires_verification: list[dict[str, Any]] = []
     real_source = 0
-    total = 0
+    examined = 0
+    coverage_seen: dict[str, float] = {}
+
     for rec in iter_jsonl_tolerant(ctx.paper_audit):
         if rec.get("event_type") != "order_filled":
             continue
@@ -350,45 +337,115 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             price = float(rec.get("fill_price") or 0.0)
         except (TypeError, ValueError):
             continue
-        if not (band_lo <= price <= band_hi):
+        if price <= 0:
             continue
         sym = str(rec.get("symbol"))
+        examined += 1
+
+        match = match_mock_price(sym, price)
+        if match is None:
+            # Not on the curve at all. Under the old band rule a real AAVE quote
+            # at 98.77 was a finding; it is simply not one.
+            continue
+
+        coverage_seen[sym] = mock_curve_coverage(sym)
+
+        # FAIL-CLOSED, unchanged in all five directions: an explicit ``mock`` in
+        # the loop audit is never overridden by a positive row- or screener-level
+        # claim; a missing join is not a clearance.
         src = source_by_order.get(str(rec.get("order_id") or ""))
         if src and src != "mock":
             real_source += 1
             continue
-        # Kein Zyklus-Beleg: erst die Zeile selbst, dann die Screener-Route
-        # ueber document_id -> candidate_id. Ein ausdrueckliches ``mock``
-        # (src == "mock") ueberspringt BEIDE Wege — kein Zusatz-Beleg darf
-        # einen Negativ-Befund aufweichen.
         if src is None and _row_names_real_price_source(rec):
             real_source += 1
             continue
         if src is None and _screener_entry_basis(rec, sym, basis_by_candidate) == _BASIS_REAL:
             real_source += 1
             continue
-        total += 1
-        per_symbol[sym] = per_symbol.get(sym, 0) + 1
-    if not total:
-        return []
-    top = sorted(per_symbol.items(), key=lambda kv: -kv[1])[:_EVIDENCE_CAP]
-    return [
-        Violation(
-            invariant_id="TL-002",
-            severity=Severity.WARNING,
-            dataset="paper_execution_audit.jsonl",
-            message=(
-                f"{total} Fills im Mock-Preisband [{band_lo:.0f},{band_hi:.0f}] seit "
-                f"{BASELINE_MOCK_GATE_UTC[:10]} ohne belegte reale Preisquelle — "
-                f"sichtpruefen ({real_source} weitere im Band mit realer Quelle ausgenommen)"
-            ),
-            evidence={
-                "count": total,
-                "per_symbol": dict(top),
-                "band_real_source_excluded": real_source,
-            },
+
+        row = {
+            "order_id": rec.get("order_id"),
+            "symbol": sym,
+            "fill_price": price,
+            "mock_phase": match.phase,
+            "mock_raw_price": match.mock_raw_price,
+            "curve_coverage": round(coverage_seen[sym], 4),
+            "timestamp_utc": rec.get("timestamp_utc"),
+        }
+        if uses_default_base_price(sym) or is_high_coverage_symbol(sym):
+            row["classification"] = "REQUIRES_VERIFICATION"
+            row["reason"] = (
+                "DEFAULT_BASE_PRICE" if uses_default_base_price(sym) else "HIGH_CURVE_COVERAGE"
+            )
+            requires_verification.append(row)
+        else:
+            row["classification"] = "MOCK_SYNTHETIC"
+            synthetic.append(row)
+
+    # The rule publishes its OWN detection coverage. Without it a reader cannot
+    # tell "no synthetic fills" from "this detector cannot see them here".
+    detection = {
+        "fills_examined": examined,
+        "curve_matches": len(synthetic) + len(requires_verification) + real_source,
+        "cleared_by_real_price_source": real_source,
+        "per_symbol_curve_coverage": {k: round(v, 4) for k, v in sorted(coverage_seen.items())},
+        "coverage_note": (
+            "curve_coverage is the share of representable two-decimal prices in the "
+            "symbol's band that the mock curve can emit. Near 0 a bit-exact hit is a "
+            "fingerprint; near 1 it is a coincidence. No single global threshold "
+            "decides corruption."
+        ),
+    }
+
+    violations: list[Violation] = []
+    if synthetic:
+        top = sorted(
+            {r["symbol"]: 0 for r in synthetic},
+            key=lambda sym: -sum(1 for r in synthetic if r["symbol"] == sym),
+        )[:_EVIDENCE_CAP]
+        violations.append(
+            Violation(
+                invariant_id="TL-002",
+                severity=Severity.WARNING,
+                dataset="paper_execution_audit.jsonl",
+                message=(
+                    f"{len(synthetic)} Fill(s) treffen die Mock-Kurve bit-exakt auf einem "
+                    f"Symbol mit unterscheidbarer Kurvenabdeckung und tragen keine belegte "
+                    f"reale Preisquelle — MOCK_SYNTHETIC ({', '.join(top)}); "
+                    f"{real_source} weitere Kurventreffer sind ueber eine reale Quelle "
+                    f"ausgenommen"
+                ),
+                evidence={
+                    "classification": "MOCK_SYNTHETIC",
+                    "count": len(synthetic),
+                    "rows": synthetic[:_EVIDENCE_CAP],
+                    "detection": detection,
+                },
+            )
         )
-    ]
+    if requires_verification:
+        violations.append(
+            Violation(
+                invariant_id="TL-002",
+                severity=Severity.INFO,
+                dataset="paper_execution_audit.jsonl",
+                message=(
+                    f"{len(requires_verification)} Fill(s) treffen die Mock-Kurve, aber auf "
+                    f"Symbolen, deren Kurve einen grossen Teil des darstellbaren Preisraums "
+                    f"abdeckt (Default-Basis 100.0 bzw. coverage >= {HIGH_COVERAGE_THRESHOLD}). "
+                    f"Bit-exakte Gleichheit ist hier KEIN Korruptionsbeweis — "
+                    f"REQUIRES_VERIFICATION, keine Verletzung"
+                ),
+                evidence={
+                    "classification": "REQUIRES_VERIFICATION",
+                    "count": len(requires_verification),
+                    "rows": requires_verification[:_EVIDENCE_CAP],
+                    "detection": detection,
+                },
+            )
+        )
+    return violations
 
 
 def _tl004_metrics(ctx: LintContext) -> dict[str, Any]:
