@@ -10,7 +10,7 @@ annotated-doc==0.0.5
     #   typer
 annotated-types==0.8.0
     # via pydantic
-anthropic==0.122.0
+anthropic==1.2.0
     # via ai-analyst-trading-bot (pyproject.toml)
 anyio==4.14.2
     # via
@@ -50,31 +50,28 @@ charset-normalizer==3.5.1
     #   htmldate
     #   requests
     #   trafilatura
-click==8.4.2
+click==8.5.0
     # via uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
-    #   click
     #   pytest
-    #   tqdm
     #   typer
 courlan==1.4.0
     # via trafilatura
-coverage==7.15.4
+coverage==7.16.0
     # via pytest-cov
-cryptography==50.0.0
+cryptography==50.0.1
     # via
     #   google-auth
     #   pyjwt
 dateparser==1.4.2
     # via htmldate
 defusedxml==0.7.1
-    # via youtube-transcript-api
-distro==1.9.0
     # via
-    #   anthropic
-    #   google-genai
-    #   openai
+    #   ai-analyst-trading-bot (pyproject.toml)
+    #   youtube-transcript-api
+distro==1.9.0
+    # via google-genai
 docstring-parser==0.18.0
     # via anthropic
 duckdb==1.5.5
@@ -83,7 +80,7 @@ execnet==2.1.2
     # via pytest-xdist
 factory-boy==3.3.3
     # via ai-analyst-trading-bot (pyproject.toml)
-faker==40.36.0
+faker==40.37.0
     # via factory-boy
 fastapi==0.141.1
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -93,9 +90,9 @@ feedparser-sgmllib==2.1.0
     # via feedparser
 freezegun==1.5.5
     # via ai-analyst-trading-bot (pyproject.toml)
-google-auth==2.56.3
+google-auth==2.57.0
     # via google-genai
-google-genai==2.18.1
+google-genai==2.21.0
     # via ai-analyst-trading-bot (pyproject.toml)
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via sqlalchemy
@@ -108,25 +105,26 @@ htmldate==1.10.0
     # via trafilatura
 httpcore==1.0.9
     # via httpx
-httpcore2==2.10.0 ; sys_platform != 'emscripten'
+httpcore2==2.12.0 ; sys_platform != 'emscripten'
     # via httpx2
 httptools==0.8.0
     # via uvicorn
 httpx==0.28.1
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
-    #   anthropic
     #   google-genai
     #   mcp
 httpx-sse==0.4.3
     # via mcp
-httpx2==2.10.0
-    # via openai
+httpx2==2.12.0
+    # via
+    #   anthropic
+    #   openai
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
-hypothesis==6.165.10
+hypothesis==6.167.1
     # via ai-analyst-trading-bot (pyproject.toml)
-idna==3.18
+idna==3.19
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   anyio
@@ -151,7 +149,7 @@ langdetect==1.0.9
     # via ai-analyst-trading-bot (pyproject.toml)
 librt==0.15.0 ; platform_python_implementation != 'PyPy'
     # via mypy
-lxml==6.1.1
+lxml==6.1.2
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   htmldate
@@ -168,7 +166,7 @@ markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
     # via mako
-mcp==1.29.0
+mcp==1.29.1
     # via ai-analyst-trading-bot (pyproject.toml)
 mdurl==0.1.2
     # via markdown-it-py
@@ -176,7 +174,7 @@ mypy==2.3.1
     # via ai-analyst-trading-bot (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-openai==3.1.0
+openai==3.6.0
     # via ai-analyst-trading-bot (pyproject.toml)
 opentimestamps==0.4.5
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -188,7 +186,7 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
-portalocker==4.1.0
+portalocker==4.3.0
     # via ai-analyst-trading-bot (pyproject.toml)
 psutil==7.2.2
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -206,7 +204,7 @@ pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementatio
     # via cffi
 pycryptodomex==3.23.0
     # via opentimestamps
-pydantic==2.13.4
+pydantic==2.13.5
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   anthropic
@@ -215,13 +213,13 @@ pydantic==2.13.4
     #   mcp
     #   openai
     #   pydantic-settings
-pydantic-core==2.46.4
+pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   mcp
-pygments==2.20.0
+pygments==2.21.0
     # via
     #   pytest
     #   rich
@@ -273,7 +271,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.7.19
+regex==2026.9.3
     # via
     #   dateparser
     #   tiktoken
@@ -332,38 +330,31 @@ tenacity==9.1.4
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   google-genai
-tiktoken==0.13.0
+tiktoken==0.14.0
     # via ai-analyst-trading-bot (pyproject.toml)
 tld==0.13.2
     # via courlan
-tqdm==4.70.0
-    # via openai
 trafilatura==2.2.0
     # via ai-analyst-trading-bot (pyproject.toml)
 truststore==0.10.4 ; sys_platform != 'emscripten'
     # via
     #   httpcore2
     #   httpx2
-typer==0.27.1
+typer==0.27.2
     # via ai-analyst-trading-bot (pyproject.toml)
 typing-extensions==4.16.0
     # via
     #   alembic
     #   anthropic
-    #   anyio
     #   beautifulsoup4
     #   fastapi
     #   google-genai
-    #   httpx2
     #   mcp
     #   mypy
     #   openai
     #   pydantic
     #   pydantic-core
-    #   pytest-asyncio
-    #   referencing
     #   sqlalchemy
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
     # via
@@ -386,7 +377,7 @@ urllib3==2.7.0
     #   htmldate
     #   requests
     #   trafilatura
-uvicorn==0.52.3
+uvicorn==0.52.4
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   mcp
