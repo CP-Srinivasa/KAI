@@ -760,3 +760,60 @@ def test_health_meldet_auch_einen_abschluss_der_nur_off_chain_liegt(
         i.severity == "critical" and "claims a completed scheduled review" in i.message
         for i in issues
     )
+
+
+# ---------------------------------------------------------------------------
+# INVALIDATED_BEFORE_MEASUREMENT — #841 trug den Zustand ins Schema, aber nicht
+# in die Menge, die der Leser akzeptiert. Der Eintrag galt damit als
+# Aufsichtsluecke, obwohl der Operator ihn ausdruecklich entschieden hatte.
+# Ueber ein 14-Tage-Fenster haette dieser Warnbefund die G8-Population gefuellt
+# — dieselbe Kontamination, die den ersten Akt zerstoert hat.
+# ---------------------------------------------------------------------------
+
+
+def test_ein_invalidierter_eintrag_ist_keine_aufsichtsluecke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "INVALIDATED_BEFORE_MEASUREMENT",
+            "owner": "operator",
+            "invalidation_reason": "POST_T0_INSTRUMENTATION_CONTAMINATION",
+            "invalidated_at_utc": "2026-09-01T13:00:00+00:00",
+            "replaced_by": "b7f9a8e204e40e23",
+            "substantive_verdict": "NONE",
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert " ".join(i.message for i in issues).find("Aufsichtsluecke") == -1
+    assert issues == []
+
+
+def test_ein_unbekannter_zustand_bleibt_eine_aufsichtsluecke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negativkontrolle: der Leser bleibt fail-closed, die Menge ist nicht offen."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "INVALIDATED",  # nicht der registrierte Zustand
+            "owner": "operator",
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert "Aufsichtsluecke" in " ".join(i.message for i in issues)

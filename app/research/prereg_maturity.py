@@ -103,6 +103,12 @@ SUPERVISING_DECISION_STATES = frozenset(
         # Ob der Claim wirklich terminal ist, prueft der Health-Check separat;
         # dieser Eintrag allein schliesst nichts.
         "SCHEDULED_REVIEW_COMPLETED",
+        # Formal invalidierte Messung. Sie ist entschieden, nicht uebersehen:
+        # der Eintrag traegt Grund, Zeitpunkt und Nachfolger und bekommt
+        # bewusst keinen Watcher und keinen Termin. Fehlte er hier, meldete der
+        # Waechter ihn als Aufsichtsluecke — bei einem 14-Tage-Fenster taeglich,
+        # und genau dieser Selbstbefund hat den ersten G8-Akt vergiftet.
+        "INVALIDATED_BEFORE_MEASUREMENT",
     }
 )
 
