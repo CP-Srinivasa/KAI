@@ -36,6 +36,7 @@
     "app/api/routers/premium_signals.py::reconcile_completion",
     "app/api/routers/signals.py::_apply_completions",
     "app/api/routers/signals.py::_project_signal",
+    "app/api/routers/signals.py::_resolve_close",
     "app/api/routers/signals.py::_signal_preview",
     "app/api/routers/tradingview.py::tradingview_webhook",
     "app/api/routers/truth_oracle.py::onchain_facts",
@@ -68,11 +69,6 @@
     "app/execution/open_fee_match.py::match_open_fees",
     "app/execution/operator_entry_watch.py::_build_waiting_signal",
     "app/execution/order_intent.py::to_dict",
-    "app/execution/paper_finite_gate.py::_closing_replacement",
-    "app/execution/paper_finite_gate.py::_opening_replacement",
-    "app/execution/paper_finite_gate.py::build_fill_mutation_plan",
-    "app/execution/paper_finite_gate.py::set_position_tp_tiers",
-    "app/execution/paper_finite_gate.py::validate_order_numbers",
     "app/execution/paper_engine.py::__init__",
     "app/execution/paper_engine.py::_consume_first_tier",
     "app/execution/paper_engine.py::adjust_position",
@@ -81,6 +77,11 @@
     "app/execution/paper_engine.py::fill_order",
     "app/execution/paper_engine.py::status",
     "app/execution/paper_engine_singleton.py::get_paper_engine",
+    "app/execution/paper_finite_gate.py::_closing_replacement",
+    "app/execution/paper_finite_gate.py::_opening_replacement",
+    "app/execution/paper_finite_gate.py::build_fill_mutation_plan",
+    "app/execution/paper_finite_gate.py::set_position_tp_tiers",
+    "app/execution/paper_finite_gate.py::validate_order_numbers",
     "app/execution/portfolio_read.py::_build_exposure_summary",
     "app/execution/portfolio_read.py::_build_snapshot_from_portfolio_state",
     "app/execution/portfolio_read.py::build_portfolio_snapshot",
@@ -179,6 +180,7 @@
   ],
   "_extended_2026_08_17": "AGG_TOKENS um Geld-/Risiko-Kennzahlen erweitert (pnl, bps, sharpe, drawdown, fee, drag, edge, equity, mu, ...) und app/execution in SCAN_ROOTS aufgenommen. Die zwoelf urspruenglichen Tokens trafen KEINE einzige Geld-Kennzahl - genau die Zahlen, fuer die die Direktive geschrieben wurde, liefen am Ratchet vorbei. Der Zuwachs ist kein Regress, sondern vorher unsichtbare Schuld.",
   "_notes": {
-    "app/execution/close_verifier.py::verify_close": "Kein Aggregat: urteilt ueber GENAU EINEN Close (eine Audit-Zeile, ein Evidenz-Artefakt, ein Urteil) — es gibt keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das Kwarg `tolerance_pct` (Token 'pct'), eine Toleranzschwelle beim Kerzen-Vergleich. Bewusst hier eingetragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl."
+    "app/execution/close_verifier.py::verify_close": "Kein Aggregat: urteilt ueber GENAU EINEN Close (eine Audit-Zeile, ein Evidenz-Artefakt, ein Urteil) — es gibt keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das Kwarg `tolerance_pct` (Token 'pct'), eine Toleranzschwelle beim Kerzen-Vergleich. Bewusst hier eingetragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl.",
+    "app/api/routers/signals.py::_resolve_close": "Kein Aggregat: entscheidet ueber GENAU EINEN Envelope, ob sein Paper-Zustand von einem Close-Event ueberstimmt wird — eine Zeile, ein Zustand, keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das durchgereichte Kwarg `realized_pnl_usd` (Token 'pnl'), das an close_reason_to_state geht, um TP von SL zu trennen. Derselbe Fall wie close_verifier.py::verify_close und bewusst genauso behandelt: eintragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl. (STAB-2026-09-01 §5)"
   }
 }
