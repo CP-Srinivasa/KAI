@@ -17,7 +17,7 @@
     "Jede prereg_id in diesem Register existiert im versiegelten Ledger.",
     "Kein Eintrag hat decision_state UNRESOLVED oder UNWATCHED.",
     "WATCH-Eintraege nennen einen watcher_id, der bereits existiert - dieses Register legt keine Timer und keine Services an.",
-    "MANUAL_IMMEDIATE_VERDICT setzt next_review_utc auf DUE_NOW.",
+    "MANUAL_IMMEDIATE_VERDICT mit open=true traegt next_review_utc=DUE_NOW. Mit open=false traegt er next_review_utc=null UND eine attestation mit truth_seq UND eine verification_sha256 - erst dann gilt er als geschlossen.",
     "Ein Eintrag mit blocking_finding traegt spec_installed=false, bis der Operator entschieden hat.",
     "Ein Eintrag mit decision_state SUPERSEDED bekommt NIE einen Watcher, Termin oder MATURITY_SPEC und traegt substantive_verdict=NONE.",
     "SCHEDULED_REVIEW_COMPLETED entsteht NUR aus MANUAL_SCHEDULED_REVIEW - der Uebergang steht explizit in previous_decision_state, er wird nicht erzaehlt.",
@@ -33,7 +33,7 @@
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
-      "next_review_utc": "DUE_NOW",
+      "next_review_utc": null,
       "decision_question": "Ist Quadrant Q4 (beide Eingangsverdikte FAIL) korrekt eingetreten, und wird Fork B damit als bindend attestiert?",
       "rationale": "Kein Beobachtungsproblem: beide Eingangsverdikte sind terminal in der verifizierten Truth-Kette (AnalystProbe f0e1a3a8073fd4c0 = FAIL/NO_DEMAND seq 91; C1 9cab81fae4823482 = FAIL/NO_DEMAND seq 71; beide subject_id == payload_hash). Der versiegelte Baum bindet fuer Q4: KAI als Selbst-Instrument, null Monetarisierungs-Engineering, Re-Open nur ueber unaufgefordertes externes Signal plus neue Prae-Registrierung. Bis das attestiert ist, gilt eine Bindung, die niemand ausgesprochen hat.",
       "evidence_path": "KAI-mirror/reports/KAI_ForkB_Entscheidungsbaum_2026-07.md",
@@ -42,7 +42,27 @@
       "archive_path": "artifacts/research/supervision/81c41ae153e5d427/",
       "spec_installed": false,
       "spec_required": false,
-      "blocking_finding": null
+      "blocking_finding": null,
+      "attestation": {
+        "attested": true,
+        "attested_at_utc": "2026-08-27T10:09:34+00:00",
+        "attestation_hash": "94602d24e6c81c1f097c62b4690b64e616657fd10fc73af09931fe490339a4e5",
+        "truth_seq": 102,
+        "verdict_class": "MET",
+        "verdict_headline": "MET: Quadrant Q4 (beide Eingangsverdikte FAIL) ist eingetreten - Fork B ist bindend",
+        "verification_file": "verification_20260827.json",
+        "verification_sha256": "831878a628df228293f5f92d3b20f65bdeb035b4461672926e9b9b7d5ec10517",
+        "verification_clauses": 4,
+        "report_file": "20260827_100934_fork_decision_tree_probe_c1_v1.json",
+        "report_sha256": "b74f9b8a4ee71a13eaac25945501b032c1d948045da93647a5d21d88cd0f7ec4",
+        "consequence": "Fork B BINDEND: KAI als Selbst-Instrument, null Monetarisierungs-Engineering, Re-Open nur ueber unaufgefordertes externes Signal plus neue Prae-Registrierung."
+      },
+      "open": false,
+      "archive_contents": [
+        "verification_20260827.json",
+        "20260827_100934_fork_decision_tree_probe_c1_v1.json",
+        "20260827_100934_fork_decision_tree_probe_c1_v1.md"
+      ]
     },
     {
       "prereg_id": "836b1c7e28eed49a",
@@ -51,7 +71,7 @@
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
-      "next_review_utc": "DUE_NOW",
+      "next_review_utc": null,
       "decision_question": "Erfuellen Bundle v0.1 und Verifier auch die restlichen versiegelten Konstanten, sodass PASS attestiert werden kann?",
       "rationale": "Die beiden gehashten Artefakte sind am 2026-08-27 bit-genau gegen den Seal geprueft und identisch. Ein Seal verrottet nicht - eine Dauerueberwachung haette nichts zu melden. Offen und ausdruecklich NICHT geprueft: runtime_baseline_sha, truth_lint_registry_version=11-invariants-5-active, provenance_semantics=pipeline_scoped, network=llm=execution_influence=false sowie die Vier-Wege-Ausgabe PASS/FAIL/INVALID/INCONCLUSIVE (exit 0/1/2/3).",
       "evidence_path": "schemas/verdict_bundle/manifest.schema.v0_1.json + docs/verifier/threat_model_v0_1.md",
@@ -60,7 +80,35 @@
       "archive_path": "artifacts/research/supervision/836b1c7e28eed49a/",
       "spec_installed": false,
       "spec_required": false,
-      "blocking_finding": null
+      "blocking_finding": null,
+      "attestation": {
+        "attested": true,
+        "attested_at_utc": "2026-08-27T10:09:37+00:00",
+        "attestation_hash": "9e9a5675340ee9800efa389e80fb9266d80579e005320bbac97cbb452fb0ffa0",
+        "truth_seq": 103,
+        "verdict_class": "MET",
+        "verdict_headline": "PASS: Schema- und Threat-Model-Seal vollstaendig verifiziert, 14/14 Klauseln",
+        "verification_file": "verification_20260827.json",
+        "verification_sha256": "76687ee90aed86a175cd17518dcf7b55ac192582185182c857843264211137df",
+        "verification_clauses": 14,
+        "report_file": "20260827_100937_verifier_bundle_v0_1_schema_seal.json",
+        "report_sha256": "7c43f5c9d5aa78ecbbf124868fbd962c421c1a107f0af19897eedbc0e55cb1df",
+        "previously_open_constants_now_measured": [
+          "runtime_baseline_sha=1d2e565ef847efaa019e58753a65dc8f6531b0dd",
+          "truth_lint_registry_version=11-invariants-5-active",
+          "provenance_semantics=pipeline_scoped",
+          "network_required=llm_required=execution_influence=false",
+          "Vier-Wege-Ausgabe PASS=0/FAIL=1/INVALID=2/INCONCLUSIVE=3",
+          "sieben Schritte in versiegelter Reihenfolge, Abbruch beim ersten INVALID",
+          "lint-in-bundle T7/T8: fehlende signal_path_id-Provenance = INVALID"
+        ]
+      },
+      "open": false,
+      "archive_contents": [
+        "verification_20260827.json",
+        "20260827_100937_verifier_bundle_v0_1_schema_seal.json",
+        "20260827_100937_verifier_bundle_v0_1_schema_seal.md"
+      ]
     },
     {
       "prereg_id": "8b21040ad7935a4a",
@@ -69,7 +117,7 @@
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
-      "next_review_utc": "DUE_NOW",
+      "next_review_utc": null,
       "decision_question": "Wird der Clean-Room-PASS vom 2026-07-12 attestiert - mit ausdruecklichem POST_HOC_SEAL-Vorbehalt im Verdikttext?",
       "rationale": "Der Seal beschreibt das Ergebnis selbst: zwei Umgebungen (Windows/x64/Py3.13 und Linux/ARM/Py3.12 Wegwerf-Klon, prod unberuehrt), beide 7/7 Schritte, beide exit 0, identischer result_sha256 40faff0dd0b6bcc92f7b38928b6f9d313e637bbdca5966b35af52c2a475e9e90 bei code_sha e01b5e3c108b705b7bc8cc4e953255835326809b.",
       "verdict_text_requirement": "POST_HOC_SEAL",
@@ -80,7 +128,31 @@
       "archive_path": "artifacts/research/supervision/8b21040ad7935a4a/",
       "spec_installed": false,
       "spec_required": false,
-      "blocking_finding": null
+      "blocking_finding": null,
+      "attestation": {
+        "attested": true,
+        "attested_at_utc": "2026-08-27T10:09:39+00:00",
+        "attestation_hash": "71e09b977af23207dda8d70ee1f2ac5c1bf3f646bad93bb3c29e062a1b1d88b2",
+        "truth_seq": 104,
+        "verdict_class": "MET",
+        "verdict_headline": "PASS (POST_HOC_SEAL): Clean-Room-Reproduktion in zwei Umgebungen belegt",
+        "verification_file": "verification_20260827.json",
+        "verification_sha256": "9e5d81ef6543cf623bb574ae38e1817b177143b9081ec8c94d0bdefb3fb0bb75",
+        "verification_clauses": 5,
+        "report_file": "20260827_100939_verifier_bundle_v0_1_cleanroom_pass.json",
+        "report_sha256": "bd37a2a08628a7d300ef0382726e6a0e11b441b5ff72e061803ebbf9999b0798",
+        "evidence_doc_resolved": {
+          "path": "KAI-mirror/reports/KAI_Verifier_v0_1_CleanRoom_2026-07-12.md",
+          "sha256": "e47eedc41a43a67463991f635d0a47c45e8085a8089ecf0fd64ae10ea689b88f",
+          "note": "Am 2026-08-27 gefunden und gehasht - exakt der im Seal genannte Wert. Zuvor im Register als ungeprueft gefuehrt (latest_evidence_sha256=null)."
+        }
+      },
+      "open": false,
+      "archive_contents": [
+        "verification_20260827.json",
+        "20260827_100939_verifier_bundle_v0_1_cleanroom_pass.json",
+        "20260827_100939_verifier_bundle_v0_1_cleanroom_pass.md"
+      ]
     },
     {
       "prereg_id": "0879a65c5fd01f65",
@@ -89,7 +161,7 @@
       "owner": "operator",
       "watcher_id": null,
       "cadence": null,
-      "next_review_utc": "DUE_NOW",
+      "next_review_utc": null,
       "decision_question": "Wird das Safety-Achsen-PASS mit scope_note in die verifizierte Truth-Kette attestiert?",
       "rationale": "Der Lauf ist gemacht; das PASS liegt in der Seitenablage, nicht in der Truth-Kette - Zustand VERDICT_UNATTESTED, nicht UNWATCHED. Der Seal schraenkt selbst ein: bei null berechtigten Open-Intent-Vorfaellen bleibt die Transition-Achse INSUFFICIENT_N und NUR die Safety-/Tip-Achse darf bestehen. Der Verdikttext muss diese Einschraenkung tragen, sonst liest spaeter jemand 'LN PASS', wo 'nur Safety-Achse' gemeint war. Betrifft den Geldpfad: ein PASS ohne Kette ist im Ernstfall kein Beweis.",
       "verdict_text_requirement": "PASS_SAFETY_AXIS_ONLY",
@@ -99,7 +171,27 @@
       "archive_path": "artifacts/research/supervision/0879a65c5fd01f65/",
       "spec_installed": false,
       "spec_required": false,
-      "blocking_finding": null
+      "blocking_finding": null,
+      "attestation": {
+        "attested": true,
+        "attested_at_utc": "2026-08-27T10:09:42+00:00",
+        "attestation_hash": "8f576276a4d8fd5ce1114abb1160525fb23823666465aab7bae71bb1c0bff687",
+        "truth_seq": 105,
+        "verdict_class": "MET",
+        "verdict_headline": "PASS - SAFETY_AXIS_ONLY: nur die Safety-/Tip-Achse besteht",
+        "verification_file": "verification_20260827.json",
+        "verification_sha256": "57e1ed1e831e314e58d35c2a7f52fe68ec2ab8adaec825a190d199530da4931e",
+        "verification_clauses": 7,
+        "report_file": "20260827_100942_ln_reconciliation_shadow_integrity_v1.json",
+        "report_sha256": "537755b197d1f04c75abf2d46b7fe1d99815c6bc89b6d87760b66349c8e337e4",
+        "tokenization_note": "Der Verdikttext beginnt bewusst 'PASS - SAFETY_AXIS_ONLY', NICHT 'PASS_SAFETY_AXIS_ONLY': _terminal_verdict_class behandelt den Unterstrich nicht als Token-Grenze. Live geprueft 2026-08-27: 'PASS_SAFETY_AXIS_ONLY: ...' ergibt UNKNOWN und damit RESOLUTION_HOLD statt RESOLVED."
+      },
+      "open": false,
+      "archive_contents": [
+        "verification_20260827.json",
+        "20260827_100942_ln_reconciliation_shadow_integrity_v1.json",
+        "20260827_100942_ln_reconciliation_shadow_integrity_v1.md"
+      ]
     },
     {
       "prereg_id": "6751bc3364d39ec2",
