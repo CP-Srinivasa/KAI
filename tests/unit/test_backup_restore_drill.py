@@ -313,3 +313,330 @@ def test_restore_drill_wrong_passphrase_writes_fail_proof(tmp_path: Path) -> Non
     proof = _latest_proof(tmp_path)
     assert proof["status"] == "FAIL"
     assert proof["reason"] == "decrypt failed"
+
+
+# ── STAB-05D: Ledger-Identitaet und Shadow-Schutz ────────────────────────────
+
+
+def _ledger_rows(root: Path) -> list[dict[str, object]]:
+    path = root / "artifacts" / "backup_audit.jsonl"
+    if not path.exists():
+        return []
+    rows: list[dict[str, object]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def test_ledger_ok_row_names_the_final_encrypted_artifact(tmp_path: Path) -> None:
+    """Der Ledger muss die Identitaet nennen, die den Lauf UEBERLEBT.
+
+    Bis STAB-05D schrieb er den Pre-Encryption-Staging-Namen und dazu Hash und
+    Groesse des verschluesselten Artefakts. Live gemessen 2026-08-27: 0 von 3
+    erfolgreichen Laeufen nannten eine existierende Datei, waehrend Hash und
+    Bytes 3/3 korrekt waren. Ein Recovery-Prozess, der dem Feld folgt, sucht
+    eine Datei, die nach erfolgreichem Backup geloescht ist.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    ok_rows = [r for r in _ledger_rows(tmp_path) if r.get("status") == "ok"]
+    assert ok_rows, "kein ok-Eintrag im Ledger"
+    row = ok_rows[-1]
+
+    assert row["archive"] == archive.name
+    assert str(row["archive"]).endswith(".tar.gz.enc")
+    # Die drei Felder muessen DIESELBE Byte-Identitaet beschreiben.
+    named = archive.parent / str(row["archive"])
+    assert named.is_file(), "der Ledger nennt eine nicht existierende Datei"
+    assert row["sha256"] == hashlib.sha256(named.read_bytes()).hexdigest()
+    assert row["bytes"] == named.stat().st_size
+
+
+def test_failure_rows_keep_the_staging_name(tmp_path: Path) -> None:
+    """Gegenprobe gegen Ueber-Korrektur.
+
+    Die sechs uebrigen write_audit-Aufrufe duerfen NICHT mitgeaendert werden:
+    zu ihrem Zeitpunkt existiert kein verschluesseltes Artefakt, und sie
+    schreiben bewusst leeren Hash und bytes=0. Wer dort ebenfalls auf .enc
+    umstellt, laesst den Ledger eine Datei benennen, die nie entstanden ist.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+
+    result = _run_bash(
+        tmp_path,
+        "env KAI_BACKUP_KEEP_DAYS=0 bash scripts/kai_backup_artifacts.sh",
+    )
+    assert result.returncode != 0, "ohne Passphrase muss das Backup scheitern"
+
+    rows = [r for r in _ledger_rows(tmp_path) if r.get("status") != "ok"]
+    assert rows, "kein Fehl-Eintrag im Ledger"
+    for row in rows:
+        assert not str(row.get("archive") or "").endswith(".enc"), (
+            f"Fehl-Eintrag {row.get('status')} nennt ein .enc-Artefakt, das nie entstand"
+        )
+        assert row.get("sha256") == ""
+        assert row.get("bytes") == 0
+
+
+def test_a_later_row_without_expectations_cannot_shadow_the_manifest(
+    tmp_path: Path,
+) -> None:
+    """Der eigentliche Silent-Green-Schutz.
+
+    Der Reader nimmt die LETZTE passende Ledger-Zeile. Eine spaetere Zeile ohne
+    Manifest wuerde die historische Erwartung verdraengen; ``audit_expectation``
+    liefert dann leer und der Drill faellt auf ``current_expectation`` zurueck —
+    er prueft gegen das HEUTIGE Dateisystem statt gegen den Archivinhalt.
+
+    Der Test macht das messbar: nach dem Backup entsteht eine NEUE Live-Datei in
+    einem Quellverzeichnis. Sie steht nicht im Archiv. Greift die historische
+    Erwartung, ist sie kein Teil der Erwartung und der Drill besteht. Faellt der
+    Drill auf den Live-Zustand zurueck, erwartet er sie und meldet sie als
+    fehlend.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    ledger = tmp_path / "artifacts" / "backup_audit.jsonl"
+    schatten = {
+        "ts": "2026-08-27T23:59:59Z",
+        "status": "ok",
+        "archive": archive.name,
+        "sha256": "0" * 64,
+        "bytes": 1,
+        "remote": "",
+        "remote_status": "",
+        "note": "spaetere Zeile ohne Manifest",
+    }
+    with ledger.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(schatten) + "\n")
+
+    neu = tmp_path / "artifacts" / "research" / "forecaster_panel" / "nachtraeglich.json"
+    neu.write_text('{"entstanden":"nach dem Backup"}\n', encoding="utf-8")
+
+    result = _run_drill(tmp_path, archive)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    proof = _latest_proof(tmp_path)
+    assert proof["status"] == "PASS"
+    files_expected = cast(list[str], proof["files_expected"])
+    assert "artifacts/research/forecaster_panel/nachtraeglich.json" not in files_expected, (
+        "der Drill hat auf den Live-Zustand zurueckgegriffen — die schwaechere "
+        "Zeile hat das Manifest verdraengt"
+    )
+    assert proof["files_missing"] == []
+
+
+def test_a_later_row_with_expectations_still_wins(tmp_path: Path) -> None:
+    """Die Haertung darf den Ledger nicht einfrieren.
+
+    Nur eine BEWEISLOSE Zeile wird abgewiesen. Traegt eine spaetere Zeile selbst
+    ein Manifest, muss sie weiterhin gewinnen — sonst waere eine spaetere,
+    genauere Korrektur wirkungslos.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    ledger = tmp_path / "artifacts" / "backup_audit.jsonl"
+    spaeter = {
+        "ts": "2026-08-27T23:59:59Z",
+        "status": "ok",
+        "archive": archive.name,
+        "sha256": "0" * 64,
+        "bytes": 1,
+        "file_sha256": {"DECISION_LOG.md": "1" * 64},
+        "note": "spaetere Zeile MIT Manifest",
+    }
+    with ledger.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(spaeter) + "\n")
+
+    result = _run_drill(tmp_path, archive)
+
+    proof = _latest_proof(tmp_path)
+    files_expected = cast(list[str], proof["files_expected"])
+    assert files_expected == ["DECISION_LOG.md"], (
+        "die spaetere Zeile MIT Manifest muss die Erwartung bestimmen"
+    )
+    assert result.returncode != 0, "der gefaelschte Hash muss als Mismatch auffallen"
+
+
+def test_ledger_identity_pairing_contract() -> None:
+    """Statischer Vertrag ueber ALLE write_audit-Aufrufe.
+
+    Ein Laufzeittest kann nur den Fehlerpfad pruefen, den er ausloesen kann —
+    ``fail_tar`` und ``fail_encrypt`` sind ohne kuenstlich zerstoerte Umgebung
+    nicht erreichbar. Die Invariante gilt aber fuer jeden Aufruf, deshalb wird
+    sie hier am Skripttext geprueft:
+
+        schreibt der Aufruf ENC_SHA/ENC_BYTES  -> muss er ARCHIVE_ENC benennen
+        schreibt er leeren Hash und bytes=0    -> darf er KEIN .enc benennen
+
+    Damit faellt sowohl das alte Fehlpaar (Staging-Name + finaler Hash) auf als
+    auch die Ueber-Korrektur, die Fehlerpfade auf ein Artefakt umstellt, das zu
+    ihrem Zeitpunkt nie entstanden ist.
+    """
+    # Die geprueften Argumente (status, archive, sha, bytes) stehen alle auf der
+    # ERSTEN Zeile eines Aufrufs; Fortsetzungszeilen tragen nur remote und note.
+    aufrufe = [
+        line.split("write_audit", 1)[1]
+        for line in BACKUP_SCRIPT.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("write_audit ")
+    ]
+    assert len(aufrufe) >= 8, f"unerwartet wenige write_audit-Aufrufe: {len(aufrufe)}"
+
+    mit_enc_hash = 0
+    for argumente in aufrufe:
+        schreibt_enc_hash = "$ENC_SHA" in argumente
+        # Auf die EIGENSCHAFT pruefen, nicht auf den Variablennamen: ein
+        # ``${ARCHIVE_NAME}.enc`` benennt ebenfalls das verschluesselte
+        # Artefakt, enthaelt aber nie die Zeichenkette ARCHIVE_ENC.
+        nennt_enc = "ARCHIVE_ENC" in argumente or ".enc" in argumente
+        if schreibt_enc_hash:
+            mit_enc_hash += 1
+            assert nennt_enc, (
+                f"Aufruf schreibt ENC_SHA, benennt aber nicht das finale Artefakt: {argumente!r}"
+            )
+            assert "$ENC_BYTES" in argumente
+        else:
+            assert not nennt_enc, (
+                f"Aufruf ohne ENC_SHA benennt ein .enc-Artefakt, das zu diesem "
+                f"Zeitpunkt nicht existiert: {argumente!r}"
+            )
+    assert mit_enc_hash == 2, (
+        f"erwartet genau 2 Aufrufe mit finalem Hash (fail_push, ok), gefunden {mit_enc_hash}"
+    )
+
+
+def test_proof_names_the_source_of_its_expectation(tmp_path: Path) -> None:
+    """Ein PASS aus dem Manifest und ein PASS aus dem Live-Zustand sehen sonst
+    identisch aus — obwohl sie verschiedene Fragen beantworten.
+
+    Das Beweis-Artefakt muss deshalb ausweisen, WORAUS die Erwartung stammt.
+    Ohne dieses Feld laesst sich `MODERN_RESTORE_CANNOT_SILENTLY_DOWNGRADE`
+    nicht belegen, sondern nur behaupten.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    result = _run_drill(tmp_path, archive)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert _latest_proof(tmp_path)["expectation_source"] == "audit_manifest"
+
+
+def test_proof_marks_the_fallback_when_no_manifest_exists(tmp_path: Path) -> None:
+    """Gegenprobe: Archive aus der Zeit vor STAB-05c haben kein Manifest.
+
+    Der Rueckfall bleibt erlaubt — er ist fuer Alt-Archive noetig —, aber er
+    muss im Artefakt ERKENNBAR sein. Sonst zaehlt ein alter Drill-Pass wie ein
+    neuer, obwohl er nur gegen das heutige Dateisystem geprueft hat.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    # Das Manifest entfernen und den Ledger auf den Vor-STAB-05c-Zustand
+    # zuruecksetzen: Zeile ohne file_sha256, wie sie bis 27.08. geschrieben wurde.
+    (archive.parent / (archive.name + ".manifest.json")).unlink(missing_ok=True)
+    ledger = tmp_path / "artifacts" / "backup_audit.jsonl"
+    alt = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    for row in alt:
+        row.pop("file_sha256", None)
+    ledger.write_text(
+        "".join(json.dumps(r) + "\n" for r in alt),
+        encoding="utf-8",
+    )
+
+    result = _run_drill(tmp_path, archive)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert _latest_proof(tmp_path)["expectation_source"] == "current_filesystem"
+
+
+def test_modern_archive_with_orphaned_manifest_fails_closed(tmp_path: Path) -> None:
+    """Ein Widerspruch darf nicht durch eine schwaechere Pruefung ersetzt werden.
+
+    Der Writer legt das Manifest doppelt ab: als Sidecar neben dem Archiv UND
+    als ``file_sha256`` in der Ledger-Zeile. Existiert der Sidecar, liefert das
+    Ledger aber keine Erwartung, ist entweder die Zeile verdraengt worden oder
+    die beiden Ablagen sind auseinandergelaufen. Beides ist ein Befund — ein
+    Rueckfall auf den Live-Zustand wuerde ihn zudecken.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    sidecar = archive.parent / (archive.name + ".manifest.json")
+    assert sidecar.is_file(), "Vorbedingung: der Writer legt einen Sidecar an"
+
+    # Sidecar bleibt, Ledger-Erwartung verschwindet -> Widerspruch.
+    ledger = tmp_path / "artifacts" / "backup_audit.jsonl"
+    rows = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    for row in rows:
+        row.pop("file_sha256", None)
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    result = _run_drill(tmp_path, archive)
+
+    assert result.returncode != 0, "der Widerspruch muss FAIL erzeugen, nicht PASS"
+    proof = _latest_proof(tmp_path)
+    assert proof["expectation_source"] == "ledger_manifest_missing"
+    assert proof["status"] != "PASS"
+
+
+# ---------------------------------------------------------------------------
+# Ausdrueckliche Nicht-Ansprueche (G5 Task 3, Operator-Vorgabe 2026-09-01)
+# ---------------------------------------------------------------------------
+
+
+def test_proof_states_what_it_does_not_claim(tmp_path: Path) -> None:
+    """Ein PASS belegt genau das Gepruefte — und sagt selbst, was es NICHT belegt.
+
+    Ohne diese beiden Felder liest jemand spaeter einen konsistenten
+    Systemzustand oder eine Off-Site-Redundanz in einen Drill hinein, der
+    beides nie gemessen hat.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    assert _run_drill(tmp_path, archive).returncode == 0
+    proof = _latest_proof(tmp_path)
+    assert proof["status"] == "PASS"
+    assert proof["global_atomic_point_in_time"] == "NOT_CLAIMED"
+    assert proof["off_pi_redundancy"] == "NOT_CLAIMED"
+
+
+def test_non_claims_survive_a_failing_run(tmp_path: Path) -> None:
+    """Auch im Fehlerfall. Ein Beweis, der seine Grenzen nur im Erfolgsfall
+    nennt, nennt sie nicht."""
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    assert _run_drill(tmp_path, archive, passphrase=None).returncode == 2
+    proof = _latest_proof(tmp_path)
+    assert proof["status"] == "FAIL"
+    assert proof["global_atomic_point_in_time"] == "NOT_CLAIMED"
+    assert proof["off_pi_redundancy"] == "NOT_CLAIMED"

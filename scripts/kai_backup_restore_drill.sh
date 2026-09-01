@@ -76,10 +76,16 @@ payload = {
     "reason": reason,
     "archive": archive,
     "archive_sha256": archive_sha256,
+    "expectation_source": "",
     "files_expected": [],
     "files_restored": [],
     "files_missing": [],
     "sha256_mismatch": [],
+    # Nicht-Ansprueche: stehen auch dann im Artefakt, wenn die Validierung gar
+    # nicht erst lief (fail_push, Passphrase fehlt, openssl fehlt). Ein Beweis,
+    # der seine Grenzen nur im Erfolgsfall nennt, nennt sie nicht.
+    "global_atomic_point_in_time": "NOT_CLAIMED",
+    "off_pi_redundancy": "NOT_CLAIMED",
     "duration_s": int(duration_s),
     "host": host,
 }
@@ -88,7 +94,15 @@ if validation_path:
         validation = json.loads(Path(validation_path).read_text(encoding="utf-8"))
     except FileNotFoundError:
         validation = {}
-    for key in ("files_expected", "files_restored", "files_missing", "sha256_mismatch"):
+    for key in (
+        "expectation_source",
+        "files_expected",
+        "files_restored",
+        "files_missing",
+        "sha256_mismatch",
+        "global_atomic_point_in_time",
+        "off_pi_redundancy",
+    ):
         if key in validation:
             payload[key] = validation[key]
 
@@ -229,6 +243,22 @@ def rel(path: Path, base: Path) -> str:
     return path.relative_to(base).as_posix()
 
 
+def _has_historical_expectation(item: dict[str, object]) -> bool:
+    """Traegt dieser Ledger-Eintrag den Zustand, der eingepackt WURDE?
+
+    Nur solche Eintraege duerfen einen bereits ausgewaehlten beweisfuehrenden
+    Eintrag ersetzen. Die geprueften Schluessel sind exakt die, die
+    ``audit_expectation()`` unten auswertet — bewusst dieselbe Liste, damit
+    Praedikat und Auswertung nicht auseinanderlaufen koennen.
+    """
+    for key in ("file_sha256", "files_sha256", "sha256_by_file"):
+        value = item.get(key)
+        if isinstance(value, dict) and value:
+            return True
+    files = item.get("files_expected") or item.get("files")
+    return isinstance(files, list) and bool(files)
+
+
 def audit_expectation() -> tuple[list[str], dict[str, str]]:
     archive_name = archive.name
     plain_name = archive_name[:-4] if archive_name.endswith(".enc") else archive_name
@@ -240,8 +270,25 @@ def audit_expectation() -> tuple[list[str], dict[str, str]]:
             item = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if item.get("archive") in {archive_name, plain_name}:
-            selected = item
+        if item.get("archive") not in {archive_name, plain_name}:
+            continue
+        # Die spaetere Zeile gewinnt — AUSSER sie wuerde eine beweisfuehrende
+        # durch eine beweislose ersetzen (STAB-05D, 2026-08-27).
+        #
+        # Ohne diese Bedingung genuegt EINE spaetere Zeile mit passendem
+        # ``archive`` und ohne Manifest, um die historische Erwartung zu
+        # verdraengen. ``audit_expectation()`` liefert dann leer, der Aufrufer
+        # faellt auf ``current_expectation()`` zurueck — und der Drill prueft
+        # gegen das HEUTIGE Dateisystem statt gegen den Archivinhalt. Kein
+        # Crash, kein roter Test, keine Fehlermeldung: die Beweiskraft sinkt
+        # still. Genau die Klasse Fehler, die ein Waechter nicht haben darf.
+        if (
+            selected is not None
+            and _has_historical_expectation(selected)
+            and not _has_historical_expectation(item)
+        ):
+            continue
+        selected = item
     if selected is None:
         return [], {}
 
@@ -319,8 +366,30 @@ def validate_jsonl_file(path: Path) -> bool:
 
 
 expected, expected_hashes = audit_expectation()
+expectation_source = "audit_manifest"
+fail_closed_reason = ""
 if not expected:
-    expected, expected_hashes = current_expectation()
+    # Der Rueckfall auf den Live-Zustand ist noetig fuer Archive aus der Zeit
+    # vor dem Manifest (STAB-05c), aber er beantwortet eine SCHWAECHERE Frage:
+    # "passt das Archiv zum heutigen Dateisystem?" statt "laesst sich aus
+    # diesem Archiv wiederherstellen?".
+    #
+    # Der Backup-Writer legt das Manifest DOPPELT ab: als Sidecar neben dem
+    # Archiv und als ``file_sha256`` in der Ledger-Zeile. Existiert der Sidecar,
+    # liefert das Ledger aber keine Erwartung, ist das ein Widerspruch — die
+    # Zeile wurde verdraengt oder die beiden Ablagen sind auseinandergelaufen.
+    # Ein Waechter darf einen Widerspruch nicht durch eine schwaechere Pruefung
+    # ersetzen; hier wird fail-closed abgebrochen (STAB-05D, 2026-08-27).
+    sidecar = archive.parent / (archive.name + ".manifest.json")
+    if sidecar.is_file():
+        expectation_source = "ledger_manifest_missing"
+        fail_closed_reason = (
+            "manifest sidecar exists but the ledger yielded no historical "
+            "expectation for this archive"
+        )
+    else:
+        expected, expected_hashes = current_expectation()
+        expectation_source = "current_filesystem"
 
 restored = sorted(rel(path, extract_dir) for path in extract_dir.rglob("*") if path.is_file())
 restored_set = set(restored)
@@ -354,14 +423,30 @@ for name in expected:
             )
 
 payload = {
+    "expectation_source": expectation_source,
     "files_expected": expected,
     "files_restored": restored,
     "files_missing": sorted(missing),
     "sha256_mismatch": mismatches,
+    # Zwei Dinge, die dieser Drill AUSDRUECKLICH NICHT beweist. Sie stehen im
+    # Beweis-Artefakt, damit niemand sie spaeter hineinliest: ein PASS ist ein
+    # Beleg fuer genau das, was geprueft wurde, und fuer nichts darueber hinaus.
+    #
+    # GLOBAL_ATOMIC_POINT_IN_TIME: das Archiv entsteht waehrend das System
+    # laeuft. Die enthaltenen Dateien stammen aus einem Zeitfenster, nicht aus
+    # einem Augenblick; zwei Stroeme koennen um Sekunden auseinanderliegen.
+    # Wer daraus einen konsistenten Systemzustand ableitet, behauptet mehr als
+    # gemessen wurde.
+    #
+    # OFF_PI_REDUNDANCY: geprueft wird ein Archiv AUF dem Pi. Dass eine Kopie
+    # ausserhalb existiert und lesbar ist, sagt dieser Lauf nicht — das waere
+    # ein eigener Beweis an einem anderen Ort.
+    "global_atomic_point_in_time": "NOT_CLAIMED",
+    "off_pi_redundancy": "NOT_CLAIMED",
 }
 out.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
-if missing or mismatches:
+if fail_closed_reason or missing or mismatches:
     raise SystemExit(1)
 PY
 then

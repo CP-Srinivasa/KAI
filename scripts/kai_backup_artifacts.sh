@@ -205,6 +205,15 @@ DAY=$(date -u +'%Y-%m-%d')
 DAY_DIR="$STAGE_DIR/$DAY"
 mkdir -p "$DAY_DIR"
 
+# ZWEI Identitaeten, bewusst getrennt (STAB-05D, 2026-08-27):
+#   ARCHIVE_NAME/ARCHIVE_TMP = Staging. Existiert nur bis zur Verschluesselung
+#                              und wird danach geloescht.
+#   ARCHIVE_ENC              = das dauerhaft erhaltene, finale Artefakt.
+# Der Ledger MUSS die Identitaet beschreiben, die den Lauf ueberlebt. Bis heute
+# schrieb er ARCHIVE_NAME und dazu Hash und Groesse von ARCHIVE_ENC — gemessen
+# ueber den gesamten Ledger: 0 von 3 erfolgreichen Laeufen nannten eine
+# existierende Datei, waehrend Hash und Bytes 3/3 korrekt waren. Wer dem Feld
+# folgt, sucht eine Datei, die es nach erfolgreichem Backup nicht mehr gibt.
 ARCHIVE_NAME="kai_artifacts_${TS}.tar.gz"
 ARCHIVE_TMP="$DAY_DIR/$ARCHIVE_NAME"
 ARCHIVE_ENC="$DAY_DIR/${ARCHIVE_NAME}.enc"
@@ -294,7 +303,7 @@ if [[ -n "$REMOTE" ]]; then
         else
             REMOTE_STATUS="push_failed"
             write_log "ERROR: rclone push failed."
-            write_audit "fail_push" "$ARCHIVE_NAME" "$ENC_SHA" "$ENC_BYTES" \
+            write_audit "fail_push" "$(basename "$ARCHIVE_ENC")" "$ENC_SHA" "$ENC_BYTES" \
                 "$REMOTE" "push_failed" "see kai_backup.log"
             exit 5
         fi
@@ -317,7 +326,12 @@ fi
 
 # --- audit ------------------------------------------------------------------
 
-write_audit "ok" "$ARCHIVE_NAME" "$ENC_SHA" "$ENC_BYTES" \
+# Finales Artefakt, nicht das Staging: siehe Kommentar an der ARCHIVE_ENC-
+# Definition. Die uebrigen sechs write_audit-Aufrufe bleiben unveraendert — sie
+# schreiben leeren Hash und bytes=0, weil zu ihrem Zeitpunkt noch gar kein
+# verschluesseltes Artefakt existiert. Nur wo ENC_SHA/ENC_BYTES mitgeschrieben
+# werden, muss auch der Name das finale Artefakt benennen.
+write_audit "ok" "$(basename "$ARCHIVE_ENC")" "$ENC_SHA" "$ENC_BYTES" \
     "${REMOTE:-(none)}" "$REMOTE_STATUS" "files=${#EXISTING[@]} skipped=${#MISSING[@]}"
 write_log "Done: status=ok files=${#EXISTING[@]} remote=$REMOTE_STATUS"
 exit 0
