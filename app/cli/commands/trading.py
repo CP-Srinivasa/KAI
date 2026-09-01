@@ -1600,8 +1600,13 @@ def trading_paper_portfolio_snapshot(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        # STAB-2026-09-01 §24: None => the system provider
+        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
+        # source the canonical operator payload reads. A hard-coded "coingecko"
+        # here made the CLI a narrower population than the dashboard while both
+        # were labelled "the paper portfolio". --provider still overrides.
+        None,
         "--provider",
         help="Read-only market data provider for mark-to-market",
     ),
@@ -1643,8 +1648,13 @@ def trading_paper_positions_summary(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        # STAB-2026-09-01 §24: None => the system provider
+        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
+        # source the canonical operator payload reads. A hard-coded "coingecko"
+        # here made the CLI a narrower population than the dashboard while both
+        # were labelled "the paper portfolio". --provider still overrides.
+        None,
         "--provider",
         help="Read-only market data provider for mark-to-market",
     ),
@@ -1714,8 +1724,13 @@ def trading_positions_risk_snapshot(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        # STAB-2026-09-01 §24: None => the system provider
+        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
+        # source the canonical operator payload reads. A hard-coded "coingecko"
+        # here made the CLI a narrower population than the dashboard while both
+        # were labelled "the paper portfolio". --provider still overrides.
+        None,
         "--provider",
         help="Read-only market data provider for mark-to-market",
     ),
@@ -1952,8 +1967,13 @@ def trading_paper_exposure_summary(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        # STAB-2026-09-01 §24: None => the system provider
+        # (settings.market_data_provider, i.e. the ``fallback`` chain), the same
+        # source the canonical operator payload reads. A hard-coded "coingecko"
+        # here made the CLI a narrower population than the dashboard while both
+        # were labelled "the paper portfolio". --provider still overrides.
+        None,
         "--provider",
         help="Read-only market data provider for mark-to-market",
     ),
@@ -2089,7 +2109,7 @@ def trading_scan_candidates(
 
     resolved_provider = provider if provider is not None else None
     snapshot = asyncio.run(
-        build_portfolio_snapshot(audit_path=audit_path, provider=resolved_provider or "coingecko")
+        build_portfolio_snapshot(audit_path=audit_path, provider=resolved_provider)
     )
     rankings = select_short_term_candidates(
         positions=exposures_from_snapshot(snapshot), limit=limit
