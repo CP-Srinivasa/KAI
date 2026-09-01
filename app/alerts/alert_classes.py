@@ -110,6 +110,11 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     "precision": AlertClass.P2,
     "annotations": AlertClass.P2,
     "prereg_reconciliation": AlertClass.P2,
+    # P0: ein Dienst auf altem Code macht die Aussage "deployt" unwahr. Weder
+    # `active` noch `/health=200` sehen das — der kai-tg-listener lief am
+    # 2026-09-01 sechs Tage mit Bibliotheken im Speicher, die auf der Platte
+    # laengst ersetzt waren, und meldete durchgehend gruen.
+    "runtime_provenance": AlertClass.P0,
     "prereg_ledger_presence": AlertClass.P2,
     # --- P3: Hinweis -----------------------------------------------------
     # Sagt, WO die Sonde lief — eine Eigenschaft der Messung, kein Systemzustand.

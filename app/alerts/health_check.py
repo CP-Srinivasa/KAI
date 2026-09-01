@@ -1328,6 +1328,64 @@ def _cycle_started_at(record: dict[str, object]) -> datetime | None:
     return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
+def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
+    """Laeuft jeder produktive Dienst auf dem Stand, den der Deploy behauptet?
+
+    Befund 2026-09-01: ``kai-tg-listener`` lief seit dem 26.08. und hielt die
+    alten Bibliotheken im Speicher, waehrend auf der Platte laengst neue lagen.
+    Weder ``active`` noch ``/health=200`` sehen das — beide meldeten die ganze
+    Zeit gruen. Gemessen wird deshalb vom PROZESS aus.
+
+    ``critical``, nicht ``warning``: ein Dienst auf altem Code macht die Aussage
+    „deployt" unwahr.
+    """
+    from app.observability.runtime_provenance import (
+        DEFAULT_MARKER_RELPATH,
+        collect_runtime_services,
+        evaluate_provenance,
+        read_marker,
+        render_verdict,
+        sha256_of,
+    )
+
+    head = _git_head(repo_root)
+    if not head:
+        return []  # kein Git-Checkout -> der Vertrag gilt hier nicht
+    verdict = evaluate_provenance(
+        collect_runtime_services(),
+        expected_sha=head,
+        marker=read_marker(repo_root / DEFAULT_MARKER_RELPATH),
+        checkout_sha=head,
+        checkout_lock_sha256=sha256_of(repo_root / "requirements.lock"),
+    )
+    if verdict.ok:
+        return []
+    return [
+        HealthIssue(
+            severity="critical",
+            component="runtime_provenance",
+            message=render_verdict(verdict),
+        )
+    ]
+
+
+def _git_head(repo_root: Path) -> str:
+    import subprocess
+
+    if not (repo_root / ".git").exists():
+        return ""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def run_health_check_report(
     artifacts_dir: Path | None = None,
     lookback_hours: int = 24,
@@ -1378,6 +1436,7 @@ def run_health_check_report(
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_alert_delivery(adir, now))
     report.issues.extend(_check_prereg_reconciliation(adir))
+    report.issues.extend(_check_runtime_provenance(adir.parent))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).
