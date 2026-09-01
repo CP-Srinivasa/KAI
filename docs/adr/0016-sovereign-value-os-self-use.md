@@ -1,6 +1,7 @@
 # ADR 0016 — Sovereign Value OS (Self-Use)
 
-- **Status:** DRAFT — Entwurf 2026-08-02. Entscheid erst nach **beiden** attestierten Verdikten: C1 `9cab81fae4823482` (04.08.) und Analyst-Probe `f0e1a3a8073fd4c0` (~10.08.). Bis dahin bindet dieses Dokument nichts.
+- **Status:** **ACCEPTED — SELF-USE ONLY / FORK-B BINDING** (Operator-Entscheid **2026-09-01**). Die im Entwurf genannte Vorbedingung ist erfuellt: C1 `9cab81fae4823482` und die Analyst-Probe `f0e1a3a8073fd4c0` sind **beide terminal attestiert** (Truth-Kette seq 71 bzw. seq 91, `subject_id == payload_hash`), und der Fork-B-Quadrant Q4 ist damit terminal gebunden. Ab diesem Datum bindet dieses Dokument.
+- **Entwurfsdatum:** 2026-08-02 · **Entscheidungsdatum:** 2026-09-01
 - **Datum:** 2026-08-02
 - **Betroffen:** Positionierung, Ausbau-Reihenfolge der Lightning-Schicht, Rolle des Tradings, Abgrenzung Eigennutzung ↔ Produkt
 - **Verhältnis zu bestehenden ADRs:** konkretisiert **ADR 0014 Schicht 4** („Intent Layer — nur als Self-Use offen; Dritt-Variante = Tier 2"), erbt **ADR 0012** (Research-/Truth-Plattform als Wegpunkt) und respektiert den prä-registrierten Fork-B-Entscheidungsbaum. **Ersetzt keines von beiden und hebt Fork-B nicht auf.**
@@ -129,10 +130,46 @@ Leere Risikometriken (VaR, CVaR, Sharpe, Sortino, Drawdown) sind **beabsichtigt*
 
 **Risiko und Gegenmaßnahme.** Das größte Risiko ist Doktrin-Erosion: Härtung und Eigennutzung als Deckmantel für schrittweisen Produktbau. Dagegen stehen der Self-Use-Test pro Paket, die Regel „Dogfood ist keine Nachfrage" und die unveränderte Re-Open-Klausel.
 
-## Offene Frage, die dieses ADR bei Annahme beantworten muss
+## Die bei Annahme beantwortete Frage: SSG-Pilot
 
-Der **SSG-Pilot** (Signal-Abo-Audit-Report, 79 EUR, Operator-Entscheid vom 30.07.) ist selbst ein Monetarisierungsvorhaben und wurde **vor** dem Q4-Verdikt beschlossen. Genießt er Bestandsschutz, oder fällt er unter das Q4-Verbot? Beide Auslegungen sind vertretbar; die Entscheidung gehört dem Operator und wird bei Annahme dieses ADRs hier eingetragen.
+Der **SSG-Pilot** (Signal-Abo-Audit-Report, 79 EUR, Operator-Entscheid vom 30.07.) wurde **vor** dem
+Q4-Verdikt beschlossen. Der Entwurf liess offen, ob er Bestandsschutz geniesst.
 
-## Status-Übergang
+**Operator-Entscheid 2026-09-01: KEIN BESTANDSSCHUTZ.**
 
-Dieses Dokument bleibt **DRAFT**, bis beide Verdikte attestiert sind. Erst dann entscheidet der Operator über ACCEPTED oder REJECTED. Ein Übergang nach ACCEPTED ohne vorliegende Verdikte wäre genau die Vorwegnahme, die der Fork-B-Baum ausschließen sollte.
+Die Entscheidung vom 30.07. bleibt dokumentierte Historie — sie wird nicht getilgt und nicht
+umgedeutet. Aber sie **legitimiert nach dem terminalen Q4/Fork-B-Verdikt keine weitere
+Monetarisierungsarbeit**. Konkret und ohne Auslegungsspielraum:
+
+- keine aktive Vermarktung,
+- keine Kalt-Ansprache,
+- keine Produktweiterentwicklung mit Monetarisierungszweck,
+- keine Umgehung ueber „war vorher beschlossen".
+
+Die Begruendung ist dieselbe, die den ganzen Fork-B-Baum traegt: ein vor der Messung gefasster
+Beschluss darf das Ergebnis der Messung nicht ueberleben, sonst ist die Praeregistrierung eine
+Formalie. Bestandsschutz waere genau der Doktrin-Praezedenzfall, den dieses ADR an anderer Stelle
+ausdruecklich verhindern will.
+
+Unveraendert gilt das einzige Re-Open-Kriterium: ein **extern initiiertes, unaufgefordertes** Signal
+loest ausschliesslich eine **neue Prae-Registrierung** aus — niemals direkten Bau.
+
+## Status-Übergang (vollzogen)
+
+Der Entwurf verlangte: **DRAFT**, bis beide Verdikte attestiert sind — ein Uebergang ohne
+vorliegende Verdikte waere genau die Vorwegnahme gewesen, die der Fork-B-Baum ausschliessen sollte.
+
+Diese Bedingung ist am **2026-09-01** erfuellt und der Uebergang damit **vollzogen**:
+
+| Vorbedingung | Beleg |
+|---|---|
+| C1 `9cab81fae4823482` terminal | Truth-Kette **seq 71**, FAIL/NO_DEMAND |
+| Analyst-Probe `f0e1a3a8073fd4c0` terminal | Truth-Kette **seq 91**, FAIL/NO_DEMAND |
+| Q4 eingetreten, Fork B bindend | `81c41ae153e5d427`, attestiert **seq 102** |
+
+**Was ACCEPTED erlaubt:** Self-Use, Geldpfad-/Custody-/Node-Haertung, Operator-Wallet innerhalb der
+Eigennutzung.
+
+**Was ACCEPTED nicht erlaubt:** Drittproduktbau bleibt gesperrt. **Dogfood bleibt keine
+Demand-Evidenz** — eigene Nutzung zaehlt in keiner Nachfragebehauptung, egal wie intensiv sie ist.
+Fork B bleibt bindend.

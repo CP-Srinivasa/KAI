@@ -31,7 +31,7 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 | [0013](0013-frontier-and-boundary.md) | Frontier & Boundary: souveräner Zugang statt Umgehung | ACCEPTED (2026-07-01) |
 | [0014](0014-kai-protocol-zielbild.md) | KAI Protocol: Zielbild & Schichtenkarte (Verifiable AI Finance) | ACCEPTED (2026-07-06) |
 | [0015](0015-kai-local-intelligence-layer.md) | KAI Local Intelligence Layer (lokales LLM als auditierbare Shadow-Schicht) | ACCEPTED (2026-07-11) |
-| [0016](0016-sovereign-value-os-self-use.md) | Sovereign Value OS (Self-Use): Geldpfad-Härtung + Operator-Wallet unter ADR-0014 Schicht 4 | **DRAFT (2026-08-02)** — Entscheid erst nach beiden Verdikten (C1 04.08., Analyst-Probe ~10.08.) |
+| [0016](0016-sovereign-value-os-self-use.md) | Sovereign Value OS (Self-Use): Geldpfad-Härtung + Operator-Wallet unter ADR-0014 Schicht 4 | **ACCEPTED — SELF-USE ONLY / FORK-B BINDING (2026-09-01)** — beide Vorbedingungs-Verdikte terminal (seq 71 / seq 91), Q4 gebunden (seq 102); SSG-Pilot **ohne Bestandsschutz** |
 
 **Hinweis:** „0006a/0006b" sind nur Index-Labels dieses Dokuments zur Unterscheidung — die Dateien selbst heißen beide `0006-*` und behalten ihre Namen.
 
@@ -40,4 +40,4 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 - **ADR 0012** definiert den aktuellen Wegpunkt (Truth-/Falsifikations-Plattform) **innerhalb** der unveränderten Gesamt-Vision (`docs/KAI_IDENTITY.md`) — siehe Addendum (a).
 - **ADR 0013** definiert die Zugangs-/Realisierungs-Achse (legale Frontier, Tier-Karte, Lizenz-Gate).
 - **ADR 0014** definiert das Zielbild-Dach „KAI Protocol" (Schichtenkarte, Demand-Gates, Tier-2-STOP-Schilder, Design-Invarianten).
-- **ADR 0016** konkretisiert Schicht 4 von ADR 0014 als **Self-Use** (Geldpfad-Härtung, Operator-Wallet) — DRAFT; hebt Fork-B nicht auf.
+- **ADR 0016** konkretisiert Schicht 4 von ADR 0014 als **Self-Use** (Geldpfad-Härtung, Operator-Wallet) — **ACCEPTED 2026-09-01**; hebt Fork-B nicht auf, sondern bindet ihn: Drittproduktbau gesperrt, Dogfood ist keine Demand-Evidenz.
