@@ -23,11 +23,15 @@ Zustand nur von „unbeobachtet" zu „unattestiert".
 
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from app.research import prereg_reconciliation
 from app.research.prereg_maturity import (
     STATE_RESOLVED,
     STATE_UNWATCHED,
@@ -49,6 +53,31 @@ from app.truth.attestation import compute_attestation
 from app.truth.ledger import append_attestation
 
 _NOW = datetime(2026, 8, 26, 18, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_supervision_register(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kein Test liest versehentlich das echte Aufsichtsregister aus dem Repo.
+
+    Der Default ist CWD-relativ (Haus-Stil, wie ``DEFAULT_PREREG_LEDGER_PATH``),
+    also haengt er am Arbeitsverzeichnis des Testlaufs. Tests, die einen
+    Zustand behaupten, muessen ihr Register selbst mitbringen.
+    """
+    monkeypatch.setattr(
+        prereg_reconciliation,
+        "DEFAULT_SUPERVISION_REGISTER",
+        tmp_path_factory.mktemp("no-register") / "absent.json",
+    )
+
+
+def test_the_production_default_points_at_the_repo_register() -> None:
+    """Positivkontrolle zur Fixture: der echte Default darf nicht ins Leere zeigen."""
+    with_default = importlib.reload(prereg_reconciliation).DEFAULT_SUPERVISION_REGISTER
+    assert with_default == Path("config/prereg_supervision.json")
+    assert Path(__file__).resolve().parents[2].joinpath(with_default).is_file()
+
 
 _RESOLVED = "f676bcf5a7a1bfb6"  # attestiert NOT_MET, in keiner Wachliste
 _WATCHED = "00c75a76a2b0e78b"  # Deadline-Spec, kein Verdikt
@@ -406,3 +435,328 @@ def test_board_stuft_unattestiertes_verdikt_wie_unbeobachtet_ein() -> None:
     from app.observability.operator_board_live import _board_state
 
     assert _board_state({"state": STATE_VERDICT_UNATTESTED, "due": True}) == BOARD_UNWATCHED
+
+
+# ---------------------------------------------------------------------------
+# Aufsichtsregister — Befund 2026-08-31
+#
+# ``config/prereg_supervision.json`` traegt seit dem 2026-08-27 eine
+# Operator-Aufsichtsentscheidung je Claim. Der Waechter kannte die Datei nicht
+# und meldete ``6751bc33`` taeglich als „in KEINER Wachliste, kein Verdikt" —
+# waehrend das Register fuer genau diesen Claim MANUAL_SCHEDULED_REVIEW mit
+# Termin 2026-09-15 und Entscheidungsfrage fuehrt. Der Alarm war unwahr, nicht
+# nur unschoen: er behauptete eine Aufsichtsluecke, wo eine Aufsicht steht
+# ([[feedback_watchlists_must_reconcile_against_source]]).
+#
+# Die Gegenprobe ist Teil des Auftrags: das Register darf KEIN Stummschalter
+# werden. Ein faelliger Termin bleibt faellig, und ein Registereintrag mit
+# unbekanntem oder leerem Zustand zaehlt weiter als Aufsichtsluecke.
+# ---------------------------------------------------------------------------
+
+from app.research.prereg_reconciliation import (  # noqa: E402
+    RECON_STATE_SUPERVISED,
+    load_supervision_register,
+)
+
+_SUPERVISED = "6751bc3364d39ec2"
+
+
+def _register(path: Path, *entries: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": "prereg_supervision/v1", "entries": list(entries)}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_registered_claim_is_supervised_not_an_oversight_gap(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "name": "sec_filing_timing",
+            "decision_state": "MANUAL_SCHEDULED_REVIEW",
+            "owner": "operator",
+            "next_review_utc": "2026-09-15T00:00:00+00:00",
+            "decision_question": "Frist rueckwirkend setzen oder Population verbreitern?",
+        },
+    )
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg)
+    assert row["state"] == RECON_STATE_SUPERVISED
+    assert row["supervision"]["decision_state"] == "MANUAL_SCHEDULED_REVIEW"
+    assert row["supervision"]["owner"] == "operator"
+    assert row["supervision"]["due"] is False
+
+
+def test_without_the_register_the_same_claim_is_still_an_oversight_gap(tmp_path: Path) -> None:
+    """Positivkontrolle: der neue Zustand kommt aus dem Register, nicht aus Nachsicht."""
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    (row,) = classify_ledger_entries(
+        root, specs=(), supervision_register=tmp_path / "config" / "missing.json"
+    )
+    assert row["state"] == RECON_STATE_UNWATCHED
+    assert row["supervision"] is None
+
+
+def test_an_overdue_review_stays_due_the_register_is_no_mute_button(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "name": "sec_filing_timing",
+            "decision_state": "MANUAL_IMMEDIATE_VERDICT",
+            "owner": "operator",
+            "next_review_utc": "DUE_NOW",
+        },
+    )
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg, now=_NOW)
+    assert row["state"] == RECON_STATE_SUPERVISED
+    assert row["supervision"]["due"] is True
+
+
+def test_a_past_review_date_is_due_as_well(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "name": "sec_filing_timing",
+            "decision_state": "MANUAL_SCHEDULED_REVIEW",
+            "owner": "operator",
+            "next_review_utc": "2026-08-01T00:00:00+00:00",
+        },
+    )
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg, now=_NOW)
+    assert row["supervision"]["due"] is True
+
+
+def test_an_unknown_decision_state_does_not_count_as_supervision(tmp_path: Path) -> None:
+    """Fail-closed: was der Waechter nicht versteht, ist keine Aufsicht."""
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    for bad in ("UNWATCHED", "UNRESOLVED", "", "irgendwas"):
+        reg = _register(
+            tmp_path / "config" / "prereg_supervision.json",
+            {"prereg_id": _SUPERVISED, "decision_state": bad, "owner": "operator"},
+        )
+        (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg)
+        assert row["state"] == RECON_STATE_UNWATCHED, bad
+
+
+def test_a_verdict_outranks_the_register(tmp_path: Path) -> None:
+    """Wahrheitsordnung unveraendert: die Truth-Kette schlaegt jede Aufsichtsnotiz."""
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    _attest(root, _SUPERVISED, "NOT_MET - x")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {"prereg_id": _SUPERVISED, "decision_state": "MANUAL_SCHEDULED_REVIEW"},
+    )
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg)
+    assert row["state"] == RECON_STATE_RESOLVED
+
+
+def test_a_maturity_spec_outranks_the_register(tmp_path: Path) -> None:
+    """Ein laufender Zaehler ist die staerkere Aussage als eine Terminnotiz."""
+    root = tmp_path / "artifacts"
+    _seal(root, _WATCHED, "k1_channel_audit_resonance", created=_SPEC["since_utc"])
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {"prereg_id": _WATCHED, "decision_state": "WATCH"},
+    )
+    (row,) = classify_ledger_entries(root, specs=(_SPEC,), supervision_register=reg)
+    assert row["state"] == RECON_STATE_WATCHED
+
+
+def test_a_corrupt_register_never_crashes_the_reconciliation(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    bad = tmp_path / "config" / "prereg_supervision.json"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text("{ not json", encoding="utf-8")
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=bad)
+    assert row["state"] == RECON_STATE_UNWATCHED
+    assert load_supervision_register(bad) == {}
+
+
+def test_a_register_entry_for_an_unsealed_claim_is_drift_not_supervision(tmp_path: Path) -> None:
+    """Spiegelbild von ghost_specs: das Register darf nicht auf Phantome zeigen."""
+    root = tmp_path / "artifacts"
+    _seal(root, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {"prereg_id": _SUPERVISED, "decision_state": "WATCH"},
+        {"prereg_id": "deadbeef00000009", "decision_state": "WATCH"},
+    )
+    loaded = load_supervision_register(reg)
+    assert set(loaded) == {_SUPERVISED, "deadbeef00000009"}
+    rows = classify_ledger_entries(root, specs=(), supervision_register=reg)
+    assert [r["prereg_id"] for r in rows] == [_SUPERVISED]
+
+
+def test_health_nennt_einen_faelligen_aufsichtstermin_keine_luecke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der Alarm darf die Frist zeigen, aber nicht mehr 'Aufsichtsluecke' sagen."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "MANUAL_IMMEDIATE_VERDICT",
+            "owner": "operator",
+            "next_review_utc": "DUE_NOW",
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    (issue,) = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert "SUPERVISED=1" in issue.message
+    assert "Aufsichtstermin faellig" in issue.message
+    assert _SUPERVISED in issue.message
+    assert "Aufsichtsluecke" not in issue.message
+
+
+def test_health_schweigt_bei_einem_termin_in_der_zukunft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ein bewusst nach vorn gelegter Termin ist kein taeglicher Befund."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "MANUAL_SCHEDULED_REVIEW",
+            "owner": "operator",
+            "next_review_utc": "2099-01-01T00:00:00+00:00",
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    assert _check_prereg_reconciliation(tmp_path, specs=()) == []
+
+
+def test_health_meldet_ein_register_das_auf_ein_phantom_zeigt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spiegelbild zu ghost_specs: Aufsicht ueber eine nie versiegelte ID ist Drift."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "MANUAL_SCHEDULED_REVIEW",
+            "next_review_utc": "2099-01-01T00:00:00+00:00",
+        },
+        {"prereg_id": "deadbeef00000009", "decision_state": "WATCH"},
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert [i.severity for i in issues] == ["critical"]
+    assert "supervision drift" in issues[0].message
+    assert "deadbeef00000009" in issues[0].message
+
+
+# ---------------------------------------------------------------------------
+# Invariante 2/3 mechanisch: das Register darf keinen Abschluss BEHAUPTEN,
+# den die verifizierte Truth-Kette nicht traegt (Operator-Vorgabe 2026-08-31).
+#
+# Der Vertragstest im Repo prueft nur die FORM des Eintrags (truth_seq, Klasse)
+# — ``artifacts/`` ist nicht im Repo, eine CI-Pruefung gegen die echte Kette
+# waere Theater. Hier, auf dem Pi, liegen beide Seiten nebeneinander, und nur
+# hier faellt eine Luege auf.
+# ---------------------------------------------------------------------------
+
+
+def test_health_meldet_einen_behaupteten_abschluss_ohne_ketten_beleg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert any(i.severity == "critical" for i in issues)
+    message = " ".join(i.message for i in issues)
+    assert "claims a completed scheduled review" in message
+    assert _SUPERVISED in message
+
+
+def test_health_schweigt_wenn_die_kette_den_abschluss_traegt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positivkontrolle: mit Ketten-Beleg ist derselbe Eintrag kein Befund."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    _attest(tmp_path, _SUPERVISED, "CLOSED_UNMEASURABLE - keine auswertbare Population")
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    assert _check_prereg_reconciliation(tmp_path, specs=()) == []
+
+
+def test_health_meldet_auch_einen_abschluss_der_nur_off_chain_liegt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seitenablage ist kein Abschluss — sonst genuegte eine Datei ohne Kette."""
+    from app.alerts.health_check import _check_prereg_reconciliation
+
+    _seal(tmp_path, _SUPERVISED, "sec_filing_timing")
+    _offchain(
+        tmp_path,
+        "prereg_verdicts.jsonl",
+        {"prereg_id": _SUPERVISED, "verdict": "NOT_MET", "passed": False},
+    )
+    reg = _register(
+        tmp_path / "config" / "prereg_supervision.json",
+        {
+            "prereg_id": _SUPERVISED,
+            "decision_state": "SCHEDULED_REVIEW_COMPLETED",
+            "owner": "operator",
+            "truth_seq": 113,
+        },
+    )
+    monkeypatch.setattr(prereg_reconciliation, "DEFAULT_SUPERVISION_REGISTER", reg)
+
+    issues = _check_prereg_reconciliation(tmp_path, specs=())
+
+    assert any(
+        i.severity == "critical" and "claims a completed scheduled review" in i.message
+        for i in issues
+    )

@@ -41,6 +41,20 @@ _TERMINAL_STATES = {
     "MANUAL_IMMEDIATE_VERDICT",
     "MANUAL_SCHEDULED_REVIEW",
     "SUPERSEDED",
+    # Neu 2026-08-31: die terminierte Wiedervorlage HAT stattgefunden und endete
+    # in einem Abschluss in der Truth-Kette. Ohne diesen Zustand konnte das
+    # Register einen vollzogenen Review gar nicht ausdruecken — er haette ein
+    # Datum in der Zukunft luegen oder ``next_review_utc: null`` tragen muessen,
+    # was dieser Vertrag zu Recht zurueckweist.
+    #
+    # Der Name ist ABSICHTLICH eng (Operator-Entscheidung 2026-08-31): das
+    # kuerzere ``REVIEW_COMPLETED`` haette gelesen werden koennen als "irgendein
+    # Review ist fertig". Ein Review kann aber sehr wohl abgeschlossen werden und
+    # als Ergebnis "weiter beobachten, neuer Termin" tragen — das ist NICHT
+    # dieser Zustand. Hier gilt genau eine Kette:
+    #   MANUAL_SCHEDULED_REVIEW -> Review durchgefuehrt
+    #   -> Truth-Kette terminalisiert den Claim -> SCHEDULED_REVIEW_COMPLETED
+    "SCHEDULED_REVIEW_COMPLETED",
     "RETIRE",
     "NO_WATCH_REQUIRED",
 }
@@ -63,6 +77,16 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "owner",
         "next_review_utc",
         "decision_question",
+        "rationale",
+        "archive_path",
+    ),
+    "SCHEDULED_REVIEW_COMPLETED": (
+        "owner",
+        "previous_decision_state",
+        "closure_reason",
+        "substantive_verdict",
+        "terminal_verdict_class",
+        "truth_seq",
         "rationale",
         "archive_path",
     ),
@@ -247,7 +271,12 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     assert agg["WATCH"] == counts.get("WATCH", 0) == 1
     assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
     assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4
-    assert agg["MANUAL_SCHEDULED_REVIEW"] == counts.get("MANUAL_SCHEDULED_REVIEW", 0) == 1
+    # 2026-08-31: die einzige terminierte Wiedervorlage (6751bc33) wurde
+    # durchgefuehrt und endete in CLOSED_UNMEASURABLE (Truth-seq 113). Sie
+    # zaehlt seitdem als SCHEDULED_REVIEW_COMPLETED — die Summe der manuellen Faelle
+    # bleibt 5, nur ihre Verteilung hat sich verschoben.
+    assert agg["MANUAL_SCHEDULED_REVIEW"] == counts.get("MANUAL_SCHEDULED_REVIEW", 0) == 0
+    assert agg["SCHEDULED_REVIEW_COMPLETED"] == counts.get("SCHEDULED_REVIEW_COMPLETED", 0) == 1
     assert agg["MANUAL"] == 5
     assert agg["RETIRE"] == 0 and agg["NO_WATCH_REQUIRED"] == 0
     assert agg["UNRESOLVED"] == 0
@@ -257,9 +286,159 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     )
 
 
-def test_keine_stillen_abschluesse(registry: dict[str, Any], entries: list[dict[str, Any]]) -> None:
-    """RETIRE/NO_WATCH_REQUIRED sind in dieser Runde ausdrücklich nicht vergeben."""
-    states = {e["decision_state"] for e in entries}
-    assert "RETIRE" not in states
-    assert "NO_WATCH_REQUIRED" not in states
+def test_kein_zustand_ohne_definition_wird_benutzt(
+    registry: dict[str, Any], entries: list[dict[str, Any]]
+) -> None:
+    """Ein Name, dessen Definition woertlich "Nicht vergeben." lautet, ist keine Klasse.
+
+    Vorher stand hier eine feste Liste aus RETIRE und NO_WATCH_REQUIRED. Die
+    Regel dahinter ist aber allgemeiner und wichtiger: wer einen undefinierten
+    Namen benutzt, DEFINIERT ihn dabei — und zwar unter dem Druck, einen Claim
+    schliessen zu wollen. Genau diese Versuchung gab es am 2026-08-31 bei K1,
+    wo RETIRE oberflaechlich gepasst haette ("wegen Irrelevanz beendet").
+    Die Sperre haengt jetzt an der Definition, nicht an zwei Namen.
+    """
+    undefiniert = {
+        name
+        for name, text in registry["decision_states"].items()
+        if text.strip() == "Nicht vergeben."
+    }
+    assert undefiniert, "Erwartet mindestens einen als 'Nicht vergeben.' markierten Zustand"
+
+    benutzt = {e["decision_state"] for e in entries}
+    verletzung = undefiniert & benutzt
+    assert not verletzung, (
+        f"Zustaende ohne Definition in Benutzung: {sorted(verletzung)} - erst definieren "
+        "(Pflichtfelder, Abgrenzung, Praezedenz), dann vergeben."
+    )
+
+
+def test_undefinierte_zustaende_sind_auch_nicht_auswaehlbar(registry: dict[str, Any]) -> None:
+    """Gegenprobe im Code: sie duerfen gar nicht erst zur Wahl stehen."""
+    from app.research.terminal_classes import TERMINAL_CLASSES
+
+    undefiniert = {
+        name
+        for name, text in registry["decision_states"].items()
+        if text.strip() == "Nicht vergeben."
+    }
+    assert not (undefiniert & set(TERMINAL_CLASSES))
     assert registry["decision_states"]["RETIRE"] == "Nicht vergeben."
+
+
+def test_ein_vollzogener_review_traegt_keinen_offenen_termin(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Abgeschlossen heisst abgeschlossen — kein Watcher, kein Datum, keine Reifezaehlung.
+
+    Spiegelbild zur SUPERSEDED-Regel. Ohne diese Invariante koennte ein
+    geschlossener Claim wieder auf der Handlungsliste auftauchen, sobald jemand
+    versehentlich ein Datum ergaenzt.
+    """
+    for entry in entries:
+        if entry["decision_state"] != "SCHEDULED_REVIEW_COMPLETED":
+            continue
+        assert entry.get("next_review_utc") is None, entry["prereg_id"]
+        assert entry.get("watcher_id") is None, entry["prereg_id"]
+        assert entry.get("spec_installed") is False, entry["prereg_id"]
+        assert entry["substantive_verdict"] == "NONE", entry["prereg_id"]
+        assert isinstance(entry["truth_seq"], int), entry["prereg_id"]
+
+
+def test_der_geschlossene_sec_claim_nennt_seine_unerreichbare_population(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Der Abschluss muss den GRUND tragen, nicht nur den Zustand.
+
+    'Zu langsam' und 'unmessbar' sind verschiedene Dinge: das erste laedt zum
+    Warten ein, das zweite verbietet es. Live gemessen am 2026-08-31: 19
+    Dokumente seit der Versiegelung, davon **0** mit Richtung und **0** mit
+    Ticker — auch n=100 haette 0 auswertbare Ereignisse ergeben.
+    """
+    entry = next(e for e in entries if e["prereg_id"] == "6751bc3364d39ec2")
+
+    assert entry["decision_state"] == "SCHEDULED_REVIEW_COMPLETED"
+    assert entry["closure_reason"] == "UNMEASURABLE_POPULATION"
+    assert "0 mit Richtung und 0 mit Ticker" in entry["rationale"]
+    assert "neue Prae-Registrierung" in entry["reactivation_condition"]
+
+
+# ── Die drei Invarianten des Zustands (Operator-Vorgabe 2026-08-31) ──────────
+#
+# Der Zustand ist eng gemeint, und Enge muss man erzwingen, sonst franst sie aus.
+# Aufsichtsstatus und Sachverdikt bleiben ausdruecklich getrennt: ``decision_state``
+# sagt, WER wann hingesehen hat; ``outcome``/``substantive_verdict``/
+# ``terminal_verdict_class`` sagen, WAS dabei herauskam.
+
+
+def test_invariante_1_entsteht_nur_aus_einer_terminierten_wiedervorlage(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Vorgaenger ist explizit, nicht erzaehlt.
+
+    Ohne ``previous_decision_state`` liesse sich der Zustand aus jedem beliebigen
+    anderen heraus vergeben — etwa aus ``WATCH``, wo nie ein Mensch einen Termin
+    hatte. Der Uebergang ist Teil der Aussage.
+    """
+    for entry in entries:
+        if entry["decision_state"] != "SCHEDULED_REVIEW_COMPLETED":
+            continue
+        assert entry["previous_decision_state"] == "MANUAL_SCHEDULED_REVIEW", entry["prereg_id"]
+
+
+def test_invariante_2_braucht_einen_terminalen_truth_chain_beleg(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Ein Abschluss ohne Ketten-Beleg ist eine Behauptung, kein Abschluss.
+
+    Der Vertrag pruefen kann hier nur die FORM (seq + terminale Klasse); dass die
+    Kette diesen Claim wirklich terminal fuehrt, prueft der Health-Check auf dem
+    Pi gegen ``artifacts/`` — das Verzeichnis ist nicht im Repo, eine CI-Pruefung
+    waere hier also nur Theater.
+    """
+    terminal_classes = {"MET", "NOT_MET", "CLOSED_NO_VERDICT"}
+    for entry in entries:
+        if entry["decision_state"] != "SCHEDULED_REVIEW_COMPLETED":
+            continue
+        assert isinstance(entry["truth_seq"], int) and entry["truth_seq"] > 0, entry["prereg_id"]
+        assert entry["terminal_verdict_class"] in terminal_classes, entry["prereg_id"]
+
+
+def test_invariante_3_ein_review_ohne_abschluss_ist_dieser_zustand_nicht(
+    entries: list[dict[str, Any]],
+) -> None:
+    """Der eigentliche Zweck des engen Namens.
+
+    Ein durchgefuehrter Review darf ergeben: weiter beobachten, neuer Termin,
+    keine terminale Entscheidung. Das ist ``WATCH`` oder erneut
+    ``MANUAL_SCHEDULED_REVIEW`` mit einem ECHTEN Datum — niemals dieser Zustand.
+    Mechanisch heisst das: wer hier steht, traegt ein Ergebnis, und wer ein
+    offenes Ergebnis traegt, steht nicht hier.
+    """
+    for entry in entries:
+        if entry["decision_state"] != "SCHEDULED_REVIEW_COMPLETED":
+            continue
+        assert entry.get("next_review_utc") is None, entry["prereg_id"]
+        assert entry.get("watcher_id") is None, entry["prereg_id"]
+        assert entry.get("cadence") is None, entry["prereg_id"]
+        assert entry["outcome"], entry["prereg_id"]
+        assert entry["substantive_verdict"] in ("NONE", "MET", "NOT_MET"), entry["prereg_id"]
+
+
+def test_aufsichtsstatus_und_sachverdikt_bleiben_getrennte_felder(
+    entries: list[dict[str, Any]],
+) -> None:
+    """``decision_state`` ist keine Ergebnisspalte — sonst verschwimmt beides.
+
+    ``6751bc33`` ist der Praezedenzfall: Aufsicht abgeschlossen (Status), aber
+    OHNE Sachverdikt (``substantive_verdict = NONE``). Wer beides in ein Feld
+    zoege, muesste hier luegen.
+    """
+    entry = next(e for e in entries if e["prereg_id"] == "6751bc3364d39ec2")
+
+    assert entry["decision_state"] == "SCHEDULED_REVIEW_COMPLETED"
+    assert entry["outcome"] == "CLOSED_UNMEASURABLE"
+    assert entry["substantive_verdict"] == "NONE"
+    assert entry["terminal_verdict_class"] == "CLOSED_NO_VERDICT"
+    assert entry["truth_seq"] == 113
+    assert entry["closure_reason"] == "UNMEASURABLE_POPULATION"

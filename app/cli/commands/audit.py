@@ -307,4 +307,5 @@ def audit_watchdog_report(
 
 
 # Register additive read-only audit commands kept outside this godfile.
+from app.cli.commands import input_contracts_cli as _input_contracts_cli  # noqa: E402,F401
 from app.cli.commands import worktree_claims_cli as _worktree_claims_cli  # noqa: E402,F401

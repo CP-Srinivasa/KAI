@@ -65,8 +65,27 @@ def test_the_closed_window_is_stated_on_the_page(page: str) -> None:
 
     assert "2026-08-03" in block, "Das Fensterende des Claims fehlt auf der Seite."
     lowered = block.lower()
-    assert "outstanding" in lowered or "pending" in lowered, (
-        "Der Block sagt nicht, dass das Verdikt noch aussteht."
+    # Zwei ehrliche Formen, je nachdem WO der Claim steht — und genau zwei:
+    #
+    #   (a) Das Fenster ist zu und das Verdikt steht noch aus  -> "outstanding"/"pending"
+    #   (b) Das Fenster ist zu und terminal abgeschlossen      -> terminale Klasse
+    #                                                             plus substantive_verdict
+    #
+    # Bis zum 31.08. galt nur (a). Mit dem K1-Abschluss (#827) wurde daraus (b):
+    # die Seite nennt jetzt "terminal_class = inconclusive_by_timeout ::
+    # substantive_verdict = none". Der Test forderte weiter (a) und widersprach
+    # damit exakt der Aenderung, die ihn haette gruen halten sollen — Mainline rot.
+    #
+    # Der Zweck bleibt unveraendert und ist der Grund, warum hier NICHT einfach
+    # die Bedingung geloescht wird: der Leser muss sehen, dass das Fenster
+    # verstrichen ist UND was dabei herauskam. Verschwiegen werden darf keins
+    # von beiden.
+    verdict_outstanding = "outstanding" in lowered or "pending" in lowered
+    terminally_closed = "terminal_class" in lowered and "substantive_verdict" in lowered
+    assert verdict_outstanding or terminally_closed, (
+        "Der Block sagt weder, dass das Verdikt aussteht, noch nennt er einen "
+        "terminalen Ausgang — ein verstrichenes Fenster ohne Ausgang ist eine "
+        "Luecke, keine Aussage."
     )
 
 

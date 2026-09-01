@@ -41,6 +41,10 @@ jobs:
       # Growth requires an extraction in the same PR - or a conscious,
       # diff-visible baseline raise the review has to justify.
       - run: python scripts/godfile_ratchet.py
+      # G4 stream-consumer ratchet (KMA-20260827): ein NEUER artifacts-Strom
+      # ist nur mergefaehig mit Leser, Ausfallkonsequenz und Freshness-Zeile.
+      # Der Bestand (Baseline) wird NICHT rueckwirkend erzwungen.
+      - run: python scripts/stream_consumer_ratchet.py
 
   test:
     name: Tests

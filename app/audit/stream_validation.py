@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,16 +170,10 @@ def load_audit_stream(
         result = AuditStreamReadResult(stream=stream, path=resolved, rows=(), issues=())
         return result
 
-    parsed, issues, last_failed = _parse_jsonl(resolved, stream)
+    parsed, issues, last_failed = _parse_jsonl(resolved, stream, tail=tail)
     if last_failed:
         time.sleep(RETRY_SLEEP_SECONDS)
-        parsed, issues, _ = _parse_jsonl(resolved, stream, report_last_json_error=True)
-
-    if tail is not None:
-        if tail <= 0:
-            parsed = []
-        else:
-            parsed = parsed[-tail:]
+        parsed, issues, _ = _parse_jsonl(resolved, stream, report_last_json_error=True, tail=tail)
 
     rows: list[dict[str, Any]] = []
     validator = _STREAM_VALIDATORS[stream]
@@ -208,16 +203,37 @@ def load_audit_stream(
     return result
 
 
+def _read_non_empty(path: Path, tail: int | None) -> list[tuple[int, str]]:
+    """Lies die Datei ZEILENWEISE — und bei ``tail`` nur die letzten n Saetze.
+
+    Vorher stand hier ``path.read_text().splitlines()``: die ganze Datei zuerst
+    als EIN String, dann als Liste aller Zeilen, dann als Dicts — und der
+    ``tail``-Schnitt kam erst danach. Bei ``bayes_confidence_audit.jsonl``
+    (31 MB, 17.831 Saetze) waren das **+248 MB** in einem Dienst mit
+    ``MemoryMax=512M``; der Health-Check wurde am 31.08. ab 20:00 vom
+    OOM-Killer erschlagen. Der Schnitt gehoert an den Anfang, nicht ans Ende.
+    """
+    if tail is not None and tail <= 0:
+        return []
+    keep: deque[tuple[int, str]] | list[tuple[int, str]] = (
+        deque(maxlen=tail) if tail is not None else []
+    )
+    with path.open("r", encoding="utf-8") as fh:
+        for line_no, raw in enumerate(fh, start=1):
+            stripped = raw.strip()
+            if stripped:
+                keep.append((line_no, stripped))
+    return list(keep)
+
+
 def _parse_jsonl(
     path: Path,
     stream: AuditStreamName,
     *,
     report_last_json_error: bool = False,
+    tail: int | None = None,
 ) -> tuple[list[tuple[int, dict[str, Any]]], list[AuditStreamIssue], bool]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    non_empty = [
-        (line_no, line.strip()) for line_no, line in enumerate(lines, start=1) if line.strip()
-    ]
+    non_empty = _read_non_empty(path, tail)
     if not non_empty:
         return [], [], False
 

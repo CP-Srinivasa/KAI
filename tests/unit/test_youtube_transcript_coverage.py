@@ -178,7 +178,59 @@ def test_blackout_message_names_the_suspect_not_the_language() -> None:
     message = render_message(classify_coverage([ChannelCoverage("Bankless", 5, 0)]))
 
     assert "KEIN einziger Kanal liefert" in message
-    assert "youtube-transcript-api" in message
+    # Bis 2026-08-31 stand hier die Anweisung "fetch_transcript gegen die
+    # installierte youtube-transcript-api pruefen". Sie war am 27./28.08.
+    # erledigt (#792) und wurde trotzdem alle 15 Minuten wiederholt. Eine
+    # Meldung, die eine abgearbeitete Spur vorschlaegt, ist nicht bloss
+    # ueberfluessig — sie lenkt von der echten Ursache ab.
+    assert "youtube-transcript-api" not in message
+    assert "kein Grund aufgezeichnet" in message
+    assert "NICHT durch neue Abrufe messen" in message
+
+
+def test_blackout_message_names_the_recorded_reason_when_there_is_one() -> None:
+    """Der Grund steht jetzt am Dokument — die Meldung nennt ihn statt zu raten."""
+    message = render_message(
+        classify_coverage(
+            [ChannelCoverage("Bankless", 5, 0)],
+            by_status=(("error:IpBlocked", 4), ("none_found", 1)),
+        )
+    )
+
+    assert "aufgezeichneter Grund: error:IpBlocked 4x, none_found 1x" in message
+    assert "kein Grund aufgezeichnet" not in message
+
+
+def test_reasons_are_ordered_by_frequency_not_by_name() -> None:
+    message = render_message(
+        classify_coverage(
+            [ChannelCoverage("Bankless", 9, 0)],
+            by_status=(("a_rare", 1), ("z_common", 8)),
+        )
+    )
+
+    assert message.index("z_common 8x") < message.index("a_rare 1x")
+
+
+def test_reasons_never_soften_the_verdict() -> None:
+    """``transcripts_disabled`` erklaert den Ausfall, es entschuldigt ihn nicht."""
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 5, 0)],
+        by_status=(("transcripts_disabled", 5),),
+    )
+
+    assert verdict.status == "blackout"
+    assert verdict.with_transcript == 0
+
+
+def test_the_length_only_fallback_says_that_it_is_a_ceiling() -> None:
+    """47 von 76 Beschreibungen lagen am 2026-08-31 ueber der Schwelle."""
+    message = render_message(
+        classify_coverage([ChannelCoverage("Bankless", 9, 0)], degraded_length_proxy=True)
+    )
+
+    assert "Laengen-Heuristik" in message
+    assert "Obergrenze und kein Nachweis" in message
 
 
 # ── Die Naht: echte SQLite-Datei, injizierte Uhr ─────────────────────────
@@ -347,3 +399,82 @@ def test_legacy_rows_without_the_field_still_use_the_length_heuristic(tmp_path: 
     )
 
     assert _check_youtube_transcript_coverage(_url(db), NOW) == []
+
+
+# ── Die Naht mit aufgezeichnetem Grund (2026-08-31) ──────────────────────
+
+
+def _db_with_status(tmp_path: Path, statuses: list[str]) -> Path:
+    """Echte SQLite-Datei, in der jede Zeile ihren Ausfallgrund traegt."""
+    path = tmp_path / "kai_status.db"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE canonical_documents ("
+        "author TEXT, raw_text TEXT, source_type TEXT, fetched_at TEXT, youtube_meta TEXT)"
+    )
+    con.executemany(
+        "INSERT INTO canonical_documents VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                "Bankless",
+                DESCRIPTION,
+                "youtube_channel",
+                (NOW - timedelta(hours=1)).replace(tzinfo=None).isoformat(sep=" "),
+                json.dumps({"text_source": "description", "transcript_status": status}),
+            )
+            for status in statuses
+        ],
+    )
+    con.commit()
+    con.close()
+    return path
+
+
+def test_the_seam_carries_the_recorded_reason_into_the_alert(tmp_path: Path) -> None:
+    """Ende zu Ende: der Grund steht in der DB und landet im Operator-Text."""
+    db = _db_with_status(tmp_path, ["error:IpBlocked"] * 4 + ["none_found"])
+
+    (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
+
+    assert "aufgezeichneter Grund: error:IpBlocked 4x, none_found 1x" in issue.message
+    assert "youtube-transcript-api" not in issue.message
+
+
+def test_the_seam_admits_when_no_reason_was_recorded(tmp_path: Path) -> None:
+    """Altzeilen ohne das Feld: die Meldung raet nicht, sie sagt es."""
+    db = _db(
+        tmp_path,
+        [("Bankless", DESCRIPTION, "youtube_channel", NOW - timedelta(hours=1)) for _ in range(5)],
+        text_source="description",
+    )
+
+    (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
+
+    assert "kein Grund aufgezeichnet" in issue.message
+    assert "NICHT durch neue Abrufe messen" in issue.message
+
+
+def test_a_placeholder_is_not_a_reason(tmp_path: Path) -> None:
+    """Gemischt: benannte Gruende zaehlen, die Luecke wird beziffert statt kaschiert."""
+    db = _db_with_status(tmp_path, ["error:IpBlocked", "error:IpBlocked"])
+    con = sqlite3.connect(db)
+    con.executemany(
+        "INSERT INTO canonical_documents VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                "Bankless",
+                DESCRIPTION,
+                "youtube_channel",
+                (NOW - timedelta(hours=1)).replace(tzinfo=None).isoformat(sep=" "),
+                json.dumps({"text_source": "description"}),
+            )
+            for _ in range(3)
+        ],
+    )
+    con.commit()
+    con.close()
+
+    (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
+
+    assert "error:IpBlocked 2x" in issue.message
+    assert "(+3 Zeilen ohne Grund)" in issue.message

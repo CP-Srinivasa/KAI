@@ -21,7 +21,19 @@ Wahrheitsordnung (unverändert, nur konsequent angewandt):
    ``ln_reconciliation_verdict.jsonl``) schließt nicht, ändert aber die
    fällige Handlung: attestieren statt auswerten. → ``VERDICT_UNATTESTED``.
 3. Ein Claim mit Reife-Spec ist beobachtet. → ``WATCHED``.
-4. Alles andere ist eine Aufsichtslücke. → ``UNWATCHED``.
+4. Ein Claim mit Operator-Aufsichtsentscheidung im Register
+   (``config/prereg_supervision.json``) ist beaufsichtigt — von einem
+   Menschen mit Termin, nicht von einem Zähler. → ``SUPERVISED``.
+5. Alles andere ist eine Aufsichtslücke. → ``UNWATCHED``.
+
+Befund 2026-08-31: ``6751bc33`` wurde täglich als „in KEINER Wachliste, kein
+Verdikt" gemeldet, obwohl das Register seit dem 27.08. dafür
+``MANUAL_SCHEDULED_REVIEW`` mit Termin 2026-09-15 und Entscheidungsfrage
+führt. Der Alarm war nicht bloß laut, er war **unwahr** — dieselbe Klasse
+Fehler wie die drei Wachlisten, die am selben Tag nicht zu ihrer Quelle
+passten. Das Register ist ausdrücklich KEIN Stummschalter: ein fälliger oder
+überfälliger Termin bleibt fällig (``supervision.due``), und ein Zustand, den
+dieses Modul nicht kennt, ist keine Aufsicht (fail-closed).
 
 Beschädigte, widersprüchliche oder unklassifizierbare Resolutionen sind KEIN
 Abschluss (fail-closed): der Claim bleibt in seinem Aufsichtszustand, die
@@ -31,20 +43,27 @@ Resolution hängt zur Diagnose an der Zeile.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from app.research.prereg_maturity import (
+    DEFAULT_SUPERVISION_REGISTER,
     MATURITY_SPECS,
     PREREG_LEDGER_RELPATH,
+    STATE_SUPERVISED,
     _terminal_verdict_class,
     load_attested_resolutions,
+    load_supervision_register,
+    supervision_view,
 )
 
 RECON_STATE_RESOLVED = "RESOLVED"
 RECON_STATE_VERDICT_UNATTESTED = "VERDICT_UNATTESTED"
 RECON_STATE_WATCHED = "WATCHED"
+RECON_STATE_SUPERVISED = STATE_SUPERVISED
 RECON_STATE_UNWATCHED = "UNWATCHED"
+
 
 # Seitenablagen mit Verdikt-Datensätzen außerhalb der Truth-Kette. Bewusst
 # eine explizite Liste, kein Glob: eine Datei, die zufällig „verdict" im
@@ -127,6 +146,8 @@ def classify_ledger_entries(
     specs: Any = MATURITY_SPECS,
     resolutions: dict[str, dict[str, Any]] | None = None,
     resolution_error: dict[str, Any] | None = None,
+    supervision_register: Path | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Eine Zeile je versiegeltem Claim, mit Abgleichszustand.
 
@@ -144,6 +165,11 @@ def classify_ledger_entries(
         if isinstance(spec.get("prereg_id"), str) and spec.get("prereg_id")
     }
     offchain = load_offchain_verdicts(artifacts_dir)
+    register_path = (
+        DEFAULT_SUPERVISION_REGISTER if supervision_register is None else supervision_register
+    )
+    supervision = load_supervision_register(register_path)
+    at = now or datetime.now(UTC)
 
     rows: list[dict[str, Any]] = []
     for record in load_sealed_entries(artifacts_dir):
@@ -157,6 +183,8 @@ def classify_ledger_entries(
             state = RECON_STATE_VERDICT_UNATTESTED
         elif prereg_id in watched:
             state = RECON_STATE_WATCHED
+        elif prereg_id in supervision:
+            state = RECON_STATE_SUPERVISED
         else:
             state = RECON_STATE_UNWATCHED
         rows.append(
@@ -168,6 +196,7 @@ def classify_ledger_entries(
                 "n_target": record.get("sample_size_target"),
                 "state": state,
                 "watched": prereg_id in watched,
+                "supervision": supervision_view(supervision.get(prereg_id), at),
                 "verdict_class": (
                     str(resolution.get("verdict_class")) if resolved and resolution else None
                 ),
@@ -213,14 +242,21 @@ def reconcile_ledger_view(artifacts_dir: Path, view_rows: list[dict[str, Any]]) 
     }
 
 
+# Das Aufsichtsregister wohnt in ``prereg_maturity`` (eine Implementierung fuer
+# beide Leser) und wird hier ausdruecklich weitergereicht: der Health-Check
+# joint Zeilen-Zustand und Register-Drift und muss dafuer denselben Pfad sehen,
+# den ``classify_ledger_entries`` benutzt — auch wenn ein Test ihn umbiegt.
 __all__ = [
+    "DEFAULT_SUPERVISION_REGISTER",
     "OFFCHAIN_VERDICT_RELPATHS",
     "RECON_STATE_RESOLVED",
+    "RECON_STATE_SUPERVISED",
     "RECON_STATE_UNWATCHED",
     "RECON_STATE_VERDICT_UNATTESTED",
     "RECON_STATE_WATCHED",
     "classify_ledger_entries",
     "load_offchain_verdicts",
     "load_sealed_entries",
+    "load_supervision_register",
     "reconcile_ledger_view",
 ]

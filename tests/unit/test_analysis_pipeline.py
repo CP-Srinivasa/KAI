@@ -1,6 +1,8 @@
 """Tests for AnalysisPipeline with mocked LLM providers."""
 
 import asyncio
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,8 +13,8 @@ from app.analysis.internal_model.provider import InternalModelProvider
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult, _fallback_market_scope
-from app.core.domain.document import AnalysisResult, CanonicalDocument
-from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
+from app.core.domain.document import AnalysisResult, CanonicalDocument, YouTubeVideoMeta
+from app.core.enums import AnalysisSource, DocumentType, MarketScope, SentimentLabel, SourceType
 
 
 def _btc_engine() -> KeywordEngine:
@@ -133,6 +135,111 @@ async def test_pipeline_with_llm_provider():
     assert result.analysis_result.sentiment_label == SentimentLabel.BULLISH
     assert isinstance(result.analysis_result.explanation_short, str)
     assert result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
+
+
+@pytest.mark.asyncio
+async def test_youtube_below_measured_minimum_is_rejected_before_both_llms(tmp_path: Path):
+    primary = _mock_provider(_make_llm_output())
+    shadow = _mock_named_provider("shadow", _make_llm_output())
+    rejects = tmp_path / "analysis_input_contract_rejections.jsonl"
+    pipeline = AnalysisPipeline(
+        keyword_engine=_btc_engine(),
+        provider=primary,
+        shadow_provider=shadow,
+        run_llm=True,
+        input_rejection_path=rejects,
+    )
+    doc = CanonicalDocument(
+        url="https://www.youtube.com/watch?v=fixture",
+        title="Bitcoin market outlook",
+        raw_text="x" * 124,
+        source_type=SourceType.YOUTUBE_CHANNEL,
+        document_type=DocumentType.YOUTUBE_VIDEO,
+        youtube_meta=YouTubeVideoMeta(video_id="fixture", text_source="description"),
+    )
+
+    result = await pipeline.run(doc)
+
+    assert result.success is False
+    assert result.error == "input_contract_rejected: youtube_content_below_measured_minimum"
+    assert result.analysis_result is None
+    primary.analyze.assert_not_called()
+    shadow.analyze.assert_not_called()
+    rows = [json.loads(line) for line in rejects.read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        {
+            "schema": "analysis-input-rejection/v1",
+            "ts": rows[0]["ts"],
+            "contract": "analysis_input/v1",
+            "document_id": str(doc.id),
+            "source_type": "youtube_channel",
+            "reason": "youtube_content_below_measured_minimum",
+            "content_chars": 124,
+            "minimum_chars": 200,
+        }
+    ]
+    raw_reject = rejects.read_text(encoding="utf-8")
+    assert doc.raw_text not in raw_reject
+    assert doc.title not in raw_reject
+    assert doc.url not in raw_reject
+
+
+@pytest.mark.asyncio
+async def test_youtube_at_measured_positive_control_reaches_both_llms(tmp_path: Path):
+    primary = _mock_provider(_make_llm_output())
+    shadow = _mock_named_provider("shadow", _make_llm_output())
+    rejects = tmp_path / "analysis_input_contract_rejections.jsonl"
+    pipeline = AnalysisPipeline(
+        keyword_engine=_btc_engine(),
+        provider=primary,
+        shadow_provider=shadow,
+        run_llm=True,
+        input_rejection_path=rejects,
+    )
+    doc = CanonicalDocument(
+        url="https://www.youtube.com/watch?v=real-transcript",
+        title="Bitcoin transcript",
+        raw_text="x" * 315,
+        source_type=SourceType.YOUTUBE_CHANNEL,
+        document_type=DocumentType.YOUTUBE_VIDEO,
+        youtube_meta=YouTubeVideoMeta(video_id="real-transcript", text_source="transcript"),
+    )
+
+    result = await pipeline.run(doc)
+
+    assert result.success is True
+    assert result.analysis_result is not None
+    primary.analyze.assert_awaited_once()
+    shadow.analyze.assert_awaited_once()
+    assert not rejects.exists(), "measured-positive content must not manufacture a rejection"
+
+
+@pytest.mark.asyncio
+async def test_analysis_stays_rejected_when_reject_stream_is_unwritable(tmp_path: Path):
+    primary = _mock_provider(_make_llm_output())
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("block", encoding="utf-8")
+    pipeline = AnalysisPipeline(
+        keyword_engine=_btc_engine(),
+        provider=primary,
+        run_llm=True,
+        input_rejection_path=blocker / "analysis_input_contract_rejections.jsonl",
+    )
+    doc = CanonicalDocument(
+        url="https://www.youtube.com/watch?v=fixture",
+        title="Bitcoin market outlook",
+        raw_text="x" * 124,
+        source_type=SourceType.YOUTUBE_CHANNEL,
+        document_type=DocumentType.YOUTUBE_VIDEO,
+    )
+
+    result = await pipeline.run(doc)
+
+    assert result.success is False
+    assert result.error == (
+        "input_contract_rejected: youtube_content_below_measured_minimum; rejection_audit_failed"
+    )
+    primary.analyze.assert_not_called()
 
 
 @pytest.mark.asyncio

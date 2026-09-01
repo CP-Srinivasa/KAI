@@ -55,6 +55,12 @@ def _render_maturity_state(row: dict[str, Any]) -> str:
             "[yellow]PROXY-ZIEL ERREICHT — exakten Eval fahren; KEIN Verdikt aus Proxy[/yellow]"
         ),
         "JUDGEABLE": "[green]URTEILBAR — Verdikt-Kette fahren (prereg-check --report)[/green]",
+        # Kein Zaehler und kein Verdikt, aber ein Eigentuemer mit Termin. Ohne
+        # eigene Zeile las sich das wie ein roher Zustandsname.
+        "SUPERVISED": (
+            "[cyan]UNTER OPERATOR-AUFSICHT — Termin im Register "
+            "(config/prereg_supervision.json); KEINE Aufsichtsluecke[/cyan]"
+        ),
     }
     return renders.get(raw, raw)
 
@@ -240,6 +246,60 @@ def _reconciliation_root_for(ledger_file: Path) -> Path:
     if ledger_file.parent.name == "research":
         return ledger_file.parent.parent
     return ledger_file.parent
+
+
+@trading_app.command("k1-inbox-count")
+def trading_k1_inbox_count(
+    rows_file: str = typer.Option(
+        ..., "--rows", help="Anonymisierte Posteingangszeilen (pipe-getrennt, siehe Modul-Doku)"
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Rohreport als JSON"),
+) -> None:
+    """K1 00c75a76 mechanisch auszaehlen — der Evaluator entscheidet, nicht das Lesen.
+
+    Erwartet je Zeile:
+    ``datum_utc | richtung | absenderklasse | betreff | antwort | thread_id | qualifiziert``
+    plus optional eine achte Spalte ``zahlungsabsicht``. Keine Mailtexte, keine
+    Adressen, keine Namen — der Zaehler braucht sie nicht.
+
+    Rechnet BEIDE belegbaren Seal-Fenster getrennt und meldet, ob sie im Verdikt
+    uebereinstimmen. Faellt eine Zeile durch, bricht der Lauf ab, statt sie als
+    "zaehlt nicht" zu verbuchen.
+    """
+    from app.research.k1_inbox_count import K1CountError, count_rows, parse_rows
+
+    path = Path(rows_file)
+    if not path.exists():
+        console.print(f"[red]k1-inbox-count:[/red] keine Datei: {rows_file}")
+        raise typer.Exit(code=2)
+    try:
+        report = count_rows(parse_rows(path.read_text(encoding="utf-8")))
+    except K1CountError as exc:
+        console.print(f"[red]k1-inbox-count:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if json_out:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+
+    for key, win in sorted(report["windows"].items()):
+        color = "green" if win["VERDICT"] == "MET" else "red"
+        console.print(
+            f"Fenster ab {key}: SEALED_COUNT={win['SEALED_COUNT']}/{win['THRESHOLD']} "
+            f"-> [{color}]{win['VERDICT']}[/{color}]  "
+            f"(inbound {win['INBOUND_MESSAGES_TOTAL']}, Threads "
+            f"{win['DISTINCT_QUALIFIED_THREADS']}, davon Antwort auf eigene Ansprache "
+            f"{win['QUALIFIED_RESPONSES_TO_OWN_OUTREACH']})"
+        )
+    if not report["windows_agree_on_verdict"]:
+        console.print(
+            "[yellow]Die beiden Seal-Fenster kommen zu VERSCHIEDENEN Verdikten — "
+            "die Fensterlesart ist damit eine Entscheidung und gehoert dokumentiert, "
+            "bevor ein Verdikt attestiert wird.[/yellow]"
+        )
+    for conflict in report["conflicts"]:
+        console.print(f"[yellow]Widerspruch:[/yellow] {conflict}")
+    console.print(f"[dim]{report['distinct_contacts_note']}[/dim]")
 
 
 @trading_app.command("prereg-list")

@@ -40,6 +40,10 @@ from typing import Any
 
 import portalocker
 
+from app.lightning.input_contract_rejections import (
+    MoneyInputRejectionAuditError,
+    append_money_input_rejection,
+)
 from app.lightning.jsonl_tail import read_recent_jsonl
 from app.lightning.plan_guards import plan_structural_defects
 from app.truth.attestation import compute_attestation
@@ -681,6 +685,7 @@ def prepare_ln_intent(
     intent_id: str | None = None,
     authorization: dict[str, Any] | None = None,
     path: Path | None = None,
+    rejection_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Durably write a value intent BEFORE the LND call (fail-closed, v2 only).
@@ -694,8 +699,27 @@ def prepare_ln_intent(
     # false positive -- see app/lightning/plan_guards for why the split exists.
     defects = plan_structural_defects(action, plan)
     if defects:
+        audit_failure = ""
+        try:
+            append_money_input_rejection(
+                action=action,
+                reasons=defects,
+                path=rejection_path,
+                now=moment,
+            )
+        except MoneyInputRejectionAuditError as exc:
+            audit_failure = "; rejection_audit_failed"
+            logger.error(
+                "money_input_rejection_audit_failed",
+                extra={
+                    "action": action,
+                    "reason_count": len(defects),
+                    "error_type": type(exc).__name__,
+                },
+            )
         raise LightningOpsLedgerError(
-            f"refusing to journal a structurally impossible {action} plan: {'; '.join(defects)}"
+            "input_contract_rejected: refusing to journal a structurally impossible "
+            f"{action} plan: {'; '.join(defects)}{audit_failure}"
         )
     public = redact_ln_op_record(
         {

@@ -705,16 +705,14 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     # (bayes_quarantine.is_corrupt_close) = exact forensic signatures (DS-20260529-V1
     # MATIC stale-exit, DS-20260601 ETH off-market) OVER the generic phantom-return
     # guard — same set as the realized-by-asset path (2026-06-23 leak fix).
-    closes: list[dict[str, Any]] = []
-    quarantined_closes_list: list[dict[str, Any]] = []
-    for r in exec_rows:
-        if r.get("event_type") not in ("position_closed", "position_partial_closed"):
-            continue
-        if is_corrupt_close(r):
-            quarantined_closes_list.append(r)
-        else:
-            closes.append(r)
-
+    # G3: die Aufteilung nach Quarantaene UND Epoche liegt jetzt geschlossen in
+    # app.execution.paper_scope — vorher lief der eine Filter hier, der andere
+    # 60 Zeilen spaeter, und nur einer der beiden erreichte die Quarantaene-Zahl.
+    closes: list[dict[str, Any]] = [
+        r
+        for r in exec_rows
+        if r.get("event_type") in ("position_closed", "position_partial_closed")
+    ]
     # Eine Regel fuer alle drei Lesepfade (analytics_db war die einzige
     # korrekte): der exakte ``trade_pnl_usd`` schlaegt den Stempel, und die
     # Rekonstruktion ist seitenbewusst. Das Stempel-Gate hier warf den
@@ -725,14 +723,14 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     now_utc = datetime.now(UTC)
     rolling_window_hours = 24
     rolling_start = now_utc - timedelta(hours=rolling_window_hours)
-    close_ts_keys = (
-        "closed_at",
-        "timestamp_utc",
-        "filled_at",
-        "executed_at",
-        "created_at",
-        "updated_at",
+    from app.execution.paper_scope import (
+        CLOSE_TS_KEYS,
+        fills_scope_label,
+        quarantine_payload,
+        split_closes,
     )
+
+    close_ts_keys = CLOSE_TS_KEYS
     fill_ts_keys = ("filled_at", "timestamp_utc", "created_at", "executed_at")
 
     # Epochen-Schnitt (Voll-Audit 2026-08-06, P1-2): dieser Endpoint war der
@@ -758,20 +756,16 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     if epoch_info is not None:
         epoch_id, epoch_started_at_utc = epoch_info
         epoch_start = _parse_iso_utc(epoch_started_at_utc)
+    scoped = split_closes(
+        closes,
+        is_corrupt=is_corrupt_close,
+        first_ts=_first_present_ts,
+        epoch_start=epoch_start,
+    )
+    closes = scoped.clean_in_epoch
+    pre_epoch_closes_excluded = scoped.pre_epoch_excluded
+    closes_without_timestamp = scoped.without_timestamp
     if epoch_start is not None:
-        kept_closes: list[dict[str, Any]] = []
-        for r in closes:
-            ts = _first_present_ts(r, close_ts_keys)
-            if ts is None:
-                # Unter Epochen-Regime nicht datierbar => kein Performance-Claim
-                # daraus (fail-closed Richtung Ausschluss), aber sichtbar gezählt.
-                closes_without_timestamp += 1
-                continue
-            if ts < epoch_start:
-                pre_epoch_closes_excluded += 1
-                continue
-            kept_closes.append(r)
-        closes = kept_closes
         kept_fills: list[dict[str, Any]] = []
         for r in fills:
             fts = _first_present_ts(r, fill_ts_keys)
@@ -823,7 +817,6 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     )
 
     realized_pnl_usd = round(sum(_close_pnl(r) for r in closes), 2)
-    quarantined_pnl_usd = round(sum(_close_pnl(r) for r in quarantined_closes_list), 2)
     positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
     positions_partial_closed = sum(
         1 for r in closes if r.get("event_type") == "position_partial_closed"
@@ -880,7 +873,7 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
             value=positions_closed + positions_partial_closed,
             unit="count",
             semantic_type="paper_closed_trade_activity",
-            scope="cutoff_since" if audit_provenance else "lifetime",
+            scope=fills_scope_label(epoch_id, has_cutoff=bool(audit_provenance)),
             since=(
                 str(audit_provenance.get("cut_off_ts_utc"))
                 if isinstance(audit_provenance, dict) and audit_provenance.get("cut_off_ts_utc")
@@ -1073,11 +1066,15 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
         "paper_fills": len(fills),
         "paper_fills_with_pnl": positions_closed + positions_partial_closed,
         "paper_realized_pnl_usd": realized_pnl_usd,
-        "paper_quarantined_pnl_usd": quarantined_pnl_usd,
-        "paper_quarantined_closes": len(quarantined_closes_list),
+        **quarantine_payload(scoped, pnl=_close_pnl, epoch_id=epoch_id),
         "paper_positions_closed": positions_closed,
         "paper_positions_partial_closed": positions_partial_closed,
         "paper_evidence": {
+            # G3: die kanonische Zahl ist wohldefiniert, aber NICHT konstant --
+            # zwei Messungen derselben Regel lagen 81 USD auseinander, weil 17
+            # Stunden dazwischen lagen. Ohne diesen Stempel ist der Wert keine
+            # Aussage ueber KAI, sondern ueber einen unbenannten Zeitpunkt.
+            "measured_at_utc": generated_at,
             # Epochenrein, wenn ein Reset-Event existiert; die Lifetime-Zählung
             # steht als *_lifetime_total daneben (Transparenz statt Löschung).
             "scope": (
@@ -2927,7 +2924,7 @@ async def _live_operator_board(session_factory: Any | None) -> dict[str, Any]:
     if cached is not None and (now - _operator_board_cache["at"]) < _OPERATOR_BOARD_CACHE_TTL_S:
         return cast(dict[str, Any], cached)
 
-    from app.observability.operator_board_live import build_live_board
+    from app.observability.operator_board_live import build_live_board_from_disk
 
     ledger = _load_jsonl(_PREREG_LEDGER)
     verdicts = _load_jsonl(_PREREG_VERDICTS)
@@ -2946,7 +2943,9 @@ async def _live_operator_board(session_factory: Any | None) -> dict[str, Any]:
             logger.warning("operator_board_maturity_failed: %s", exc)
             maturity_state = "unavailable"
 
-    live = build_live_board(ledger=ledger, verdicts=verdicts, maturity_rows=maturity_rows)
+    live = build_live_board_from_disk(
+        ledger=ledger, verdicts=verdicts, maturity_rows=maturity_rows, artifacts_dir=_ARTIFACTS
+    )
     live["maturity_state"] = maturity_state
     live["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     _operator_board_cache["live"] = live

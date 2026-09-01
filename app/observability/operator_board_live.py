@@ -33,10 +33,17 @@ bestanden"; fehlende Reife-Info ist weder PASS noch FAIL, sondern
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # INSUFFICIENT_N schliesst einen Claim NICHT ab — er reift weiter und muss
 # darum als offener Punkt sichtbar bleiben. Nur MET/NOT_MET sind terminal.
+#: HISTORISCH: die Seitenablage ``prereg_verdicts.jsonl`` galt dem Board als
+#: Abschluss. Das widerspricht der Doktrin — ``prereg_reconciliation`` fuehrt ein
+#: Off-Chain-Verdikt als ``VERDICT_UNATTESTED``: "attestieren statt auswerten",
+#: NICHT "erledigt". Zwei Bildschirme zeigten so zwei Wahrheiten. Terminal ist
+#: seit 2026-08-31 allein die verifizierte Truth-Kette (``resolved_ids``); diese
+#: Menge bleibt nur noch, um den letzten Off-Chain-Stand ANZUZEIGEN.
 TERMINAL_VERDICTS = frozenset({"MET", "NOT_MET"})
 
 # Ab wann ein OFFENER kuratierter Punkt als ungepflegt gilt. Bewusst identisch
@@ -62,11 +69,18 @@ STATE_NO_COUNTER = "no_counter"
 # sondern eine Luecke in der Ueberwachung selbst — und deshalb dringlicher
 # als jeder reifende Claim: er laeuft unbeobachtet aus.
 STATE_UNWATCHED = "unwatched"
+# Versiegelt, kein Zaehler, kein Verdikt — aber im Operator-Aufsichtsregister
+# mit Zustand, Eigentuemer und Termin gefuehrt. Ohne eigenen Board-Zustand
+# fiel so ein Claim auf den Default zurueck und behauptete eines von zwei
+# falschen Dingen: "reifend" (es gibt keinen Zaehler) oder "Evaluator faellig"
+# (die Handlung ist eine Entscheidung, kein Lauf).
+STATE_SUPERVISED = "supervised"
 
 _STATE_RANK = {
     STATE_UNWATCHED: 0,
     STATE_EVIDENCE_HOLD: 0,
     STATE_JUDGEABLE: 1,
+    STATE_SUPERVISED: 2,
     STATE_EVAL_CHECK: 2,
     STATE_MATURING: 3,
     STATE_NO_COUNTER: 4,
@@ -91,6 +105,8 @@ def _board_state(mat: dict[str, Any]) -> str:
     SCHWÄCHERE Zustand angenommen — nie der stärkere.
     """
     raw = mat.get("state")
+    if raw == "SUPERVISED":
+        return STATE_SUPERVISED
     if raw in ("UNWATCHED", "VERDICT_UNATTESTED"):
         # Unattestiert ist so dringlich wie unbeobachtet: der Claim steht
         # ausserhalb der Truth-Kette. Der Handlungstext unterscheidet die
@@ -110,14 +126,25 @@ def _board_state(mat: dict[str, Any]) -> str:
 def open_preregs(
     ledger: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
+    *,
+    resolved_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Registrierte Claims minus terminal aufgelöste — read-only-safe.
+
+    ``resolved_ids`` sind die in der **verifizierten Truth-Kette** geschlossenen
+    Claims und die EINZIGE Abschluss-Quelle. Bis 2026-08-31 stand hier nur die
+    Seitenablage mit ``MET``/``NOT_MET`` — ein ``CLOSED_UNMEASURABLE`` fiel
+    durch, und ein Claim blieb nur deshalb unsichtbar, weil ``compute_maturity``
+    ihn nebenbei als ``RESOLVED`` markierte. Genau diese Reife darf aber
+    ausfallen: mit ``maturity_rows=[]`` zeigte das Board live **16 offene
+    Claims statt 4**, darunter drei am selben Tag attestierte Abschluesse. Ein
+    Ausfall der Zählung machte aus entschiedenen Claims wieder offene.
 
     Kaputte/fremde Zeilen werden übersprungen (nie eine Exception), doppelte
     Registrierungen derselben ``prereg_id`` kollabieren auf eine Zeile.
     """
     last_verdict: dict[str, str] = {}
-    terminal: set[str] = set()
+    terminal: set[str] = set(resolved_ids)
     for raw in verdicts:
         if not isinstance(raw, dict):
             continue
@@ -125,9 +152,9 @@ def open_preregs(
         verdict = raw.get("verdict")
         if not isinstance(pid, str) or not isinstance(verdict, str):
             continue
+        # NUR anzeigen. Ein Off-Chain-Verdikt schliesst nicht — es aendert die
+        # faellige Handlung von "auswerten" zu "attestieren".
         last_verdict[pid] = verdict
-        if verdict in TERMINAL_VERDICTS:
-            terminal.add(pid)
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -157,11 +184,43 @@ def open_preregs(
     return out
 
 
+def load_resolved_ids(artifacts_dir: Path) -> tuple[frozenset[str], str]:
+    """Terminal geschlossene Claims aus der verifizierten Truth-Kette.
+
+    Gibt ``(ids, state)`` zurueck; ``state`` ist ``"ok"`` nur, wenn die Kette
+    verifiziert werden konnte. Bewusst hier und nicht im Router: der Abschluss
+    ist eine Board-Eigenschaft, kein HTTP-Detail — und er darf NICHT an der
+    DB-Session haengen, denn genau die darf ausfallen. Mit leeren Reife-Zeilen
+    zeigte das Board am 2026-08-31 live 16 offene Claims statt 4, weil der
+    Abschluss nur als Nebenwirkung der Reife-Berechnung mitkam.
+
+    Fail-loud statt fail-silent: eine unlesbare Kette liefert eine LEERE Menge
+    und einen Zustand != ``"ok"``, damit die Liste sichtbar als Obergrenze
+    gerendert wird — nie stillschweigend als Wahrheit.
+    """
+    try:
+        from app.research.prereg_maturity import load_attested_resolutions
+
+        resolutions, error = load_attested_resolutions(artifacts_dir)
+    except Exception:  # noqa: BLE001 — unlesbare Kette ist ein Befund, kein 500
+        return frozenset(), "unavailable"
+    if error is not None:
+        return frozenset(), str(error.get("status") or "invalid_ledger")
+    return (
+        frozenset(
+            pid for pid, res in (resolutions or {}).items() if str(res.get("status")) == "resolved"
+        ),
+        "ok",
+    )
+
+
 def build_live_board(
     *,
     ledger: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
     maturity_rows: list[dict[str, Any]],
+    resolved_ids: frozenset[str] = frozenset(),
+    resolutions_state: str = "ok",
 ) -> dict[str, Any]:
     """Assemble die Live-Sektion: offene Prä-Regs mit Reife-Zustand + Aktion.
 
@@ -189,7 +248,7 @@ def build_live_board(
     claimed_names = {r["name"] for r in by_id.values() if isinstance(r.get("name"), str)}
 
     rows: list[dict[str, Any]] = []
-    for claim in open_preregs(ledger, verdicts):
+    for claim in open_preregs(ledger, verdicts, resolved_ids=resolved_ids):
         mat = by_id.get(claim["prereg_id"])
         if mat is None and claim["name"] not in claimed_names:
             mat = by_name.get(claim["name"])
@@ -213,7 +272,20 @@ def build_live_board(
                 progress = round(min(100.0, 100.0 * n_proxy / n_target), 1)
             state = _board_state(mat)
 
-        if state == STATE_UNWATCHED:
+        if state == STATE_SUPERVISED:
+            sup = (mat or {}).get("supervision") or {}
+            when = sup.get("next_review_utc") or "offen"
+            action = (
+                f"AUFSICHT — {sup.get('decision_state') or '?'} bei "
+                f"{sup.get('owner') or 'unbekannt'}, Termin {when}. "
+                + (
+                    "Termin faellig: die versiegelte Regel anwenden und das Verdikt attestieren."
+                    if sup.get("due")
+                    else "Noch nicht faellig — bis dahin ist Nichtstun die "
+                    "vorgesehene Handlung, kein Versaeumnis."
+                )
+            )
+        elif state == STATE_UNWATCHED:
             offchain = bool((mat or {}).get("per_source", {}).get("offchain_verdict"))
             action = "UNBEOBACHTET — versiegelt, aber in keiner Wachliste. " + (
                 "Verdikt liegt off-chain vor: attestieren."
@@ -252,6 +324,15 @@ def build_live_board(
             )
         elif state == STATE_MATURING:
             action = f"reift ({n_proxy}/{n_target}) — kein Attest vor Ziel-n."
+        elif claim.get("last_verdict") in TERMINAL_VERDICTS:
+            # Der Claim ist offen, traegt aber ein terminales Verdikt in der
+            # Seitenablage. Die faellige Handlung ist damit eine ANDERE als
+            # "auswerten" — sonst wertet jemand denselben Claim ein zweites Mal
+            # aus, statt das vorhandene Ergebnis in die Kette zu heben.
+            action = (
+                f"Verdikt {claim['last_verdict']} liegt off-chain in prereg_verdicts.jsonl, "
+                "NICHT in der verifizierten Truth-Kette — attestieren, nicht neu auswerten."
+            )
         else:
             action = "kein Reife-Zähler registriert — Fortschritt nicht gezählt."
 
@@ -283,6 +364,11 @@ def build_live_board(
         # Achtung — das ist NICHT „urteilbar" (s. _board_state).
         "due_count": judgeable + eval_check + unwatched,
         "has_content": bool(rows),
+        # Konnte die Truth-Kette gelesen werden? Wenn nicht, ist die Liste eine
+        # OBERGRENZE: geschlossene Claims koennen darin wieder auftauchen. Das
+        # gehoert auf den Schirm, nicht in eine stille Annahme.
+        "resolutions_state": resolutions_state,
+        "open_preregs_are_upper_bound": resolutions_state != "ok",
         # Sprachregel: die Sektion ist live-berechnet, die Reife ist ein Proxy.
         "note": (
             "Live aus prereg_ledger − prereg_verdicts plus verifizierter Truth-Resolution "
@@ -329,6 +415,9 @@ __all__ = [
     "STATE_JUDGEABLE",
     "STATE_MATURING",
     "STATE_NO_COUNTER",
+    "STATE_SUPERVISED",
+    "build_live_board_from_disk",
+    "load_resolved_ids",
     "STATE_UNWATCHED",
     "CURATED_STALE_DAYS",
     "TERMINAL_VERDICTS",
@@ -337,3 +426,26 @@ __all__ = [
     "has_open_curated_items",
     "open_preregs",
 ]
+
+
+def build_live_board_from_disk(
+    *,
+    ledger: list[dict[str, Any]],
+    verdicts: list[dict[str, Any]],
+    maturity_rows: list[dict[str, Any]],
+    artifacts_dir: Path,
+) -> dict[str, Any]:
+    """Duenne Naht: Truth-Kette lesen, dann den reinen Assembler rufen.
+
+    Existiert, damit der Router EINE Zeile bleibt und ``build_live_board``
+    rein und ohne I/O testbar. Die Zuordnung Datei -> Zustand gehoert in dieses
+    Modul, nicht in einen HTTP-Handler.
+    """
+    resolved_ids, resolutions_state = load_resolved_ids(artifacts_dir)
+    return build_live_board(
+        ledger=ledger,
+        verdicts=verdicts,
+        maturity_rows=maturity_rows,
+        resolved_ids=resolved_ids,
+        resolutions_state=resolutions_state,
+    )

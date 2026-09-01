@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.alerts.youtube_transcript_coverage import (
@@ -45,7 +46,7 @@ from app.core.runtime_identity import (
     evaluate_runtime_drift,
     read_runtime_identity_artifact,
 )
-from app.orchestrator.trading_loop import load_trading_loop_cycles
+from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
 
@@ -114,6 +115,42 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # Verbindungsabbruch, die Schwelle deckt Reconnect-Backoff (max 60 s) und
     # einen Service-Restart bequem ab.
     "liquidation_stream_heartbeat.txt": 30,
+    # G6: der Zustellpfad der Alarme selbst. Er schrieb bisher NICHTS —
+    # 15 von 19 FAIL-Alarmen erreichten den Operator nie, und kein Strom
+    # hielt das fest. Der Healthcheck-Timer setzt jede Stunde ein
+    # Lebenszeichen (HEARTBEAT_INTERVAL_S); 180 min = drei verpasste.
+    "alert_delivery_audit.jsonl": 180,
+    # G5: die beiden Reject-Stroeme stehen bewusst NICHT hier. Sie haben keine
+    # Schreibkadenz — fehlt eine Ablehnung, ist Stille der gesunde Zustand —
+    # und eine Schwelle 0 waere kein Vertrag, sondern ein Platzhalter: heute
+    # wirkungslos (die Dateien stehen in keiner ``files_to_check``-Liste),
+    # spaeter ein Daueralarm, sobald sie jemand dort eintraegt. Sie deklarieren
+    # stattdessen ``monitoring: alternative_watcher`` mit
+    # ``_check_input_contract_rejection_streams`` (config/stream_contracts.json,
+    # erzwungen von scripts/stream_consumer_ratchet.py seit #820).
+    #
+    # ── G6 Task 6 (31.08.): elf bis dahin UNBEWACHTE, aber nachweislich
+    # taktgetriebene Stroeme. Jede Schwelle ist rund das Doppelte des
+    # GROESSTEN je gemessenen Abstands dieses Stroms (Pi, 31.08., ueber die
+    # volle Historie) — nicht geraten, nicht aus einem Vorfall abgeleitet.
+    #
+    # Bewusst NICHT aufgenommen: die uebrigen unbewachten Stroeme. Sie sind
+    # ereignisgetrieben oder seit Monaten still (operator_commands 2.629 h,
+    # mcp_write_audit 2.650 h, decision_journal 3.013 h). Eine Schwelle waere
+    # dort ab der ersten Minute ein Daueralarm, kein Waechter — dieselbe Falle
+    # wie ein 0-Sentinel. Wer sie bewachen will, braucht einen alternativen
+    # Waechter (monitoring=alternative_watcher, #820).
+    "shadow_real_feed_funnel.jsonl": 120,  # groesster Abstand 0,5 h
+    "ln_reputation.jsonl": 240,  # groesster Abstand 1,6 h
+    "funding_evidence_shadow.jsonl": 960,  # groesster Abstand 6,6 h
+    "oi_evidence_shadow.jsonl": 960,  # groesster Abstand 6,6 h
+    "momentum_evidence_shadow.jsonl": 1560,  # groesster Abstand 12,2 h
+    "momentum_crosscheck.jsonl": 1560,  # groesster Abstand 12,0 h
+    "momentum_universe_candidates.jsonl": 3000,  # groesster Abstand 24,1 h
+    "symbol_eligibility_audit.jsonl": 3000,  # groesster Abstand 24,1 h
+    "kai_audit.jsonl": 3000,  # groesster Abstand 24,0 h
+    "timer_health_audit.jsonl": 3000,  # groesster Abstand 24,0 h
+    "onchain_fee_shadow.jsonl": 6480,  # groesster Abstand 52,2 h
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
@@ -174,6 +211,40 @@ _PAPER_EXECUTION_SILENCE_MIN = 180  # 3h — informative threshold for the messa
 # Hostname substrings that identify the Pi-side authoritative host. Override
 # via env KAI_PI_HOSTNAME_MARKER for non-default deployments.
 _PI_HOSTNAME_MARKERS = ("kai-pi", "kai-pi5", "pi5", "kai_pi")
+#: Wie viele der JUENGSTEN Saetze die Schema-Sonde prueft.
+#:
+#: Vorher: alle. ``bayes_confidence_audit.jsonl`` (31 MB, 17.831 Saetze) kostete
+#: dabei allein **+248 MB** — der Dienst laeuft mit ``MemoryMax=512M`` und wurde
+#: am 31.08. ab 20:00 vom OOM-Killer erschlagen (gemessener Spitzenwert des
+#: Unit-Kommandos: 540 MB). Gemessene Kadenz desselben Stroms: 72–230 Saetze/Tag
+#: (Median ~130), laengste Zeile 2.632 Bytes. 2.000 deckt damit **ueber acht
+#: Tage** ab, selbst am dichtesten gemessenen Tag — und begrenzt den Speicher
+#: auf die Fenstergroesse statt auf die Dateigroesse.
+#:
+#: Was das Fenster NICHT mehr sieht: eine Schema-Verletzung, die aelter als das
+#: Fenster ist. Die war zum Zeitpunkt ihres Entstehens im Fenster und ist damit
+#: bereits gemeldet worden; eine dauerhafte Wiederholung derselben Altlast war
+#: ohnehin nie der Zweck dieser Sonde.
+SCHEMA_PROBE_TAIL = 2000
+
+#: G6 Task 6: (Dateiname, Komponentenname) der elf neu bewachten Stroeme.
+#: Der Komponentenname wird zu ``<component>_freshness`` und erbt damit
+#: automatisch die Alarmklasse P1 (app/alerts/alert_classes.py) — stilles
+#: Versagen, kein Kapitalbefund.
+_G6_TASK6_WATCHED: tuple[tuple[str, str], ...] = (
+    ("shadow_real_feed_funnel.jsonl", "shadow_real_feed_funnel"),
+    ("ln_reputation.jsonl", "ln_reputation"),
+    ("funding_evidence_shadow.jsonl", "funding_evidence_shadow"),
+    ("oi_evidence_shadow.jsonl", "oi_evidence_shadow"),
+    ("momentum_evidence_shadow.jsonl", "momentum_evidence_shadow"),
+    ("momentum_crosscheck.jsonl", "momentum_crosscheck"),
+    ("momentum_universe_candidates.jsonl", "momentum_universe_candidates"),
+    ("symbol_eligibility_audit.jsonl", "symbol_eligibility_audit"),
+    ("kai_audit.jsonl", "kai_audit"),
+    ("timer_health_audit.jsonl", "timer_health_audit"),
+    ("onchain_fee_shadow.jsonl", "onchain_fee_shadow"),
+)
+
 _AUDIT_STREAM_SCHEMA_FILES: tuple[tuple[AuditStreamName, str], ...] = (
     ("alert_audit", "alert_audit.jsonl"),
     ("blocked_alerts", "blocked_alerts.jsonl"),
@@ -310,6 +381,13 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             "liquidation_ingress",
             False,
         ),
+        # G6 Task 6: die elf gemessenen Stroeme von oben. Ohne diese Zeilen
+        # waere die Schwelle daneben wirkungslos — ``_FRESHNESS_PER_FILE_MIN``
+        # ist nur eine Nachschlagetabelle, ausgewertet wird ausschliesslich,
+        # was HIER steht. Genau diese Luecke machte den 0-Sentinel in #817 so
+        # tueckisch: eine Zusage, die nie gelesen wird.
+        # required=False durchgehend — ein frischer Checkout hat keinen davon.
+        *((adir / fname, fname, component, False) for fname, component in _G6_TASK6_WATCHED),
     ]
     # Prä-Reg-Ledger (Blindstelle #5): NUR Existenz, keine mtime-Schwelle —
     # Prä-Regs dürfen Wochen legitim ruhen (Stille ≠ Defekt), aber ein
@@ -395,7 +473,7 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
 def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
     issues: list[HealthIssue] = []
     for stream, filename in _AUDIT_STREAM_SCHEMA_FILES:
-        result = load_audit_stream(adir / filename, stream)
+        result = load_audit_stream(adir / filename, stream, tail=SCHEMA_PROBE_TAIL)
         if not result.issues:
             continue
         first = result.issues[0]
@@ -410,6 +488,23 @@ def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
             )
         )
     return issues
+
+
+def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
+    """Validate existing G5 reject streams without inventing a write cadence."""
+    from app.audit.input_contract_rejections import inspect_input_rejection_streams
+
+    return [
+        HealthIssue(
+            severity="warning",
+            component="input_contract_rejection_stream",
+            message=f"{problem.stream}: {problem.detail}",
+        )
+        for problem in inspect_input_rejection_streams(
+            ln_path=adir / "ln_input_contract_rejections.jsonl",
+            analysis_path=adir / "analysis_input_contract_rejections.jsonl",
+        )
+    ]
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -907,6 +1002,18 @@ _YT_COVERAGE_SQL_BY_SOURCE = (
     "GROUP BY 1"
 )
 
+#: Die Zerlegung des AUSFALLS, nicht der Abdeckung: warum kein Transkript da ist.
+#: Ohne sie meldet die Wache eine Zahl ohne Ursache — und die einzige Diagnose
+#: waere ein neuer Abruf bei YouTube gewesen, also genau die Handlung, die am
+#: 2026-08-28 den IP-Block ausgeloest hat.
+_YT_REASON_SQL = (
+    "SELECT coalesce(json_extract(youtube_meta, '$.transcript_status'), '(nicht aufgezeichnet)'), "
+    "COUNT(*) "
+    "FROM canonical_documents "
+    "WHERE source_type = ? AND fetched_at >= ? "
+    "GROUP BY 1"
+)
+
 #: Rueckfall fuer SQLite-Builds ohne JSON1 — schwaechere Messung statt gar keiner.
 _YT_COVERAGE_SQL_BY_LENGTH = (
     "SELECT coalesce(nullif(author, ''), '(ohne Kanal)'), COUNT(*), "
@@ -940,22 +1047,31 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         .isoformat(sep=" ")
     )
 
-    def _query(sql: str) -> list[Any]:
+    def _query(sql: str, params: tuple[Any, ...]) -> list[Any]:
         con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
         try:
-            return con.execute(
-                sql, (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start)
-            ).fetchall()
+            return con.execute(sql, params).fetchall()
         finally:
             con.close()
 
+    coverage_params = (TRANSCRIPT_MIN_CHARS, "youtube_channel", window_start)
+    degraded = False
+    reasons: tuple[tuple[str, int], ...] = ()
     try:
         try:
-            rows = _query(_YT_COVERAGE_SQL_BY_SOURCE)
+            rows = _query(_YT_COVERAGE_SQL_BY_SOURCE, coverage_params)
+            reasons = tuple(
+                (str(name), int(count))
+                for name, count in _query(_YT_REASON_SQL, ("youtube_channel", window_start))
+            )
         except sqlite3.OperationalError:
             # SQLite ohne JSON1 (aeltere Builds): lieber die schwaechere Messung
-            # als gar keine — und sichtbar hier dokumentiert, nicht still.
-            rows = _query(_YT_COVERAGE_SQL_BY_LENGTH)
+            # als gar keine — aber ausdruecklich als schwaecher gekennzeichnet.
+            # Seit dem Feed-Umbau liegen Beschreibungen regelmaessig ueber
+            # TRANSCRIPT_MIN_CHARS (47 von 76 am 2026-08-31), die Laengen-
+            # Heuristik zaehlt sie also als Transkript und meldete still gruen.
+            degraded = True
+            rows = _query(_YT_COVERAGE_SQL_BY_LENGTH, coverage_params)
     except sqlite3.Error as exc:
         return [
             HealthIssue(
@@ -967,7 +1083,9 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
         ]
 
     verdict = classify_coverage(
-        [ChannelCoverage(str(name), int(total), int(hits or 0)) for name, total, hits in rows]
+        [ChannelCoverage(str(name), int(total), int(hits or 0)) for name, total, hits in rows],
+        by_status=reasons,
+        degraded_length_proxy=degraded,
     )
     if verdict.is_healthy:
         return []
@@ -976,6 +1094,42 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
             severity="warning",
             component="youtube_transcript_coverage",
             message=render_message(verdict, window_hours=COVERAGE_WINDOW_HOURS),
+        )
+    ]
+
+
+def _check_alert_delivery(adir: Path, now: datetime) -> list[HealthIssue]:
+    """Ist der Alarm ANGEKOMMEN? (G6, A4-017)
+
+    Bis hierher prueft jede Sonde, ob KAI etwas zu melden hat. Keine prueft, ob
+    die Meldung den Operator erreicht. Live gemessen ueber 30 Tage: von 19
+    FAIL-Alarmen des Premium-Healthchecks erreichten **15 den Operator nie**
+    (78,9 %) — alle mit ``Temporary failure in name resolution``, alle im
+    naechtlichen Fenster 01:04-01:25, kein einziger wegen eines fehlenden
+    Tokens. Der Alarm war weg, und nichts sagte es.
+
+    Ein ausstehender Zustellversuch ist ab ``UNDELIVERED_WARN_MIN`` ein Befund
+    und ab ``UNDELIVERED_CRITICAL_MIN`` ein kritischer — letzterer beim
+    Dreifachen der gemessenen DNS-Luecke (10 min am 13.08.), damit die
+    naechtliche Neueinwahl allein ihn nicht ausloest.
+    """
+    verdict = classify_delivery(load_records(adir / DELIVERY_STREAM), now=now)
+    if verdict.status == "ok":
+        return []
+    age = (
+        f"{verdict.oldest_age_min:.0f}min"
+        if verdict.oldest_age_min is not None
+        else "unbekanntes Alter"
+    )
+    reasons = "; ".join(verdict.reasons) or "kein Grund protokolliert"
+    return [
+        HealthIssue(
+            severity="critical" if verdict.status == "critical" else "warning",
+            component="alert_delivery",
+            message=(
+                f"{verdict.undelivered} Alarm(e) nicht zugestellt, aeltester {age} "
+                f"- Grund: {reasons}. Ein Alarm, der nicht ankommt, ist kein Alarm."
+            ),
         )
     ]
 
@@ -995,11 +1149,14 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
     """
     from app.research.prereg_maturity import MATURITY_SPECS
     from app.research.prereg_reconciliation import (
+        DEFAULT_SUPERVISION_REGISTER,
         RECON_STATE_RESOLVED,
+        RECON_STATE_SUPERVISED,
         RECON_STATE_UNWATCHED,
         RECON_STATE_VERDICT_UNATTESTED,
         RECON_STATE_WATCHED,
         classify_ledger_entries,
+        load_supervision_register,
     )
 
     if not (adir / "research" / "prereg_ledger.jsonl").exists():
@@ -1046,19 +1203,78 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
         for state in (
             RECON_STATE_RESOLVED,
             RECON_STATE_WATCHED,
+            RECON_STATE_SUPERVISED,
             RECON_STATE_VERDICT_UNATTESTED,
             RECON_STATE_UNWATCHED,
         )
     }
+    # Spiegelbild zu ``ghost_specs``: auch das Aufsichtsregister kann auf eine
+    # nie versiegelte ID zeigen. Ein solcher Eintrag sieht wie Aufsicht aus,
+    # beaufsichtigt aber nichts — er gehoert gemeldet, nicht geglaubt.
+    register = load_supervision_register(DEFAULT_SUPERVISION_REGISTER)
+    ghost_supervision = sorted(pid for pid in register if pid not in sealed)
+    # Invariante 2/3 des Zustands SCHEDULED_REVIEW_COMPLETED (Operator 2026-08-31):
+    # er behauptet, die terminierte Wiedervorlage sei durchgefuehrt UND habe in
+    # einem terminalen Abschluss der verifizierten Truth-Kette geendet. Der
+    # Vertragstest im Repo kann nur die Form pruefen — ``artifacts/`` liegt nicht
+    # im Repo. Hier liegen beide Seiten nebeneinander: behauptet das Register
+    # einen Abschluss, den die Kette nicht traegt, ist das eine Falschaussage
+    # ueber die Aufsicht selbst, kein Schoenheitsfehler. Ein Off-Chain-Verdikt
+    # zaehlt ausdruecklich NICHT (RECON_STATE_VERDICT_UNATTESTED bleibt offen).
+    state_by_id = {r["prereg_id"]: r["state"] for r in rows}
+    unbacked_closures = sorted(
+        pid
+        for pid, entry in register.items()
+        if str(entry.get("decision_state")) == "SCHEDULED_REVIEW_COMPLETED"
+        and pid in sealed
+        and state_by_id.get(pid) != RECON_STATE_RESOLVED
+    )
+    if unbacked_closures:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    "supervision drift: prereg_supervision.json claims a completed scheduled "
+                    "review without a terminal resolution in the verified truth chain: "
+                    f"{', '.join(unbacked_closures)}"
+                ),
+            )
+        )
+    if ghost_supervision:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="prereg_reconciliation",
+                message=(
+                    "supervision drift: prereg_supervision.json references prereg_id(s) "
+                    f"not in the sealed ledger: {', '.join(ghost_supervision)}"
+                ),
+            )
+        )
     unattested = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_VERDICT_UNATTESTED]
     unwatched = [r["prereg_id"] for r in rows if r["state"] == RECON_STATE_UNWATCHED]
-    if unattested or unwatched:
+    # Beaufsichtigt UND faellig ist eine offene Entscheidung des Eigentuemers,
+    # keine Aufsichtsluecke. Beaufsichtigt und noch nicht faellig ist gar kein
+    # Befund — sonst meldete der Waechter einen Termin taeglich vor, den der
+    # Operator bewusst in die Zukunft gelegt hat.
+    supervised_due = [
+        r["prereg_id"]
+        for r in rows
+        if r["state"] == RECON_STATE_SUPERVISED and (r.get("supervision") or {}).get("due")
+    ]
+    if unattested or unwatched or supervised_due:
         breakdown = " ".join(f"{k}={v}" for k, v in counts.items())
         parts = [f"ledger={len(rows)} {breakdown}"]
         if unattested:
             parts.append("attestieren (Verdikt nur in Seitenablage): " + ", ".join(unattested))
         if unwatched:
             parts.append("Aufsichtsluecke (weder Spec noch Verdikt): " + ", ".join(unwatched))
+        if supervised_due:
+            parts.append(
+                "Aufsichtstermin faellig (Operator-Register, KEINE Luecke): "
+                + ", ".join(supervised_due)
+            )
         issues.append(
             HealthIssue(
                 severity="warning",
@@ -1067,6 +1283,49 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
             )
         )
     return issues
+
+
+#: Fenster fuer den Zyklus-Strom im Health-Check.
+#:
+#: ``load_trading_loop_cycles`` laedt sonst die GESAMTE Historie: am 31.08.
+#: waren das 128.501 Saetze aus 79 MB = **+320 MB**, der groesste Einzelposten
+#: des Dienstes, der ab 20:00 vom OOM-Killer erschlagen wurde. Diese Sonde
+#: braucht davon nur das ``lookback_hours``-Fenster (sie filtert ohnehin auf
+#: ``cutoff``).
+#:
+#: 10.000 Saetze decken **4,6 Tage** ab — gemessen an der hoechsten je
+#: beobachteten Tagesrate (2.178 am dichtesten Tag; Median 1.126, zuletzt
+#: 1.000-1.300). Das ist ein Vielfaches des 24-h-Fensters.
+CYCLE_PROBE_TAIL = 10_000
+
+
+def _load_cycles_for_window(path: Path, cutoff: datetime) -> list[dict[str, object]]:
+    """Lies die Zyklen des Fensters — begrenzt, aber nachweislich vollstaendig.
+
+    Der Schnitt darf die Zahlen dieser Sonde NICHT veraendern. Deshalb wird
+    geprueft, ob das Fenster ueberhaupt erreicht wurde: ist der aelteste
+    gelesene Satz JUENGER als der Cutoff, koennte das Fenster abgeschnitten
+    sein — dann wird ungekuerzt nachgelesen. Damit kostet die Begrenzung im
+    Normalfall Speicher und im Ausnahmefall nichts an Wahrheit.
+    """
+    cycles = load_trading_loop_cycles(path, tail=CYCLE_PROBE_TAIL)
+    if len(cycles) < CYCLE_PROBE_TAIL:
+        return cycles  # ganze Datei gelesen, nichts abgeschnitten
+    oldest = _cycle_started_at(cycles[0])
+    if oldest is not None and oldest <= cutoff:
+        return cycles  # das Fenster liegt vollstaendig im gelesenen Ausschnitt
+    return load_trading_loop_cycles(path)
+
+
+def _cycle_started_at(record: dict[str, object]) -> datetime | None:
+    raw = record.get("started_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
 def run_health_check_report(
@@ -1099,6 +1358,7 @@ def run_health_check_report(
     report.issues.extend(freshness_issues)
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
+    report.issues.extend(_check_input_contract_rejection_streams(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).
@@ -1116,6 +1376,7 @@ def run_health_check_report(
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
+    report.issues.extend(_check_alert_delivery(adir, now))
     report.issues.extend(_check_prereg_reconciliation(adir))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
@@ -1201,9 +1462,7 @@ def run_health_check_report(
 
     # ── Trading loop freshness (+ P1 status breakdown) ───────────────
     try:
-        cycles = load_trading_loop_cycles(
-            adir / "trading_loop_audit.jsonl",
-        )
+        cycles = _load_cycles_for_window(adir / "trading_loop_audit.jsonl", cutoff)
     except Exception:
         report.issues.append(
             HealthIssue(

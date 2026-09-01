@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "G4 (KMA-20260827) — Vertraege fuer NEUE artifacts-Stroeme. Wer einen Strom",
+    "hinzufuegt, der nicht in scripts/stream_baseline.json steht, traegt ihn hier ein.",
+    "Regeln und Begruendung: docs/runbooks/stream_consumer_contract.md.",
+    "Der Bestand wird NICHT rueckwirkend erzwungen — diese Datei startet leer."
+  ],
+  "_schema": {
+    "reader": "Repo-relativer Pfad des Moduls, das den Strom LIEST. Muss existieren und den Stromnamen nennen.",
+    "failure_consequence": "Was kaputtgeht, wenn der Strom stirbt. Nicht 'nichts'.",
+    "freshness_check": "Nur bei monitoring=\"freshness\": der Strom braucht eine Zeile in _FRESHNESS_PER_FILE_MIN mit einer POSITIVEN Schwelle. 0 ist kein Vertrag.",
+    "failure_would_be_noticed_by": "WER merkt den Ausfall. 'niemand' ⇒ NEEDS_CONSUMER_FIRST.",
+    "time_to_notice": "NACH WELCHER ZEIT er auffaellt. 'nie' ⇒ NEEDS_CONSUMER_FIRST.",
+    "decision_that_would_change": "WELCHE Entscheidung ohne den Strom anders ausfaellt. 'keine' ⇒ NEEDS_CONSUMER_FIRST.",
+    "monitoring": "\"freshness\" (Standard) ODER \"alternative_watcher\" — GENAU EINE Semantik je Strom, nie beide.",
+    "watcher": "Nur bei monitoring=\"alternative_watcher\": Name einer Sonde in app/alerts/health_check.py, die dort definiert UND in run_health_check_report aufgerufen wird."
+  },
+  "_intentionally_inert_comment": [
+    "Absichtlich inerte Doktrin-Anker (nie ausgefuehrte LN-Verben, Kapital-Segmentierung,",
+    "Dritt-Prinzipal-Gate, R2-11) fallen NICHT unter das Ratchet — und duerfen in keiner",
+    "Reifegradaussage als 'vorhanden' gezaehlt werden. Eintrag hier ist eine Behauptung,",
+    "die im PR-Body begruendet werden muss."
+  ],
+  "intentionally_inert": [],
+  "streams": {
+    "alert_delivery_audit.jsonl": {
+      "reader": "app/alerts/alert_delivery.py",
+      "failure_consequence": "Ein nicht zugestellter Alarm bleibt unbemerkt verloren; genau so gingen 15 von 19 FAIL-Alarmen in 30 Tagen verloren (A4-017).",
+      "freshness_check": "_FRESHNESS_PER_FILE_MIN",
+      "failure_would_be_noticed_by": "_check_alert_delivery in app/alerts/health_check.py (Sonde) und die 180-min-Freshness-Zeile fuer den stuendlichen Heartbeat",
+      "time_to_notice": "5 Minuten fuer einen ausstehenden Alarm (warning), 30 Minuten fuer kritisch, 180 Minuten fuer einen toten Zustellpfad",
+      "decision_that_would_change": "Der Operator wuerde nicht erfahren, dass die Pipeline steht — und keinen Neustart ausloesen; ohne den Strom sieht ein tauber Kanal aus wie ein ruhiger.",
+      "monitoring": "freshness"
+    },
+    "ln_input_contract_rejections.jsonl": {
+      "reader": "app/audit/input_contract_rejections.py",
+      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund; der Geldpfad bleibt zwar fail-closed, aber der Operator koennte Caller-Fehler und Vertragsverletzung nicht auseinanderhalten.",
+      "failure_would_be_noticed_by": "Der Writer kennzeichnet einen fehlgeschlagenen Reject-Append sofort in LightningOpsLedgerError; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
+      "time_to_notice": "Im selben abgelehnten Writer-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder fehlerhaften Money-Caller vor einem erneuten Intent, statt die Ablehnung als Journal- oder Node-Ausfall zu behandeln.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_input_contract_rejection_streams"
+    },
+    "analysis_input_contract_rejections.jsonl": {
+      "reader": "app/audit/input_contract_rejections.py",
+      "failure_consequence": "Eine vor dem LLM abgelehnte Quelle waere nicht dauerhaft von Provider-Ausfall oder normalem Analysefehler unterscheidbar.",
+      "failure_would_be_noticed_by": "Der PipelineResult kennzeichnet einen fehlgeschlagenen Reject-Append sofort; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
+      "time_to_notice": "Im selben abgelehnten Analyse-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder die betroffene Inhaltsquelle, bevor diese Quelle erneut fuer LLM-Klassifikation freigegeben wird.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_input_contract_rejection_streams"
+    }
+  }
+}

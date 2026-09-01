@@ -262,3 +262,81 @@ def test_pre_d_writers_leave_locked_schema_valid_rows(tmp_path: Path) -> None:
     )
     assert bayes_path.with_suffix(".jsonl.lock").exists()
     assert load_audit_stream(bayes_path, "bayes_confidence_audit").issue_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Begrenztes Lesen (31.08.: der Health-Check lief OOM)
+# ---------------------------------------------------------------------------
+
+
+def _write_alert_stream(path: Path, count: int) -> None:
+    for i in range(count):
+        append_alert_audit(
+            AlertAuditRecord(
+                document_id=f"doc-{i:05d}",
+                channel="telegram",
+                message_id=f"msg-{i}",
+                is_digest=False,
+                dispatched_at=_TS,
+            ),
+            path,
+        )
+
+
+def test_tail_reads_only_the_newest_records(tmp_path: Path) -> None:
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 50)
+    result = load_audit_stream(path, "alert_audit", tail=10)
+    assert len(result.rows) == 10
+    assert result.rows[-1]["document_id"] == "doc-00049"
+    assert result.rows[0]["document_id"] == "doc-00040"
+
+
+def test_tail_zero_reads_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 5)
+    assert load_audit_stream(path, "alert_audit", tail=0).rows == ()
+
+
+def test_tail_larger_than_file_returns_everything(tmp_path: Path) -> None:
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 5)
+    assert len(load_audit_stream(path, "alert_audit", tail=100).rows) == 5
+
+
+def test_without_tail_everything_is_read(tmp_path: Path) -> None:
+    """Positivkontrolle: die Begrenzung ist opt-in, kein stiller Default."""
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 40)
+    assert len(load_audit_stream(path, "alert_audit").rows) == 40
+
+
+def test_line_numbers_stay_true_to_the_file_under_tail(tmp_path: Path) -> None:
+    """Negativkontrolle: der Schnitt darf die Zeilennummer nicht verfaelschen —
+    sonst zeigt ein Befund auf die falsche Zeile."""
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 20)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("{kaputt\n")
+    _write_alert_stream(path, 1)
+    result = load_audit_stream(path, "alert_audit", tail=5)
+    assert [i.line_number for i in result.issues] == [21]
+
+
+def test_bounded_read_does_not_materialise_the_whole_file(tmp_path: Path) -> None:
+    """Der Kern des Fixes: der Speicher haengt am Fenster, nicht an der Datei."""
+    path = tmp_path / "alert_audit.jsonl"
+    _write_alert_stream(path, 500)
+    result = load_audit_stream(path, "alert_audit", tail=5)
+    assert len(result.rows) == 5
+    assert result.rows[0]["document_id"] == "doc-00495"
+
+
+def test_health_probe_tail_is_wired_and_measured() -> None:
+    """Die Sonde muss die Grenze auch BENUTZEN — sonst ist sie Dekoration."""
+    import inspect
+
+    from app.alerts.health_check import SCHEMA_PROBE_TAIL, _check_audit_stream_schemas
+
+    assert SCHEMA_PROBE_TAIL == 2000
+    assert "tail=SCHEMA_PROBE_TAIL" in inspect.getsource(_check_audit_stream_schemas)

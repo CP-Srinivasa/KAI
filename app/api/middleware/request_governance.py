@@ -64,6 +64,19 @@ class APIErrorResponse:
         }
 
 
+def _extract_trigger_id(request: Request) -> str | None:
+    """Hole die Auslöser-ID aus dem Query-Parameter — oder nichts.
+
+    Das ist die einzige Stelle, an der ein Alarm und eine Operator-Handlung
+    denselben Schluessel tragen koennen: der Operator klickt einen Link, er
+    setzt keinen Header. Formfremdes wird verworfen, nicht gespeichert.
+    """
+    from app.observability.operator_feedback import TRIGGER_QUERY_PARAM, is_trigger_id
+
+    raw = request.query_params.get(TRIGGER_QUERY_PARAM)
+    return raw if is_trigger_id(raw) else None
+
+
 def _extract_client_ip(
     request: Request,
     *,
@@ -187,6 +200,7 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
             status_code=response.status_code,
             duration_ms=duration_ms,
             client_ip=client_ip,
+            trigger_id=_extract_trigger_id(request),
         )
 
         return response
@@ -227,6 +241,7 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         status_code: int,
         duration_ms: float,
         client_ip: str = "unknown",
+        trigger_id: str | None = None,
     ) -> None:
         record = {
             "timestamp_utc": datetime.now(UTC).isoformat(),
@@ -237,6 +252,12 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
             "duration_ms": duration_ms,
             "client_ip": client_ip,
         }
+        # G8: die Rueckkante. Nur eine formgueltige Auslöser-ID wird
+        # uebernommen — der Parameter ist Fremdeingabe aus der URL, und ein
+        # ungeprueftes Feld im Audit-Strom waere genau die Klasse, die die
+        # Eingangsvertraege gerade an drei anderen Stellen schliessen.
+        if trigger_id is not None:
+            record["trigger_id"] = trigger_id
         try:
             with self._audit_path.open(
                 "a",

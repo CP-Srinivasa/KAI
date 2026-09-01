@@ -61,6 +61,11 @@ from typing import Any
 
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.crypto_relevance import crypto_relevance_verdict
+from app.analysis.input_contract import (
+    AnalysisInputRejectionAuditError,
+    analysis_input_rejection,
+    append_analysis_input_rejection,
+)
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
@@ -431,6 +436,7 @@ class AnalysisPipeline:
         market_data_adapter: BaseMarketDataAdapter | None = None,
         trusted_social_handles: frozenset[str] | None = None,
         crypto_gate_mode: str | None = None,
+        input_rejection_path: Path | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
@@ -438,6 +444,7 @@ class AnalysisPipeline:
         self._shadow_provider = shadow_provider
         self._market_data_adapter = market_data_adapter
         self._cached_market_context: dict[str, Any] | None = None
+        self._input_rejection_path = input_rejection_path
         # D-174 Phase I (2Y): curated twitter watchlist bypasses stub + low-relevance gates.
         self._trusted_social_handles: frozenset[str] = trusted_social_handles or frozenset()
         # Pre-analysis crypto-relevance gate (2026-06-16). Resolved once at
@@ -594,6 +601,28 @@ class AnalysisPipeline:
     async def run(self, doc: CanonicalDocument) -> PipelineResult:
         """Analyze a single document."""
         text = doc.cleaned_text or doc.raw_text or ""
+        input_rejection = analysis_input_rejection(doc, text)
+        if input_rejection is not None:
+            audit_failure = ""
+            try:
+                append_analysis_input_rejection(
+                    doc,
+                    input_rejection,
+                    path=self._input_rejection_path,
+                )
+            except AnalysisInputRejectionAuditError as exc:
+                audit_failure = "; rejection_audit_failed"
+                logger.error(
+                    "analysis_input_rejection_audit_failed",
+                    doc_id=str(doc.id),
+                    reason=input_rejection.reason,
+                    error_type=type(exc).__name__,
+                )
+            return PipelineResult(
+                document=doc,
+                error=f"input_contract_rejected: {input_rejection.reason}{audit_failure}",
+                provider_name="rejected",
+            )
         full_text = f"{doc.title} {text}".strip()
 
         keyword_hits = self._keyword_engine.match(full_text)

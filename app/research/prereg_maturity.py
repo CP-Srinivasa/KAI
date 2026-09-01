@@ -77,6 +77,38 @@ STATE_RESOLUTION_HOLD = "RESOLUTION_HOLD"
 # NICHT terminal entschieden hat. Kein Reifegrad, sondern eine Luecke in der
 # Aufsicht selbst — deshalb ein eigener Zustand und nicht "NOT_DUE".
 STATE_UNWATCHED = "UNWATCHED"
+# Beaufsichtigt durch eine Operator-Entscheidung im Register, nicht durch einen
+# Zaehler. Ein Mensch mit Termin ist Aufsicht — nur eben keine, die eine
+# Wachliste kennt. Bis 2026-08-31 fehlte dieser Zustand, und der taegliche
+# Alarm nannte ``6751bc33`` deshalb "in KEINER Wachliste": unwahr, seit das
+# Register am 27.08. dafuer MANUAL_SCHEDULED_REVIEW mit Termin 15.09. fuehrt.
+STATE_SUPERVISED = "SUPERVISED"
+
+# Operator-Aufsichtsregister. Liegt im Repo (versioniert), nicht unter
+# ``artifacts`` — deshalb ein eigener Default statt eines Relpath.
+DEFAULT_SUPERVISION_REGISTER = Path("config/prereg_supervision.json")
+
+# Geschlossene Liste, bewusst kein "alles ausser UNWATCHED": ein neuer Zustand
+# muss hier eingetragen werden, bevor er einen Claim aus der Aufsichtsluecke
+# holt. Sonst schaltete ein Tippfehler im Register den Waechter still.
+SUPERVISING_DECISION_STATES = frozenset(
+    {
+        "WATCH",
+        "MANUAL_IMMEDIATE_VERDICT",
+        "MANUAL_SCHEDULED_REVIEW",
+        "SUPERSEDED",
+        # Vollzogene terminierte Wiedervorlage. Steht hier, damit ein solcher
+        # Eintrag auch dann nicht als Aufsichtsluecke gilt, wenn die Truth-Kette
+        # einmal nicht lesbar ist — der Operator HAT hingesehen, das bleibt wahr.
+        # Ob der Claim wirklich terminal ist, prueft der Health-Check separat;
+        # dieser Eintrag allein schliesst nichts.
+        "SCHEDULED_REVIEW_COMPLETED",
+    }
+)
+
+# ``MANUAL_IMMEDIATE_VERDICT`` traegt laut Register-Invariante diesen Wert
+# statt eines Datums — er bedeutet faellig, nicht "kein Termin".
+_DUE_NOW = "DUE_NOW"
 # Ein versiegelter Claim, fuer den ein Verdikt in einer SEITENABLAGE liegt
 # (prereg_verdicts.jsonl, ln_reconciliation_verdict.jsonl), aber keines in
 # der verifizierten Truth-Kette. Kein Abschluss — aber eine andere Handlung
@@ -227,6 +259,13 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
         "window_end_utc": "2026-08-03T12:51:11.469459+00:00",
         "n_target": 5,
         "note": (
+            "GESCHLOSSEN 2026-08-31 als INCONCLUSIVE_BY_TIMEOUT (Truth-seq 114), "
+            "substantive_verdict=NONE: Fenster abgelaufen, kein Sachverdikt gebildet. "
+            "Weder MET noch NOT_MET, keine Unmessbarkeits-Aussage. Es wurde NIE "
+            "gezaehlt, und es wird nicht mehr gezaehlt - die kontaktabhaengige "
+            "Messkampagne ist per Operator-Policy beendet. Der Spec bleibt stehen, "
+            "damit der Claim als abgeschlossen SICHTBAR ist statt unsichtbar. "
+            "Historischer Wortlaut der versiegelten Regel: "
             "Zaehlung ist NICHT maschinell: >=5 qualifizierte schriftliche Anfragen "
             "(je ein konkret benannter zu auditierender Signalanbieter ODER ein klares "
             "Zahlungsbereitschafts-Signal) im Fenster; Spam, Selbstbewerbung ohne "
@@ -463,12 +502,24 @@ def _maturity_deadline(spec: dict[str, Any], now: datetime) -> tuple[int, dict[s
     """
     window_end = _as_dt(spec.get("window_end_utc"))
     if window_end is None:
-        return 0, {"window_end_utc": None, "days_remaining": 0}, STATE_EVAL_CHECK_DUE
+        return (
+            0,
+            {"window_end_utc": None, "days_remaining": 0, "days_overdue": None},
+            STATE_EVAL_CHECK_DUE,
+        )
     remaining = max((window_end - now).total_seconds(), 0.0)
     days_remaining = int(remaining // 86400)
+    # Wie lange ist die Frist schon zu? Ohne diese Zahl liest sich ein Claim am
+    # ersten und am achtundzwanzigsten Tag identisch — K1 (00c75a76) meldete
+    # vom 2026-08-03 bis zum 2026-08-31 taeglich denselben Satz, und genau
+    # deshalb fiel nicht auf, dass er festhing. Eine Frist ohne sichtbares
+    # Alter ist eine Erinnerung, kein Druck.
+    overdue = max((now - window_end).total_seconds(), 0.0)
+    days_overdue = int(overdue // 86400)
     detail: dict[str, Any] = {
         "window_end_utc": str(spec.get("window_end_utc")),
         "days_remaining": days_remaining,
+        "days_overdue": days_overdue,
     }
     state = STATE_EVAL_CHECK_DUE if now >= window_end else STATE_NOT_DUE
     return 0, detail, state
@@ -710,11 +761,88 @@ def find_resolved_unspecced_preregs(
     return rows
 
 
+def review_is_due(next_review_utc: Any, now: datetime) -> bool:
+    """Faellig heisst: jetzt oder ueberfaellig. Ein fehlender Termin ist NICHT faellig.
+
+    Ein unlesbares Datum gilt als faellig — lieber eine Meldung zu viel als ein
+    Termin, den ein Tippfehler unsichtbar macht.
+    """
+    if not isinstance(next_review_utc, str) or not next_review_utc.strip():
+        return False
+    raw = next_review_utc.strip()
+    if raw == _DUE_NOW:
+        return True
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when <= now
+
+
+def load_supervision_register(path: Path) -> dict[str, dict[str, Any]]:
+    """Je ``prereg_id`` die Operator-Aufsichtsentscheidung — fail-soft, fail-closed.
+
+    EINE Implementierung fuer beide Leser (``find_unwatched_preregs`` hier und
+    ``classify_ledger_entries`` in :mod:`app.research.prereg_reconciliation`).
+    Zwei Kopien haetten sich denselben Weg gedriftet wie #723/#748/#755.
+
+    Fail-soft: fehlende oder kaputte Datei -> ``{}``; der Abgleich meldet dann
+    wieder Aufsichtsluecken, was korrekt ist. Fail-closed: nur Zustaende aus
+    :data:`SUPERVISING_DECISION_STATES` zaehlen; ``UNWATCHED``, ``UNRESOLVED``,
+    leer oder unbekannt wird verworfen statt still als Aufsicht durchzugehen.
+
+    Der Abgleich gegen das versiegelte Ledger passiert NICHT hier: auch
+    Eintraege ohne versiegelten Claim kommen zurueck, damit der Aufrufer diese
+    Drift melden kann (Spiegelbild zu ``ghost_specs``).
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    entries = raw.get("entries")
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        prereg_id = entry.get("prereg_id")
+        state = entry.get("decision_state")
+        if not isinstance(prereg_id, str) or not prereg_id:
+            continue
+        if not isinstance(state, str) or state not in SUPERVISING_DECISION_STATES:
+            continue
+        out[prereg_id] = entry
+    return out
+
+
+def supervision_view(entry: dict[str, Any] | None, now: datetime) -> dict[str, Any] | None:
+    """Nur die handlungsrelevanten Felder — kein Durchreichen des Registers.
+
+    Insbesondere wandert KEINE Begruendungs-Prosa aus dem Register in einen
+    Alarmtext; gerendert werden Zustand, Eigentuemer und Termin.
+    """
+    if not entry:
+        return None
+    return {
+        "decision_state": str(entry.get("decision_state")),
+        "owner": str(entry.get("owner") or "unknown"),
+        "next_review_utc": entry.get("next_review_utc"),
+        "due": review_is_due(entry.get("next_review_utc"), now),
+    }
+
+
 def find_unwatched_preregs(
     artifacts_dir: Path,
     *,
     specs: Any = MATURITY_SPECS,
     resolutions: dict[str, dict[str, Any]] | None = None,
+    supervision_register: Path | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Versiegelte Claims, die weder beobachtet noch terminal entschieden sind.
 
@@ -745,6 +873,10 @@ def find_unwatched_preregs(
     # trennt aber die zwei Operator-Handlungen: "Verdikt attestieren" ist
     # etwas anderes als "versiegelte Regel ueberhaupt erst anwenden".
     offchain = _offchain_verdict_sources(artifacts_dir)
+    supervision = load_supervision_register(
+        DEFAULT_SUPERVISION_REGISTER if supervision_register is None else supervision_register
+    )
+    at = now or datetime.now(UTC)
     closed = {
         pid
         for pid, res in (resolutions or {}).items()
@@ -776,6 +908,9 @@ def find_unwatched_preregs(
             continue
         seen.add(prereg_id)
         offchain_sources = offchain.get(prereg_id, [])
+        # Nur ein SUPERVISED-Claim kann nicht faellig sein; alles andere in
+        # dieser Funktion ist per Definition eine offene Handlung.
+        supervision_due = True
         if offchain_sources:
             # Ein Off-Chain-Verdikt schliesst nicht, aendert aber die Handlung:
             # die versiegelte Regel WURDE angewandt — was fehlt, ist die
@@ -787,6 +922,21 @@ def find_unwatched_preregs(
                 f"({', '.join(offchain_sources)}), aber NICHT in der verifizierten "
                 "Truth-Kette. Verdikt attestieren — nicht erneut auswerten."
             )
+        elif prereg_id in supervision:
+            # Beaufsichtigt, nicht uebersehen: das Register nennt Zustand,
+            # Eigentuemer und Termin. Faellig bleibt faellig — der Eintrag
+            # verschiebt die Frist nicht, er benennt nur den Zustaendigen.
+            view = supervision_view(supervision[prereg_id], at) or {}
+            state = STATE_SUPERVISED
+            note = (
+                "Versiegelt und ohne terminales Verdikt, aber unter "
+                f"Operator-Aufsicht ({view.get('decision_state')}, "
+                f"Eigentuemer {view.get('owner')}, Termin "
+                f"{view.get('next_review_utc') or 'offen'}). Keine "
+                "Aufsichtsluecke — die Handlung liegt beim Termin, nicht bei "
+                "einem fehlenden Spec."
+            )
+            supervision_due = bool(view.get("due"))
         else:
             state = STATE_UNWATCHED
             note = (
@@ -816,7 +966,8 @@ def find_unwatched_preregs(
                 "window_end_utc": None,
                 "timed_out": False,
                 "resolution": (resolutions or {}).get(prereg_id),
-                "due": True,
+                "supervision": supervision_view(supervision.get(prereg_id), at),
+                "due": supervision_due,
             }
         )
     return rows
@@ -1084,6 +1235,13 @@ def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
             f"davon {unwatched} {STATE_UNWATCHED}: versiegelt, aber unbeobachtet "
             "und unentschieden — Aufsichtsluecke, kein Reifegrad."
         )
+    supervised = sum(1 for r in due_rows if r.get("state") == STATE_SUPERVISED)
+    if supervised:
+        lines.append(
+            f"davon {supervised} {STATE_SUPERVISED}: unter Operator-Aufsicht mit "
+            "faelligem Termin — keine Aufsichtsluecke, sondern eine offene "
+            "Entscheidung des Eigentuemers."
+        )
     unattested = sum(1 for r in due_rows if r.get("state") == STATE_VERDICT_UNATTESTED)
     if unattested:
         lines.append(
@@ -1102,12 +1260,29 @@ def build_maturity_alert(rows: list[dict[str, Any]]) -> str | None:
                 if detail.get("offchain_verdict")
                 else "kein Verdikt in der verifizierten Truth-Kette"
             )
-            evidence = (
-                f"versiegelt {sealed}, horizon {detail.get('horizon') or '?'} "
-                f"— in KEINER Wachliste, {where}"
-            )
+            supervision = row.get("supervision")
+            if isinstance(supervision, dict):
+                # "in KEINER Wachliste" waere hier eine Falschaussage: das
+                # Register nennt Zustand, Eigentuemer und Termin. Faellig ist
+                # die Zeile trotzdem — sie sagt nur, WER dran ist.
+                whose = (
+                    f"{supervision.get('decision_state')} bei "
+                    f"{supervision.get('owner')}, Termin "
+                    f"{supervision.get('next_review_utc') or 'offen'}"
+                )
+                evidence = (
+                    f"versiegelt {sealed}, horizon {detail.get('horizon') or '?'} "
+                    f"— unter Operator-Aufsicht ({whose}), {where}"
+                )
+            else:
+                evidence = (
+                    f"versiegelt {sealed}, horizon {detail.get('horizon') or '?'} "
+                    f"— in KEINER Wachliste, {where}"
+                )
         elif row.get("kind") == "deadline":
-            evidence = f"Fenster endete {window_end}"
+            overdue = (row.get("per_source") or {}).get("days_overdue")
+            seit = f" (seit {overdue} Tagen)" if isinstance(overdue, int) and overdue > 0 else ""
+            evidence = f"Fenster endete {window_end}{seit}"
         else:
             n_exact = row.get("n_exact")
             n_shown = n_exact if n_exact is not None else row.get("n_proxy")
@@ -1128,6 +1303,7 @@ __all__ = [
     "STATE_NOT_DUE",
     "STATE_RESOLUTION_HOLD",
     "STATE_RESOLVED",
+    "STATE_SUPERVISED",
     "STATE_UNWATCHED",
     "STATE_VERDICT_UNATTESTED",
     "TRUTH_LEDGER_RELPATH",

@@ -40,14 +40,34 @@ __all__ = [
     "build_health_alert_text",
     "dispatch_health_notification",
     "issues_fingerprint",
+    "reassert_minutes_for",
 ]
 
 HEALTH_NOTIFY_STATE_FILE = Path("artifacts") / ".health_check_last_notification"
+
+#: Query-Parameter der Auslöser-ID (siehe app/observability/operator_feedback.py).
+TRIGGER_QUERY_PARAM = "t"
 
 # Ein Daueralarm darf nicht still verschwinden: einmal pro Tag wird auch ein
 # unveränderter Befund wiederholt. 24 h statt 30 min senkt die Last um Faktor
 # ~48, ohne einen Befund je aus dem Kanal zu verlieren.
 _DEFAULT_REASSERT_MINUTES = 1440.0
+
+# KLASSENABHAENGIGE WIEDERHOLUNG (G6 Task 1, A4-024/026). Das 24-h-Gate loeste
+# den Wiederholungs-Spam — und schuf denselben Widerspruch noch einmal an
+# anderer Stelle: ein STILLES VERSAGEN, das sich per Definition nicht aendert,
+# verschwand damit fuer 24 h aus dem Kanal. Genau dieser Fatigue-Schutz erstickt
+# die Klasse, gegen die er nie gerichtet war.
+#
+# Aufloesung: der Fingerprint entscheidet weiter, WAS neu ist; die Klasse
+# entscheidet, wie lange Bekanntes schweigen darf. Kein Durchbruch auf 0 —
+# das waere der Zustand vor dem 18.08. (gemessen: 30 gesendete Alarme an EINEM
+# Tag, alle mit demselben 16 Tage alten Befund).
+_REASSERT_MINUTES_BY_CLASS: dict[str, float] = {
+    "P0": 60.0,  # Kapital/Truth/Backup: stuendlich, solange es steht
+    "P1": 360.0,  # stilles Versagen: 4x taeglich statt 1x
+    "UNCLASSIFIED": 360.0,  # unbekannte Dringlichkeit wird wie P1 behandelt
+}
 
 _RECOVERY_TEXT = (
     "KAI Health Alert — behoben\nAlle vorher gemeldeten Befunde sind aufgelöst; "
@@ -72,8 +92,53 @@ def issues_fingerprint(issues: Any) -> str:
     return hashlib.sha256("|".join(keys).encode("utf-8")).hexdigest()[:16]
 
 
+def reassert_minutes_for(issues: Any, *, default_minutes: float) -> float:
+    """Wie lange ein UNVERAENDERTER Befund schweigen darf — nach Klasse.
+
+    Die dringlichste anwesende Klasse gewinnt: eine P0 neben zehn P2 macht die
+    ganze Meldung stuendlich, nicht taeglich.
+    """
+    from app.alerts.alert_classes import classify_issues
+
+    windows = [
+        _REASSERT_MINUTES_BY_CLASS[item.alert_class.value]
+        for item in classify_issues(issues)
+        if item.alert_class.value in _REASSERT_MINUTES_BY_CLASS
+    ]
+    return min(windows) if windows else default_minutes
+
+
+def _dashboard_link(trigger_id: str) -> str:
+    """Klickbarer Link mit Auslöser-ID — oder nichts.
+
+    Ohne ihn muss der Operator die ID von Hand an eine URL haengen. Eine
+    Rueckkante, die eine Bastelarbeit verlangt, misst Reibung statt Nutzen:
+    eine Null waere dann nicht die Antwort auf die Frage, sondern die Antwort
+    auf die Umstaendlichkeit ihrer Messung. Fehlt die URL, bleibt es bei der
+    nackten ID — geraten wird nichts.
+    """
+    try:
+        from app.core.settings import get_settings
+
+        base = str(get_settings().operator.telegram_dashboard_url or "").strip()
+    except Exception:  # noqa: BLE001 — ein Alarm darf an der Konfiguration nicht scheitern
+        return ""
+    if not base:
+        return ""
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{TRIGGER_QUERY_PARAM}={trigger_id}"
+
+
 def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
-    """Alarmtext aus dem Report. Rein, damit der Inhalt prüfbar ist."""
+    """Alarmtext aus dem Report. Rein, damit der Inhalt prüfbar ist.
+
+    Nach Klassen getrennt statt in EINEM Block: bis hierher reisten bis zu 35
+    Komponenten in einer Nachricht, ein kritischer ``privilege_broker`` mit
+    derselben Dringlichkeit wie ein ``annotations``-Rueckstand (A4-005).
+    """
+    from app.alerts.alert_classes import partition
+    from app.observability.operator_feedback import new_trigger_id
+
     lines = ["KAI Health Alert"]
     if report.data_sources_stale:
         lines.append("[NOTE] data sources stale — Pi-sync may be lagging")
@@ -81,9 +146,23 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
         f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
         f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
     )
-    for issue in report.issues:
-        tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
-        lines.append(f"[{tag}] {issue.component}: {issue.message}")
+    trigger_id = new_trigger_id(seed=issues_fingerprint(report.issues))
+    link = _dashboard_link(trigger_id)
+    # G8, Rueckkante: ohne einen Schluessel, den Befund UND Handlung tragen,
+    # ist "der Operator hat nach dem Alarm etwas getan" nicht von "er hat
+    # zufaellig etwas getan" zu unterscheiden. Genau daran scheitert jede
+    # Nutzenaussage - 141 Stroeme messen KAI, null messen seinen Nutzen.
+    lines.append(f"Trigger: {trigger_id}")
+    if link:
+        lines.append(link)
+    grouped = partition(report.issues)
+    for alert_class in sorted(grouped, key=lambda c: c.rank):
+        items = grouped[alert_class]
+        lines.append("")
+        lines.append(f"== {alert_class.value} ({len(items)}) ==")
+        for item in items:
+            tag = "CRITICAL" if item.severity == "critical" else "WARNING"
+            lines.append(f"[{tag}] {item.component}: {item.message}")
     return "\n".join(lines)
 
 
@@ -142,6 +221,36 @@ def _send(text: str, *, sender: Any) -> bool:
     return bool(asyncio.run(send_operator_notification(text)))
 
 
+def _record_emitted(text: str, *, fingerprint: str, finding_count: int) -> None:
+    """Schreibe die ausgesendete Auslöser-ID in den Operator-Strom (G8).
+
+    Best effort: ein Protokollfehler darf einen zugestellten Alarm nicht
+    nachtraeglich entwerten.
+    """
+    try:
+        from datetime import UTC, datetime
+
+        from app.observability.operator_feedback import (
+            OPERATOR_ACTION_STREAM,
+            record_trigger_emitted,
+        )
+
+        line = next((ln for ln in text.splitlines() if ln.startswith("Trigger: ")), "")
+        trigger_id = line.split(" ", 1)[1].strip() if " " in line else ""
+        if not trigger_id:
+            return
+        record_trigger_emitted(
+            Path("artifacts") / OPERATOR_ACTION_STREAM,
+            now=datetime.now(UTC),
+            trigger_id=trigger_id,
+            channel="telegram",
+            finding_count=finding_count,
+            fingerprint=fingerprint,
+        )
+    except Exception:  # noqa: BLE001
+        return
+
+
 def dispatch_health_notification(
     report: Any,
     *,
@@ -192,12 +301,14 @@ def dispatch_health_notification(
                     f"{elapsed_min:.1f}/{notify_cooldown_minutes}min).[/dim]"
                 )
                 return False
-        elif fingerprint == last_fingerprint and elapsed_min < reassert_minutes:
-            console.print(
-                f"[dim]Notification suppressed (unchanged finding, "
-                f"{elapsed_min:.0f}/{reassert_minutes:.0f}min till re-assert).[/dim]"
-            )
-            return False
+        else:
+            window = reassert_minutes_for(report.issues, default_minutes=reassert_minutes)
+            if fingerprint == last_fingerprint and elapsed_min < window:
+                console.print(
+                    f"[dim]Notification suppressed (unchanged finding, "
+                    f"{elapsed_min:.0f}/{window:.0f}min till re-assert).[/dim]"
+                )
+                return False
 
     # Geänderte Befundmenge ist Neuigkeit und wartet auf keinen Cooldown: der
     # frühere Zeit-Cooldown hätte einen NEUEN kritischen Befund bis zu 30 Minuten
@@ -205,6 +316,7 @@ def dispatch_health_notification(
     text = build_health_alert_text(report, lookback_hours=lookback_hours)
     ok = _send(text, sender=sender)
     if ok:
+        _record_emitted(text, fingerprint=fingerprint, finding_count=len(report.issues))
         _write_state(path, now_ts=now, fingerprint=fingerprint)
         console.print("[green]Telegram notification sent.[/green]")
     else:

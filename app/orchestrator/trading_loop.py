@@ -38,6 +38,7 @@ from app.orchestrator.signal_source import (
     derive_autonomous_signal_source,
     resolve_signal_source,
 )
+from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 from app.risk.churn_killer import ChurnKillerConfig, ChurnVerdict, evaluate_churn_gate
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
@@ -2108,29 +2109,6 @@ async def run_position_monitor_once(
         enable_consensus=False,
     )
     return await loop.run_position_monitor()
-
-
-def load_trading_loop_cycles(audit_path: str | Path = _AUDIT_LOG) -> list[dict[str, object]]:
-    """Load loop cycle audit rows from JSONL, skipping malformed lines."""
-    path = Path(audit_path)
-    if not path.exists():
-        return []
-
-    records: list[dict[str, object]] = []
-    # KAI-01: stream the (~27 MB) trading-loop audit line-by-line instead of
-    # ``read_text().splitlines()`` to avoid the full-file RAM peak on the Pi.
-    with path.open(encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                records.append(payload)
-    return records
 
 
 def build_recent_cycles_summary(
