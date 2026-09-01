@@ -1,0 +1,22 @@
+{
+  // Dedizierter Type-Check fuer die BUILD-/DEV-Konfiguration.
+  //
+  // WARUM: tsconfig.json includet nur "src" — vite.config.ts und vitest.config.ts
+  // wurden dadurch von `tsc -b --noEmit` NIE geprueft. Positivkontrolle 31.08.:
+  // ein absichtlich injizierter Typfehler in vite.config.ts lief mit
+  // `npm run lint` glatt mit exit 0 durch. Erst `vite build` faengt so etwas —
+  // also erst, nachdem der Fehler schon im Build steckt.
+  //
+  // Bewusst NICHT das Haupt-tsconfig verbreitert: das zoege postcss/tailwind-
+  // Configs und Skripte mit ein und aendert die Semantik des Produktions-Gates.
+  // Stattdessen ein zweiter, enger Vertrag — verdrahtet in `npm run lint`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // vite.config.ts nutzt `path` und `__dirname`.
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "vitest.config.ts", "src/lib/resolveApiBase.ts"]
+}

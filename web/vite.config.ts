@@ -2,14 +2,24 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-// Backend base URL for proxy + same-origin fetches. Override via VITE_KAI_API_BASE.
-// LAN-reachable dev: set host:true (already below) and VITE_KAI_API_BASE to LAN IP.
-export default defineConfig(({ mode }) => {
+import { localDevBanner, resolveApiBase } from "./src/lib/resolveApiBase.js";
+
+// Backend base URL fuer den DEV-SERVER-PROXY. Wird NICHT ins Bundle injiziert:
+// produktiv fetcht das Frontend Same-Origin relativ (Asset-Base /dashboard/).
+// H6 Dev-Guard 2026-08-31: kein stiller Rueckfall auf 127.0.0.1 mehr. Ohne
+// VITE_KAI_API_BASE und ohne KAI_ALLOW_LOCAL_DEV_BACKEND=1 bricht der DEV-Server
+// ab; Build und Preview bleiben unberuehrt. Siehe src/lib/resolveApiBase.ts.
+export default defineConfig((configEnv) => {
+  const { command, mode } = configEnv;
+  const isPreview = Boolean((configEnv as { isPreview?: boolean }).isPreview);
   const env = loadEnv(mode, process.cwd(), "");
-  const apiBase = env.VITE_KAI_API_BASE || "http://127.0.0.1:8000";
+  const resolved = resolveApiBase(command, env, isPreview);
+  if (resolved.kind === "local-dev-optin") {
+    console.warn(localDevBanner());
+  }
 
   const proxied = {
-    target: apiBase,
+    target: resolved.base,
     changeOrigin: true,
     secure: false,
   };
@@ -55,18 +65,24 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    server: {
-      host: true,
-      port: 5173,
-      proxy: {
-        "/health": proxied,
-        "/dashboard/api": proxied,
-        "/operator": proxied,
-        "/alerts": proxied,
-        "/sources": proxied,
-        "/research": proxied,
-        "/query": proxied,
-      },
-    },
+    // Nur wenn eine Base feststeht (Dev-Server). Bei Build/Preview entfaellt der
+    // server-Block vollstaendig -> im Produktionspfad existiert kein localhost.
+    ...(resolved.base
+      ? {
+          server: {
+            host: true,
+            port: 5173,
+            proxy: {
+              "/health": proxied,
+              "/dashboard/api": proxied,
+              "/operator": proxied,
+              "/alerts": proxied,
+              "/sources": proxied,
+              "/research": proxied,
+              "/query": proxied,
+            },
+          },
+        }
+      : {}),
   };
 });
