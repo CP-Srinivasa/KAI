@@ -139,17 +139,276 @@ def timer_category(unit: str) -> str:
     return classify_timer_schedule(*schedule)
 
 
-def _get_default_total() -> int:
-    """Dynamically count kai-*.timer units in deploy/systemd as default timer count."""
-    default_total = 10  # Standard fallback
+def _deploy_systemd_dir() -> Path | None:
+    """Locate ``deploy/systemd`` by walking up, exactly like ``_find_timer_file``.
+
+    STAB-2026-09-01: this used a hard-coded ``parents[3]``, which is off by one
+    for a module at ``app/services/`` (parents[2] IS the repo root; parents[3] is
+    the directory ABOVE it, e.g. ``/home/ubuntu``). The lookup therefore never
+    found ``deploy/systemd`` on the Pi, fell into the bare ``except`` and returned
+    the hard-coded fallback 10 -- which is what the dashboard rendered as
+    "10 Timer" while 56 kai-*.timer units were installed. The walk-up form is the
+    one already proven in ``_find_timer_file`` and is nesting-independent.
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "deploy" / "systemd"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def installed_timer_units() -> list[str]:
+    """Every ``kai-*.timer`` unit the repo ships, sorted. Empty when unlocatable."""
+    deploy_dir = _deploy_systemd_dir()
+    if deploy_dir is None:
+        return []
     try:
-        workspace_root = Path(__file__).resolve().parents[3]
-        deploy_dir = workspace_root / "deploy" / "systemd"
-        if deploy_dir.is_dir():
-            default_total = len(list(deploy_dir.glob("kai-*.timer")))
+        return sorted(p.name for p in deploy_dir.glob("kai-*.timer"))
     except Exception:
-        pass
-    return default_total
+        return []
+
+
+# The declared fallback when the unit inventory cannot be read at all. It is a
+# LAST RESORT, and the reader now marks the population ``unknown`` rather than
+# presenting the fallback as a measured count.
+_UNKNOWN_TOTAL_FALLBACK = 0
+
+
+def _get_default_total() -> int:
+    """Number of kai-*.timer units shipped in deploy/systemd (0 when unknown)."""
+    units = installed_timer_units()
+    return len(units) if units else _UNKNOWN_TOTAL_FALLBACK
+
+
+# ---------------------------------------------------------------------------
+# Freshness contract (STAB-2026-09-01)
+# ---------------------------------------------------------------------------
+# The old rule was a flat ``diff > 7200`` ("older than 2h -> stale"). The PRODUCER
+# of this snapshot is ``kai-pi-health.timer`` with ``OnCalendar=*-*-* 04:30:00 UTC``
+# -- it runs ONCE PER DAY. A 2h budget against a 24h cadence means the snapshot is
+# "stale" for 22 of every 24 hours: a permanent structural false positive rather
+# than a measurement. The budget is now DERIVED from the unit contract:
+#
+#     stale_after = expected_cadence + accuracy + runtime_margin + grace
+#
+# Nothing here parses calendar expressions by hand. ``OnCalendar`` is evaluated by
+# systemd itself (``systemd-analyze calendar``) and ``OnUnitActiveSec`` by
+# ``systemd-analyze timespan``; when systemd is unavailable (CI, Windows dev) only
+# the one unambiguous "every day at a fixed wall-clock time" shape is accepted and
+# everything else is reported as unknown -- never guessed.
+
+TIMER_HEALTH_PRODUCER_UNIT = "kai-pi-health.timer"
+
+# Deterministic, declared margins. AccuracySec is read from the unit itself; the
+# runtime margin covers the probe's own execution (measured ~3 s wall on the Pi 5,
+# so 300 s is two orders of magnitude of headroom); the grace absorbs a single
+# missed-then-recovered activation window.
+_DEFAULT_RUNTIME_MARGIN_S = 300
+_DEFAULT_GRACE_S = 600
+_DEFAULT_ACCURACY_S = 60
+
+
+@dataclass(frozen=True)
+class FreshnessContract:
+    """How old this snapshot may be before it stops describing the present."""
+
+    producer_unit: str
+    expected_cadence_seconds: int | None
+    accuracy_seconds: int
+    runtime_margin_seconds: int
+    grace_seconds: int
+
+    @property
+    def stale_after_seconds(self) -> int | None:
+        if self.expected_cadence_seconds is None:
+            return None
+        return (
+            self.expected_cadence_seconds
+            + self.accuracy_seconds
+            + self.runtime_margin_seconds
+            + self.grace_seconds
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "producer_unit": self.producer_unit,
+            "expected_cadence_seconds": self.expected_cadence_seconds,
+            "accuracy_seconds": self.accuracy_seconds,
+            "runtime_margin_seconds": self.runtime_margin_seconds,
+            "grace_seconds": self.grace_seconds,
+            "stale_after_seconds": self.stale_after_seconds,
+        }
+
+
+def _run_systemd_analyze(cmd: list[str]) -> str | None:
+    """Run a systemd-analyze query. Returns None whenever systemd is not usable."""
+    try:
+        import shutil
+        import subprocess
+
+        if shutil.which(cmd[0]) is None:
+            return None
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            cmd, capture_output=True, text=True, timeout=10, check=False
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+    except Exception:
+        return None
+
+
+def parse_systemd_timespan(
+    expr: str, *, runner: Callable[[list[str]], str | None] | None = None
+) -> int | None:
+    """Seconds for a systemd timespan (``2min``, ``1h 30s``, ``86400``).
+
+    Delegates to ``systemd-analyze timespan`` when available so the semantics are
+    systemd's, not ours. The local fallback understands only the unambiguous
+    ``<number><unit>`` forms systemd documents; anything else returns ``None``
+    rather than a guess.
+    """
+    expr = (expr or "").strip()
+    if not expr:
+        return None
+    out = (runner or _run_systemd_analyze)(["systemd-analyze", "timespan", expr])
+    if out:
+        m = re.search(r"[Uu]sec:\s*(\d+)", out)
+        if m:
+            return int(int(m.group(1)) // 1_000_000)
+    units = {
+        "us": 1e-6,
+        "usec": 1e-6,
+        "ms": 1e-3,
+        "msec": 1e-3,
+        "s": 1,
+        "sec": 1,
+        "second": 1,
+        "seconds": 1,
+        "m": 60,
+        "min": 60,
+        "minute": 60,
+        "minutes": 60,
+        "h": 3600,
+        "hr": 3600,
+        "hour": 3600,
+        "hours": 3600,
+        "d": 86400,
+        "day": 86400,
+        "days": 86400,
+        "w": 604800,
+        "week": 604800,
+        "weeks": 604800,
+    }
+    total = 0.0
+    matched = False
+    for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-zA-Z]*)", expr):
+        key = unit.lower()
+        if key == "":
+            factor = 1.0
+        elif key in units:
+            factor = float(units[key])
+        else:
+            return None
+        total += float(num) * factor
+        matched = True
+    return int(total) if matched else None
+
+
+def _parse_systemd_stamp(text: str) -> datetime | None:
+    """Parse the timestamp systemd-analyze prints, tolerating its variants."""
+    cleaned = re.sub(r"^[A-Za-z]{3}\s+", "", text.strip())
+    cleaned = re.sub(r"\s+(UTC|CEST|CET|GMT)$", "", cleaned)
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(cleaned, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return None
+
+
+def derive_cadence_seconds(
+    oncalendar: str | None,
+    onunitactivesec: str | None = None,
+    *,
+    runner: Callable[[list[str]], str | None] | None = None,
+) -> int | None:
+    """Expected interval between two runs, using systemd's own semantics.
+
+    ``OnCalendar`` is handed to ``systemd-analyze calendar --iterations=3`` and the
+    interval is read off the iterations it returns; we never implement calendar
+    arithmetic here (that is exactly the homegrown-parser trap #14 warns about).
+    ``OnUnitActiveSec`` is a plain timespan. Unknown / unavailable -> ``None``, and
+    the caller then reports the freshness budget as unknown instead of inventing one.
+    """
+    run = runner or _run_systemd_analyze
+    cal = (oncalendar or "").strip()
+    if cal:
+        out = run(["systemd-analyze", "calendar", "--iterations=3", cal])
+        if out:
+            stamps: list[datetime] = []
+            for pattern in (r"Next elapse:\s*(.+)$", r"Iter\.\s*#\d+:\s*(.+)$"):
+                for m in re.finditer(pattern, out, re.MULTILINE):
+                    parsed = _parse_systemd_stamp(m.group(1).strip())
+                    if parsed is not None:
+                        stamps.append(parsed)
+            stamps.sort()
+            deltas = [
+                int((b - a).total_seconds()) for a, b in zip(stamps, stamps[1:], strict=False)
+            ]
+            deltas = [d for d in deltas if d > 0]
+            if deltas:
+                return max(deltas)
+        # systemd unavailable: accept ONLY the unambiguous "every day at a fixed
+        # wall-clock time" shape, which is what every daily KAI producer uses.
+        # Anything richer stays unknown rather than mis-derived.
+        if re.fullmatch(r"\*-\*-\*\s+\d{2}:\d{2}(:\d{2})?(\s+\w+)?", cal):
+            return 86400
+        return None
+    return parse_systemd_timespan(onunitactivesec or "", runner=run)
+
+
+def _parse_accuracy_seconds(text: str) -> int:
+    """AccuracySec= from a unit body, via systemd timespan semantics."""
+    m = re.search(r"^\s*AccuracySec=(.+)$", text, re.MULTILINE)
+    if not m:
+        return _DEFAULT_ACCURACY_S
+    parsed = parse_systemd_timespan(m.group(1).strip())
+    return parsed if parsed is not None else _DEFAULT_ACCURACY_S
+
+
+def timer_health_freshness_contract(
+    producer_unit: str = TIMER_HEALTH_PRODUCER_UNIT,
+    *,
+    runner: Callable[[list[str]], str | None] | None = None,
+) -> FreshnessContract:
+    """Freshness budget derived from the producer timer's own unit contract."""
+    base = producer_unit.removesuffix(".timer").removesuffix(".service")
+    timer_file = _find_timer_file(base)
+    cadence: int | None = None
+    accuracy = _DEFAULT_ACCURACY_S
+    if timer_file is not None:
+        try:
+            text = timer_file.read_text(encoding="utf-8")
+        except Exception:
+            text = ""
+        if text:
+            accuracy = _parse_accuracy_seconds(text)
+            cal = re.search(r"^\s*OnCalendar=(.+)$", text, re.MULTILINE)
+            act = re.search(r"^\s*OnUnitActiveSec=(.+)$", text, re.MULTILINE)
+            cadence = derive_cadence_seconds(
+                cal.group(1).strip() if cal else None,
+                act.group(1).strip() if act else None,
+                runner=runner,
+            )
+    return FreshnessContract(
+        producer_unit=producer_unit,
+        expected_cadence_seconds=cadence,
+        accuracy_seconds=accuracy,
+        runtime_margin_seconds=_DEFAULT_RUNTIME_MARGIN_S,
+        grace_seconds=_DEFAULT_GRACE_S,
+    )
 
 
 def read_latest_timer_audit(path: Path) -> dict[str, Any]:
@@ -158,7 +417,8 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
     Fehlertolerant:
     - Datei fehlt oder leer -> state="no_data"
     - Letzte Zeile korrupt -> state="corrupt" mit Fallback auf vorletzte Zeile
-    - checked_at älter als 2h -> state="stale" (auch wenn inactive=0)
+    - checked_at älter als der ABGELEITETE Freshness-Vertrag -> state="stale"
+      (siehe ``timer_health_freshness_contract``; kein pauschaler 2h-Wert mehr)
     - FS-2 taxonomy: each inactive timer is categorised (recurring_required /
       one_shot_expected_inactive / disabled_by_design). A recurring/failed timer
       that is inactive -> state="critical"; an expected-inactive one-shot (fixed
@@ -166,13 +426,34 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
     - sonst -> state="ok"
     """
     default_total = _get_default_total()
+    installed = installed_timer_units()
+    contract = timer_health_freshness_contract()
 
+    # STAB-2026-09-01: previously this returned ``total=active=default_total`` —
+    # i.e. "everything is fine" fabricated out of a fallback constant while NO
+    # measurement existed at all. A missing snapshot is UNKNOWN, never healthy.
+    # ``total``/``active`` are the CURRENT measurement and are ``None`` whenever
+    # the snapshot does not describe the present; the numbers that were last
+    # observed live on in ``last_known_*`` and must be rendered as such.
     default_response: dict[str, Any] = {
         "state": "no_data",
+        "severity": "warning",
         "checked_at": None,
         "stale_minutes": None,
-        "total": default_total,
-        "active": default_total,
+        "age_seconds": None,
+        "counts_are_current": False,
+        "total": None,
+        "active": None,
+        "last_known_total": None,
+        "last_known_active": None,
+        "installed_timer_count": len(installed),
+        "installed_timers": installed,
+        "monitored_timer_count": None,
+        "critical_count": 0,
+        "expected_inactive_count": 0,
+        "unknown_count": len(installed),
+        "freshness": contract.as_dict(),
+        "status_reason": "NO_SNAPSHOT",
         "inactive": [],
     }
 
@@ -210,19 +491,17 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
             parsed_data = None
 
     if parsed_data is None:
-        return {
-            "state": "corrupt",
-            "checked_at": None,
-            "stale_minutes": None,
-            "total": default_total,
-            "active": default_total,
-            "inactive": [],
-        }
+        corrupt = dict(default_response)
+        corrupt["state"] = "corrupt"
+        corrupt["status_reason"] = "SNAPSHOT_CORRUPT"
+        return corrupt
 
     # Bestimme checked_at
     checked_at_str = parsed_data.get("timestamp_utc")
     checked_at = None
     stale_minutes = None
+    age_seconds: int | None = None
+    status_reason = "PASS"
     state = "ok"
 
     if checked_at_str:
@@ -234,9 +513,17 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
 
             now = datetime.now(UTC)
             diff = now - checked_at
-            stale_minutes = int(diff.total_seconds() // 60)
-            if diff.total_seconds() > 7200:  # 2 Stunden = 7200 Sekunden
+            age_seconds = int(diff.total_seconds())
+            stale_minutes = age_seconds // 60
+            budget = contract.stale_after_seconds
+            if budget is None:
+                # The producer cadence could not be established. Fail CLOSED: an
+                # unverifiable budget must not silently certify freshness.
                 state = "stale"
+                status_reason = "FRESHNESS_BUDGET_UNKNOWN"
+            elif age_seconds > budget:
+                state = "stale"
+                status_reason = "SNAPSHOT_OLDER_THAN_CADENCE"
         except Exception:
             pass
 
@@ -297,6 +584,17 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
         total = len(inactive_timers)
     active = total - len(inactive_timers)
 
+    # The probe reports how many units it actually examined. When it does not, we
+    # say so instead of passing the repo inventory off as a measurement.
+    monitored_from_audit = parsed_data.get("monitored_timers")
+    monitored: int | None
+    try:
+        monitored = int(monitored_from_audit) if monitored_from_audit is not None else None
+    except Exception:
+        monitored = None
+    if monitored is None and total_from_audit is not None:
+        monitored = total
+
     # FS-2 taxonomy counts.
     critical_count = sum(1 for t in inactive_timers if t.get("severity") == "critical")
     expected_inactive_count = sum(
@@ -320,15 +618,35 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
     else:
         severity = "ok"
 
+    if state == "critical" and status_reason == "PASS":
+        status_reason = "RECURRING_TIMER_INACTIVE"
+
+    # THE CONTRACT (STAB-2026-09-01 §11): a snapshot that no longer describes the
+    # present may not be reported as a current measurement. ``total``/``active``
+    # are the CURRENT reading and go to ``None``; the observed numbers survive as
+    # ``last_known_*`` and every consumer must label them as last-known.
+    counts_are_current = state not in ("stale", "corrupt", "no_data")
+    installed_units = installed_timer_units()
+
     return {
         "state": state,
         "severity": severity,
         "checked_at": checked_at_str,
         "stale_minutes": stale_minutes,
-        "total": total,
-        "active": active,
-        "critical_count": critical_count,
-        "expected_inactive_count": expected_inactive_count,
+        "age_seconds": age_seconds,
+        "counts_are_current": counts_are_current,
+        "total": total if counts_are_current else None,
+        "active": active if counts_are_current else None,
+        "last_known_total": total,
+        "last_known_active": active,
+        "installed_timer_count": len(installed_units),
+        "installed_timers": installed_units,
+        "monitored_timer_count": monitored,
+        "critical_count": critical_count if counts_are_current else 0,
+        "expected_inactive_count": expected_inactive_count if counts_are_current else 0,
+        "unknown_count": 0 if counts_are_current else (monitored or len(installed_units)),
+        "freshness": contract.as_dict(),
+        "status_reason": status_reason,
         "inactive": inactive_timers,
     }
 
