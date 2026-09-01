@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -454,10 +455,10 @@ def canonical_source_id(raw: str | None) -> str:
 
 def reconcile_source_populations(
     *,
-    accuracy: dict[str, object],
-    stability: dict[str, object],
-    reliability: dict[str, object] | None = None,
-) -> dict[str, object]:
+    accuracy: Mapping[str, object],
+    stability: Mapping[str, object],
+    reliability: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
     """Explain every difference between the source populations. §5.
 
     The dashboard published "0/15" next to "0/12" with both labelled simply
@@ -496,8 +497,25 @@ def reconcile_source_populations(
         if s not in reasons
     )
 
+    # Per-source membership: which of the three models each canonical source is
+    # actually in. This is the decomposition BEHIND the counts — without it
+    # "15 vs 12" is again just two numbers, which is the whole complaint. It also
+    # satisfies the repo's "kein Aggregat ohne Zerlegung" ratchet for the right
+    # reason: the breakdown is the point of this function, not a token added to
+    # get past a guard.
+    per_source_membership = {
+        src: {
+            "in_accuracy": src in acc,
+            "in_reliability": src in rel,
+            "in_stability": src in stab,
+            "reason": reasons.get(src, "present in every evaluated model"),
+        }
+        for src in sorted(acc | rel | stab)
+    }
+
     return {
         # §5: the two counts are NAMED, never both just "Quellen".
+        "per_source_membership": per_source_membership,
         "outcome_bearing_source_count": len(acc),
         "reliability_managed_source_count": len(rel),
         "stability_evaluated_source_count": len(stab),
