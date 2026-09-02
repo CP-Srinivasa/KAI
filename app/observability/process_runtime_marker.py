@@ -80,6 +80,7 @@ STATE_UNKNOWN: Final = "UNKNOWN"
 STATE_DEPLOY_PROVENANCE_MISMATCH: Final = "DEPLOYMENT_PROVENANCE_MISMATCH"
 STATE_EXPECTED_UNKNOWN: Final = "EXPECTED_SHA_UNKNOWN"
 STATE_NOT_RUNNING: Final = "EXPECTED_UNIT_NOT_RUNNING"
+STATE_RELEASE_MISMATCH: Final = "RELEASE_IDENTITY_MISMATCH"
 
 #: Zustaende, die niemals als „in Ordnung" durchgehen duerfen.
 NOT_PASSING: Final = frozenset(
@@ -92,6 +93,7 @@ NOT_PASSING: Final = frozenset(
         STATE_DEPLOY_PROVENANCE_MISMATCH,
         STATE_EXPECTED_UNKNOWN,
         STATE_NOT_RUNNING,
+        STATE_RELEASE_MISMATCH,
     }
 )
 
@@ -155,6 +157,8 @@ def build_process_marker(
     python_executable: str,
     requirements_lock_sha256: str | None,
     started_at_utc: str,
+    release_path: str = "",
+    release_tree_sha256: str = "",
 ) -> dict[str, Any]:
     """Der Satz, den ein Dienst beim Start ueber sich selbst schreibt."""
     return {
@@ -168,7 +172,48 @@ def build_process_marker(
         "runtime_code_sha": runtime_code_sha,
         "python_executable": python_executable,
         "requirements_lock_sha256": requirements_lock_sha256,
+        # Der AUFGELOESTE Release-Pfad, nicht der Symlink: ein spaeter
+        # umgeschaltetes ``current`` darf diesen Prozess nicht umetikettieren.
+        "release_path": release_path,
+        "release_tree_sha256": release_tree_sha256,
     }
+
+
+def marker_from_release(
+    manifest: Any,
+    *,
+    unit: str,
+    pid: int,
+    release_path: Path | str,
+    started_at_utc: str,
+    proc_start_ticks_value: int | None = None,
+    boot_id: str | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    """Der Marker aus dem RELEASE, nicht aus einem beweglichen Checkout.
+
+    Kein ``git rev-parse`` im laufenden Prozess: der Release-Baum ist
+    unveraenderlich, sein ``release.json`` sagt, welche Bytes hier liegen. Genau
+    das ist die geladene Code-Identitaet — ein Commit aus einem Baum, der sich
+    weiterbewegen kann, war es nie.
+    """
+    import sys as _sys
+
+    return build_process_marker(
+        unit=unit,
+        pid=pid,
+        proc_start_ticks=(
+            proc_start_ticks(pid) if proc_start_ticks_value is None else proc_start_ticks_value
+        ),
+        boot_id=current_boot_id() if boot_id is None else boot_id,
+        repo_root=str(release_path),
+        runtime_code_sha=str(getattr(manifest, "repo_sha", "") or ""),
+        python_executable=python_executable or _sys.executable,
+        requirements_lock_sha256=getattr(manifest, "requirements_lock_sha256", None) or None,
+        started_at_utc=started_at_utc,
+        release_path=str(release_path),
+        release_tree_sha256=str(getattr(manifest, "release_tree_sha256", "") or ""),
+    )
 
 
 def self_attest_and_exec(
@@ -192,8 +237,25 @@ def self_attest_and_exec(
     einen Prozess, der den alten geladen hat — ein falsches MATCH aus genau der
     Luecke, die dieser Marker schliessen soll.
     """
-    marker = marker_from_identity(identity, unit=unit, pid=os.getpid(), repo_root=repo_root)
-    write_process_marker(marker, root=Path(repo_root))
+    root = Path(repo_root)
+    from app.observability.release_identity import read_release_manifest
+
+    manifest = read_release_manifest(root)
+    if manifest is not None:
+        # Der Regelfall in Produktion: unveraenderlicher Release-Baum.
+        marker = marker_from_release(
+            manifest,
+            unit=unit,
+            pid=os.getpid(),
+            release_path=root,
+            started_at_utc=identity.started_at_utc,
+        )
+    else:
+        # Kein Release-Baum (Entwicklungsumgebung): der Marker traegt dann KEINE
+        # Release-Identitaet, und der Evaluator behandelt das als unbelegt statt
+        # als bestanden.
+        marker = marker_from_identity(identity, unit=unit, pid=os.getpid(), repo_root=root)
+    write_process_marker(marker, root=root)
     (execv or os.execv)(argv[0], list(argv))
 
 
@@ -273,6 +335,8 @@ def _one(
     expected_lock_sha256: str | None,
     checkout_sha: str,
     deployed_at_utc: str | None,
+    expected_release_tree_sha256: str = "",
+    current_release_path: str = "",
 ) -> ProcessFinding:
     if marker is None:
         return ProcessFinding(
@@ -352,6 +416,38 @@ def _one(
             expected_sha,
         )
 
+    # Der unveraenderliche Baum: Prozess, aktives Release und Deploy muessen
+    # DIESELBE Release-Identitaet nennen. Ohne diese Achse beweist ein gleicher
+    # Commit nur, dass irgendwo dieselbe Zahl steht — nicht, welche Bytes der
+    # Prozess geladen hat.
+    if expected_release_tree_sha256:
+        marker_tree = str(marker.get("release_tree_sha256") or "")
+        if not marker_tree:
+            return unknown("Marker nennt keinen Release-Baum — geladene Bytes unbelegt")
+        if marker_tree != expected_release_tree_sha256:
+            return ProcessFinding(
+                obs.unit,
+                STATE_RELEASE_MISMATCH,
+                (
+                    f"Prozess laedt Release-Baum {marker_tree[:8]}, "
+                    f"aktiv/deployt ist {expected_release_tree_sha256[:8]}"
+                ),
+                code_sha,
+                expected_sha,
+            )
+    if current_release_path:
+        marker_path_value = str(marker.get("release_path") or "")
+        if not marker_path_value:
+            return unknown("Marker nennt keinen Release-Pfad")
+        if os.path.normcase(marker_path_value) != os.path.normcase(current_release_path):
+            return ProcessFinding(
+                obs.unit,
+                STATE_RELEASE_MISMATCH,
+                f"Prozess laeuft aus {marker_path_value}, current zeigt auf {current_release_path}",
+                code_sha,
+                expected_sha,
+            )
+
     lock = marker.get("requirements_lock_sha256")
     # Eine fehlende Soll-Lock ist keine bestandene Pruefung, sondern eine
     # unvollstaendige Provenienz: ohne Soll laesst sich ueber die
@@ -402,6 +498,8 @@ def evaluate_process_markers(
     expected_lock_sha256: str | None = None,
     deployed_at_utc: str | None = None,
     expected_units: Iterable[str] = (),
+    expected_release_tree_sha256: str = "",
+    current_release_path: str = "",
 ) -> ProcessProvenance:
     """Rein: aus Marker und Beobachtung ein Urteil. Keine Uhr, kein I/O.
 
@@ -419,6 +517,8 @@ def evaluate_process_markers(
             expected_lock_sha256=expected_lock_sha256,
             checkout_sha=checkout_sha,
             deployed_at_utc=deployed_at_utc,
+            expected_release_tree_sha256=expected_release_tree_sha256,
+            current_release_path=current_release_path,
         )
         for obs in observations
     ) + tuple(
@@ -562,6 +662,7 @@ __all__ = [
     "STATE_INVALID",
     "STATE_MATCH",
     "STATE_NOT_RUNNING",
+    "STATE_RELEASE_MISMATCH",
     "STATE_STALE_NO_RESTART",
     "STATE_DEPLOY_PROVENANCE_MISMATCH",
     "STATE_EXPECTED_UNKNOWN",
@@ -576,6 +677,7 @@ __all__ = [
     "build_process_marker",
     "self_attest_and_exec",
     "marker_from_identity",
+    "marker_from_release",
     "current_boot_id",
     "evaluate_process_markers",
     "marker_path",

@@ -8,7 +8,13 @@ OnFailure=kai-unit-failure-notify@%n.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+# Der Code liegt im unveraenderlichen Release; `current` wird vom Wrapper
+# beim Start AUFGELOEST und der aufgeloeste Pfad im Marker gefuehrt — ein
+# spaeter umgeschaltetes current etikettiert diesen Prozess nicht um.
+WorkingDirectory=/home/kai/current
+# Kein __pycache__ im versiegelten Baum — sonst versuchte der Interpreter,
+# genau das zu beschreiben, was unveraenderlich sein soll.
+Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 
@@ -23,7 +29,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # behaelt PID und Kernel-Startzeit, also sind Marker und Dienst dieselbe
 # Identitaet. ExecStartPost koennte das nicht: ein zweiter Prozess wuerde
 # einen selbst gelesenen Commit einer fremden MainPID zuschreiben.
-ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/ubuntu/ai_analyst_trading_bot -- /home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.ingestion.liquidations.binance_stream
+ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.ingestion.liquidations.binance_stream
 
 Restart=always
 RestartSec=5

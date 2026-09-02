@@ -64,6 +64,11 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
         for s in services
     ]
     deploy = read_deployment_marker(repo_root) or {}
+    # Die dritte Achse: welche unveraenderlichen Bytes sind ueberhaupt aktiv?
+    # ``current`` wird aufgeloest, nicht als Symlink gefuehrt — und das aktive
+    # Release muss seinen eigenen Anspruch noch tragen, sonst ist der Baum
+    # nachtraeglich angefasst worden.
+    current_path, current_tree = _active_release(repo_root)
     # Der erwartete Stand ist, WAS DEPLOYT WURDE — nicht, worauf der Checkout
     # gerade steht. Beides gleichzusetzen hiess, den Checkout mit sich selbst zu
     # vergleichen: eine Pruefung, die nicht scheitern kann. Auch die Lock-SHA
@@ -75,6 +80,8 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
         expected_sha=str(deploy.get("repo_sha") or ""),
         checkout_sha=checkout_sha,
         expected_units=expected,
+        expected_release_tree_sha256=current_tree,
+        current_release_path=current_path,
         expected_lock_sha256=deploy.get("requirements_lock_sha256"),
         deployed_at_utc=deploy.get("deployed_at_utc"),
     )
@@ -112,6 +119,31 @@ def unit_active_enter_utc(unit: str) -> str:
     return datetime.fromtimestamp(now - boot + usec / 1_000_000, tz=UTC).isoformat(
         timespec="seconds"
     )
+
+
+def _active_release(state_root: Path) -> tuple[str, str]:
+    """``(aufgeloester Release-Pfad, release_tree_sha256)`` — leer, wenn keiner.
+
+    Leer heisst NICHT "in Ordnung": der Evaluator prueft die Release-Achse dann
+    schlicht nicht, und ohne Release-Marker im Prozess bleibt sein Zustand
+    ohnehin unbelegt. Auf dem Pi ist beides gesetzt.
+    """
+    from app.observability.release_identity import (
+        read_release_manifest,
+        resolve_current,
+        verify_release,
+    )
+
+    current = resolve_current(state_root.parent / "current")
+    if current is None:
+        return "", ""
+    if verify_release(current):
+        # Der aktive Baum traegt seinen eigenen Anspruch nicht mehr. Dann ist
+        # jede Aussage ueber ihn wertlos — die Achse bleibt ungenannt, und die
+        # uebrigen Pruefungen entscheiden.
+        return str(current), ""
+    manifest = read_release_manifest(current)
+    return str(current), (manifest.release_tree_sha256 if manifest else "")
 
 
 def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
