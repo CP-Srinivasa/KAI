@@ -8,7 +8,7 @@ OnFailure=kai-unit-failure-notify@%n.service
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 Environment=EXPLORATION_ENABLED=true
 Environment=EXPLORATION_COINGECKO_ENABLED=true
 Environment=EXPLORATION_COINGECKO_SCRAPE_ENABLED=true

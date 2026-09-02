@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Feeds top-N Momentum-Universe symbols (minus those the G1 rotation FSM
 # flagged/archived) into PAPER as LONG signals tagged

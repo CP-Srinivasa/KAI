@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # READ-ONLY informational cross-check: pairs the own-data universe momentum rank
 # with a ToS-compliant TA rating computed from our OWN OHLCV (no scraping, no

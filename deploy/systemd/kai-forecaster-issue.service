@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Shadow epoch data clock (#647): issues yesterday's (UTC) CORE8 panel from the
 # read-only Binance daily-klines path. Duplicate t0 (Persistent=true catch-up
