@@ -4,6 +4,10 @@
 
 `ai_analyst_trading_bot` ist der Legacy-/Repository-/Paketname; `Robotron` ist ein interner Codename — beide sind nicht die fachliche Produktidentität.
 
+## KAI CORE v1 (2026-09-02)
+
+Der **bewiesene Kern** — acht Schichten mit je einer verantwortlichen Komponente, ein AI-Gateway (`app/ai/`), zwei reproduzierbare End-to-End-Use-Cases, Deploy-Pfad und Komponentenentscheidung (KEEP/FIX/MERGE/DELETE/QUARANTINE/DEFER) — steht in **[`docs/KAI_CORE_V1.md`](docs/KAI_CORE_V1.md)**. Was dort nicht steht, ist nicht Teil des Kerns.
+
 ## Ziel-Hierarchie (bindend, Operator-Klarstellung 2026-07-02)
 
 Die **Gesamt-Vision ist das Dach und unverändert gültig**: eine institutionelle AI-Finanzanalyse- und Entscheidungs-Infrastruktur — Qualität, probabilistische Entscheidungsfindung, Datenvalidierung, Risikoarchitektur, langfristige Lernfähigkeit, Multi-Agenten-System. Kein gewöhnlicher Trading-Bot. Kanonische Definition: [`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md).

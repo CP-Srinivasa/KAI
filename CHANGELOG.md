@@ -1,3 +1,18 @@
+## 2026-09-02 - KAI CORE v1: ein Kern, ein AI-Gateway, -18.714 Zeilen
+
+Reformations-Sprint (D-CORE-001, `docs/KAI_CORE_V1.md`). Vier LLM-Pfade werden eine Aufruf-Schicht
+(`app/ai/`: Fehlerklassifikation, Retry-Filter, Correlation-ID, Tokens, Per-Versuch-Telemetrie v2,
+`/health/ai`); der Server-Analysepfad bekommt erstmals dieselbe Fallback-Kette wie der Cron-Pfad.
+Gemini-Timeout und DB-LLM-Audit (`model="unknown"`, Gemini/Grok fehlten) repariert. Docker/Postgres-
+Welt samt ungenutztem CI-Postgres-Service entfernt, 6 importlose Dependencies raus, DB-Default auf
+SQLite, `DB_URL` in Production Pflicht, `EnvironmentFile=` in allen Units Pflicht, redigierter
+Konfig-Snapshot (`/health/config`). 5 Shims, 37 tote Module, 25 Waisen-Skripte geloescht — jeder
+Kandidat per Import-Graph + grep belegt. Zwei E2E-Use-Cases (AI-Orchestration mit 429→Fallback,
+Signal-Execution TV-Webhook→Paper-Fill→Close) und ein realer Minimal-Env-Startup-Test.
+Quarantaene statt Halbbau: Research, Lightning, Premium, Live-Exchange, `app/intelligence`,
+LiteLLM-Branch. Offene Operator-Schritte: `APP_ENV=production`, drei Units mit Code ausserhalb des
+Repos, Unit-Apply.
+
 ## 2026-08-31 - G4: kein neuer Strom ohne Abnehmer (Stream-Consumer-Ratchet)
 
 Vierzehn der 22 Integrations-Gaps des Master-Audits `KMA-20260827` sind **ein** Defekt: KAI baut
