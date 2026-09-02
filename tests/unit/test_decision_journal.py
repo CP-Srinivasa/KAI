@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.decisions.journal import (
+from app.execution.models import DecisionRecord
+from app.orchestrator.decision_journal import (
     DecisionJournalSummary,
     RiskAssessment,
     append_decision_jsonl,
@@ -16,7 +17,6 @@ from app.decisions.journal import (
     create_decision_instance,
     load_decision_journal,
 )
-from app.execution.models import DecisionRecord
 
 
 def _risk_kwargs() -> dict[str, object]:
