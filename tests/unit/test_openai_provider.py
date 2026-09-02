@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.analysis.base.interfaces import LLMAnalysisOutput
+from app.analysis.prompts import format_user_prompt
 from app.core.enums import MarketScope, SentimentLabel
-from app.integrations.openai.prompts import format_user_prompt
 from app.integrations.openai.provider import OpenAIAnalysisProvider
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Decoupled refresh: writes artifacts/momentum_universe_candidates.jsonl — a
 # read-only "Sicht" snapshot (most-traded x best-performer from our OWN exchange

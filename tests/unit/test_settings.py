@@ -26,7 +26,7 @@ def test_app_settings_defaults(monkeypatch):
 
 def test_db_settings_defaults():
     settings = DBSettings(_env_file=None)
-    assert "postgresql" in settings.url
+    assert settings.url.startswith("sqlite+aiosqlite:///")
     assert settings.pool_size > 0
 
 

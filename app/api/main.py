@@ -30,7 +30,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.analysis.factory import create_provider
+from app.analysis.factory import create_primary_provider, create_provider
 from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
 from app.api.middleware.security_headers import setup_security_headers
@@ -99,20 +99,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Build analysis components for full-pipeline mode
     keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
+    # NEO-F-001 (2026-09-02): the server used to run the single provider named
+    # by PIPELINE_PROVIDER (code default "openai"), while the CLI/cron path ran
+    # the OpenAI -> Gemini -> (Grok) chain. Two entry points, two chains, no
+    # reproducible provider selection. The server now uses the SAME chain,
+    # defined in exactly one place (app/analysis/factory.py).
+    #
+    # Cost-neutral by construction: the first attempt is still OpenAI with the
+    # same model and prompt; Gemini is only reached when OpenAI actually fails,
+    # which today ends in the rule-based fallback anyway. No shadow provider is
+    # wired here — that doubles spend and needs the cost data from the v2
+    # telemetry stream first (separate commit).
+    #
+    # PIPELINE_PROVIDER remains a hard override when it is EXPLICITLY set
+    # (model_fields_set), including an empty value meaning "no LLM at all".
     provider = None
-    if settings.pipeline_provider:
-        provider = create_provider(settings.pipeline_provider, settings)
+    if "pipeline_provider" in settings.model_fields_set:
+        if settings.pipeline_provider:
+            provider = create_provider(settings.pipeline_provider, settings)
+            if provider is None:
+                _logger.warning(
+                    "pipeline_provider_unavailable",
+                    provider=settings.pipeline_provider,
+                    hint="API key missing? Falling back to rule-based analysis only.",
+                )
+            else:
+                _logger.info(
+                    "pipeline_provider_ready",
+                    provider=settings.pipeline_provider,
+                    cls=type(provider).__name__,
+                    source="explicit_override",
+                )
+        else:
+            _logger.info("pipeline_provider_disabled_by_override")
+    else:
+        provider = create_primary_provider()
         if provider is None:
             _logger.warning(
-                "pipeline_provider_unavailable",
-                provider=settings.pipeline_provider,
-                hint="API key missing? Falling back to rule-based analysis only.",
+                "pipeline_primary_chain_unavailable",
+                hint="No provider API key configured. Rule-based analysis only.",
             )
         else:
             _logger.info(
                 "pipeline_provider_ready",
-                provider=settings.pipeline_provider,
+                provider=getattr(provider, "provider_name", type(provider).__name__),
                 cls=type(provider).__name__,
+                source="primary_chain",
             )
 
     app.state.rss_scheduler = RSSScheduler(

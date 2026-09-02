@@ -51,6 +51,15 @@ class RotationRule:
 # consumer needs at most a recent window (see module docstring for exclusions).
 ROTATION_RULES: tuple[RotationRule, ...] = (
     RotationRule(
+        filename="llm_telemetry.jsonl",
+        max_bytes=20 * _MB,
+        keep_lines=20_000,
+        rationale="KAI CORE v1 (2026-09-02): both readers are windowed — "
+        "llm_telemetry_summary (24h) and app/ai/health.py::ai_health_snapshot "
+        "(window_hours); the per-attempt v2 rows multiply volume x2-3 "
+        "(~220 calls/day on the Pi) — 20k lines is roughly a month",
+    ),
+    RotationRule(
         filename="bridge_pending_orders.jsonl",
         max_bytes=20 * _MB,
         keep_lines=5_000,

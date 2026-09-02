@@ -34,7 +34,8 @@ Honesty contracts (kai-master-coding-regeln §safe, KAI-Directive §9)
   ``edge_report`` already reports forward coverage.
 - "cvar_bps" is the cohort's OWN conditional-loss tail. Portfolio-level CVaR
   *contribution* requires the cross-position covariance path
-  (``app.risk.portfolio_risk.PortfolioRiskEngine``) and is out of scope here;
+  (a dedicated covariance engine; the former ``app.risk.portfolio_risk`` was
+  removed as dead code in KAI CORE v1) and is out of scope here;
   the field is named to avoid overclaiming.
 """
 

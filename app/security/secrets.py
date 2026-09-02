@@ -50,10 +50,13 @@ def validate_secrets(settings: AppSettings) -> None:
     warnings: list[str] = []
 
     # ── Database ──────────────────────────────────────────────────────────────
-    _insecure_default = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot"
+    # KAI CORE v1: the default is a local SQLite file (safe, credential-free), but
+    # production must name its database explicitly — an implicit default DB in
+    # production is undefined behaviour, not a configuration.
     db_url = settings.db.url or ""
-    if not db_url or db_url == _insecure_default:
-        msg = "DB_URL is using the insecure default — set a real URL with a strong password"
+    db_url_explicit = "url" in settings.db.model_fields_set
+    if not db_url or not db_url_explicit:
+        msg = "DB_URL is not set explicitly — production must name its database"
         if is_production:
             missing.append(msg)
         else:

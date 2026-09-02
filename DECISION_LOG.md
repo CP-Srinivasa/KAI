@@ -665,3 +665,8 @@ Ergebnis: Forward-Precision 36.27% → **85.19%** (23 hit / 4 miss / 27 resolved
 **Tests:** 65 Unit-Tests grün (ATR 7, ADX 8, RV/Vol-Class/ATR-Z 16, Classifier+Hysteresis 19, Storage 8, Service 7).
 
 **Nächster Folge-Sprint:** R2 — Multi-Asset (BTC, ETH + 3-5 weitere) + Korrelations-Tracking.
+
+### D-CORE-001 (2026-09-02)
+**Entscheidung:** KAI CORE v1 — genau ein Kern (8 Schichten, je eine Komponente, `docs/KAI_CORE_V1.md`); AI-Gateway `app/ai/` als einzige Aufruf-Schicht für LLM-Provider; Server- und CLI-Analysepfad auf dieselbe Kette `openai → gemini (→ grok) → internal`; Docker/Postgres-Welt, 6 Deps, 5 Shims, 37 tote Module, 25 Waisen-Skripte gelöscht (−18.714 Zeilen); Research/Lightning/Premium/Live-Exchange/`app/intelligence`/`decision_journal`/`kai-tv-auto-promote` in QUARANTINE; Branch `codex/llm-router-migration-20260901` (LiteLLM-Proxy) wird **nicht** gemergt.
+**Begründung:** Vier parallele LLM-Pfade, davon der Server-Pfad ohne Fallback und ohne Fehlersicht (0/12.940 Telemetriezeilen mit Fehler); 11 % des Codes ohne Importeur; eine Deployment-Welt ohne Nutzer; der LiteLLM-Branch wäre fünfter Pfad + zweiter Prozess + neue Dependency + Ratchet-Verstoß.
+**Auswirkungen/Rückrollbarkeit:** Löschungen via Git-History rückholbar; Quarantäne ist Doku, kein Code-Umzug; Unit-Härtung `EnvironmentFile=` wirkt erst nach Operator-Apply; `APP_ENV=production` bleibt Operator-Schritt. Betroffen: `app/ai/`, `app/analysis/factory.py`, `app/api/main.py`, `app/core/config_redaction.py`, `deploy/systemd/*`, `pyproject.toml`, `docs/KAI_CORE_V1.md`.

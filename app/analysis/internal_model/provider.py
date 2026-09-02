@@ -23,7 +23,7 @@ from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import EntityMention
 from app.core.enums import MarketScope, SentimentLabel
-from app.enrichment.entities.matcher import hits_to_entity_mentions
+from app.normalization.entities import hits_to_entity_mentions
 
 _ASSET_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _MAX_TAGS = 20

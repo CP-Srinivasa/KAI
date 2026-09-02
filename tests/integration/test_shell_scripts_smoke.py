@@ -68,7 +68,6 @@ def _repo_bash_path(path: Path) -> str:
         "paper_trading_cron.sh",
         "pi_install_systemd.sh",
         "pi_transfer_artifacts.sh",
-        "pi_build_web.sh",
         "pi_deploy_web.sh",
         "pi_health_digest.sh",
         "pi_service_watchdog.sh",

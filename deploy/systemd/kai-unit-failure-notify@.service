@@ -8,5 +8,5 @@ Description=KAI notify operator that %i failed
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/notify_unit_failure.py %i

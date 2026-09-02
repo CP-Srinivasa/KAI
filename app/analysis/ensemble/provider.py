@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.ai.audit import llm_call_scope
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.core.logging import get_logger
 
@@ -61,18 +62,42 @@ class EnsembleProvider(BaseAnalysisProvider):
         """Ordered technical trace of configured providers."""
         return [provider.provider_name for provider in self._providers]
 
+    @property
+    def providers(self) -> tuple[BaseAnalysisProvider, ...]:
+        """Ordered sub-providers. Read-only view so callers cannot mutate the chain.
+
+        Needed by the pipeline to resolve the *model* of the provider that
+        actually won — ``self.model`` only carries a provider name.
+        """
+        return tuple(self._providers)
+
     async def analyze(
         self,
         title: str,
         text: str,
         context: dict[str, Any] | None = None,
     ) -> LLMAnalysisOutput:
-        """Try each provider in order, return the first successful result."""
-        last_error: Exception | None = None
+        """Try each provider in order, return the first successful result.
 
-        for provider in self._providers:
+        NEO-F-004: each attempt gets its own telemetry row. Previously only the
+        winner was measured (the pipeline wrapped the WHOLE chain in one
+        record_llm_call), so every fallthrough was invisible and the dashboard
+        failure_rate_pct undercounted structurally.
+        """
+        last_error: Exception | None = None
+        last_index = len(self._providers) - 1
+
+        for index, provider in enumerate(self._providers):
             try:
-                result = await provider.analyze(title, text, context)
+                async with llm_call_scope(
+                    purpose="analysis",
+                    provider=provider.provider_name,
+                    model=provider.model,
+                    chain_position=index,
+                    failure_outcome="fallthrough" if index < last_index else "exhausted",
+                ) as scope:
+                    result = await provider.analyze(title, text, context)
+                    scope.set_tokens(result.prompt_tokens, result.completion_tokens)
                 # Per-call annotation survives concurrent dispatch where the
                 # shared _active_provider_name would race. Keep the instance
                 # state updated for back-compat callers, but the Pipeline uses

@@ -13,7 +13,6 @@ No storage calls. No HTTP (transport isolated in `app/integrations/`). Stateless
 | `keywords/engine.py` | `KeywordEngine`, `KeywordHit` | Multi-layer text matcher |
 | `keywords/watchlist.py` | `WatchlistEntry`, `load_watchlist` | Loads monitor/watchlists.yml |
 | `keywords/aliases.py` | `EntityAlias`, `load_entity_aliases` | Loads monitor/entity_aliases.yml |
-| `query/executor.py` | `QueryExecutor` | In-memory QuerySpec filter |
 | `pipeline.py` | `AnalysisPipeline`, `PipelineResult` | Full analysis orchestrator |
 
 ## Provider Pattern
@@ -82,7 +81,7 @@ Sprint 4C tasks (for Codex):
 - No DB imports
 - No HTTP in analysis logic (provider transport lives in `app/integrations/`)
 - All output models are Pydantic v2, all scores validated
-- Prompts versioned in `app/integrations/openai/prompts.py`
+- Prompts versioned in `app/analysis/prompts.py`
 
 ## Tests
 

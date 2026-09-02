@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 # Decoupled refresh: writes artifacts/coingecko_overview_cache.json + shadow log.
 # Default-OFF via APP_COINGECKO_OVERVIEW_ENABLED (no-op until the operator opts in).
 # "-" prefix: a failed refresh must never propagate (loop never reads this yet).

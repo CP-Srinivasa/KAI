@@ -59,6 +59,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.ai.audit import classify_error, correlation_scope, current_correlation_id, http_status
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.crypto_relevance import crypto_relevance_verdict
 from app.analysis.input_contract import (
@@ -185,6 +186,31 @@ def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
     if provider_name in {"internal"}:
         return AnalysisSource.INTERNAL
     return AnalysisSource.EXTERNAL_LLM
+
+
+def _resolve_runtime_model_name(
+    provider: BaseAnalysisProvider | None,
+    output: LLMAnalysisOutput | None = None,
+) -> str | None:
+    """Model of the provider that actually ran — ``None`` when not determinable.
+
+    An EnsembleProvider's ``.model`` returns the *active provider name*, not a
+    model, so resolving it naively would put "gemini" into the model column.
+    We look the winner up in the chain instead and return ``None`` rather than
+    guessing (No-Fake-Doktrin).
+    """
+    if provider is None:
+        return None
+    winner = _resolve_runtime_provider_name(provider, output)
+    members = getattr(provider, "providers", None)
+    if isinstance(members, tuple):
+        for member in members:
+            if winner and member.provider_name == winner:
+                member_model = member.model
+                return member_model if isinstance(member_model, str) and member_model else None
+        return None
+    model = getattr(provider, "model", None)
+    return model if isinstance(model, str) and model else None
 
 
 def _resolve_runtime_provider_name(
@@ -358,6 +384,9 @@ class PipelineResult:
     analysis_result: AnalysisResult | None = None
     error: str | None = None
     provider_name: str | None = None
+    # NEO-F-003: the DB audit trail hardcoded model="unknown" at six call sites
+    # because the winning model never left the pipeline. It does now.
+    model_name: str | None = None
     trace_metadata: dict[str, object] = field(default_factory=dict)
     shadow_llm_output: LLMAnalysisOutput | None = None
     shadow_provider_name: str | None = None
@@ -525,6 +554,9 @@ class AnalysisPipeline:
         assert self._provider is not None
         name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
         started = monotonic()
+        # chain_position=-1 marks the OUTER row that spans the whole chain. It
+        # is kept verbatim for the v1 dashboard reader; the per-attempt rows
+        # (chain_position >= 0) come from EnsembleProvider.
         try:
             output = await self._provider.analyze(title=title, text=text, context=context)
         except Exception as exc:
@@ -535,6 +567,11 @@ class AnalysisPipeline:
                 latency_ms=(monotonic() - started) * 1000.0,
                 role="primary",
                 error_type=type(exc).__name__,
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                error_class=classify_error(exc),
+                http_status=http_status(exc),
             )
             raise
         record_llm_call(
@@ -543,6 +580,11 @@ class AnalysisPipeline:
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
             role="primary",
+            correlation_id=current_correlation_id(),
+            purpose="analysis",
+            chain_position=-1,
+            prompt_tokens=output.prompt_tokens,
+            completion_tokens=output.completion_tokens,
         )
         return output
 
@@ -577,6 +619,11 @@ class AnalysisPipeline:
                 ok=True,
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                prompt_tokens=output.prompt_tokens,
+                completion_tokens=output.completion_tokens,
             )
         except Exception as exc:
             record_llm_call(
@@ -586,6 +633,11 @@ class AnalysisPipeline:
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
                 error_type=type(exc).__name__,
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                error_class=classify_error(exc),
+                http_status=http_status(exc),
             )
             error = str(exc)
             logger.warning(
@@ -598,7 +650,21 @@ class AnalysisPipeline:
 
         return output, shadow_provider_name, None
 
-    async def run(self, doc: CanonicalDocument) -> PipelineResult:
+    async def run(
+        self, doc: CanonicalDocument, *, correlation_id: str | None = None
+    ) -> PipelineResult:
+        """Analyze a single document.
+
+        NEO-F-008: binds *correlation_id* (or a per-document one) for the whole
+        run, so every LLM row written underneath — including the per-attempt
+        rows inside an EnsembleProvider — carries the same id. The binding is
+        reset on exit and, because run_batch dispatches through tasks, cannot
+        bleed between concurrently analysed documents.
+        """
+        with correlation_scope(correlation_id or f"doc_{doc.id}"):
+            return await self._run(doc)
+
+    async def _run(self, doc: CanonicalDocument) -> PipelineResult:
         """Analyze a single document."""
         text = doc.cleaned_text or doc.raw_text or ""
         input_rejection = analysis_input_rejection(doc, text)
@@ -634,6 +700,7 @@ class AnalysisPipeline:
         shadow_provider_name: str | None = None
         shadow_error: str | None = None
         provider_name = "fallback"
+        model_name: str | None = None
         trace_metadata = _resolve_trace_metadata(self._provider)
         context: dict[str, Any] = {
             "tickers": self._keyword_engine.match_tickers(full_text),
@@ -804,6 +871,7 @@ class AnalysisPipeline:
                     _resolve_runtime_provider_name(self._provider, primary_output)
                     or self._provider.provider_name
                 )
+                model_name = _resolve_runtime_model_name(self._provider, primary_output)
                 analysis_source = _resolve_analysis_source(provider_name)
 
                 analysis_result = AnalysisResult(
@@ -849,6 +917,7 @@ class AnalysisPipeline:
             llm_output=llm_output,
             analysis_result=analysis_result,
             provider_name=provider_name,
+            model_name=model_name,
             trace_metadata=trace_metadata,
             shadow_llm_output=shadow_llm_output,
             shadow_provider_name=shadow_provider_name,
