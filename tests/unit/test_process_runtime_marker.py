@@ -17,6 +17,8 @@ sie nichts.
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,7 @@ from app.observability.process_runtime_marker import (
     STATE_EXPECTED_UNKNOWN,
     STATE_INVALID,
     STATE_MATCH,
+    STATE_NOT_RUNNING,
     STATE_STALE_NO_RESTART,
     STATE_UNKNOWN,
     VERDICT_HOLD,
@@ -38,10 +41,12 @@ from app.observability.process_runtime_marker import (
     build_process_marker,
     evaluate_process_markers,
     marker_from_identity,
+    marker_path,
     proc_start_ticks,
     read_deployment_marker,
     read_process_markers,
     render_process_provenance,
+    self_attest_and_exec,
     write_process_marker,
 )
 
@@ -49,6 +54,11 @@ NEW = "9293c4239b80ebbfec42a39cda289ba4f60a1610"
 OLD = "dc276bc32700bf1293de3eabe73a3b3b6675d9d8"
 BOOT = "0b1d5f2a-0000-4000-8000-000000000001"
 LOCK = "65de2c3439f9bc06e77dfa0b41427186476f0d81271784cb796e2c54370b6908"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+#: Vollstaendige Provenienz gehoert in JEDE Positivkontrolle. Ohne
+#: Deploy-Zeitstempel ist ``process_started_at >= deployed_at`` unbeweisbar,
+#: und Unbeweisbares darf nicht als MATCH durchgehen.
+DEPLOYED = "2026-09-02T04:00:00+00:00"
 
 
 def _obs(**over) -> ProcessObservation:
@@ -87,7 +97,7 @@ def _evaluate(marker: dict | None, obs: ProcessObservation | None = None, **kw):
         expected_sha=kw.pop("expected_sha", NEW),
         checkout_sha=kw.pop("checkout_sha", NEW),
         expected_lock_sha256=kw.pop("expected_lock_sha256", LOCK),
-        deployed_at_utc=kw.pop("deployed_at_utc", None),
+        deployed_at_utc=kw.pop("deployed_at_utc", DEPLOYED),
     )
 
 
@@ -220,7 +230,12 @@ def test_mehrere_dienste_werden_einzeln_ausgewiesen() -> None:
         b.unit: _marker(unit=b.unit, pid=99, proc_start_ticks=5, runtime_code_sha=OLD),
     }
     p = evaluate_process_markers(
-        [a, b], markers, expected_sha=NEW, checkout_sha=NEW, expected_lock_sha256=LOCK
+        [a, b],
+        markers,
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
     )
     assert p.units_total == 2
     assert p.units_matching == 1
@@ -363,6 +378,7 @@ def test_b5_pass_nur_wenn_alle_drei_gleich_sind() -> None:
         expected_sha=NEW,
         checkout_sha=NEW,
         expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
     )
     assert p.verdict == VERDICT_OK
     assert p.all_match
@@ -571,3 +587,241 @@ def test_b5_deploy_marker_ohne_lock_sha_ist_unvollstaendige_provenienz() -> None
     )
     assert p.findings[0].state == STATE_UNKNOWN
     assert p.verdict == VERDICT_HOLD
+
+
+# --------------------------------------------------------------------------
+# B3-Rest — eine unterlassene Pruefung ist kein bestandener Test.
+#
+# Vorher lief die Zeitpruefung nur unter ``if deployed_at_utc:``. Fehlte der
+# Zeitstempel, wurde die Deploy-Relation stillschweigend uebersprungen und
+# _one() endete in MATCH — obwohl ``process_started_at >= deployed_at`` gar
+# nicht geprueft worden war. Und ein naiver Zeitstempel bekam eine Zeitzone
+# VERPASST statt verworfen zu werden: eine erfundene Provenienz.
+# --------------------------------------------------------------------------
+
+
+def test_missing_deployed_at_is_hold() -> None:
+    """Alles andere passt — trotzdem kein MATCH, weil die Relation fehlt."""
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker()},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=None,
+    )
+    assert p.findings[0].state == STATE_UNKNOWN
+    assert p.verdict == VERDICT_HOLD
+    assert "Startrelation nicht beweisbar" in p.findings[0].detail
+
+
+def test_naive_deployed_at_is_hold() -> None:
+    p = _evaluate(_marker(), deployed_at_utc="2026-09-02T06:00:00")
+    assert p.findings[0].state == STATE_UNKNOWN
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_naive_started_at_is_hold() -> None:
+    p = _evaluate(
+        _marker(),
+        _obs(started_at_utc="2026-09-02T07:00:00"),
+        deployed_at_utc="2026-09-02T06:00:00+00:00",
+    )
+    assert p.findings[0].state == STATE_UNKNOWN
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_naive_zeit_wird_nicht_still_als_utc_gelesen() -> None:
+    """Direkt am Parser: naiv heisst None, nicht 'vermutlich UTC'."""
+    from app.observability.process_runtime_marker import _parse_utc
+
+    assert _parse_utc("2026-09-02T06:00:00") is None
+    assert _parse_utc("2026-09-02T06:00:00Z") is not None
+    assert _parse_utc("2026-09-02T06:00:00+00:00") is not None
+    assert _parse_utc("2026-09-02T08:00:00+02:00") == _parse_utc("2026-09-02T06:00:00Z")
+
+
+# --------------------------------------------------------------------------
+# P1-C-7 — die Revision muss von DEM Prozess stammen, der spaeter geprueft wird.
+#
+# `ExecStartPost` ist ein ZWEITER Prozess: er liest den Checkout und schreibt die
+# Revision unter einer per `systemctl show MainPID` abgefragten FREMDEN PID.
+# Bewegt sich der Checkout zwischen Dienststart und Nachlauf, behauptet der
+# Marker den neuen Commit fuer einen Prozess, der den alten geladen hat.
+#
+# Diese Tests konstruieren KEIN fertiges Dict mit OLD_SHA. Sie fahren den
+# Attestierungspfad gegen ein Repo auf OLD, bewegen den Checkout danach auf NEW
+# und lassen erst dann bewerten — die Erfassungsreihenfolge ist der Beweis.
+# --------------------------------------------------------------------------
+
+
+class _FrozenIdentity:
+    """Wie ``RuntimeIdentity``: eingefroren, nur lesend."""
+
+    def __init__(self, commit: str | None, lock: str | None, started: str) -> None:
+        self._c, self._l, self._s = commit, lock, started
+
+    @property
+    def runtime_commit(self) -> str | None:
+        return self._c
+
+    @property
+    def lock_sha256_at_start(self) -> str | None:
+        return self._l
+
+    @property
+    def started_at_utc(self) -> str:
+        return self._s
+
+
+def _capture_at(root: Path, commit: str) -> dict:
+    """Der Attestierungspfad, wie ihn der Wrapper im EIGENEN Prozess faehrt.
+
+    ``proc_start_ticks`` und ``boot_id`` werden vorgegeben, weil Windows weder
+    ``/proc/<pid>/stat`` noch ``/proc/sys/kernel/random/boot_id`` hat und der echte
+    Lesevorgang dort -1 bzw. "" liefert — beides ist korrektes Fail-closed, wuerde
+    hier aber die Erfassungsreihenfolge verdecken, um die es geht. Die Bindung an
+    den eigenen Prozess prueft ``pid=os.getpid()``.
+    """
+    return marker_from_identity(
+        _FrozenIdentity(commit, LOCK, "2026-09-02T05:00:00+00:00"),
+        unit="kai-server.service",
+        pid=os.getpid(),
+        repo_root=root,
+        proc_start_ticks_value=90210,
+        boot_id=BOOT,
+    )
+
+
+def test_p1c7_self_attestation_bindet_marker_an_den_eigenen_prozess(tmp_path: Path) -> None:
+    marker = _capture_at(tmp_path, NEW)
+    assert marker["pid"] == os.getpid()
+    assert marker["runtime_code_sha"] == NEW
+    # Ohne vorgegebene Ticks liest der Pfad sie fuer den EIGENEN Prozess.
+    echt = marker_from_identity(
+        _FrozenIdentity(NEW, LOCK, "2026-09-02T05:00:00+00:00"),
+        unit="kai-server.service",
+        pid=os.getpid(),
+        repo_root=tmp_path,
+    )
+    assert echt["proc_start_ticks"] == proc_start_ticks(os.getpid())
+
+
+def test_p1c7_stale_process_race_checkout_zieht_weiter(tmp_path: Path) -> None:
+    """Erfassung auf OLD, Checkout danach auf NEW, Deploy NEW => DRIFT, nicht MATCH."""
+    marker = _capture_at(tmp_path, OLD)  # 1. der Prozess bezeugt OLD
+    checkout_now = NEW  # 2. der Checkout bewegt sich
+    obs = ProcessObservation(
+        unit="kai-server.service",
+        main_pid=marker["pid"],
+        proc_start_ticks=marker["proc_start_ticks"],
+        boot_id=marker["boot_id"],
+        started_at_utc="2026-09-02T05:00:00+00:00",
+    )
+    p = evaluate_process_markers(
+        [obs],
+        {"kai-server.service": marker},
+        expected_sha=NEW,  # 3. der Deploy-Marker sagt NEW
+        checkout_sha=checkout_now,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc="2026-09-02T04:00:00+00:00",
+    )
+    assert p.findings[0].state == STATE_CODE_DRIFT
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_p1c7_der_wrapper_schreibt_erst_und_exect_dann(tmp_path: Path) -> None:
+    """Reihenfolge: ohne geschriebenen Marker darf nicht exect werden."""
+    gesehen: list[list[str]] = []
+
+    def fake_execv(path: str, argv: Sequence[str]) -> None:
+        # Zum Zeitpunkt des exec MUSS der Marker schon auf der Platte liegen.
+        assert marker_path("kai-server.service", root=tmp_path).is_file()
+        gesehen.append(list(argv))
+
+    self_attest_and_exec(
+        _FrozenIdentity(NEW, LOCK, "2026-09-02T05:00:00+00:00"),
+        unit="kai-server.service",
+        repo_root=tmp_path,
+        argv=["/x/python", "-m", "app.api"],
+        execv=fake_execv,
+    )
+    assert gesehen == [["/x/python", "-m", "app.api"]]
+    back = read_process_markers(["kai-server.service"], root=tmp_path)
+    assert back["kai-server.service"]["pid"] == os.getpid()  # type: ignore[index]
+
+
+def test_p1c7_units_attestieren_im_execstart_nicht_im_nachlauf() -> None:
+    """Struktur-Ratchet gegen den Rueckfall auf ExecStartPost."""
+    units = sorted((REPO_ROOT / "deploy" / "systemd").glob("*.service"))
+    traegt_wrapper = [u for u in units if "runtime-exec" in u.read_text(encoding="utf-8")]
+    assert len(traegt_wrapper) >= 5, "die langlebigen Dienste muessen sich selbst bezeugen"
+    for u in traegt_wrapper:
+        text = u.read_text(encoding="utf-8")
+        aktive = [ln for ln in text.splitlines() if ln.startswith("ExecStartPost=")]
+        assert aktive == [], f"{u.name} bezeugt im Nachlauf statt im eigenen Prozess"
+        assert "runtime-marker-write" not in text
+
+
+# --------------------------------------------------------------------------
+# P1-C-9 — 0 von 0 ist kein Deploy-Beweis.
+# --------------------------------------------------------------------------
+
+
+def test_p1c9_erwartete_unit_laeuft_nicht_ist_hold() -> None:
+    p = evaluate_process_markers(
+        [],
+        {},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+        expected_units=["kai-server.service"],
+    )
+    assert p.verdict == VERDICT_HOLD
+    assert p.findings[0].state == STATE_NOT_RUNNING
+    assert p.units_total == 1
+    assert not p.all_match
+
+
+def test_p1c9_ohne_erwartete_units_bleibt_null_von_null_kein_beweis() -> None:
+    p = evaluate_process_markers([], {}, expected_sha=NEW)
+    assert not p.all_match, "0 von 0 darf nie als vollstaendiger Beweis gelten"
+
+
+def test_p1c9_teilmenge_laeuft_die_fehlende_wird_benannt() -> None:
+    obs = _obs(unit="kai-server.service")
+    p = evaluate_process_markers(
+        [obs],
+        {"kai-server.service": _marker()},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+        expected_units=["kai-server.service", "kai-tg-listener.service"],
+    )
+    assert p.verdict == VERDICT_HOLD
+    zustaende = {f.unit: f.state for f in p.findings}
+    assert zustaende["kai-server.service"] == STATE_MATCH
+    assert zustaende["kai-tg-listener.service"] == STATE_NOT_RUNNING
+
+
+def test_p1c9_erwartete_units_kommen_aus_den_unit_dateien() -> None:
+    from app.alerts.process_runtime_probe import expected_attesting_units
+
+    erwartet = expected_attesting_units(REPO_ROOT)
+    assert "kai-server.service" in erwartet
+    assert len(erwartet) >= 5
+
+
+# --------------------------------------------------------------------------
+# Haltbarkeit B — die beiden Rollen duerfen nicht wieder vertauscht werden.
+# --------------------------------------------------------------------------
+
+
+def test_haltbarkeit_b_soll_und_ist_bleiben_getrennt() -> None:
+    src = (REPO_ROOT / "app" / "alerts" / "process_runtime_probe.py").read_text(encoding="utf-8")
+    assert "def process_runtime_finding(repo_root: Path, *, checkout_sha: str)" in src
+    assert "checkout_sha=checkout_sha" in src
+    assert 'expected_sha=str(deploy.get("repo_sha") or "")' in src
+    assert "checkout_sha=expected_sha" not in src, "Soll und Ist wieder vertauscht"

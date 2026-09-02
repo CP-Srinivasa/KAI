@@ -20,8 +20,14 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def process_runtime_finding(repo_root: Path, *, expected_sha: str) -> str | None:
+def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None:
     """Der Befundtext, wenn ein Prozess seinen Code nicht oder falsch bezeugt.
+
+    ``checkout_sha`` heisst so, weil es das ist: der gemessene Stand des
+    Checkouts. Der SOLL-Stand kommt ausschliesslich aus
+    ``deployment_marker.repo_sha``. Der Parameter hiess frueher ``expected_sha``
+    und wurde auch als solcher weitergereicht — daher der tautologische
+    Vergleich des Checkouts mit sich selbst.
 
     ``None`` heisst: jeder repo-basierte, laufende Dienst hat beim Start die
     erwartete Revision bezeugt. Fehlt ein Marker, lautet der Zustand ``UNKNOWN``
@@ -38,8 +44,13 @@ def process_runtime_finding(repo_root: Path, *, expected_sha: str) -> str | None
     )
     from app.observability.runtime_provenance import collect_runtime_services
 
+    expected = expected_attesting_units(repo_root)
     services = [s for s in collect_runtime_services() if s.repo_based and s.pid > 0]
-    if not services:
+    if not services and not expected:
+        # Kein systemd, keine erwarteten Units: eine Entwicklungsumgebung. Hier
+        # gilt der Vertrag ausdruecklich NICHT — und "nicht anwendbar" ist etwas
+        # anderes als "bestanden". Auf dem Pi ist ``expected`` nie leer, dort
+        # fuehrt dieselbe Lage zu HOLD statt zu Schweigen.
         return None
     boot = current_boot_id()
     observations = [
@@ -62,7 +73,8 @@ def process_runtime_finding(repo_root: Path, *, expected_sha: str) -> str | None
         observations,
         read_process_markers([s.unit for s in services], root=repo_root),
         expected_sha=str(deploy.get("repo_sha") or ""),
-        checkout_sha=expected_sha,
+        checkout_sha=checkout_sha,
+        expected_units=expected,
         expected_lock_sha256=deploy.get("requirements_lock_sha256"),
         deployed_at_utc=deploy.get("deployed_at_utc"),
     )
@@ -102,4 +114,32 @@ def unit_active_enter_utc(unit: str) -> str:
     )
 
 
-__all__ = ["process_runtime_finding", "unit_active_enter_utc"]
+def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
+    """Die Units, die sich beim Start selbst bezeugen MUESSEN.
+
+    Quelle sind die Unit-Dateien im Repo: wer ``runtime-exec`` in seinem
+    ``ExecStart`` fuehrt, hat den Attestierungsvertrag. Die Liste pflegt sich
+    damit selbst — eine handgefuehrte Konstante waere die naechste Wachliste,
+    die von ihrer Quelle abweicht.
+    """
+    units_dir = repo_root / "deploy" / "systemd"
+    out: list[str] = []
+    try:
+        candidates = sorted(units_dir.glob("*.service"))
+    except OSError:
+        return ()
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "runtime-exec" in text:
+            out.append(path.name)
+    return tuple(out)
+
+
+__all__ = [
+    "expected_attesting_units",
+    "process_runtime_finding",
+    "unit_active_enter_utc",
+]

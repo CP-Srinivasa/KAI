@@ -36,11 +36,32 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
+
+
+class RuntimeIdentityLike(Protocol):
+    """Der Vertrag von :class:`app.core.runtime_identity.RuntimeIdentity`.
+
+    Bewusst ein Protokoll statt ``Any``: wird ein Feld dort umbenannt, faellt es
+    hier als mypy-Fehler auf, statt still zu ``UNKNOWN`` zu degradieren.
+    """
+
+    # Nur-lesend deklariert: ``RuntimeIdentity`` ist ein frozen dataclass, und ein
+    # Protokoll mit schreibbaren Feldern passt darauf nicht. mypy hat genau das
+    # beim ersten Versuch gemeldet.
+    @property
+    def runtime_commit(self) -> str | None: ...
+
+    @property
+    def lock_sha256_at_start(self) -> str | None: ...
+
+    @property
+    def started_at_utc(self) -> str: ...
+
 
 MARKER_SCHEMA: Final = "process_runtime_marker/v1"
 DEPLOY_MARKER_SCHEMA: Final = "deployment_marker/v1"
@@ -58,6 +79,7 @@ STATE_INVALID: Final = "INVALID"
 STATE_UNKNOWN: Final = "UNKNOWN"
 STATE_DEPLOY_PROVENANCE_MISMATCH: Final = "DEPLOYMENT_PROVENANCE_MISMATCH"
 STATE_EXPECTED_UNKNOWN: Final = "EXPECTED_SHA_UNKNOWN"
+STATE_NOT_RUNNING: Final = "EXPECTED_UNIT_NOT_RUNNING"
 
 #: Zustaende, die niemals als „in Ordnung" durchgehen duerfen.
 NOT_PASSING: Final = frozenset(
@@ -69,6 +91,7 @@ NOT_PASSING: Final = frozenset(
         STATE_UNKNOWN,
         STATE_DEPLOY_PROVENANCE_MISMATCH,
         STATE_EXPECTED_UNKNOWN,
+        STATE_NOT_RUNNING,
     }
 )
 
@@ -148,8 +171,34 @@ def build_process_marker(
     }
 
 
+def self_attest_and_exec(
+    identity: RuntimeIdentityLike,
+    *,
+    unit: str,
+    repo_root: Path | str,
+    argv: Sequence[str],
+    execv: Callable[[str, Sequence[str]], None] | None = None,
+) -> None:
+    """Im EIGENEN Prozess bezeugen, dann zum Dienst werden.
+
+    Der Marker wird unter ``os.getpid()`` geschrieben — und ``os.execv`` ersetzt
+    danach das Prozessabbild, **behaelt aber PID und Kernel-Startzeit**. Marker
+    und laufender Dienst sind damit dieselbe Kernel-Identitaet.
+
+    Warum nicht ``ExecStartPost``: das ist ein ZWEITER Prozess. Er liest den
+    Checkout und schreibt die Revision unter einer per ``systemctl show MainPID``
+    abgefragten FREMDEN PID. Bewegt sich der Checkout zwischen dem Start des
+    Dienstes und diesem Nachlauf, behauptet der Marker den neuen Commit fuer
+    einen Prozess, der den alten geladen hat — ein falsches MATCH aus genau der
+    Luecke, die dieser Marker schliessen soll.
+    """
+    marker = marker_from_identity(identity, unit=unit, pid=os.getpid(), repo_root=repo_root)
+    write_process_marker(marker, root=Path(repo_root))
+    (execv or os.execv)(argv[0], list(argv))
+
+
 def marker_from_identity(
-    identity: Any,
+    identity: RuntimeIdentityLike,
     *,
     unit: str,
     pid: int,
@@ -179,10 +228,10 @@ def marker_from_identity(
         ),
         boot_id=current_boot_id() if boot_id is None else boot_id,
         repo_root=str(repo_root),
-        runtime_code_sha=str(getattr(identity, "runtime_commit", "") or ""),
+        runtime_code_sha=str(identity.runtime_commit or ""),
         python_executable=python_executable or _sys.executable,
-        requirements_lock_sha256=getattr(identity, "lock_sha256_at_start", None),
-        started_at_utc=str(getattr(identity, "started_at_utc", "") or ""),
+        requirements_lock_sha256=identity.lock_sha256_at_start,
+        started_at_utc=str(identity.started_at_utc or ""),
     )
 
 
@@ -207,7 +256,13 @@ def _parse_utc(value: str) -> datetime | None:
         parsed = datetime.fromisoformat(raw)
     except ValueError:
         return None
-    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    # Ein naiver Zeitstempel bekommt hier KEINE Zeitzone verpasst. "06:00:00"
+    # ohne Offset ist kein Moment, sondern eine Ablesung ohne Ort; ihn still als
+    # UTC zu lesen waere eine erfundene Provenienz — und genau die Sorte
+    # stillschweigender Annahme, gegen die dieser Marker gebaut ist.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(UTC)
 
 
 def _one(
@@ -314,22 +369,26 @@ def _one(
             expected_sha,
         )
 
-    # Konsistenzkontrolle, nicht Primaerbeweis.
-    if deployed_at_utc:
-        deployed = _parse_utc(deployed_at_utc)
-        started = _parse_utc(obs.started_at_utc)
-        if deployed is None:
-            return unknown(f"Deploy-Zeitstempel unlesbar: {deployed_at_utc!r}")
-        if started is None:
-            return unknown("Startzeit des Prozesses unlesbar — Deploy-Relation nicht beweisbar")
-        if started < deployed:
-            return ProcessFinding(
-                obs.unit,
-                STATE_STALE_NO_RESTART,
-                f"gestartet {started.isoformat()} vor dem Deploy {deployed.isoformat()}",
-                code_sha,
-                expected_sha,
-            )
+    # Konsistenzkontrolle, nicht Primaerbeweis — aber eine UNTERLASSENE Kontrolle
+    # ist kein bestandener Test. Fehlt der Deploy-Zeitstempel, laesst sich
+    # ``process_started_at >= deployed_at`` nicht beweisen, und Unbeweisbares
+    # darf nicht als MATCH enden.
+    if not deployed_at_utc:
+        return unknown("Deploy-Zeitstempel fehlt — Startrelation nicht beweisbar")
+    deployed = _parse_utc(deployed_at_utc)
+    started = _parse_utc(obs.started_at_utc)
+    if deployed is None:
+        return unknown(f"Deploy-Zeitstempel nicht beweisbar: {deployed_at_utc!r}")
+    if started is None:
+        return unknown(f"Startzeit nicht beweisbar: {obs.started_at_utc!r}")
+    if started < deployed:
+        return ProcessFinding(
+            obs.unit,
+            STATE_STALE_NO_RESTART,
+            f"gestartet {started.isoformat()} vor dem Deploy {deployed.isoformat()}",
+            code_sha,
+            expected_sha,
+        )
 
     return ProcessFinding(obs.unit, STATE_MATCH, "", code_sha, expected_sha)
 
@@ -342,8 +401,16 @@ def evaluate_process_markers(
     checkout_sha: str = "",
     expected_lock_sha256: str | None = None,
     deployed_at_utc: str | None = None,
+    expected_units: Iterable[str] = (),
 ) -> ProcessProvenance:
-    """Rein: aus Marker und Beobachtung ein Urteil. Keine Uhr, kein I/O."""
+    """Rein: aus Marker und Beobachtung ein Urteil. Keine Uhr, kein I/O.
+
+    ``expected_units`` ist die Menge der Units, die laufen MUESSEN. Ohne sie
+    waere "0 von 0 Diensten in Ordnung" ein Urteil ueber nichts — und genau das
+    hat frueher als ``OK`` gegolten. Eine erwartete Unit ohne Beobachtung ist
+    ``EXPECTED_UNIT_NOT_RUNNING`` und damit HOLD.
+    """
+    seen = {obs.unit for obs in observations}
     findings = tuple(
         _one(
             obs,
@@ -354,6 +421,14 @@ def evaluate_process_markers(
             deployed_at_utc=deployed_at_utc,
         )
         for obs in observations
+    ) + tuple(
+        ProcessFinding(
+            unit,
+            STATE_NOT_RUNNING,
+            "erwartete Unit laeuft nicht — ueber ihren Code ist nichts bezeugt",
+            expected_sha=expected_sha,
+        )
+        for unit in sorted(set(expected_units) - seen)
     )
     matching = sum(1 for f in findings if f.state == STATE_MATCH)
     reasons = tuple(sorted({f.state for f in findings if not f.passing}))
@@ -486,6 +561,7 @@ __all__ = [
     "STATE_DEPENDENCY_DRIFT",
     "STATE_INVALID",
     "STATE_MATCH",
+    "STATE_NOT_RUNNING",
     "STATE_STALE_NO_RESTART",
     "STATE_DEPLOY_PROVENANCE_MISMATCH",
     "STATE_EXPECTED_UNKNOWN",
@@ -496,7 +572,9 @@ __all__ = [
     "ProcessObservation",
     "ProcessProvenance",
     "build_deployment_marker",
+    "RuntimeIdentityLike",
     "build_process_marker",
+    "self_attest_and_exec",
     "marker_from_identity",
     "current_boot_id",
     "evaluate_process_markers",

@@ -615,3 +615,46 @@ def trading_runtime_marker_write(
     else:
         commit = str(identity.runtime_commit)
         console.print(f"[green]{unit}[/green] bezeugt {commit[:8]} (pid {pid}) -> {path}")
+
+
+@trading_app.command(
+    "runtime-exec",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def trading_runtime_exec(
+    ctx: typer.Context,
+    unit: str = typer.Option(..., "--unit", help="Vollstaendiger Unit-Name"),
+    repo: str = typer.Option(".", "--repo", help="Checkout-Wurzel"),
+) -> None:
+    """Sich selbst bezeugen und dann zum Dienst werden.
+
+    Aufruf als ``ExecStart``:
+
+    ``… trading runtime-exec --unit %n --repo <root> -- <venv>/bin/python -m app.api…``
+
+    Dieser Prozess ermittelt die Runtime-Identitaet fuer SICH, schreibt den
+    Marker unter der eigenen PID und ersetzt sich dann per ``os.execv`` durch den
+    eigentlichen Dienst. ``execv`` behaelt PID und Kernel-Startzeit — Marker und
+    laufender Dienst sind damit dieselbe Kernel-Identitaet.
+
+    ``ExecStartPost`` kann das nicht: es ist ein zweiter Prozess, der den
+    Checkout liest und die Revision einer per ``systemctl show MainPID``
+    abgefragten fremden PID zuschreibt. Bewegt sich der Checkout dazwischen,
+    behauptet der Marker den neuen Commit fuer einen Prozess, der den alten
+    geladen hat.
+    """
+    from app.core.runtime_identity import capture_runtime_identity
+    from app.observability.process_runtime_marker import self_attest_and_exec
+
+    argv = list(ctx.args)
+    if not argv:
+        console.print("[red]runtime-exec ohne Kommando[/red] — nach `--` gehoert der Dienst.")
+        raise typer.Exit(code=2)
+
+    root = Path(repo).resolve()
+    self_attest_and_exec(
+        capture_runtime_identity(root),
+        unit=unit,
+        repo_root=root,
+        argv=argv,
+    )

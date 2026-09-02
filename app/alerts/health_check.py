@@ -1432,7 +1432,7 @@ def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
                 message=render_verdict(verdict),
             )
         )
-    message = process_runtime_finding(repo_root, expected_sha=head)
+    message = process_runtime_finding(repo_root, checkout_sha=head)
     if message:
         issues.append(
             HealthIssue(
