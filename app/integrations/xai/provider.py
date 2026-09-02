@@ -16,8 +16,9 @@ from __future__ import annotations
 from typing import Any
 
 from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.ai.audit import is_retryable_error
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
 
@@ -58,6 +59,9 @@ class GrokAnalysisProvider(BaseAnalysisProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=15),
+        # NEO-F-006: without a filter tenacity retried 401/400/ValidationError too,
+        # costing three attempts plus up to 15 s backoff for a hopeless call.
+        retry=retry_if_exception(is_retryable_error),
         reraise=True,
     )
     async def analyze(
@@ -83,7 +87,22 @@ class GrokAnalysisProvider(BaseAnalysisProvider):
         raw = response.choices[0].message.content
         if not raw:
             raise ValueError("Grok returned empty content — possible refusal")
-        return LLMAnalysisOutput.model_validate_json(raw)
+        result = LLMAnalysisOutput.model_validate_json(raw)
+        # NEO-F-003: without these the DB audit trail skipped every Grok success
+        # and the token columns stayed at zero. Mirrors openai/provider.py:91-95.
+        result.raw_prompt = user_prompt
+        result.raw_response = raw
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            # isinstance-gated: LLMAnalysisOutput is strict + validate_assignment,
+            # so a non-int usage field must not blow up an otherwise valid answer.
+            prompt_tokens = getattr(usage, "prompt_tokens", 0)
+            completion_tokens = getattr(usage, "completion_tokens", 0)
+            if isinstance(prompt_tokens, int):
+                result.prompt_tokens = prompt_tokens
+            if isinstance(completion_tokens, int):
+                result.completion_tokens = completion_tokens
+        return result
 
     @classmethod
     def from_settings(cls, settings: Any) -> GrokAnalysisProvider:

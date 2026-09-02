@@ -187,6 +187,31 @@ def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
     return AnalysisSource.EXTERNAL_LLM
 
 
+def _resolve_runtime_model_name(
+    provider: BaseAnalysisProvider | None,
+    output: LLMAnalysisOutput | None = None,
+) -> str | None:
+    """Model of the provider that actually ran — ``None`` when not determinable.
+
+    An EnsembleProvider's ``.model`` returns the *active provider name*, not a
+    model, so resolving it naively would put "gemini" into the model column.
+    We look the winner up in the chain instead and return ``None`` rather than
+    guessing (No-Fake-Doktrin).
+    """
+    if provider is None:
+        return None
+    winner = _resolve_runtime_provider_name(provider, output)
+    members = getattr(provider, "providers", None)
+    if isinstance(members, tuple):
+        for member in members:
+            if winner and member.provider_name == winner:
+                member_model = member.model
+                return member_model if isinstance(member_model, str) and member_model else None
+        return None
+    model = getattr(provider, "model", None)
+    return model if isinstance(model, str) and model else None
+
+
 def _resolve_runtime_provider_name(
     provider: BaseAnalysisProvider | None,
     output: LLMAnalysisOutput | None = None,
@@ -358,6 +383,9 @@ class PipelineResult:
     analysis_result: AnalysisResult | None = None
     error: str | None = None
     provider_name: str | None = None
+    # NEO-F-003: the DB audit trail hardcoded model="unknown" at six call sites
+    # because the winning model never left the pipeline. It does now.
+    model_name: str | None = None
     trace_metadata: dict[str, object] = field(default_factory=dict)
     shadow_llm_output: LLMAnalysisOutput | None = None
     shadow_provider_name: str | None = None
@@ -634,6 +662,7 @@ class AnalysisPipeline:
         shadow_provider_name: str | None = None
         shadow_error: str | None = None
         provider_name = "fallback"
+        model_name: str | None = None
         trace_metadata = _resolve_trace_metadata(self._provider)
         context: dict[str, Any] = {
             "tickers": self._keyword_engine.match_tickers(full_text),
@@ -804,6 +833,7 @@ class AnalysisPipeline:
                     _resolve_runtime_provider_name(self._provider, primary_output)
                     or self._provider.provider_name
                 )
+                model_name = _resolve_runtime_model_name(self._provider, primary_output)
                 analysis_source = _resolve_analysis_source(provider_name)
 
                 analysis_result = AnalysisResult(
@@ -849,6 +879,7 @@ class AnalysisPipeline:
             llm_output=llm_output,
             analysis_result=analysis_result,
             provider_name=provider_name,
+            model_name=model_name,
             trace_metadata=trace_metadata,
             shadow_llm_output=shadow_llm_output,
             shadow_provider_name=shadow_provider_name,

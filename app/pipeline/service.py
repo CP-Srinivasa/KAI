@@ -38,6 +38,34 @@ from app.storage.repositories.document_repo import DocumentRepository
 
 logger = get_logger(__name__)
 
+
+async def _persist_llm_audit(repo: DocumentRepository, res: PipelineResult) -> None:
+    """Write the cognitive-audit row for one analysed document.
+
+    NEO-F-003 (2026-09-02) — this replaces six byte-identical inline blocks that
+    carried two defects:
+
+    * the guard was ``if res.llm_output.raw_prompt``; Gemini and Grok never set
+      ``raw_prompt``, so **every** Gemini/Grok success was missing from the audit
+      trail. The guard is now ``if res.llm_output`` and an absent prompt becomes
+      an empty string instead of a dropped row.
+    * ``model="unknown"`` was hardcoded, which made the column worthless. The
+      real model now comes from ``PipelineResult.model_name``; when it is not
+      determinable we still write ``"unknown"`` rather than inventing one.
+    """
+    if res.llm_output is None:
+        return
+    await repo.save_llm_audit(
+        document_id=str(res.document.id),
+        provider=res.provider_name or "unknown",
+        model=res.model_name or "unknown",
+        prompt_text=res.llm_output.raw_prompt or "",
+        raw_response=res.llm_output.raw_response or "",
+        prompt_tokens=res.llm_output.prompt_tokens,
+        completion_tokens=res.llm_output.completion_tokens,
+    )
+
+
 # ── D-119: Pipeline → Paper-Trade bridge ────────────────────────────────────
 # After a directional alert dispatches successfully, trigger a paper-trade
 # cycle so the PnL feedback loop is closed automatically.
@@ -271,16 +299,7 @@ async def run_rss_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -478,16 +497,7 @@ async def run_youtube_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -710,16 +720,7 @@ async def run_newsdata_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -899,16 +900,7 @@ async def run_okx_announcements_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -1090,16 +1082,7 @@ async def run_messari_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -1319,16 +1302,7 @@ async def run_twitter_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
-                        if res.llm_output and res.llm_output.raw_prompt:
-                            await repo.save_llm_audit(
-                                document_id=str(res.document.id),
-                                provider=res.provider_name or "unknown",
-                                model="unknown",
-                                prompt_text=res.llm_output.raw_prompt,
-                                raw_response=res.llm_output.raw_response or "",
-                                prompt_tokens=res.llm_output.prompt_tokens,
-                                completion_tokens=res.llm_output.completion_tokens,
-                            )
+                        await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1

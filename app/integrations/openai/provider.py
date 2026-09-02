@@ -13,8 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.ai.audit import is_retryable_error
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
 
@@ -53,6 +54,9 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=15),
+        # NEO-F-006: without a filter tenacity retried 401/400/ValidationError too,
+        # costing three attempts plus up to 15 s backoff for a hopeless call.
+        retry=retry_if_exception(is_retryable_error),
         reraise=True,
     )
     async def analyze(

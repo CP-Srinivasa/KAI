@@ -61,6 +61,15 @@ class EnsembleProvider(BaseAnalysisProvider):
         """Ordered technical trace of configured providers."""
         return [provider.provider_name for provider in self._providers]
 
+    @property
+    def providers(self) -> tuple[BaseAnalysisProvider, ...]:
+        """Ordered sub-providers. Read-only view so callers cannot mutate the chain.
+
+        Needed by the pipeline to resolve the *model* of the provider that
+        actually won — ``self.model`` only carries a provider name.
+        """
+        return tuple(self._providers)
+
     async def analyze(
         self,
         title: str,
