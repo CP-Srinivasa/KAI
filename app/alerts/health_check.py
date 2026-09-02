@@ -32,6 +32,7 @@ from typing import Any
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
+from app.alerts.process_runtime_probe import process_runtime_finding
 from app.alerts.youtube_transcript_coverage import (
     COVERAGE_WINDOW_HOURS,
     TRANSCRIPT_MIN_CHARS,
@@ -1183,6 +1184,8 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
     attestiert oder ausgewertet werden muss. Nur die Existenz des Ledgers wacht
     ``prereg_ledger_presence`` — hier kein Doppelbefund.
     """
+    from app.research.invalidation_evidence import verify_invalidation_evidence
+    from app.research.prereg_maturity import INVALIDATED_STATES as _INVALIDATED_STATES
     from app.research.prereg_maturity import MATURITY_SPECS
     from app.research.prereg_reconciliation import (
         DEFAULT_SUPERVISION_REGISTER,
@@ -1277,6 +1280,32 @@ def _check_prereg_reconciliation(adir: Path, *, specs: Any = None) -> list[Healt
                 ),
             )
         )
+    # Ein invalidierter Eintrag lebt von seinem Beleg. Faellt der Pin, die Datei
+    # oder die innere Widerspruchsfreiheit, ist die Invalidierung eine Behauptung
+    # ohne Deckung — und genau das war sie am 2026-09-01 einen Tag lang.
+    for pid, entry in register.items():
+        if str(entry.get("decision_state")) not in _INVALIDATED_STATES:
+            continue
+        # Nur DEKLARIERTE Belege werden zur Laufzeit geprueft. Die Pflicht, ueberhaupt
+        # einen zu deklarieren, erzwingt CI (test_evidence_contract) — als Alarm waere
+        # sie eine Dauerwarnung, auf die der Operator nicht reagieren kann, und genau
+        # solche Warnungen haben die G8-Population vergiftet.
+        if not entry.get("audit_artifact"):
+            continue
+        # Wurzel aus dem INJIZIERTEN Artefaktpfad, nie aus dem Arbeitsverzeichnis
+        # (#840: ein relativer Default hat schon einmal eine Produktionsdatei gefuellt).
+        problems = verify_invalidation_evidence(adir.parent, entry)
+        if problems:
+            issues.append(
+                HealthIssue(
+                    severity="critical",
+                    component="prereg_reconciliation",
+                    message=(
+                        f"Invalidierungsbeleg von {pid} traegt nicht: {', '.join(sorted(problems))}"
+                    ),
+                )
+            )
+
     if ghost_supervision:
         issues.append(
             HealthIssue(
@@ -1394,15 +1423,25 @@ def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
         checkout_sha=head,
         checkout_lock_sha256=sha256_of(repo_root / "requirements.lock"),
     )
-    if verdict.ok:
-        return []
-    return [
-        HealthIssue(
-            severity="critical",
-            component="runtime_provenance",
-            message=render_verdict(verdict),
+    issues: list[HealthIssue] = []
+    if not verdict.ok:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="runtime_provenance",
+                message=render_verdict(verdict),
+            )
         )
-    ]
+    message = process_runtime_finding(repo_root, expected_sha=head)
+    if message:
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="process_runtime_marker",
+                message=message,
+            )
+        )
+    return issues
 
 
 def _git_head(repo_root: Path) -> str:

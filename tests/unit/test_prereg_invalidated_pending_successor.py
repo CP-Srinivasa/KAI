@@ -21,6 +21,20 @@ from pathlib import Path
 
 import pytest
 
+from app.research.invalidation_evidence import (
+    EVIDENCE_SCHEMA,
+    INSPECTION_SCOPE_DEFECT_PROOF,
+    PROBLEM_ARTIFACT_MISSING,
+    PROBLEM_CONTRADICTS_COUNT,
+    PROBLEM_COUNT_MISSING,
+    PROBLEM_ID_MISMATCH,
+    PROBLEM_OUTCOME_INSPECTED,
+    PROBLEM_SCOPE_MISSING,
+    PROBLEM_SHA_MISMATCH,
+    PROBLEM_SUBSTANTIVE_VERDICT,
+    sha256_of_bytes,
+    verify_invalidation_evidence,
+)
 from app.research.prereg_maturity import (
     INVALIDATED_STATES,
     INVALIDATION_SUCCESSOR_TRANSITION,
@@ -178,22 +192,244 @@ def test_the_reason_is_the_instrument_not_the_branch_hash() -> None:
     assert "ALTERSBLINDE" in rationale
     assert "NULL" in rationale
     assert "veraendert Produktion nicht" in rationale
-    assert "KEIN emitted" in rationale or "KEIN Evaluator" in rationale
+    # Die korrigierte Fassung, nicht irgendeine Verneinung: "KEIN emitted-Count"
+    # waere wieder die Behauptung, die der Beleg selbst widerlegt.
+    assert "KEIN Evaluator gelaufen" in rationale
+    assert "KEIN acted-Count gelesen" in rationale
+    assert "insoweit eingesehen" in rationale  # Schreibweise ss/ss offen gelassen
+    assert "KEIN emitted- oder acted-Count" not in rationale
 
 
-def test_no_count_was_read() -> None:
-    """No evaluator run, no emitted/acted count, no interim result."""
-    artifact = (
-        Path(__file__).resolve().parents[2].parent
-        / "KAI-mirror"
-        / "reports"
-        / "G8_ACT2_INVALIDATION_20260901T203851Z.json"
-    )
-    if not artifact.exists():  # the mirror is not part of the repo checkout in CI
-        pytest.skip("audit artifact lives in KAI-mirror, outside the repo")
-    doc = json.loads(artifact.read_text(encoding="utf-8"))
+# --------------------------------------------------------------------------
+# Der Beleg selbst — fail-closed.
+#
+# Der Vorgaenger dieses Blocks hiess ``test_no_count_was_read`` und uebersprang
+# sich, wenn das Artefakt fehlte. Es lag in ``KAI-mirror/``, ausserhalb des
+# Repos — also fehlte es in CI immer. Der Waechter war gruen durch Abwesenheit
+# und hat deshalb nie bemerkt, dass der Beleg sich selbst widersprach:
+# ``emitted_count_inspected = false`` neben ``post_t0_emissions_observed = 15``.
+#
+# Jetzt liegt der kanonische Beleg IM Repo, der Spiegel muss byte-gleich sein,
+# und ein fehlender Beleg ist ein Fehlschlag.
+# --------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# Der Spiegel haengt am Benutzerverzeichnis, NICHT am Elternverzeichnis des
+# Checkouts. Die Vorgaengerfassung leitete ihn aus ``REPO_ROOT.parent`` ab und
+# zeigte damit auf ``.local/bin/KAI-mirror`` — ein Pfad, den es nie gab. Der
+# Test uebersprang sich folglich auf JEDER Maschine.
+MIRROR = Path.home() / "KAI-mirror" / "reports" / "G8_ACT2_INVALIDATION_20260901T203851Z.json"
+
+
+def _evidence_doc() -> dict:
+    entry = _entry(ACT2)
+    return json.loads((REPO_ROOT / entry["audit_artifact"]).read_text(encoding="utf-8"))
+
+
+def test_der_kanonische_beleg_liegt_im_repo_und_traegt_seinen_hash() -> None:
+    entry = _entry(ACT2)
+    path = REPO_ROOT / entry["audit_artifact"]
+    assert path.is_file(), "kanonischer Beleg fehlt: " + str(entry["audit_artifact"])
+    assert entry["audit_artifact"].startswith("artifacts/research/supervision/")
+    assert sha256_of_bytes(path.read_bytes()) == entry["audit_artifact_sha256"]
+
+
+def test_der_beleg_widerspricht_sich_nicht() -> None:
+    """Die Regressionssperre gegen genau den Defekt vom 2026-09-01."""
+    assert verify_invalidation_evidence(REPO_ROOT, _entry(ACT2)) == []
+
+
+def test_der_beleg_benennt_die_einsicht_statt_sie_zu_leugnen() -> None:
+    doc = _evidence_doc()
     nd = doc["not_done"]
+    assert nd["emitted_count_inspected"] is True
+    assert nd["emitted_inspection_scope"] == INSPECTION_SCOPE_DEFECT_PROOF
     assert nd["evaluator_executed"] is False
-    assert nd["emitted_count_inspected"] is False
     assert nd["acted_count_inspected"] is False
     assert nd["outcome_inspected"] is False
+    assert nd["interim_result_taken"] is False
+    assert nd["substantive_outcome_evaluated"] is False
+    # Die alte Behauptung darf nur noch ZITIERT werden — im Korrekturvermerk,
+    # der erklaert, was falsch war. In der Aussage selbst hat sie nichts verloren.
+    assert "No count of any kind was read" not in json.dumps(nd)
+    assert "No count of any kind was read" in doc["correction"]["reason"]
+
+
+def test_die_emissionszahl_bleibt_im_beleg_stehen() -> None:
+    """Korrigiert wurde die Behauptung, nicht die Messung."""
+    doc = _evidence_doc()
+    proof = doc["evidence"]["age_blind_annotation_warning_proof"]
+    assert proof["post_t0_emissions_observed"] == 15
+    assert doc["substantive_verdict"] == "NONE"
+    assert doc["invalidation_decided_at_utc"] == "2026-09-01T20:38:51Z"
+    assert all(row["due_unannotated"] == 0 for row in proof["post_t0_replay"])
+
+
+def test_die_vorgaengerfassung_ist_dokumentiert_nicht_geloescht() -> None:
+    entry = _entry(ACT2)
+    old = "a6974b985746272e8ec7ac08d65fe5bd158f4fa4ee6ffd075c02ba5537fcb727"
+    assert entry["previous_invalidation_artifact_sha256"] == old
+    assert entry["superseded_by_corrected_evidence"] == entry["audit_artifact_sha256"]
+    assert entry["audit_artifact_sha256"] != old
+    assert _evidence_doc()["correction"]["previous_artifact_sha256"] == old
+
+
+@pytest.mark.skipif(
+    not MIRROR.exists(),
+    reason="Audit-Spiegel nur auf der Workstation; der kanonische Beleg im Repo ist geprueft",
+)
+def test_spiegel_und_repo_sind_byte_gleich() -> None:
+    entry = _entry(ACT2)
+    assert sha256_of_bytes(MIRROR.read_bytes()) == entry["audit_artifact_sha256"]
+
+
+# --------------------------------------------------------------------------
+# Negativkontrollen — jede muss FAIL erzeugen, sonst prueft der Waechter nichts.
+# --------------------------------------------------------------------------
+
+
+def _sandbox(tmp_path: Path, doc: dict, *, pin: str | None = None) -> tuple[Path, dict]:
+    rel = "artifacts/research/supervision/x/evidence.json"
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(doc, indent=2, ensure_ascii=False).encode("utf-8")
+    target.write_bytes(raw)
+    entry = {
+        "prereg_id": doc.get("prereg_id", ACT2),
+        "audit_artifact": rel,
+        "audit_artifact_sha256": pin or sha256_of_bytes(raw),
+    }
+    return tmp_path, entry
+
+
+def _good_doc() -> dict:
+    return {
+        "schema": EVIDENCE_SCHEMA,
+        "prereg_id": ACT2,
+        "substantive_verdict": "NONE",
+        "evidence": {"proof": {"post_t0_emissions_observed": 15}},
+        "not_done": {
+            "outcome_inspected": False,
+            "evaluator_executed": False,
+            "acted_count_inspected": False,
+            "interim_result_taken": False,
+            "substantive_outcome_evaluated": False,
+            "emitted_count_inspected": True,
+            "emitted_inspection_scope": INSPECTION_SCOPE_DEFECT_PROOF,
+        },
+    }
+
+
+def test_positivkontrolle_ein_sauberer_beleg_besteht(tmp_path: Path) -> None:
+    root, entry = _sandbox(tmp_path, _good_doc())
+    assert verify_invalidation_evidence(root, entry) == []
+
+
+def test_negativ_fehlender_beleg(tmp_path: Path) -> None:
+    entry = {
+        "prereg_id": ACT2,
+        "audit_artifact": "artifacts/research/supervision/x/weg.json",
+        "audit_artifact_sha256": "0" * 64,
+    }
+    assert PROBLEM_ARTIFACT_MISSING in verify_invalidation_evidence(tmp_path, entry)
+
+
+def test_negativ_ein_byte_geaendert(tmp_path: Path) -> None:
+    root, entry = _sandbox(tmp_path, _good_doc())
+    path = root / entry["audit_artifact"]
+    path.write_bytes(path.read_bytes() + b" ")
+    assert PROBLEM_SHA_MISMATCH in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_falscher_pin_im_register(tmp_path: Path) -> None:
+    root, entry = _sandbox(tmp_path, _good_doc(), pin="b" * 64)
+    assert PROBLEM_SHA_MISMATCH in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_einsicht_geleugnet_aber_zahl_genannt(tmp_path: Path) -> None:
+    """Exakt der Defekt vom 2026-09-01."""
+    doc = _good_doc()
+    doc["not_done"]["emitted_count_inspected"] = False
+    doc["not_done"].pop("emitted_inspection_scope")
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_CONTRADICTS_COUNT in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_umfang_fehlt(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["not_done"].pop("emitted_inspection_scope")
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_SCOPE_MISSING in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_freier_text_als_umfang_genuegt_nicht(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["not_done"]["emitted_inspection_scope"] = "kurz reingeschaut"
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_SCOPE_MISSING in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_acted_count_gelesen(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["not_done"]["acted_count_inspected"] = True
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_OUTCOME_INSPECTED in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_sachverdikt_vorhanden(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["substantive_verdict"] = "NOT_MET"
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_SUBSTANTIVE_VERDICT in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_einsicht_behauptet_aber_keine_zahl(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["evidence"] = {}
+    root, entry = _sandbox(tmp_path, doc)
+    assert PROBLEM_COUNT_MISSING in verify_invalidation_evidence(root, entry)
+
+
+def test_negativ_beleg_gehoert_zu_einer_anderen_praereg(tmp_path: Path) -> None:
+    doc = _good_doc()
+    doc["prereg_id"] = "f0803d911744e0c2"
+    root, entry = _sandbox(tmp_path, doc)
+    entry["prereg_id"] = ACT2
+    assert PROBLEM_ID_MISMATCH in verify_invalidation_evidence(root, entry)
+
+
+# --------------------------------------------------------------------------
+# Deklarationspflicht — durchgesetzt in CI, nicht als Produktionsalarm.
+#
+# Eine Warnung, auf die der Operator nicht reagieren kann, gehoert nicht in die
+# Alarm-Population; genau solche Warnungen haben den zweiten G8-Akt vergiftet.
+# Also erzwingt der Test, was der Waechter nicht ausrufen darf.
+# --------------------------------------------------------------------------
+
+#: ``f0803d911744e0c2`` wurde am 2026-09-01T12:05:00Z invalidiert, BEVOR es den
+#: Beleg-Vertrag gab. Sein Beleg liegt in ``G8_PRE_T0.md`` und in #841 — als Prosa,
+#: nicht als gepinntes Artefakt. Ausdruecklich benannt statt stillschweigend
+#: uebergangen; die Menge darf nicht wachsen.
+EVIDENCE_CONTRACT_EXEMPT = frozenset({"f0803d911744e0c2"})
+
+
+def test_jede_invalidierung_deklariert_einen_beleg() -> None:
+    fehlend = sorted(
+        e["prereg_id"]
+        for e in _register()["entries"]
+        if str(e.get("decision_state")) in INVALIDATED_STATES
+        and not e.get("audit_artifact")
+        and e["prereg_id"] not in EVIDENCE_CONTRACT_EXEMPT
+    )
+    assert fehlend == [], "Invalidierung ohne gepinnten Beleg: " + ", ".join(fehlend)
+
+
+def test_die_ausnahmeliste_waechst_nicht() -> None:
+    assert EVIDENCE_CONTRACT_EXEMPT == frozenset({"f0803d911744e0c2"})
+
+
+def test_alle_deklarierten_belege_tragen() -> None:
+    """Positivkontrolle ueber das gesamte Register, nicht nur ueber Akt 2."""
+    for e in _register()["entries"]:
+        if str(e.get("decision_state")) in INVALIDATED_STATES and e.get("audit_artifact"):
+            assert verify_invalidation_evidence(REPO_ROOT, e) == [], e["prereg_id"]

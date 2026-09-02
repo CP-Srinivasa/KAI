@@ -9,6 +9,7 @@ capital movement, no gate is weakened.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -553,3 +554,80 @@ def trading_verdict_anchor(
     )
     if result.state == "error":
         raise typer.Exit(1)
+
+
+@trading_app.command("runtime-marker-write")
+def trading_runtime_marker_write(
+    unit: str = typer.Option(
+        ..., "--unit", help="Vollstaendiger Unit-Name, z. B. kai-server.service"
+    ),
+    repo: str = typer.Option(".", "--repo", help="Checkout-Wurzel"),
+    json_out: bool = typer.Option(False, "--json", help="Marker als JSON ausgeben"),
+) -> None:
+    """Der Dienst bezeugt beim Start, welchen Code er geladen hat.
+
+    Gedacht fuer ``ExecStartPost=`` — **nicht** ``ExecStartPre``: dort existiert
+    die MainPID des Dienstes noch nicht, und ein Marker mit der PID des
+    Vorbereitungsprozesses waere schlimmer als keiner, weil er wie ein Beweis
+    aussaehe.
+
+    ⚠ Ehrliche Grenze: die Revision wird hier gelesen, nicht aus dem Speicher des
+    Hauptprozesses extrahiert. ``ExecStartPost`` laeuft Millisekunden nach dem
+    Fork, also ist der Checkout-Stand praktisch sicher der geladene. Das
+    Risikofenster sind Millisekunden statt — wie am 2026-09-01 — Stunden.
+
+    Exit 0 = geschrieben · Exit 1 = MainPID nicht ermittelbar (kein Marker).
+    """
+    import json as _json
+    import subprocess
+
+    from app.observability.process_runtime_marker import (
+        build_process_marker,
+        current_boot_id,
+        proc_start_ticks,
+        write_process_marker,
+    )
+    from app.observability.runtime_provenance import sha256_of
+
+    root = Path(repo).resolve()
+    head = subprocess.run(  # noqa: S603
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    raw_pid = subprocess.run(  # noqa: S603
+        ["systemctl", "show", unit, "-p", "MainPID", "--value"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    try:
+        pid = int(raw_pid or 0)
+    except ValueError:
+        pid = 0
+    if pid <= 0 or not head:
+        console.print(
+            f"[red]kein Marker fuer {unit}[/red]: MainPID={raw_pid!r} HEAD={head[:8]!r} — "
+            "der Zustand bleibt UNKNOWN, und das ist die richtige Folge."
+        )
+        raise typer.Exit(code=1)
+
+    import sys as _sys
+
+    marker = build_process_marker(
+        unit=unit,
+        pid=pid,
+        proc_start_ticks=proc_start_ticks(pid),
+        boot_id=current_boot_id(),
+        repo_root=str(root),
+        runtime_code_sha=head,
+        python_executable=_sys.executable,
+        requirements_lock_sha256=sha256_of(root / "requirements.lock"),
+        started_at_utc=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    path = write_process_marker(marker, root=root)
+    if json_out:
+        console.print(_json.dumps(marker, indent=2, sort_keys=True))
+    else:
+        console.print(f"[green]{unit}[/green] bezeugt {head[:8]} (pid {pid}) -> {path}")

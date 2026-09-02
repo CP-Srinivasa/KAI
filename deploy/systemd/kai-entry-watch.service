@@ -20,6 +20,11 @@ WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHONIOENCODING=utf-8
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading operator-signal-entry-watch --duration-seconds 55 --poll-interval-seconds 5
+# Der Dienst bezeugt beim Start, welchen Commit er geladen hat.
+# ExecStartPost, NICHT ExecStartPre: dort gibt es die MainPID noch nicht,
+# und ein Marker mit fremder PID saehe wie ein Beweis aus, ohne einer zu sein.
+# Schlaegt es fehl, bleibt der Zustand UNKNOWN — deshalb mit '-' nicht fatal.
+ExecStartPost=-/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading runtime-marker-write --unit %n --repo /home/kai/ai_analyst_trading_bot
 Restart=always
 RestartSec=5
 StandardOutput=journal

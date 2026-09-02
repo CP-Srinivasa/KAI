@@ -21,6 +21,11 @@ ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && ch
 # Dashboard). Mit 15s schließt uvicorn hängende Verbindungen sauber und exitet
 # (verifiziert 2026-06-23: 15s "Deactivated successfully" statt 90s SIGKILL).
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --log-level info --timeout-graceful-shutdown 15
+# Der Dienst bezeugt beim Start, welchen Commit er geladen hat.
+# ExecStartPost, NICHT ExecStartPre: dort gibt es die MainPID noch nicht,
+# und ein Marker mit fremder PID saehe wie ein Beweis aus, ohne einer zu sein.
+# Schlaegt es fehl, bleibt der Zustand UNKNOWN — deshalb mit '-' nicht fatal.
+ExecStartPost=-/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading runtime-marker-write --unit %n --repo /home/kai/ai_analyst_trading_bot
 Restart=on-failure
 RestartSec=10
 # Backstop: kappt den Stop hart bei 20s, falls uvicorn doch mal nicht sauber

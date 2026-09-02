@@ -318,7 +318,7 @@
       "decision_state": "INVALIDATED_PENDING_SUCCESSOR",
       "owner": "operator",
       "decision_question": "Hat im Fenster T0..T0+14d mindestens ein zugestellter Health-Befund eine protokollierte Operator-Handlung mit derselben trigger_id ausgeloest - und welches der drei mechanischen Verdikte (MET / NOT_MET / INVALID) folgt daraus?",
-      "rationale": "ABBRUCH 2026-09-01T20:38:51Z. Das Instrument, das die gemessene Population erzeugt, ist selbst defekt, und der Defekt wurde bei offenem Fenster bewiesen: der Health-Check hat nach T0 15 mal eine ALTERSBLINDE Annotations-Warnung in genau die emitted-Population geschrieben, und bei jeder einzelnen dieser Emissionen war die Zahl der tatsaechlich ueberfaelligen Annotationen NULL (Replay 14:00:26Z 44/44/0/0, 14:15:28Z 44/42/2/0, 15:30:42Z 38/29/9/0, 16:30:00Z 29/29/0/0, 17:30:18Z 28/1/27/0 als TOTAL/NOT_DUE/GRACE/DUE). Ueber 60 Tage: 199 Warnstunden, echte Ueberfaelligkeit nie ueber 5 gegen ein >20-Gate. Die Population ist damit keine Stichprobe von Befunden, auf die der Operator haette reagieren sollen, sondern mit Alarmen aufgefuellt, die das Instrument nie haette ausloesen duerfen. AUSDRUECKLICH NICHT der Grund: dass ein noch ungemergter Branch (#848) einen anderen health_notify-Hash traegt — ein wartender Branch veraendert Produktion nicht. Es wurde KEIN Evaluator gelaufen, KEIN emitted- oder acted-Count gelesen und KEIN Zwischenergebnis genommen. Der Nachfolge-Akt wird gegen den DEPLOYTEN Code berechnet.",
+      "rationale": "ABBRUCH 2026-09-01T20:38:51Z. Das Instrument, das die gemessene Population erzeugt, ist selbst defekt, und der Defekt wurde bei offenem Fenster bewiesen: der Health-Check hat nach T0 15 mal eine ALTERSBLINDE Annotations-Warnung in genau die emitted-Population geschrieben, und bei jeder einzelnen dieser Emissionen war die Zahl der tatsaechlich ueberfaelligen Annotationen NULL (Replay 14:00:26Z 44/44/0/0, 14:15:28Z 44/42/2/0, 15:30:42Z 38/29/9/0, 16:30:00Z 29/29/0/0, 17:30:18Z 28/1/27/0 als TOTAL/NOT_DUE/GRACE/DUE). Ueber 60 Tage: 199 Warnstunden, echte Ueberfaelligkeit nie ueber 5 gegen ein >20-Gate. Die Population ist damit keine Stichprobe von Befunden, auf die der Operator haette reagieren sollen, sondern mit Alarmen aufgefuellt, die das Instrument nie haette ausloesen duerfen. AUSDRUECKLICH NICHT der Grund: dass ein noch ungemergter Branch (#848) einen anderen health_notify-Hash traegt — ein wartender Branch veraendert Produktion nicht. Es wurde KEIN Evaluator gelaufen, KEIN acted-Count gelesen und KEIN Zwischenergebnis genommen. Der emitted-Strom wurde ausschließlich insoweit eingesehen, wie der Nachweis des Instrumentendefekts es verlangte (15 Emissionen der altersblinden Warnung); dieses Ergebnis dient allein dem Verwerfen des Fensters, nie seiner Deutung. Der Nachfolge-Akt wird gegen den DEPLOYTEN Code berechnet.",
       "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
       "archive_path": "artifacts/research/supervision/b7f9a8e204e40e23/",
       "window_start_utc": "2026-09-01T14:00:00+00:00",
@@ -331,8 +331,15 @@
       "replacement_pending": true,
       "replaced_by": null,
       "MATURITY_SPEC": "none",
-      "audit_artifact": "KAI-mirror/reports/G8_ACT2_INVALIDATION_20260901T203851Z.json",
-      "audit_artifact_sha256": "a6974b985746272e8ec7ac08d65fe5bd158f4fa4ee6ffd075c02ba5537fcb727"
+      "audit_artifact": "artifacts/research/supervision/ebbf451f432cbc80/G8_ACT2_INVALIDATION_20260901T203851Z.json",
+      "audit_artifact_sha256": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "audit_artifact_mirror": "KAI-mirror/reports/G8_ACT2_INVALIDATION_20260901T203851Z.json",
+      "audit_artifact_mirror_sha256": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "audit_artifact_md_sha256": "4166e30b50e74e068206cf1ce3afd75ffb82c7bd3629de043d53375e9a2c2319",
+      "expected_post_t0_emissions_observed": 15,
+      "previous_invalidation_artifact_sha256": "a6974b985746272e8ec7ac08d65fe5bd158f4fa4ee6ffd075c02ba5537fcb727",
+      "superseded_by_corrected_evidence": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "evidence_correction_note": "Die erste Fassung des Belegs behauptete emitted_count_inspected=false und 'No count of any kind was read.', waehrend derselbe Beleg post_t0_emissions_observed=15 fuehrt und sich darauf stuetzt. Ein Instrumentendefekt ist nur nachweisbar, indem man ansieht, was das Instrument ausgesendet hat - legitim, aber die Formulierung war falsch. Korrigiert wurde die BEHAUPTUNG, nicht die Entscheidung. Der kanonische Beleg liegt jetzt IM Repo; KAI-mirror bleibt Audit-Spiegel und muss byte-gleich sein."
     }
   ],
   "not_in_this_register": {

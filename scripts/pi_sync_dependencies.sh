@@ -83,10 +83,27 @@ cat > "$MARKER" <<EOF
 }
 EOF
 
+# Deploy-Marker: WANN wurde auf WELCHEN Stand deployt. Ohne ihn laesst sich
+# spaeter nicht sagen, ob ein Prozess vor oder nach dem Deploy gestartet ist —
+# genau die Luecke, durch die am 2026-09-01 ein Prozess auf dc276bc3 lief,
+# waehrend der Checkout auf 9293c423 stand.
+DEPLOY_MARKER="$MARKER_DIR/deployment_marker.json"
+cat > "$DEPLOY_MARKER" <<EOF
+{
+  "schema": "deployment_marker/v1",
+  "repo_sha": "$REPO_SHA",
+  "requirements_lock_sha256": "$LOCK_SHA",
+  "deployed_at_utc": "$NOW"
+}
+EOF
+
 echo "== Marker geschrieben =="
 cat "$MARKER"
+cat "$DEPLOY_MARKER"
 echo
 echo "HINWEIS: laufende Dienste halten ihre Bibliotheken im Speicher. Ohne"
 echo "Neustart aendert diese Installation an ihnen nichts — pruefe danach"
 echo "  kai trading runtime-provenance"
+echo "Jeder langlebige Dienst muss NACH diesem Zeitpunkt neu gestartet werden;"
+echo "sonst meldet der Health-Check RUNTIME_STALE_NO_RESTART statt gruen."
 exit 0

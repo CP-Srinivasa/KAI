@@ -19,6 +19,11 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # exponential backoff on its own; Restart=always is the systemd backstop for a
 # hard process exit.
 ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.ingestion.liquidations.binance_stream
+# Der Dienst bezeugt beim Start, welchen Commit er geladen hat.
+# ExecStartPost, NICHT ExecStartPre: dort gibt es die MainPID noch nicht,
+# und ein Marker mit fremder PID saehe wie ein Beweis aus, ohne einer zu sein.
+# Schlaegt es fehl, bleibt der Zustand UNKNOWN — deshalb mit '-' nicht fatal.
+ExecStartPost=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main trading runtime-marker-write --unit %n --repo /home/ubuntu/ai_analyst_trading_bot
 
 Restart=always
 RestartSec=5
