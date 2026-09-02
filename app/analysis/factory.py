@@ -96,6 +96,37 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
     raise ValueError(f"Unsupported analysis provider: {provider_type!r}")
 
 
+def describe_primary_chain(settings: Any) -> list[str]:
+    """Ordered provider names of the primary chain — WITHOUT constructing clients.
+
+    Same predicate order as :func:`create_cli_primary_provider`, which now
+    builds from this list. Keeping one definition means /health/ai cannot
+    report a chain that differs from the one actually built (NEO-P-005), and
+    a health probe never instantiates an SDK client or touches an API key.
+    """
+    providers = settings.providers
+    names: list[str] = []
+    if getattr(providers, "openai_api_key", None):
+        names.append("openai")
+    if getattr(providers, "gemini_api_key", None):
+        names.append("gemini")
+    if getattr(providers, "xai_fallback_enabled", False) and getattr(
+        providers, "xai_api_key", None
+    ):
+        names.append("grok")
+    return names
+
+
+def describe_shadow_chain(settings: Any) -> list[str]:
+    """Provider names the shadow analyst would use, in preference order."""
+    providers = settings.providers
+    if getattr(providers, "anthropic_api_key", None):
+        return ["anthropic"]
+    if getattr(providers, "gemini_api_key", None):
+        return ["gemini"]
+    return []
+
+
 def create_cli_primary_provider() -> BaseAnalysisProvider | None:
     """Primary chain for CLI/ingestion pipelines: OpenAI -> Gemini -> (Grok).
 
@@ -103,24 +134,18 @@ def create_cli_primary_provider() -> BaseAnalysisProvider | None:
     :func:`create_shadow_provider`) and the internal fallback (``None`` means
     "no external LLM configured" and lets callers run rule-based). Single
     source of truth since 2026-07-11 (Audit F-4) — previously duplicated in
-    ``app/cli/main.py``.
+    ``app/cli/main.py``. Order comes from :func:`describe_primary_chain`.
     """
     from app.core.settings import get_settings
 
     settings = get_settings()
-    providers: list[BaseAnalysisProvider] = []
-    if settings.providers.openai_api_key:
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
-
-        providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
-    if settings.providers.gemini_api_key:
-        from app.integrations.gemini.provider import GeminiAnalysisProvider
-
-        providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
-    if settings.providers.xai_fallback_enabled and settings.providers.xai_api_key:
-        from app.integrations.xai.provider import GrokAnalysisProvider
-
-        providers.append(GrokAnalysisProvider.from_settings(settings.providers))
+    providers = [
+        provider
+        for provider in (
+            create_provider(name, settings) for name in describe_primary_chain(settings)
+        )
+        if provider is not None
+    ]
     if not providers:
         return None
     if len(providers) == 1:
@@ -135,12 +160,8 @@ def create_shadow_provider() -> BaseAnalysisProvider | None:
     from app.core.settings import get_settings
 
     settings = get_settings()
-    if settings.providers.anthropic_api_key:
-        from app.integrations.anthropic.provider import AnthropicAnalysisProvider
-
-        return AnthropicAnalysisProvider.from_settings(settings.providers)
-    if settings.providers.gemini_api_key:
-        from app.integrations.gemini.provider import GeminiAnalysisProvider
-
-        return GeminiAnalysisProvider.from_settings(settings.providers)
+    for name in describe_shadow_chain(settings):
+        provider = create_provider(name, settings)
+        if provider is not None:
+            return provider
     return None
