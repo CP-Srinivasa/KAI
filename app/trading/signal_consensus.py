@@ -37,7 +37,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from openai import AsyncOpenAI
@@ -45,6 +45,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.market_data.models import MarketDataPoint
 from app.signals.models import SignalCandidate
+
+if TYPE_CHECKING:
+    from app.inference.router import InferenceRouter
 
 log = structlog.get_logger(__name__)
 
@@ -91,11 +94,19 @@ Do you agree with this {direction} trade? Respond with JSON only.\
 class _ConsensusVerdict(BaseModel):
     """Strict contract for the validator LLM's JSON verdict (Audit F-3)."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     agree: bool = False
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     reasoning: str = ""
+
+
+@dataclass(frozen=True)
+class _GatewayConsensusShadow:
+    agree: bool
+    confidence: float
+    provider: str | None
+    model: str | None
 
 
 @dataclass(frozen=True)
@@ -165,6 +176,7 @@ class SignalConsensusValidator:
         max_tokens: int = 256,
         *,
         configs: list[ValidatorConfig] | None = None,
+        inference_shadow: InferenceRouter | None = None,
     ) -> None:
         if configs:
             self._configs = configs
@@ -177,6 +189,7 @@ class SignalConsensusValidator:
                     max_tokens=max_tokens,
                 ),
             ]
+        self._inference_shadow = inference_shadow
 
     @classmethod
     def multi(cls, *configs: ValidatorConfig) -> SignalConsensusValidator:
@@ -207,6 +220,12 @@ class SignalConsensusValidator:
         )
 
         tasks = [self._validate_single(cfg, user_msg) for cfg in self._configs]
+        inference_shadow = self._inference_shadow
+        shadow_task = (
+            asyncio.create_task(self._validate_inference_shadow(user_msg))
+            if inference_shadow is not None
+            else None
+        )
         results = await asyncio.gather(*tasks)
 
         all_agreed = all(r.agreed for r in results)
@@ -224,6 +243,29 @@ class SignalConsensusValidator:
             validator_results=list(results),
         )
 
+        if shadow_task is not None:
+            assert inference_shadow is not None
+            try:
+                shadow = await shadow_task
+            except Exception:  # noqa: BLE001 -- consensus shadow is non-authoritative
+                shadow = None
+            if shadow is not None:
+                from pathlib import Path
+
+                from app.inference.shadow import record_consensus_shadow_comparison
+
+                record_consensus_shadow_comparison(
+                    symbol=signal.symbol,
+                    direction=signal.direction.value,
+                    current_agreed=result.agreed,
+                    current_confidence=result.confidence,
+                    candidate_agreed=shadow.agree,
+                    candidate_confidence=shadow.confidence,
+                    candidate_provider=shadow.provider,
+                    candidate_model=shadow.model,
+                    path=Path(inference_shadow.settings.shadow_comparison_path),
+                )
+
         log.info(
             "consensus.result",
             symbol=signal.symbol,
@@ -237,6 +279,30 @@ class SignalConsensusValidator:
         )
 
         return result
+
+    async def _validate_inference_shadow(self, user_msg: str) -> _GatewayConsensusShadow:
+        assert self._inference_shadow is not None
+        from app.inference.models import InferenceRoute
+
+        result = await self._inference_shadow.chat(
+            messages=[
+                {"role": "system", "content": _CONSENSUS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            route=InferenceRoute.CRITICAL,
+            response_model=_ConsensusVerdict,
+            role="shadow",
+            max_tokens=256,
+            temperature=0.2,
+        )
+        if result.parsed is None:
+            raise ValueError("consensus shadow returned no validated verdict")
+        return _GatewayConsensusShadow(
+            agree=result.parsed.agree,
+            confidence=result.parsed.confidence,
+            provider=result.actual_provider,
+            model=result.actual_model,
+        )
 
     async def _validate_single(
         self,

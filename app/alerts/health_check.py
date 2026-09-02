@@ -507,6 +507,20 @@ def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
     ]
 
 
+def _check_inference_shadow_stream(adir: Path) -> list[HealthIssue]:
+    """Validate present shadow comparisons without inventing an off-mode cadence."""
+    from app.inference.evaluation import inspect_shadow_comparison_stream
+
+    return [
+        HealthIssue(
+            severity="warning",
+            component="inference_shadow_stream",
+            message=f"inference_shadow.jsonl: {problem}",
+        )
+        for problem in inspect_shadow_comparison_stream(adir / "inference_shadow.jsonl")
+    ]
+
+
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
     """Append-able hint about paper_execution_audit staleness (V5 secondary signal).
 
@@ -1417,6 +1431,7 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
+    report.issues.extend(_check_inference_shadow_stream(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).

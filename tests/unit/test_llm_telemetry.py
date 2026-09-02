@@ -74,3 +74,33 @@ def test_error_type_recorded(tmp_path: Path) -> None:
     )
     row = json.loads(p.read_text("utf-8").splitlines()[0])
     assert row["error_type"] == "TimeoutError" and row["role"] == "shadow"
+
+
+def test_v2_fields_tokens_fallback_and_unknown_cost_are_honest(tmp_path: Path) -> None:
+    path = tmp_path / "telemetry.jsonl"
+    record_llm_call(
+        provider="xai",
+        model="grok-real",
+        ok=True,
+        latency_ms=12.5,
+        logical_route="standard",
+        requested_model_alias="kai-standard",
+        actual_provider="xai",
+        actual_model="grok-real",
+        prompt_tokens=11,
+        completion_tokens=7,
+        cached_tokens=3,
+        fallback_count=1,
+        fallback_reason="http_429",
+        request_id="request-safe-id",
+        schema_validation="passed",
+        path=path,
+    )
+    row = json.loads(path.read_text("utf-8"))
+    assert row["actual_provider"] == "xai"
+    assert row["total_tokens"] == 18 and row["cached_tokens"] == 3
+    assert row["estimated_cost"] is None
+    summary = llm_telemetry_summary(path=path)
+    assert summary["estimated_cost_usd"] is None
+    assert summary["fallback_count"] == 1
+    assert summary["unknown_cost_calls"] == 1

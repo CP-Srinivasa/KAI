@@ -1,0 +1,88 @@
+# KAI operational inference gateway. Secrets are environment references only.
+# KAI owns the bounded retry/fallback policy; LiteLLM retries are disabled to
+# prevent multiplicative retry storms.
+model_list:
+  - model_name: kai-bulk
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 28
+  - model_name: kai-bulk
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 28
+
+  - model_name: kai-standard
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 28
+  - model_name: kai-standard
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+      timeout: 28
+
+  - model_name: kai-reasoning
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 28
+  - model_name: kai-reasoning
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 28
+
+  - model_name: kai-critical
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 28
+  - model_name: kai-critical
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 28
+  - model_name: kai-critical
+    litellm_params:
+      model: xai/grok-4
+      api_key: os.environ/XAI_API_KEY
+      timeout: 28
+
+  - model_name: kai-openai-last-resort
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 28
+
+  - model_name: kai-stt
+    litellm_params:
+      model: openai/whisper-1
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+    model_info:
+      mode: audio_transcription
+  - model_name: kai-openai-stt-last-resort
+    litellm_params:
+      model: openai/whisper-1
+      api_key: os.environ/OPENAI_API_KEY
+      timeout: 60
+    model_info:
+      mode: audio_transcription
+
+router_settings:
+  routing_strategy: simple-shuffle
+  enable_pre_call_checks: true
+
+litellm_settings:
+  drop_params: true
+  num_retries: 0
+  request_timeout: 30
+  telemetry: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  background_health_checks: true
+  health_check_interval: 30

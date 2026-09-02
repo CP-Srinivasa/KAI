@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.market_data.models import MarketDataPoint
@@ -71,6 +73,34 @@ def _mock_openai_response(content: str) -> MagicMock:
     response = MagicMock()
     response.choices = [choice]
     return response
+
+
+async def test_gateway_consensus_is_shadow_only_and_cannot_change_result(tmp_path) -> None:
+    router = SimpleNamespace(
+        settings=SimpleNamespace(shadow_comparison_path=str(tmp_path / "shadow.jsonl")),
+        chat=AsyncMock(
+            return_value=SimpleNamespace(
+                parsed=SimpleNamespace(agree=False, confidence=0.99),
+                actual_provider="gemini",
+                actual_model="candidate",
+            )
+        ),
+    )
+    validator = SignalConsensusValidator(api_key="test-key", inference_shadow=router)
+    direct = _mock_openai_response(
+        '{"agree": true, "confidence": 0.8, "reasoning": "direct authority"}'
+    )
+    with patch("app.trading.signal_consensus.AsyncOpenAI") as mock_cls:
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(return_value=direct)
+        mock_cls.return_value = client
+        result = await validator.validate(_make_signal(), _make_market_data())
+    assert result.agreed is True
+    assert result.confidence == 0.8
+    row = json.loads((tmp_path / "shadow.jsonl").read_text("utf-8"))
+    assert row["authoritative"] == "current"
+    assert row["influences_execution"] is False
+    assert row["divergence"]["agreement_disagreement"] is True
 
 
 # ── Single model (backward compatible) ────────────────────────────

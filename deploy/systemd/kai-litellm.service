@@ -1,0 +1,37 @@
+[Unit]
+Description=KAI local LiteLLM inference gateway
+After=network-online.target
+Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/etc/kai/litellm.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv-litellm/bin/litellm --config /home/kai/ai_analyst_trading_bot/deploy/litellm/config.yaml --host 127.0.0.1 --port 4000
+ExecStartPost=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/litellm_healthcheck.py --url http://127.0.0.1:4000 --retries 20
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=45
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

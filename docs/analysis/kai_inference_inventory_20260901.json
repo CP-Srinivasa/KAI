@@ -1,0 +1,210 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-01",
+  "base_commit": "3b0fa02751728a93e8c2c34a9bb6515a0dff2597",
+  "scope": "operative_kai_inference",
+  "secret_material_included": false,
+  "runtime_baseline": {
+    "authoritative_provider": "openai",
+    "authoritative_model": "gpt-4o",
+    "pipeline_interval_minutes": 15,
+    "available_provider_credentials_reported_read_only": [
+      "openai",
+      "anthropic",
+      "gemini",
+      "xai"
+    ],
+    "llm_calls_24h": 300,
+    "llm_failure_rate_24h_pct": 0.0,
+    "latency_p50_24h_ms": 6741,
+    "latency_p95_24h_ms": 20922
+  },
+  "architectural_boundaries": {
+    "operational_target": "KAI_INFERENCE_*",
+    "excluded_layer": "app/intelligence/*",
+    "excluded_namespace": "KAI_LLM_*",
+    "excluded_adr": "docs/adr/0015-kai-local-intelligence-layer.md",
+    "execution_authority_change": false
+  },
+  "callers": [
+    {
+      "path": "app/analysis/factory.py",
+      "role": "provider construction and ordered direct fallback",
+      "interfaces": ["BaseAnalysisProvider", "EnsembleProvider"],
+      "providers": ["openai", "anthropic", "gemini", "xai", "internal"],
+      "migration_candidate": true
+    },
+    {
+      "path": "app/integrations/openai/provider.py",
+      "role": "structured news analysis",
+      "sdk": "openai.AsyncOpenAI",
+      "operation": "beta.chat.completions.parse",
+      "structured_output": "LLMAnalysisOutput",
+      "retry": "tenacity: 3 attempts, exponential",
+      "token_accounting": true,
+      "migration_candidate": true
+    },
+    {
+      "path": "app/integrations/anthropic/provider.py",
+      "role": "structured news analysis and independent shadow",
+      "sdk": "anthropic.AsyncAnthropic",
+      "operation": "messages.create with forced tool call",
+      "structured_output": "LLMAnalysisOutput",
+      "retry": "tenacity: 3 attempts, exponential",
+      "token_accounting": true,
+      "migration_candidate": false,
+      "reason": "retain independent direct shadow semantics"
+    },
+    {
+      "path": "app/integrations/gemini/provider.py",
+      "role": "structured news analysis fallback",
+      "sdk": "google.genai.Client",
+      "operation": "models.generate_content",
+      "structured_output": "LLMAnalysisOutput",
+      "retry": "tenacity: 3 attempts, exponential",
+      "token_accounting": false,
+      "migration_candidate": true
+    },
+    {
+      "path": "app/integrations/xai/provider.py",
+      "role": "flag-gated emergency news-analysis fallback",
+      "sdk": "openai.AsyncOpenAI",
+      "client_protocol": "openai-compatible",
+      "provider_identity": "xai",
+      "operation": "chat.completions.create",
+      "structured_output": "KAI-side LLMAnalysisOutput validation",
+      "retry": "tenacity: 3 attempts, exponential",
+      "token_accounting": false,
+      "migration_candidate": true
+    },
+    {
+      "path": "app/analysis/pipeline.py",
+      "role": "authoritative analysis, rule fallback, optional independent shadow",
+      "structured_output": "LLMAnalysisOutput to AnalysisResult",
+      "telemetry": "artifacts/llm_telemetry.jsonl",
+      "relevance_gate": "SOURCE_CRYPTO_RELEVANCE_GATE_MODE",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/pipeline/service.py",
+      "role": "RSS/YouTube/NewsData/OKX/Messari/X pipeline orchestration and LLM audit persistence",
+      "known_model_label_problem": "model persisted as unknown",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/api/main.py",
+      "role": "scheduled pipeline and Telegram text/voice provider wiring",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/cli/main.py",
+      "role": "manual pipeline/provider selection and independent shadow wiring",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/cli/commands/ingestion.py",
+      "role": "ingestion command aliases for primary and shadow providers",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/messaging/text_intent.py",
+      "role": "Telegram text intent and response generation",
+      "sdk": "openai.AsyncOpenAI",
+      "operation": "chat.completions.create",
+      "structured_output": "JSON parsed but not strict before this sprint",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/messaging/kai_chat_engine.py",
+      "role": "KAI web smalltalk",
+      "sdk": "openai.AsyncOpenAI",
+      "operation": "chat.completions.create",
+      "migration_candidate": true
+    },
+    {
+      "path": "app/messaging/voice_transcriber.py",
+      "role": "Telegram voice download and OpenAI Whisper transcription",
+      "transport": "httpx multipart",
+      "operation": "POST /v1/audio/transcriptions",
+      "migration_candidate": true,
+      "migration_constraint": "separate SpeechToTextProvider abstraction"
+    },
+    {
+      "path": "app/messaging/kai_chat_engine.py::transcribe_audio_via_whisper",
+      "role": "web voice transcription",
+      "sdk": "openai.AsyncOpenAI",
+      "operation": "audio.transcriptions.create",
+      "migration_candidate": true,
+      "migration_constraint": "separate SpeechToTextProvider abstraction"
+    },
+    {
+      "path": "app/trading/signal_consensus.py",
+      "role": "trading-critical unanimous validator",
+      "sdk": "openai.AsyncOpenAI",
+      "client_protocol": "openai-compatible",
+      "structured_output": "strict KAI-side _ConsensusVerdict",
+      "migration_candidate": false,
+      "reason": "direct migration is not proven behavior-preserving; shadow-only evaluation required"
+    }
+  ],
+  "supporting_surfaces": [
+    {
+      "path": "app/core/settings.py",
+      "role": "provider credentials, models, timeouts, pipeline provider and relevance gate"
+    },
+    {
+      "path": "app/security/secrets.py",
+      "role": "startup secret readiness; currently treats OpenAI as production-required"
+    },
+    {
+      "path": "app/observability/llm_telemetry.py",
+      "role": "append-only provider/model/role/success/latency telemetry and p50/p95 summary"
+    },
+    {
+      "path": "app/api/routers/dashboard.py",
+      "role": "operator provider readiness and LLM telemetry summary"
+    },
+    {
+      "path": "deploy/systemd/kai-llm-shadow.service",
+      "role": "ADR-0015 local intelligence shadow; excluded from gateway migration"
+    },
+    {
+      "path": "deploy/systemd/kai-llm-shadow.timer",
+      "role": "ADR-0015 local intelligence schedule; excluded from gateway migration"
+    },
+    {
+      "path": "deploy/systemd/kai-real-analysis-paper-feed.service",
+      "role": "downstream paper-only consumer of authoritative analysis; no provider call"
+    },
+    {
+      "path": "deploy/systemd/kai-real-analysis-paper-feed.timer",
+      "role": "15-minute downstream schedule; no provider call"
+    }
+  ],
+  "capability_findings": {
+    "function_calling": ["Anthropic forced tool call for analysis schema"],
+    "tool_calling": ["Anthropic record_analysis tool"],
+    "structured_outputs": ["OpenAI parse", "Anthropic tool schema", "Gemini response_schema", "KAI-side xAI validation"],
+    "embeddings": [],
+    "vision": [],
+    "audio_stt": ["Telegram VoiceTranscriber", "KAI web voice transcription"],
+    "shadow_calls": ["AnalysisPipeline independent shadow", "ADR-0015 separate local shadow"],
+    "consensus_calls": ["SignalConsensusValidator direct OpenAI-compatible clients"],
+    "cost_accounting": "not centrally implemented before this sprint",
+    "token_accounting": "present for OpenAI and Anthropic analysis, incomplete elsewhere",
+    "retry_risk": "provider-local tenacity retries can multiply with ensemble fallback"
+  },
+  "tests": [
+    "tests/unit/test_openai_provider.py",
+    "tests/unit/test_anthropic_provider.py",
+    "tests/unit/test_anthropic_sdk_contract.py",
+    "tests/unit/test_gemini_provider.py",
+    "tests/unit/test_xai_provider.py",
+    "tests/unit/test_analysis_pipeline.py",
+    "tests/unit/test_llm_telemetry.py",
+    "tests/unit/test_text_intent.py",
+    "tests/unit/test_voice_transcriber.py",
+    "tests/unit/test_signal_consensus.py",
+    "tests/unit/test_crypto_relevance_gate.py"
+  ]
+}

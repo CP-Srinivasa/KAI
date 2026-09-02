@@ -1,0 +1,2 @@
+# Dedicated gateway venv; intentionally not part of KAI's application runtime.
+litellm[proxy]==1.99.0

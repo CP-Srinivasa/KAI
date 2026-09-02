@@ -42,6 +42,7 @@ from app.api.routers import (
     events,
     health,
     health_premium_pipeline,
+    inference,
     kai,
     kyt,
     ln_control,
@@ -65,6 +66,8 @@ from app.core.runtime_identity import (
     write_runtime_identity_artifact,
 )
 from app.core.settings import get_settings
+from app.inference.router import get_inference_router
+from app.inference.stt import build_speech_to_text_provider
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
 from app.messaging.context_builder import make_context_provider
 from app.messaging.telegram_bot import TelegramOperatorBot, TelegramPoller
@@ -176,18 +179,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     op = settings.operator
     text_processor = None
     voice_transcriber = None
-    if op.telegram_polling_enabled and settings.providers.openai_api_key:
+    inference_mode = settings.inference.effective_mode
+    inference_router = get_inference_router() if inference_mode != "off" else None
+    if op.telegram_polling_enabled and (
+        settings.providers.openai_api_key or inference_mode == "primary"
+    ):
         text_processor = TextIntentProcessor(
             api_key=settings.providers.openai_api_key,
             model=settings.providers.openai_model,
             timeout=settings.providers.openai_timeout,
+            inference_router=inference_router,
+        )
+        speech_provider = build_speech_to_text_provider(
+            inference=settings.inference,
+            openai_api_key=settings.providers.openai_api_key,
+            openai_timeout=settings.providers.openai_timeout,
         )
         voice_transcriber = VoiceTranscriber(
             bot_token=op.telegram_bot_token,
             openai_api_key=settings.providers.openai_api_key,
             timeout=settings.providers.openai_timeout,
+            speech_provider=speech_provider,
         )
-        _logger.info("text_and_voice_processor_ready", model=settings.providers.openai_model)
+        _logger.info(
+            "text_and_voice_processor_ready",
+            model=settings.providers.openai_model,
+            inference_mode=inference_mode,
+        )
 
     # Context provider — feeds recent analyses into LLM prompts
     context_provider = make_context_provider(app.state.session_factory)
@@ -374,6 +392,7 @@ def create_app() -> FastAPI:
     # Dashboard + kai-premium-healthcheck.timer konsumiert. Separater Router
     # damit der triviale /health (Server-Liveness) ohne DBus-Dependency bleibt.
     app.include_router(health_premium_pipeline.router)
+    app.include_router(inference.router)
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)

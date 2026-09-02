@@ -1,6 +1,6 @@
 # ADR-Index (`docs/adr/`)
 
-**Stand:** 2026-08-02 · Architecture Decision Records von KAI.
+**Stand:** 2026-09-01 · Architecture Decision Records von KAI.
 
 **Konvention:** fortlaufende Nummern; Historie wird nie umgeschrieben — Korrekturen/Präzisierungen kommen als `## Addendum` in die bestehende ADR oder als neue ADR, die die alte supersedet.
 
@@ -9,7 +9,7 @@
 - **0006 ist doppelt vergeben** (`0006-fastlane-fail-closed-bypass-defaults.md` UND `0006-source-intake-exploration-grey-area.md`).
 - **0008 wurde nie vergeben** (Lücke zwischen 0007 und 0009).
 
-Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dateinamen — rückwirkende Umnummerierung würde die Verweis-Stabilität brechen. Bei Zitaten von „ADR 0006" den vollen Dateinamen nennen. Neue ADRs setzen bei der nächsten freien Nummer fort (**nächste: 0017**).
+Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dateinamen — rückwirkende Umnummerierung würde die Verweis-Stabilität brechen. Bei Zitaten von „ADR 0006" den vollen Dateinamen nennen. Neue ADRs setzen bei der nächsten freien Nummer fort (**nächste: 0018**).
 
 ## Index
 
@@ -32,6 +32,7 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 | [0014](0014-kai-protocol-zielbild.md) | KAI Protocol: Zielbild & Schichtenkarte (Verifiable AI Finance) | ACCEPTED (2026-07-06) |
 | [0015](0015-kai-local-intelligence-layer.md) | KAI Local Intelligence Layer (lokales LLM als auditierbare Shadow-Schicht) | ACCEPTED (2026-07-11) |
 | [0016](0016-sovereign-value-os-self-use.md) | Sovereign Value OS (Self-Use): Geldpfad-Härtung + Operator-Wallet unter ADR-0014 Schicht 4 | **ACCEPTED — SELF-USE ONLY / FORK-B BINDING (2026-09-01)** — beide Vorbedingungs-Verdikte terminal (seq 71 / seq 91), Q4 gebunden (seq 102); SSG-Pilot **ohne Bestandsschutz** |
+| [0017](0017-kai-production-multi-provider-inference-gateway.md) | KAI Production Multi-Provider Inference Gateway | **CODE_COMPLETE / DEPLOYMENT-GATED (2026-09-01)** — default-off; kein Production-Cutover |
 
 **Hinweis:** „0006a/0006b" sind nur Index-Labels dieses Dokuments zur Unterscheidung — die Dateien selbst heißen beide `0006-*` und behalten ihre Namen.
 

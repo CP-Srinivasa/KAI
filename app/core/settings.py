@@ -231,6 +231,103 @@ class ProviderSettings(BaseSettings):
     )(_strip_secret)
 
 
+class InferenceSettings(BaseSettings):
+    """Operational multi-provider inference gateway (separate from ADR-0015).
+
+    ``KAI_LLM_*`` belongs exclusively to the local Intelligence Layer.  This
+    profile intentionally uses ``KAI_INFERENCE_*`` and defaults to an inert
+    direct-provider-compatible state.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="KAI_INFERENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    mode: Literal["off", "shadow", "primary"] = Field(default="off")
+    gateway_url: str = Field(default="http://127.0.0.1:4000/v1")
+    gateway_api_key: str = Field(default="", repr=False)
+    allow_non_loopback_gateway: bool = Field(default=False)
+    timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    max_attempts: int = Field(default=4, ge=1, le=10)
+    retries_per_model: int = Field(default=1, ge=0, le=3)
+    backoff_base_seconds: float = Field(default=0.25, ge=0.0, le=30.0)
+    backoff_max_seconds: float = Field(default=4.0, ge=0.0, le=60.0)
+
+    route_aliases: dict[str, str] = Field(
+        default_factory=lambda: {
+            "bulk": "kai-bulk",
+            "standard": "kai-standard",
+            "reasoning": "kai-reasoning",
+            "critical": "kai-critical",
+            "stt": "kai-stt",
+        }
+    )
+    route_fallbacks: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "bulk": ["kai-standard", "kai-openai-last-resort"],
+            "standard": ["kai-reasoning", "kai-openai-last-resort"],
+            "reasoning": ["kai-critical", "kai-openai-last-resort"],
+            "critical": ["kai-openai-last-resort"],
+            "stt": ["kai-openai-stt-last-resort"],
+        }
+    )
+
+    circuit_failure_threshold: int = Field(default=3, ge=1, le=100)
+    circuit_recovery_seconds: float = Field(default=60.0, gt=0.0, le=3600.0)
+
+    daily_soft_limit_usd: float | None = Field(default=None, gt=0.0)
+    daily_hard_limit_usd: float | None = Field(default=None, gt=0.0)
+    monthly_soft_limit_usd: float | None = Field(default=None, gt=0.0)
+    monthly_hard_limit_usd: float | None = Field(default=None, gt=0.0)
+    per_route_max_cost_usd: dict[str, float] = Field(default_factory=dict)
+    premium_escalation_daily_limit: int | None = Field(default=None, ge=1)
+    # Prices are operator-maintained metadata, never business logic. Shape:
+    # {"provider/model": {"input_per_million": 1.0, "output_per_million": 2.0}}
+    model_prices_usd: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+    telemetry_path: str = Field(default="artifacts/llm_telemetry.jsonl")
+    shadow_comparison_path: str = Field(default="artifacts/inference_shadow.jsonl")
+
+    @property
+    def effective_mode(self) -> Literal["off", "shadow", "primary"]:
+        return self.mode if self.enabled else "off"
+
+    @model_validator(mode="after")
+    def _validate_inference_gateway(self) -> "InferenceSettings":
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.gateway_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("KAI_INFERENCE_GATEWAY_URL must be an absolute HTTP(S) URL")
+        loopback_hosts = {"127.0.0.1", "localhost", "::1"}
+        if parsed.hostname not in loopback_hosts and not self.allow_non_loopback_gateway:
+            raise ValueError(
+                "KAI_INFERENCE_GATEWAY_URL must use loopback unless "
+                "KAI_INFERENCE_ALLOW_NON_LOOPBACK_GATEWAY=true"
+            )
+        if self.backoff_max_seconds < self.backoff_base_seconds:
+            raise ValueError("inference backoff_max_seconds must be >= backoff_base_seconds")
+        if (
+            self.daily_soft_limit_usd is not None
+            and self.daily_hard_limit_usd is not None
+            and self.daily_soft_limit_usd > self.daily_hard_limit_usd
+        ):
+            raise ValueError("daily inference soft limit must be <= hard limit")
+        if (
+            self.monthly_soft_limit_usd is not None
+            and self.monthly_hard_limit_usd is not None
+            and self.monthly_soft_limit_usd > self.monthly_hard_limit_usd
+        ):
+            raise ValueError("monthly inference soft limit must be <= hard limit")
+        for route, alias in self.route_aliases.items():
+            if not route.strip() or not alias.strip():
+                raise ValueError("inference route aliases must use non-empty names")
+        return self
+
+
 class SourceSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SOURCE_", env_file=".env", extra="ignore")
 
@@ -1547,6 +1644,7 @@ class AppSettings(BaseSettings):
     db: DBSettings = Field(default_factory=DBSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
+    inference: InferenceSettings = Field(default_factory=InferenceSettings)
     sources: SourceSettings = Field(default_factory=SourceSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)

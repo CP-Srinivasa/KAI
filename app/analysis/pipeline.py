@@ -371,6 +371,11 @@ class PipelineResult:
         """Apply analysis results, entities, and scores directly to the document."""
         self.document.entity_mentions = self.entity_mentions
         self.document.provider = self.provider_name
+        if self.llm_output is not None:
+            if self.llm_output.model_used:
+                self.document.metadata["analysis_model"] = self.llm_output.model_used
+            if self.llm_output.logical_route:
+                self.document.metadata["logical_route"] = self.llm_output.logical_route
         if self.trace_metadata:
             self.document.metadata.update(self.trace_metadata)
 
@@ -523,6 +528,8 @@ class AnalysisPipeline:
         from app.observability.llm_telemetry import record_llm_call
 
         assert self._provider is not None
+        if getattr(self._provider, "records_telemetry", False):
+            return await self._provider.analyze(title=title, text=text, context=context)
         name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
         started = monotonic()
         try:
@@ -539,10 +546,16 @@ class AnalysisPipeline:
             raise
         record_llm_call(
             provider=output.provider_used or name,
-            model=getattr(self._provider, "model", ""),
+            model=output.model_used or getattr(self._provider, "model", "") or "unknown",
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
             role="primary",
+            logical_route=output.logical_route,
+            actual_provider=output.provider_used or name,
+            actual_model=output.model_used,
+            prompt_tokens=output.prompt_tokens,
+            completion_tokens=output.completion_tokens,
+            schema_validation="passed",
         )
         return output
 
@@ -572,11 +585,17 @@ class AnalysisPipeline:
                 context=context,
             )
             record_llm_call(
-                provider=shadow_provider_name,
-                model=getattr(self._shadow_provider, "model", ""),
+                provider=output.provider_used or shadow_provider_name,
+                model=output.model_used or getattr(self._shadow_provider, "model", "") or "unknown",
                 ok=True,
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
+                logical_route=output.logical_route,
+                actual_provider=output.provider_used or shadow_provider_name,
+                actual_model=output.model_used,
+                prompt_tokens=output.prompt_tokens,
+                completion_tokens=output.completion_tokens,
+                schema_validation="passed",
             )
         except Exception as exc:
             record_llm_call(

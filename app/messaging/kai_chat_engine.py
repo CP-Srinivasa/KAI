@@ -17,7 +17,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from app.inference.models import InferenceResult
 
 from app.core.settings import get_settings
 from app.execution.portfolio_read import build_portfolio_snapshot
@@ -26,14 +31,13 @@ from app.messaging.kai_persona import KaiPersonaConfigError, load_kai_persona
 logger = logging.getLogger(__name__)
 
 ChatIntent = Literal["trading", "smalltalk"]
-ChatSource = Literal["system", "gpt4o", "fallback"]
 
 
 @dataclass(frozen=True)
 class ChatReply:
     reply: str
     intent: ChatIntent
-    source: ChatSource
+    source: str
 
 
 _TRADING_KEYWORDS_DE = {
@@ -207,8 +211,9 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     settings = get_settings()
     api_key = settings.providers.openai_api_key
     model = settings.providers.openai_model or "gpt-4o"
+    inference_mode = settings.inference.effective_mode
 
-    if not api_key:
+    if not api_key and inference_mode != "primary":
         logger.warning("[kai-chat] no openai_api_key configured")
         if language == "de":
             return ChatReply(
@@ -222,24 +227,53 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
             source="fallback",
         )
 
-    from openai import AsyncOpenAI
-
     system_prompt = _build_persona_system_prompt(language)
-    client = AsyncOpenAI(api_key=api_key, timeout=20.0)
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
+        if inference_mode != "off":
+            from app.inference.mode import run_inference_mode
+            from app.inference.models import InferenceRoute
+            from app.inference.router import get_inference_router
+
+            router = get_inference_router()
+            messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message},
-            ],
-            max_tokens=150,
-            temperature=0.7,
+            ]
+
+            async def gateway_call() -> ChatReply:
+                result: InferenceResult[BaseModel] = await router.chat(
+                    messages=messages,
+                    route=InferenceRoute.STANDARD,
+                    role="shadow" if inference_mode == "shadow" else "primary",
+                    max_tokens=150,
+                    temperature=0.7,
+                )
+                return ChatReply(
+                    reply=result.content,
+                    intent="smalltalk",
+                    source=result.actual_provider or "litellm",
+                )
+
+            async def legacy_call() -> ChatReply:
+                return await _direct_smalltalk(
+                    api_key=api_key,
+                    model=model,
+                    system_prompt=system_prompt,
+                    message=message,
+                )
+
+            return await run_inference_mode(
+                mode=inference_mode,
+                gateway_call=gateway_call,
+                legacy_call=legacy_call if api_key else None,
+            )
+
+        return await _direct_smalltalk(
+            api_key=api_key,
+            model=model,
+            system_prompt=system_prompt,
+            message=message,
         )
-        text = (response.choices[0].message.content or "").strip()
-        if not text:
-            raise ValueError("empty_completion")
-        return ChatReply(reply=text, intent="smalltalk", source="gpt4o")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-chat] gpt-4o call failed: %s", exc)
         if language == "de":
@@ -253,6 +287,28 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
             intent="smalltalk",
             source="fallback",
         )
+
+
+async def _direct_smalltalk(
+    *, api_key: str, model: str, system_prompt: str, message: str
+) -> ChatReply:
+    """Exact rollback path used when KAI_INFERENCE_MODE=off."""
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=api_key, timeout=20.0)
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message},
+        ],
+        max_tokens=150,
+        temperature=0.7,
+    )
+    text = (response.choices[0].message.content or "").strip()
+    if not text:
+        raise ValueError("empty_completion")
+    return ChatReply(reply=text, intent="smalltalk", source="gpt4o")
 
 
 async def chat(message: str, language: str = "de") -> ChatReply:
@@ -345,7 +401,7 @@ async def transcribe_audio_via_whisper(
     """
     settings = get_settings()
     api_key = settings.providers.openai_api_key
-    if not api_key:
+    if not api_key and settings.inference.effective_mode != "primary":
         logger.warning("[kai-voice] no openai_api_key configured")
         return None
 
@@ -371,18 +427,22 @@ async def transcribe_audio_via_whisper(
         lang,
         head_hex,
     )
-    # Audit F-2 (2026-07-11): Whisper ueber den offiziellen SDK-Client statt rohem
-    # httpx-Multipart — gleiche Transport-Konventionen wie der Chat-Pfad oben.
-    from openai import AsyncOpenAI
-
     try:
-        client = AsyncOpenAI(api_key=api_key, timeout=90.0)
-        transcription = await client.audio.transcriptions.create(
+        from app.inference.stt import build_speech_to_text_provider
+
+        speech_provider = build_speech_to_text_provider(
+            inference=settings.inference,
+            openai_api_key=api_key,
+            openai_timeout=90.0,
             model="whisper-1",
-            language=lang,
-            file=(f"voice.{ext}", audio_data, mime),
         )
-        text = (transcription.text or "").strip()
+        text = await speech_provider.transcribe(
+            audio_data,
+            f"voice.{ext}",
+            language=lang,
+            mime_type=mime,
+        )
+        text = (text or "").strip()
         if text and _is_whisper_hallucination(text):
             logger.warning(
                 "[kai-voice] whisper hallucination filtered: %r (size=%d)",

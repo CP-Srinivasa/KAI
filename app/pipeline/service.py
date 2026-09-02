@@ -275,7 +275,7 @@ async def run_rss_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,
@@ -482,7 +482,7 @@ async def run_youtube_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,
@@ -714,7 +714,7 @@ async def run_newsdata_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,
@@ -903,7 +903,7 @@ async def run_okx_announcements_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,
@@ -1094,7 +1094,7 @@ async def run_messari_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,
@@ -1323,7 +1323,7 @@ async def run_twitter_pipeline(
                             await repo.save_llm_audit(
                                 document_id=str(res.document.id),
                                 provider=res.provider_name or "unknown",
-                                model="unknown",
+                                model=res.llm_output.model_used or "unknown",
                                 prompt_text=res.llm_output.raw_prompt,
                                 raw_response=res.llm_output.raw_response or "",
                                 prompt_tokens=res.llm_output.prompt_tokens,

@@ -42,6 +42,7 @@ See `DECISION_LOG.md` for decision history; ADRs unter `docs/adr/` (Index: [`doc
 | Paper-trading scheduling (systemd-Timer auf Pi 5) | paper cycles, position monitor, bridge, entry-watch, freshness check, liveness watchdog |
 | Agent worker | SENTR · Watchdog · Architect · DALI · Neo · SATOSHI (Claude Code only) |
 | Dashboard SPA | React under `/dashboard/` · mobile-friendly |
+| Operational inference gateway | LiteLLM migration code-complete, default-off/deployment-gated — [ADR 0017](docs/adr/0017-kai-production-multi-provider-inference-gateway.md) |
 
 ## Quick Start
 

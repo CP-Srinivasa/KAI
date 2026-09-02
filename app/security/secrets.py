@@ -60,9 +60,16 @@ def validate_secrets(settings: AppSettings) -> None:
             warnings.append(msg)
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
-    if not settings.providers.openai_api_key:
+    if not settings.providers.openai_api_key and settings.inference.effective_mode != "primary":
         msg = "OPENAI_API_KEY is empty — LLM analysis will fail"
         if is_production:
+            missing.append(msg)
+        else:
+            warnings.append(msg)
+
+    if settings.inference.effective_mode != "off" and not settings.inference.gateway_api_key:
+        msg = "KAI_INFERENCE_GATEWAY_API_KEY is empty while the inference gateway is enabled"
+        if is_strict:
             missing.append(msg)
         else:
             warnings.append(msg)
@@ -108,9 +115,11 @@ def validate_secrets(settings: AppSettings) -> None:
         )
 
     logger.info(
-        "secrets_validation_passed: env=%s, openai_key_prefix=%s, telegram=%s, email=%s",
+        "secrets_validation_passed: env=%s, openai_key=%s, inference_gateway_key=%s, "
+        "telegram=%s, email=%s",
         settings.env,
         _redact(settings.providers.openai_api_key),
+        _redact(settings.inference.gateway_api_key),
         settings.alerts.telegram_enabled,
         settings.alerts.email_enabled,
     )

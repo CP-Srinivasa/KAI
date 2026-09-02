@@ -121,6 +121,34 @@ class TestTextIntentProcessor:
         assert result.intent == "chat"
         assert "nicht verarbeiten" in result.response
 
+    @pytest.mark.asyncio
+    async def test_primary_gateway_works_without_direct_key(self) -> None:
+        router = MagicMock()
+        router.settings.effective_mode = "primary"
+        parsed = MagicMock()
+        parsed.intent = "query"
+        parsed.response = "Gateway answer"
+        parsed.signal = None
+        parsed.mapped_command = None
+        router.chat = AsyncMock(return_value=MagicMock(parsed=parsed))
+        processor = TextIntentProcessor(api_key="", inference_router=router)
+        result = await processor.process("Status?")
+        assert processor.is_configured is True
+        assert result.response == "Gateway answer"
+        router.chat.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_shadow_gateway_never_replaces_direct_intent(self) -> None:
+        router = MagicMock()
+        router.settings.effective_mode = "shadow"
+        router.chat = AsyncMock(return_value=MagicMock(parsed=MagicMock()))
+        processor = TextIntentProcessor(api_key="direct", inference_router=router)
+        expected = IntentResult(intent="command", response="Direct", mapped_command="status")
+        with patch.object(processor, "_direct_process", new=AsyncMock(return_value=expected)):
+            result = await processor.process("Status?")
+        assert result == expected
+        router.chat.assert_awaited_once()
+
 
 class TestIntentResult:
     """Tests for the frozen dataclass."""

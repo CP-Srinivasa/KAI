@@ -10,7 +10,7 @@ from app.core.enums import MarketScope, SentimentLabel
 
 class LLMAnalysisOutput(BaseModel):
     # Required configuration for strict validation
-    model_config = ConfigDict(strict=True, validate_assignment=True)
+    model_config = ConfigDict(strict=True, validate_assignment=True, extra="forbid")
 
     sentiment_label: SentimentLabel
     sentiment_score: float = Field(ge=-1.0, le=1.0)
@@ -43,12 +43,16 @@ class LLMAnalysisOutput(BaseModel):
     # actually produced this output. Per-call, so it survives parallel runs
     # where a shared provider instance would otherwise race on mutable state.
     provider_used: str | None = None
+    model_used: str | None = None
+    logical_route: str | None = None
 
     # Cognitive Audit fields (populated post-validation by the provider)
     raw_prompt: str | None = None
     raw_response: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    latency_ms: float | None = Field(default=None, ge=0.0)
+    estimated_cost_usd: float | None = Field(default=None, ge=0.0)
 
 
 class BaseAnalysisProvider(ABC):

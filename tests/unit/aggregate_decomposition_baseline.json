@@ -122,7 +122,6 @@
     "app/observability/generator_edge.py::build_generator_edge_report",
     "app/observability/generator_edge.py::to_dict",
     "app/observability/l2_evidence_eval.py::evaluate_feature_direction",
-    "app/observability/llm_telemetry.py::llm_telemetry_summary",
     "app/observability/metric_registry.py::reconcile",
     "app/observability/momentum_cohort_outcomes.py::extract_cohort_outcomes",
     "app/observability/momentum_crosscheck.py::build_crosscheck_rows",

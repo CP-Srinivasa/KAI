@@ -83,7 +83,17 @@ class GrokAnalysisProvider(BaseAnalysisProvider):
         raw = response.choices[0].message.content
         if not raw:
             raise ValueError("Grok returned empty content — possible refusal")
-        return LLMAnalysisOutput.model_validate_json(raw)
+        result = LLMAnalysisOutput.model_validate_json(raw)
+        result.provider_used = "xai"
+        result.model_used = self._model
+        if getattr(response, "usage", None):
+            prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+            completion_tokens = getattr(response.usage, "completion_tokens", 0)
+            result.prompt_tokens = prompt_tokens if isinstance(prompt_tokens, int) else 0
+            result.completion_tokens = (
+                completion_tokens if isinstance(completion_tokens, int) else 0
+            )
+        return result
 
     @classmethod
     def from_settings(cls, settings: Any) -> GrokAnalysisProvider:

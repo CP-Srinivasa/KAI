@@ -11,10 +11,11 @@ import logging
 
 import httpx
 
+from app.inference.stt import OpenAISpeechToTextProvider, SpeechToTextProvider
+
 logger = logging.getLogger(__name__)
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
-_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 
 class VoiceTranscriber:
@@ -26,15 +27,24 @@ class VoiceTranscriber:
         openai_api_key: str,
         whisper_model: str = "whisper-1",
         timeout: int = 30,
+        speech_provider: SpeechToTextProvider | None = None,
     ) -> None:
         self._bot_token = bot_token
         self._openai_api_key = openai_api_key
         self._whisper_model = whisper_model
         self._timeout = timeout
+        self._speech_provider = speech_provider or OpenAISpeechToTextProvider(
+            api_key=openai_api_key,
+            model=whisper_model,
+            timeout=timeout,
+        )
+        self._speech_provider_injected = speech_provider is not None
 
     @property
     def is_configured(self) -> bool:
-        return bool(self._bot_token) and bool(self._openai_api_key)
+        return bool(self._bot_token) and (
+            bool(self._openai_api_key) or self._speech_provider_injected
+        )
 
     async def transcribe(self, file_id: str) -> str | None:
         """Download voice from Telegram and transcribe via Whisper.
@@ -80,21 +90,20 @@ class VoiceTranscriber:
 
     async def _whisper_transcribe(self, audio_data: bytes, filename: str) -> str | None:
         """Send audio bytes to OpenAI Whisper API for transcription."""
-        headers = {"Authorization": f"Bearer {self._openai_api_key}"}
         # Determine extension from Telegram file_path (e.g. "voice/file_123.oga")
         ext = filename.rsplit(".", 1)[-1] if "." in filename else "ogg"
-        files = {"file": (f"voice.{ext}", audio_data, "audio/ogg")}
-        data = {"model": self._whisper_model, "language": "de"}
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
-                resp.raise_for_status()
-                text = str(resp.json().get("text", "")).strip()
-                if text:
-                    logger.info("[VOICE] Transcribed %d chars", len(text))
-                    return text
-                logger.warning("[VOICE] Whisper returned empty transcript")
+            text = await self._speech_provider.transcribe(
+                audio_data,
+                f"voice.{ext}",
+                language="de",
+                mime_type="audio/ogg",
+            )
+            if text:
+                logger.info("[VOICE] Transcribed %d chars", len(text))
+                return text
+            logger.warning("[VOICE] Speech provider returned empty transcript")
         except Exception as exc:  # noqa: BLE001
-            logger.error("[VOICE] Whisper error: %s", exc)
+            logger.error("[VOICE] Speech provider error: %s", exc)
         return None

@@ -37,7 +37,14 @@ class TestVoiceTranscriberConfig:
 class TestVoiceTranscriberTranscribe:
     @pytest.mark.asyncio
     async def test_full_pipeline_success(self) -> None:
-        t = _make_transcriber()
+        speech_provider = AsyncMock()
+        speech_provider.transcribe = AsyncMock(return_value="Bitcoin ist bullish")
+        t = VoiceTranscriber(
+            bot_token="fake-token",
+            openai_api_key="sk-test",
+            timeout=5,
+            speech_provider=speech_provider,
+        )
 
         # Mock getFile → download → whisper
         get_file_resp = MagicMock()
@@ -50,10 +57,6 @@ class TestVoiceTranscriberTranscribe:
         download_resp.status_code = 200
         download_resp.content = b"fake-ogg-audio-data"
 
-        whisper_resp = MagicMock()
-        whisper_resp.raise_for_status = MagicMock()
-        whisper_resp.json.return_value = {"text": "Bitcoin ist bullish"}
-
         call_count = 0
 
         async def mock_get(url, params=None):
@@ -63,13 +66,9 @@ class TestVoiceTranscriberTranscribe:
                 return get_file_resp
             return download_resp
 
-        async def mock_post(url, headers=None, files=None, data=None):
-            return whisper_resp
-
         with patch("app.messaging.voice_transcriber.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
             mock_client.get = mock_get
-            mock_client.post = mock_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_client
@@ -77,6 +76,12 @@ class TestVoiceTranscriberTranscribe:
             result = await t.transcribe("file_id_123")
 
         assert result == "Bitcoin ist bullish"
+        speech_provider.transcribe.assert_awaited_once_with(
+            b"fake-ogg-audio-data",
+            "voice.oga",
+            language="de",
+            mime_type="audio/ogg",
+        )
 
     @pytest.mark.asyncio
     async def test_returns_none_on_get_file_failure(self) -> None:

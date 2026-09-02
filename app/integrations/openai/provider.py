@@ -93,6 +93,8 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
         if hasattr(response, "usage") and response.usage:
             result.prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
             result.completion_tokens = getattr(response.usage, "completion_tokens", 0)
+        result.provider_used = "openai"
+        result.model_used = self._model
 
         return result
 

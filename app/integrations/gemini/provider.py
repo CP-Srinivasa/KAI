@@ -92,7 +92,14 @@ class GeminiAnalysisProvider(BaseAnalysisProvider):
             raise ValueError("Gemini returned empty structured output")
 
         # response.text is guaranteed to be a JSON string matching schema
-        return LLMAnalysisOutput.model_validate_json(response.text)
+        result = LLMAnalysisOutput.model_validate_json(response.text)
+        result.provider_used = "gemini"
+        result.model_used = self._model
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            result.prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+            result.completion_tokens = getattr(usage, "candidates_token_count", 0) or 0
+        return result
 
     @classmethod
     def from_settings(cls, settings: Any) -> GeminiAnalysisProvider:

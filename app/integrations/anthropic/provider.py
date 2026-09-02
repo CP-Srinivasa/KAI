@@ -114,6 +114,8 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
                 if hasattr(response, "usage") and response.usage:
                     result.prompt_tokens = getattr(response.usage, "input_tokens", 0)
                     result.completion_tokens = getattr(response.usage, "output_tokens", 0)
+                result.provider_used = "anthropic"
+                result.model_used = self._model
                 return result
 
         raise ValueError(

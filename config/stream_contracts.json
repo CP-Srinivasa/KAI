@@ -49,6 +49,15 @@
       "decision_that_would_change": "Der Operator repariert Reject-Speicher oder die betroffene Inhaltsquelle, bevor diese Quelle erneut fuer LLM-Klassifikation freigegeben wird.",
       "monitoring": "alternative_watcher",
       "watcher": "_check_input_contract_rejection_streams"
+    },
+    "inference_shadow.jsonl": {
+      "reader": "app/inference/evaluation.py",
+      "failure_consequence": "Ohne lesbare Shadow-Vergleiche waeren Divergenz, Kosten und Schemaqualitaet unbekannt; primary duerfte nicht empfohlen werden.",
+      "failure_would_be_noticed_by": "_check_inference_shadow_stream in app/alerts/health_check.py und der read-only Inference-Status",
+      "time_to_notice": "Beim naechsten Health-Check nach einer unlesbaren oder authority-widrigen vorhandenen Vergleichszeile",
+      "decision_that_would_change": "Der Operator verweigert die Graduation zu primary und repariert zuerst den Shadow-Auditpfad.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_inference_shadow_stream"
     }
   }
 }

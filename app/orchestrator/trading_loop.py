@@ -1938,7 +1938,19 @@ def _build_consensus_validator(
     if not configs:
         return None
 
-    return SignalConsensusValidator(configs=configs)
+    inference_shadow = None
+    inference_settings = getattr(settings, "inference", None)
+    if inference_settings is not None and inference_settings.effective_mode != "off":
+        from app.inference.router import get_inference_router
+
+        # Trading-critical consensus remains direct and authoritative even when
+        # the general inference mode is primary. The gateway is comparison-only.
+        inference_shadow = get_inference_router()
+
+    return SignalConsensusValidator(
+        configs=configs,
+        inference_shadow=inference_shadow,
+    )
 
 
 def build_trading_loop(

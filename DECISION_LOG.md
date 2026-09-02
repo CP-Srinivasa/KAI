@@ -665,3 +665,7 @@ Ergebnis: Forward-Precision 36.27% → **85.19%** (23 hit / 4 miss / 27 resolved
 **Tests:** 65 Unit-Tests grün (ATR 7, ADX 8, RV/Vol-Class/ATR-Z 16, Classifier+Hysteresis 19, Storage 8, Service 7).
 
 **Nächster Folge-Sprint:** R2 — Multi-Asset (BTC, ETH + 3-5 weitere) + Korrelations-Tracking.
+
+### D-LLM-GW-001 (2026-09-01)
+Operative Inferenz erhält einen getrennten `KAI_INFERENCE_*`-Vertrag mit lokalem LiteLLM-Gateway, zentralen begrenzten Fallbacks/Retry/Circuit/Budget/Telemetry und Default `off` (ADR 0017).
+ADR 0015 (`app/intelligence`, `KAI_LLM_*`, shadow-only/no execution) bleibt unverändert; Signal Consensus ist Gateway-shadow-only. Kein Deploy, kein Mainline-Merge, Primary erst nach Operator-Shadow-Evidenz.
