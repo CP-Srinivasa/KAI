@@ -127,14 +127,18 @@ def describe_shadow_chain(settings: Any) -> list[str]:
     return []
 
 
-def create_cli_primary_provider() -> BaseAnalysisProvider | None:
-    """Primary chain for CLI/ingestion pipelines: OpenAI -> Gemini -> (Grok).
+def create_primary_provider() -> BaseAnalysisProvider | None:
+    """THE primary chain for every entry point: OpenAI -> Gemini -> (Grok).
 
     Deliberately EXCLUDES Anthropic (reserved as independent shadow, see
     :func:`create_shadow_provider`) and the internal fallback (``None`` means
     "no external LLM configured" and lets callers run rule-based). Single
     source of truth since 2026-07-11 (Audit F-4) — previously duplicated in
     ``app/cli/main.py``. Order comes from :func:`describe_primary_chain`.
+
+    Renamed from ``create_cli_primary_provider`` (NEO-P-003, 2026-09-02): the
+    server path uses it too now, so "cli" was simply wrong. The old name stays
+    as an alias below.
     """
     from app.core.settings import get_settings
 
@@ -153,6 +157,10 @@ def create_cli_primary_provider() -> BaseAnalysisProvider | None:
     from app.analysis.ensemble.provider import EnsembleProvider
 
     return EnsembleProvider(providers)
+
+
+# Back-compat alias — app/cli/main.py and external callers keep working.
+create_cli_primary_provider = create_primary_provider
 
 
 def create_shadow_provider() -> BaseAnalysisProvider | None:
