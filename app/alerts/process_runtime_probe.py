@@ -36,7 +36,7 @@ def process_runtime_finding(repo_root: Path, *, expected_sha: str) -> str | None
         read_process_markers,
         render_process_provenance,
     )
-    from app.observability.runtime_provenance import collect_runtime_services, sha256_of
+    from app.observability.runtime_provenance import collect_runtime_services
 
     services = [s for s in collect_runtime_services() if s.repo_based and s.pid > 0]
     if not services:
@@ -53,12 +53,17 @@ def process_runtime_finding(repo_root: Path, *, expected_sha: str) -> str | None
         for s in services
     ]
     deploy = read_deployment_marker(repo_root) or {}
+    # Der erwartete Stand ist, WAS DEPLOYT WURDE — nicht, worauf der Checkout
+    # gerade steht. Beides gleichzusetzen hiess, den Checkout mit sich selbst zu
+    # vergleichen: eine Pruefung, die nicht scheitern kann. Auch die Lock-SHA
+    # kommt aus der Deploy-Provenienz, nicht aus einem zweiten Dateihash hier.
+    # Fehlt der Marker, ist der Soll-Stand unbelegt — das ist HOLD, nicht PASS.
     result = evaluate_process_markers(
         observations,
         read_process_markers([s.unit for s in services], root=repo_root),
-        expected_sha=expected_sha,
+        expected_sha=str(deploy.get("repo_sha") or ""),
         checkout_sha=expected_sha,
-        expected_lock_sha256=sha256_of(repo_root / "requirements.lock"),
+        expected_lock_sha256=deploy.get("requirements_lock_sha256"),
         deployed_at_utc=deploy.get("deployed_at_utc"),
     )
     return None if result.ok else render_process_provenance(result)

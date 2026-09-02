@@ -25,6 +25,8 @@ from app.observability.process_runtime_marker import (
     MARKER_SCHEMA,
     STATE_CODE_DRIFT,
     STATE_DEPENDENCY_DRIFT,
+    STATE_DEPLOY_PROVENANCE_MISMATCH,
+    STATE_EXPECTED_UNKNOWN,
     STATE_INVALID,
     STATE_MATCH,
     STATE_STALE_NO_RESTART,
@@ -35,6 +37,7 @@ from app.observability.process_runtime_marker import (
     build_deployment_marker,
     build_process_marker,
     evaluate_process_markers,
+    marker_from_identity,
     proc_start_ticks,
     read_deployment_marker,
     read_process_markers,
@@ -316,3 +319,255 @@ def test_unlesbares_stat_ergibt_minus_eins(tmp_path: Path, stat: str) -> None:
     (tmp_path / "77").mkdir()
     (tmp_path / "77" / "stat").write_text(stat, encoding="utf-8")
     assert proc_start_ticks(77, proc_root=tmp_path) == -1
+
+
+# --------------------------------------------------------------------------
+# B5 — der erwartete Stand kommt aus der Deploy-Provenienz.
+#
+# Vorher galt `expected_sha = checkout_head` UND `checkout_sha = expected_sha`.
+# Der Checkout wurde also mit sich selbst verglichen — eine Pruefung, die nicht
+# scheitern kann. `deployment_marker.repo_sha` wurde gelesen und nie benutzt.
+# --------------------------------------------------------------------------
+
+
+def test_b5_mutation_1_runtime_alt_bei_neuem_deploy_und_checkout() -> None:
+    """deploy=NEW, checkout=NEW, runtime=OLD => RUNTIME_CODE_DRIFT."""
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker(runtime_code_sha=OLD)},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+    )
+    assert p.findings[0].state == STATE_CODE_DRIFT
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_b5_mutation_2_deploy_marker_haengt_hinterher() -> None:
+    """deploy=OLD, checkout=NEW, runtime=NEW => DEPLOYMENT_PROVENANCE_MISMATCH."""
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker(runtime_code_sha=NEW)},
+        expected_sha=OLD,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+    )
+    assert p.findings[0].state == STATE_DEPLOY_PROVENANCE_MISMATCH
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_b5_pass_nur_wenn_alle_drei_gleich_sind() -> None:
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker(runtime_code_sha=NEW)},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=LOCK,
+    )
+    assert p.verdict == VERDICT_OK
+    assert p.all_match
+
+
+def test_b5_fehlender_deploy_marker_ist_kein_pass() -> None:
+    p = _evaluate(_marker(), expected_sha="", checkout_sha=NEW)
+    assert p.findings[0].state == STATE_EXPECTED_UNKNOWN
+    assert p.verdict == VERDICT_HOLD
+
+
+# --------------------------------------------------------------------------
+# B4 — fehlende Identitaet ist kein Treffer. Zwei leere Werte sind nicht gleich,
+# sondern zwei fehlende Beweise.
+# --------------------------------------------------------------------------
+
+
+def test_b4_leere_boot_id_auf_beiden_seiten_ist_kein_match() -> None:
+    p = _evaluate(_marker(boot_id=""), _obs(boot_id=""))
+    assert p.findings[0].state == STATE_UNKNOWN
+    assert not p.findings[0].passing
+
+
+def test_b4_unlesbares_proc_stat_ist_kein_match() -> None:
+    p = _evaluate(_marker(), _obs(proc_start_ticks=-1))
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b4_marker_ohne_startzeit_ist_kein_match() -> None:
+    m = _marker()
+    m["proc_start_ticks"] = -1
+    p = _evaluate(m)
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b4_nicht_numerische_pid_urteilt_statt_zu_werfen() -> None:
+    m = _marker()
+    m["pid"] = "viertausendsiebenhundertelf"
+    p = _evaluate(m)
+    assert p.findings[0].state == STATE_INVALID
+
+
+def test_b4_marker_ohne_revision_ist_unknown_nicht_drift() -> None:
+    p = _evaluate(_marker(runtime_code_sha=""))
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b4_fehlende_lock_sha_im_marker_ueberspringt_nichts() -> None:
+    m = _marker()
+    m["requirements_lock_sha256"] = None
+    p = _evaluate(m, expected_lock_sha256=LOCK)
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b4_fehlende_lock_sha_im_deploy_marker_ist_kein_freibrief() -> None:
+    """Ohne Soll-Lock wird die Abhaengigkeitsachse nicht geprueft — aber der
+    Rest schon; der Befund darf nicht still zu MATCH werden, wenn der Marker
+    selbst eine abweichende Lock traegt."""
+    p = _evaluate(_marker(requirements_lock_sha256="a" * 64), expected_lock_sha256=None)
+    assert p.findings[0].state == STATE_UNKNOWN  # keine Soll-Angabe => unbelegt, nicht gruen
+    p2 = _evaluate(_marker(requirements_lock_sha256="a" * 64), expected_lock_sha256=LOCK)
+    assert p2.findings[0].state == STATE_DEPENDENCY_DRIFT
+
+
+# --------------------------------------------------------------------------
+# B3 — Zeitpunkte semantisch, nicht lexikografisch.
+# "Z" > "+" im Stringvergleich: ein Prozess NACH dem Deploy sah aus wie davor.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("started", "deployed"),
+    [
+        ("2026-09-02T06:00:00Z", "2026-09-02T06:00:00+00:00"),
+        ("2026-09-02T06:00:00+00:00", "2026-09-02T06:00:00Z"),
+        ("2026-09-02T06:00:00.000000Z", "2026-09-02T06:00:00+00:00"),
+        ("2026-09-02T08:00:00+02:00", "2026-09-02T06:00:00Z"),
+    ],
+)
+def test_b3_gleicher_moment_in_verschiedenen_schreibweisen(started: str, deployed: str) -> None:
+    p = _evaluate(_marker(), _obs(started_at_utc=started), deployed_at_utc=deployed)
+    assert p.findings[0].state == STATE_MATCH, p.findings[0].detail
+
+
+def test_b3_stringvergleich_haette_hier_falsch_geurteilt() -> None:
+    """``"...Z" < "...+00:00"`` ist lexikografisch falsch — hier bewiesen."""
+    started, deployed = "2026-09-02T06:00:00Z", "2026-09-02T06:00:00+00:00"
+    assert not (started < deployed), "Vorbedingung des Tests"
+    p = _evaluate(_marker(), _obs(started_at_utc=started), deployed_at_utc=deployed)
+    assert p.findings[0].state == STATE_MATCH
+
+
+def test_b3_prozess_vor_dem_deploy_mit_gemischten_formaten() -> None:
+    p = _evaluate(
+        _marker(),
+        _obs(started_at_utc="2026-09-02T05:59:59Z"),
+        deployed_at_utc="2026-09-02T06:00:00+00:00",
+    )
+    assert p.findings[0].state == STATE_STALE_NO_RESTART
+
+
+@pytest.mark.parametrize("bad", ["gestern", "2026-13-45T99:99:99Z", "2026-09-02"])
+def test_b3_unlesbarer_zeitstempel_ist_hold(bad: str) -> None:
+    p = _evaluate(_marker(), _obs(started_at_utc="2026-09-02T07:00:00Z"), deployed_at_utc=bad)
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b3_fehlende_prozess_startzeit_ist_hold() -> None:
+    p = _evaluate(_marker(), _obs(started_at_utc=""), deployed_at_utc="2026-09-02T06:00:00+00:00")
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# B2 — genau eine Runtime-Identitaet.
+# --------------------------------------------------------------------------
+
+
+def test_b2_marker_uebernimmt_die_eingefrorenen_werte_der_identitaet() -> None:
+    from app.core.runtime_identity import RuntimeIdentity
+
+    identity = RuntimeIdentity(
+        schema="runtime_identity/v1",
+        runtime_commit=NEW,
+        started_at_utc="2026-09-02T07:00:00+00:00",
+        lock_sha256_at_start=LOCK,
+        pid=4711,
+    )
+    marker = marker_from_identity(
+        identity,
+        unit="kai-server.service",
+        pid=4711,
+        repo_root="/home/ubuntu/ai_analyst_trading_bot",
+        proc_start_ticks_value=90210,
+        boot_id=BOOT,
+        python_executable="/x/.venv/bin/python3",
+    )
+    assert marker["runtime_code_sha"] == NEW
+    assert marker["requirements_lock_sha256"] == LOCK
+    assert marker["started_at_utc"] == "2026-09-02T07:00:00+00:00"
+    assert marker["schema"] == MARKER_SCHEMA
+
+
+def test_b2_eine_identitaet_ohne_commit_erzeugt_keinen_scheinbeweis() -> None:
+    from app.core.runtime_identity import RuntimeIdentity
+
+    identity = RuntimeIdentity(
+        schema="runtime_identity/v1",
+        runtime_commit=None,
+        started_at_utc="2026-09-02T07:00:00+00:00",
+        lock_sha256_at_start=None,
+        pid=4711,
+    )
+    marker = marker_from_identity(
+        identity,
+        unit="kai-server.service",
+        pid=4711,
+        repo_root="/x",
+        proc_start_ticks_value=90210,
+        boot_id=BOOT,
+    )
+    p = _evaluate(marker)
+    assert p.findings[0].state == STATE_UNKNOWN
+
+
+def test_b2_die_sonde_ermittelt_commit_und_lock_nicht_selbst() -> None:
+    """Struktur-Ratchet: kein zweiter Weg zu denselben zwei Werten."""
+    src = (
+        Path(__file__).resolve().parents[2] / "app" / "alerts" / "process_runtime_probe.py"
+    ).read_text(encoding="utf-8")
+    assert "rev-parse" not in src
+    assert "sha256_of" not in src
+    assert 'deploy.get("repo_sha")' in src
+    assert 'deploy.get("requirements_lock_sha256")' in src
+
+
+def test_b5_fehlender_deploy_marker_auf_der_platte_ist_hold(tmp_path: Path) -> None:
+    """Nicht nur ein abweichender repo_sha — auch gar kein Marker ist HOLD."""
+    assert read_deployment_marker(tmp_path) is None
+    deploy = read_deployment_marker(tmp_path) or {}
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker()},
+        expected_sha=str(deploy.get("repo_sha") or ""),
+        checkout_sha=NEW,
+        expected_lock_sha256=deploy.get("requirements_lock_sha256"),
+    )
+    assert p.findings[0].state == STATE_EXPECTED_UNKNOWN
+    assert p.verdict == VERDICT_HOLD
+
+
+def test_b5_deploy_marker_mit_fremdem_schema_zaehlt_als_fehlend(tmp_path: Path) -> None:
+    target = tmp_path / "artifacts" / "runtime" / "deployment_marker.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"schema": "etwas/anderes", "repo_sha": NEW}), encoding="utf-8")
+    assert read_deployment_marker(tmp_path) is None
+
+
+def test_b5_deploy_marker_ohne_lock_sha_ist_unvollstaendige_provenienz() -> None:
+    """Fehlt die Soll-Lock, ist die Provenienz unvollstaendig — HOLD, nicht gruen."""
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker(requirements_lock_sha256="a" * 64)},
+        expected_sha=NEW,
+        checkout_sha=NEW,
+        expected_lock_sha256=None,
+    )
+    assert p.findings[0].state == STATE_UNKNOWN
+    assert p.verdict == VERDICT_HOLD

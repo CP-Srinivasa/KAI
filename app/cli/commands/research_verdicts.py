@@ -92,7 +92,6 @@ def trading_prereg_check(
     Exit 0 = judged (PASS or FAIL), 2 = not judgeable (unknown id / no gate /
     malformed input).
     """
-    from datetime import UTC, datetime
 
     from app.research.prereg_gate import check_gate
     from app.research.prereg_ledger import PreRegistrationLedger
@@ -571,31 +570,24 @@ def trading_runtime_marker_write(
     Vorbereitungsprozesses waere schlimmer als keiner, weil er wie ein Beweis
     aussaehe.
 
-    ⚠ Ehrliche Grenze: die Revision wird hier gelesen, nicht aus dem Speicher des
-    Hauptprozesses extrahiert. ``ExecStartPost`` laeuft Millisekunden nach dem
-    Fork, also ist der Checkout-Stand praktisch sicher der geladene. Das
-    Risikofenster sind Millisekunden statt — wie am 2026-09-01 — Stunden.
+    Commit und Lock-SHA kommen aus :func:`app.core.runtime_identity.capture_runtime_identity`
+    — derselben Quelle, die ``/health`` und den Drift-Report bedient. Ein eigenes
+    ``git rev-parse`` hier waere eine zweite Wahrheit ueber denselben Wert, und
+    zwei Wahrheiten driften (#723/#748/#755).
 
-    Exit 0 = geschrieben · Exit 1 = MainPID nicht ermittelbar (kein Marker).
+    Exit 0 = geschrieben · Exit 1 = MainPID oder Revision nicht ermittelbar
+    (dann bleibt der Zustand UNKNOWN, und das ist die richtige Folge).
     """
     import json as _json
     import subprocess
 
+    from app.core.runtime_identity import capture_runtime_identity
     from app.observability.process_runtime_marker import (
-        build_process_marker,
-        current_boot_id,
-        proc_start_ticks,
+        marker_from_identity,
         write_process_marker,
     )
-    from app.observability.runtime_provenance import sha256_of
 
     root = Path(repo).resolve()
-    head = subprocess.run(  # noqa: S603
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
     raw_pid = subprocess.run(  # noqa: S603
         ["systemctl", "show", unit, "-p", "MainPID", "--value"],
         capture_output=True,
@@ -606,28 +598,20 @@ def trading_runtime_marker_write(
         pid = int(raw_pid or 0)
     except ValueError:
         pid = 0
-    if pid <= 0 or not head:
+
+    identity = capture_runtime_identity(root, pid=pid or None)
+    if pid <= 0 or not identity.runtime_commit:
         console.print(
-            f"[red]kein Marker fuer {unit}[/red]: MainPID={raw_pid!r} HEAD={head[:8]!r} — "
-            "der Zustand bleibt UNKNOWN, und das ist die richtige Folge."
+            f"[red]kein Marker fuer {unit}[/red]: MainPID={raw_pid!r} "
+            f"runtime_commit={identity.runtime_commit!r} — der Zustand bleibt UNKNOWN, "
+            "und das ist die richtige Folge."
         )
         raise typer.Exit(code=1)
 
-    import sys as _sys
-
-    marker = build_process_marker(
-        unit=unit,
-        pid=pid,
-        proc_start_ticks=proc_start_ticks(pid),
-        boot_id=current_boot_id(),
-        repo_root=str(root),
-        runtime_code_sha=head,
-        python_executable=_sys.executable,
-        requirements_lock_sha256=sha256_of(root / "requirements.lock"),
-        started_at_utc=datetime.now(UTC).isoformat(timespec="seconds"),
-    )
+    marker = marker_from_identity(identity, unit=unit, pid=pid, repo_root=root)
     path = write_process_marker(marker, root=root)
     if json_out:
         console.print(_json.dumps(marker, indent=2, sort_keys=True))
     else:
-        console.print(f"[green]{unit}[/green] bezeugt {head[:8]} (pid {pid}) -> {path}")
+        commit = str(identity.runtime_commit)
+        console.print(f"[green]{unit}[/green] bezeugt {commit[:8]} (pid {pid}) -> {path}")

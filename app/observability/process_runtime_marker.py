@@ -56,6 +56,8 @@ STATE_STALE_NO_RESTART: Final = "RUNTIME_STALE_NO_RESTART"
 STATE_DEPENDENCY_DRIFT: Final = "DEPENDENCY_DRIFT"
 STATE_INVALID: Final = "INVALID"
 STATE_UNKNOWN: Final = "UNKNOWN"
+STATE_DEPLOY_PROVENANCE_MISMATCH: Final = "DEPLOYMENT_PROVENANCE_MISMATCH"
+STATE_EXPECTED_UNKNOWN: Final = "EXPECTED_SHA_UNKNOWN"
 
 #: Zustaende, die niemals als „in Ordnung" durchgehen duerfen.
 NOT_PASSING: Final = frozenset(
@@ -65,6 +67,8 @@ NOT_PASSING: Final = frozenset(
         STATE_DEPENDENCY_DRIFT,
         STATE_INVALID,
         STATE_UNKNOWN,
+        STATE_DEPLOY_PROVENANCE_MISMATCH,
+        STATE_EXPECTED_UNKNOWN,
     }
 )
 
@@ -144,6 +148,68 @@ def build_process_marker(
     }
 
 
+def marker_from_identity(
+    identity: Any,
+    *,
+    unit: str,
+    pid: int,
+    repo_root: Path | str,
+    proc_start_ticks_value: int | None = None,
+    boot_id: str | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    """Der Marker aus der eingefrorenen ``RuntimeIdentity`` — keine zweite Quelle.
+
+    ``runtime_commit`` und ``lock_sha256_at_start`` friert
+    :mod:`app.core.runtime_identity` beim Prozessstart ein; dieselbe Quelle
+    bedient ``/health`` und den Drift-Report. Sie hier per eigenem
+    ``git rev-parse`` nachzurechnen waere eine zweite Wahrheit ueber denselben
+    Wert — und zwei Wahrheiten driften (#723/#748/#755).
+
+    Ergaenzt wird nur, was der Identitaet zur KERNEL-Prozessidentitaet fehlt:
+    ``unit``, ``pid``, ``proc_start_ticks``, ``boot_id``, ``python_executable``.
+    """
+    import sys as _sys
+
+    return build_process_marker(
+        unit=unit,
+        pid=pid,
+        proc_start_ticks=(
+            proc_start_ticks(pid) if proc_start_ticks_value is None else proc_start_ticks_value
+        ),
+        boot_id=current_boot_id() if boot_id is None else boot_id,
+        repo_root=str(repo_root),
+        runtime_code_sha=str(getattr(identity, "runtime_commit", "") or ""),
+        python_executable=python_executable or _sys.executable,
+        requirements_lock_sha256=getattr(identity, "lock_sha256_at_start", None),
+        started_at_utc=str(getattr(identity, "started_at_utc", "") or ""),
+    )
+
+
+def _parse_utc(value: str) -> datetime | None:
+    """ISO-8601 nach aware-UTC. ``None``, wenn nicht beweisbar.
+
+    ``...Z`` und ``...+00:00`` sind derselbe Moment, lexikografisch aber nicht
+    vergleichbar: ``"Z" > "+"``. Ein Stringvergleich haette einen Prozess, der
+    NACH dem Deploy startete, als "davor" gelesen — und umgekehrt.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    # Ein reines Datum ist gueltiges ISO-8601 und wird als Mitternacht gelesen.
+    # Als Deploy-Zeitpunkt ist es wertlos: "am 02.09. deployt" beweist nicht,
+    # dass ein um 07:00 gestarteter Prozess danach kam. Fail-closed.
+    if "T" not in raw or ":" not in raw:
+        return None
+    if raw.endswith(("z", "Z")):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def _one(
     obs: ProcessObservation,
     marker: Mapping[str, Any] | None,
@@ -163,40 +229,64 @@ def _one(
 
     code_sha = str(marker.get("runtime_code_sha") or "")
 
-    # Identitaet zuerst: ein Marker, der zu einem anderen Prozess gehoert, sagt
-    # ueber diesen hier nichts — auch dann nicht, wenn seine SHA zufaellig passt.
-    if int(marker.get("pid") or 0) != obs.main_pid:
+    def invalid(detail: str) -> ProcessFinding:
+        return ProcessFinding(obs.unit, STATE_INVALID, detail, code_sha, expected_sha)
+
+    def unknown(detail: str) -> ProcessFinding:
+        return ProcessFinding(obs.unit, STATE_UNKNOWN, detail, code_sha, expected_sha)
+
+    if not expected_sha:
         return ProcessFinding(
             obs.unit,
-            STATE_INVALID,
-            f"Marker-PID {marker.get('pid')} != MainPID {obs.main_pid}",
+            STATE_EXPECTED_UNKNOWN,
+            "kein Deploy-Marker — der erwartete Stand ist nicht belegt",
             code_sha,
             expected_sha,
         )
-    if int(marker.get("proc_start_ticks") or -1) != obs.proc_start_ticks:
+    if checkout_sha and checkout_sha != expected_sha:
+        # Der Checkout selbst steht nicht auf dem deployten Stand. Frueher wurde
+        # ``checkout_sha`` auf ``expected_sha`` gesetzt und damit mit sich selbst
+        # verglichen — eine Pruefung, die nicht scheitern konnte.
         return ProcessFinding(
             obs.unit,
-            STATE_INVALID,
-            "Startzeit weicht ab — PID wiederverwendet, Marker gehoert zum Vorgaenger",
-            code_sha,
-            expected_sha,
-        )
-    if str(marker.get("boot_id") or "") != obs.boot_id:
-        return ProcessFinding(
-            obs.unit,
-            STATE_INVALID,
-            "Marker stammt aus einem frueheren Boot",
+            STATE_DEPLOY_PROVENANCE_MISMATCH,
+            f"Checkout steht auf {checkout_sha[:8]}, deployt wurde {expected_sha[:8]}",
             code_sha,
             expected_sha,
         )
 
+    # Identitaet zuerst, und FEHLENDE Identitaet ist kein Treffer: zwei leere
+    # boot_ids sind gleich, beweisen aber nichts. Der Vorgaenger dieses Blocks
+    # liess genau das als MATCH durchgehen.
+    raw_pid = marker.get("pid")
+    if not isinstance(raw_pid, int) or isinstance(raw_pid, bool):
+        return invalid(f"Marker-PID ist keine Zahl: {raw_pid!r}")
+    if raw_pid != obs.main_pid:
+        return invalid(f"Marker-PID {raw_pid} != MainPID {obs.main_pid}")
+
+    raw_ticks = marker.get("proc_start_ticks")
+    if not isinstance(raw_ticks, int) or isinstance(raw_ticks, bool) or raw_ticks < 0:
+        return unknown("Marker nennt keine lesbare Startzeit (proc_start_ticks)")
+    if obs.proc_start_ticks < 0:
+        return unknown(f"/proc/{obs.main_pid}/stat nicht lesbar — Startzeit nicht vergleichbar")
+    if raw_ticks != obs.proc_start_ticks:
+        return invalid("Startzeit weicht ab — PID wiederverwendet, Marker gehoert zum Vorgaenger")
+
+    marker_boot = str(marker.get("boot_id") or "")
+    if not marker_boot or not obs.boot_id:
+        return unknown("boot_id fehlt auf einer Seite — Boot-Zugehoerigkeit nicht beweisbar")
+    if marker_boot != obs.boot_id:
+        return invalid("Marker stammt aus einem frueheren Boot")
+
     # Primaerbeweis: die beim Start geladene Revision.
+    if not code_sha:
+        return unknown("Marker bezeugt keine Revision")
     if code_sha != expected_sha:
         return ProcessFinding(
             obs.unit,
             STATE_CODE_DRIFT,
             (
-                f"laeuft auf {code_sha[:8] or '?'}, erwartet {expected_sha[:8]}"
+                f"laeuft auf {code_sha[:8]}, erwartet {expected_sha[:8]}"
                 + (
                     f"; der Checkout steht bereits auf {checkout_sha[:8]}"
                     if checkout_sha and checkout_sha != code_sha
@@ -208,7 +298,14 @@ def _one(
         )
 
     lock = marker.get("requirements_lock_sha256")
-    if expected_lock_sha256 and lock and str(lock) != expected_lock_sha256:
+    # Eine fehlende Soll-Lock ist keine bestandene Pruefung, sondern eine
+    # unvollstaendige Provenienz: ohne Soll laesst sich ueber die
+    # Abhaengigkeiten des Prozesses nichts beweisen.
+    if not expected_lock_sha256:
+        return unknown("Deploy-Provenienz nennt keine Lock-SHA — Abhaengigkeiten unbelegt")
+    if not lock:
+        return unknown("Marker nennt keine Lock-SHA — Abhaengigkeiten nicht pruefbar")
+    if str(lock) != expected_lock_sha256:
         return ProcessFinding(
             obs.unit,
             STATE_DEPENDENCY_DRIFT,
@@ -217,16 +314,22 @@ def _one(
             expected_sha,
         )
 
-    # Konsistenzkontrolle, nicht Primaerbeweis: wer nach dem Deploy nicht neu
-    # gestartet wurde, kann den neuen Code nicht geladen haben.
-    if deployed_at_utc and obs.started_at_utc and obs.started_at_utc < deployed_at_utc:
-        return ProcessFinding(
-            obs.unit,
-            STATE_STALE_NO_RESTART,
-            f"gestartet {obs.started_at_utc} vor dem Deploy {deployed_at_utc}",
-            code_sha,
-            expected_sha,
-        )
+    # Konsistenzkontrolle, nicht Primaerbeweis.
+    if deployed_at_utc:
+        deployed = _parse_utc(deployed_at_utc)
+        started = _parse_utc(obs.started_at_utc)
+        if deployed is None:
+            return unknown(f"Deploy-Zeitstempel unlesbar: {deployed_at_utc!r}")
+        if started is None:
+            return unknown("Startzeit des Prozesses unlesbar — Deploy-Relation nicht beweisbar")
+        if started < deployed:
+            return ProcessFinding(
+                obs.unit,
+                STATE_STALE_NO_RESTART,
+                f"gestartet {started.isoformat()} vor dem Deploy {deployed.isoformat()}",
+                code_sha,
+                expected_sha,
+            )
 
     return ProcessFinding(obs.unit, STATE_MATCH, "", code_sha, expected_sha)
 
@@ -384,6 +487,8 @@ __all__ = [
     "STATE_INVALID",
     "STATE_MATCH",
     "STATE_STALE_NO_RESTART",
+    "STATE_DEPLOY_PROVENANCE_MISMATCH",
+    "STATE_EXPECTED_UNKNOWN",
     "STATE_UNKNOWN",
     "VERDICT_HOLD",
     "VERDICT_OK",
@@ -392,6 +497,7 @@ __all__ = [
     "ProcessProvenance",
     "build_deployment_marker",
     "build_process_marker",
+    "marker_from_identity",
     "current_boot_id",
     "evaluate_process_markers",
     "marker_path",

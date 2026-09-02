@@ -28,6 +28,7 @@ from app.research.invalidation_evidence import (
     PROBLEM_CONTRADICTS_COUNT,
     PROBLEM_COUNT_MISSING,
     PROBLEM_ID_MISMATCH,
+    PROBLEM_MIRROR_PIN_MISMATCH,
     PROBLEM_OUTCOME_INSPECTED,
     PROBLEM_SCOPE_MISSING,
     PROBLEM_SHA_MISMATCH,
@@ -274,13 +275,34 @@ def test_die_vorgaengerfassung_ist_dokumentiert_nicht_geloescht() -> None:
     assert _evidence_doc()["correction"]["previous_artifact_sha256"] == old
 
 
-@pytest.mark.skipif(
-    not MIRROR.exists(),
-    reason="Audit-Spiegel nur auf der Workstation; der kanonische Beleg im Repo ist geprueft",
-)
-def test_spiegel_und_repo_sind_byte_gleich() -> None:
+def test_repo_und_spiegel_sind_derselbe_beleg() -> None:
+    """Ohne Skip — der Vertrag lebt im Register, nicht in der Anwesenheit einer Datei.
+
+    Die Vorgaengerfassung haengte an ``skipif(not MIRROR.exists())``. Auf dem
+    CI-Runner gibt es kein ``~/KAI-mirror``, also uebersprang sie sich dort
+    deterministisch: der Tests-Job von 7a80ec97 meldete 9433 passed / 8 skipped,
+    und dieser evidenzkritische Guard war einer der acht. Eine gruene CI hatte
+    ihn nie ausgefuehrt.
+
+    Der Pin ``audit_artifact_mirror_sha256 == audit_artifact_sha256`` gilt
+    IMMER — er ist eine Aussage des Registers, keine Eigenschaft der Platte.
+    Die physische Byte-Pruefung kommt zusaetzlich obendrauf, wo der Spiegel
+    liegt, und wird nicht zur Bedingung fuer den Test.
+    """
     entry = _entry(ACT2)
-    assert sha256_of_bytes(MIRROR.read_bytes()) == entry["audit_artifact_sha256"]
+    assert entry["audit_artifact_mirror_sha256"] == entry["audit_artifact_sha256"]
+    assert entry["audit_artifact_mirror"].startswith("KAI-mirror/")
+    assert verify_invalidation_evidence(REPO_ROOT, entry) == []
+
+    if MIRROR.exists():  # Zusatz, nie Bedingung
+        assert sha256_of_bytes(MIRROR.read_bytes()) == entry["audit_artifact_sha256"]
+
+
+def test_ein_abweichender_spiegel_pin_ist_eine_zweite_wahrheit(tmp_path: Path) -> None:
+    """Negativkontrolle zum Pin — sonst prueft die Zeile oben nichts."""
+    root, entry = _sandbox(tmp_path, _good_doc())
+    entry["audit_artifact_mirror_sha256"] = "c" * 64
+    assert PROBLEM_MIRROR_PIN_MISMATCH in verify_invalidation_evidence(root, entry)
 
 
 # --------------------------------------------------------------------------
