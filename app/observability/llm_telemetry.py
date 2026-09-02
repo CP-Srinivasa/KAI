@@ -11,6 +11,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from app.core.file_lock import append_lock
 from app.storage.jsonl_io import iter_jsonl_tolerant
@@ -27,10 +28,24 @@ def record_llm_call(
     role: str = "primary",
     error_type: str | None = None,
     path: Path = DEFAULT_TELEMETRY_PATH,
+    # --- v2 (NEO-P-001, 2026-09-02) -------------------------------------
+    # Purely additive keyword-only fields. Every v1 call site stays valid and
+    # keeps writing the same v1 keys at the same place, so the dashboard
+    # reader (llm_telemetry_summary) is unaffected. No new artifact stream.
+    correlation_id: str | None = None,
+    call_id: str | None = None,
+    purpose: str | None = None,
+    chain_position: int = 0,
+    attempt: int = 1,
+    error_class: str | None = None,
+    http_status: int | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    outcome: str | None = None,
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
-    row = {
-        "schema_version": "v1",
+    row: dict[str, Any] = {
+        "schema_version": "v2",
         "ts": datetime.now(UTC).isoformat(),
         "provider": provider,
         "model": model,
@@ -38,6 +53,16 @@ def record_llm_call(
         "ok": bool(ok),
         "latency_ms": round(float(latency_ms), 3),
         "error_type": error_type,
+        "correlation_id": correlation_id,
+        "call_id": call_id or f"llmc_{uuid4().hex[:8]}",
+        "purpose": purpose,
+        "chain_position": int(chain_position),
+        "attempt": int(attempt),
+        "error_class": error_class,
+        "http_status": http_status,
+        "prompt_tokens": int(prompt_tokens),
+        "completion_tokens": int(completion_tokens),
+        "outcome": outcome or ("success" if ok else "exhausted"),
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
