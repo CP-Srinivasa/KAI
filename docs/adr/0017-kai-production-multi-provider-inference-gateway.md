@@ -1,7 +1,9 @@
 # ADR 0017 — KAI Production Multi-Provider Inference Gateway
 
-**Status:** CODE_COMPLETE / deployment-gated (2026-09-01)  
-**Scope:** operative KAI-Inferenz; kein Production-Cutover  
+**Status:** CODE_COMPLETE / deployment-gated (2026-09-01)
+
+**Scope:** operative KAI-Inferenz; kein Production-Cutover
+
 **Basis:** `3b0fa02751728a93e8c2c34a9bb6515a0dff2597`
 
 ## Problem und Status quo
