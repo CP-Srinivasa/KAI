@@ -52,22 +52,7 @@ jobs:
     # Bewusst OHNE needs:lint — Tests ist mit Abstand der längste Job (Kritischer
     # Pfad); die Serialisierung hinter Lint kostete ~40s Wallclock pro PR und
     # sparte nur im (seltenen) Lint-Rot-Fall Compute.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: kai_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/kai_test
       APP_ENV: testing
       OPENAI_API_KEY: sk-test-key
       TELEGRAM_ENABLED: "false"

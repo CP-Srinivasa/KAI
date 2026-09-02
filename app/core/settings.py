@@ -86,7 +86,11 @@ def validate_json_schema_payload(
 class DBSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", env_file=".env", extra="ignore")
 
-    url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot")
+    # Safe local default (KAI CORE v1): a file-backed SQLite DB, the same engine the
+    # Pi runs in production. The former Postgres default carried an embedded
+    # postgres:postgres credential; production must set DB_URL explicitly
+    # (enforced by app.security.secrets.validate_secrets).
+    url: str = Field(default="sqlite+aiosqlite:///./data/kai.db")
     pool_size: int = Field(default=20)
     max_overflow: int = Field(default=50)
     echo: bool = Field(default=False)
