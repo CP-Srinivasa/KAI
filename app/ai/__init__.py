@@ -11,12 +11,24 @@ layer's contract is the opposite one — fail-closed, no silent cloud fallback,
 ``influences_execution=false``. It stays quarantined and untouched.
 """
 
-from app.ai.audit import CallScope, ErrorClass, classify_error, http_status, llm_call_scope
+from app.ai.audit import (
+    CallScope,
+    ErrorClass,
+    classify_error,
+    correlation_scope,
+    current_correlation_id,
+    http_status,
+    is_retryable_error,
+    llm_call_scope,
+)
 
 __all__ = [
     "CallScope",
     "ErrorClass",
     "classify_error",
+    "correlation_scope",
+    "current_correlation_id",
     "http_status",
+    "is_retryable_error",
     "llm_call_scope",
 ]

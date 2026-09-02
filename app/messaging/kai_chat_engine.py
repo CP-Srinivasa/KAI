@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from app.ai.audit import llm_call_scope
 from app.core.settings import get_settings
 from app.execution.portfolio_read import build_portfolio_snapshot
 from app.messaging.kai_persona import KaiPersonaConfigError, load_kai_persona
@@ -227,18 +228,27 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     system_prompt = _build_persona_system_prompt(language)
     client = AsyncOpenAI(api_key=api_key, timeout=20.0)
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message},
-            ],
-            max_tokens=150,
-            temperature=0.7,
-        )
-        text = (response.choices[0].message.content or "").strip()
-        if not text:
-            raise ValueError("empty_completion")
+        # NEO-F-005: this call used to leave no trace at all. Transport is
+        # unchanged (same client, same timeout) — only the audit scope is new.
+        async with llm_call_scope(purpose="chat", provider="openai", model=model) as scope:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message},
+                ],
+                max_tokens=150,
+                temperature=0.7,
+            )
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                scope.set_tokens(
+                    getattr(usage, "prompt_tokens", 0),
+                    getattr(usage, "completion_tokens", 0),
+                )
+            text = (response.choices[0].message.content or "").strip()
+            if not text:
+                raise ValueError("empty_completion")
         return ChatReply(reply=text, intent="smalltalk", source="gpt4o")
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-chat] gpt-4o call failed: %s", exc)
@@ -377,11 +387,12 @@ async def transcribe_audio_via_whisper(
 
     try:
         client = AsyncOpenAI(api_key=api_key, timeout=90.0)
-        transcription = await client.audio.transcriptions.create(
-            model="whisper-1",
-            language=lang,
-            file=(f"voice.{ext}", audio_data, mime),
-        )
+        async with llm_call_scope(purpose="stt", provider="openai", model="whisper-1"):
+            transcription = await client.audio.transcriptions.create(
+                model="whisper-1",
+                language=lang,
+                file=(f"voice.{ext}", audio_data, mime),
+            )
         text = (transcription.text or "").strip()
         if text and _is_whisper_hallucination(text):
             logger.warning(

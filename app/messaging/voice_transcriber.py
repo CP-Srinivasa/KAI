@@ -11,6 +11,8 @@ import logging
 
 import httpx
 
+from app.ai.audit import llm_call_scope
+
 logger = logging.getLogger(__name__)
 
 _TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -87,10 +89,14 @@ class VoiceTranscriber:
         data = {"model": self._whisper_model, "language": "de"}
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
-                resp.raise_for_status()
-                text = str(resp.json().get("text", "")).strip()
+            # NEO-F-005/-F-010: audit scope only. The raw httpx multipart POST
+            # is deliberately LEFT IN PLACE — swapping it for the SDK would
+            # move the test patch point and is a separate change.
+            async with llm_call_scope(purpose="stt", provider="openai", model=self._whisper_model):
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
+                    resp.raise_for_status()
+                    text = str(resp.json().get("text", "")).strip()
                 if text:
                     logger.info("[VOICE] Transcribed %d chars", len(text))
                     return text

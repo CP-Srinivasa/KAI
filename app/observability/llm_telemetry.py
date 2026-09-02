@@ -27,7 +27,10 @@ def record_llm_call(
     latency_ms: float,
     role: str = "primary",
     error_type: str | None = None,
-    path: Path = DEFAULT_TELEMETRY_PATH,
+    # ``None`` resolves to DEFAULT_TELEMETRY_PATH at CALL time, so a test can
+    # redirect every writer (including the ones nested deep inside providers)
+    # by monkeypatching that module attribute.
+    path: Path | None = None,
     # --- v2 (NEO-P-001, 2026-09-02) -------------------------------------
     # Purely additive keyword-only fields. Every v1 call site stays valid and
     # keeps writing the same v1 keys at the same place, so the dashboard
@@ -65,10 +68,11 @@ def record_llm_call(
         "outcome": outcome or ("success" if ok else "exhausted"),
     }
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        sink = path if path is not None else DEFAULT_TELEMETRY_PATH
+        sink.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(row, sort_keys=True, separators=(",", ":"))
-        with append_lock(path):
-            with path.open("a", encoding="utf-8") as handle:
+        with append_lock(sink):
+            with sink.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
     except Exception:  # noqa: BLE001 — telemetry must never break the analysis path
         pass

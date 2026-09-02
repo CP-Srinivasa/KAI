@@ -59,6 +59,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.ai.audit import classify_error, correlation_scope, current_correlation_id, http_status
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.crypto_relevance import crypto_relevance_verdict
 from app.analysis.input_contract import (
@@ -553,6 +554,9 @@ class AnalysisPipeline:
         assert self._provider is not None
         name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
         started = monotonic()
+        # chain_position=-1 marks the OUTER row that spans the whole chain. It
+        # is kept verbatim for the v1 dashboard reader; the per-attempt rows
+        # (chain_position >= 0) come from EnsembleProvider.
         try:
             output = await self._provider.analyze(title=title, text=text, context=context)
         except Exception as exc:
@@ -563,6 +567,11 @@ class AnalysisPipeline:
                 latency_ms=(monotonic() - started) * 1000.0,
                 role="primary",
                 error_type=type(exc).__name__,
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                error_class=classify_error(exc),
+                http_status=http_status(exc),
             )
             raise
         record_llm_call(
@@ -571,6 +580,11 @@ class AnalysisPipeline:
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
             role="primary",
+            correlation_id=current_correlation_id(),
+            purpose="analysis",
+            chain_position=-1,
+            prompt_tokens=output.prompt_tokens,
+            completion_tokens=output.completion_tokens,
         )
         return output
 
@@ -605,6 +619,11 @@ class AnalysisPipeline:
                 ok=True,
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                prompt_tokens=output.prompt_tokens,
+                completion_tokens=output.completion_tokens,
             )
         except Exception as exc:
             record_llm_call(
@@ -614,6 +633,11 @@ class AnalysisPipeline:
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
                 error_type=type(exc).__name__,
+                correlation_id=current_correlation_id(),
+                purpose="analysis",
+                chain_position=-1,
+                error_class=classify_error(exc),
+                http_status=http_status(exc),
             )
             error = str(exc)
             logger.warning(
@@ -626,7 +650,21 @@ class AnalysisPipeline:
 
         return output, shadow_provider_name, None
 
-    async def run(self, doc: CanonicalDocument) -> PipelineResult:
+    async def run(
+        self, doc: CanonicalDocument, *, correlation_id: str | None = None
+    ) -> PipelineResult:
+        """Analyze a single document.
+
+        NEO-F-008: binds *correlation_id* (or a per-document one) for the whole
+        run, so every LLM row written underneath — including the per-attempt
+        rows inside an EnsembleProvider — carries the same id. The binding is
+        reset on exit and, because run_batch dispatches through tasks, cannot
+        bleed between concurrently analysed documents.
+        """
+        with correlation_scope(correlation_id or f"doc_{doc.id}"):
+            return await self._run(doc)
+
+    async def _run(self, doc: CanonicalDocument) -> PipelineResult:
         """Analyze a single document."""
         text = doc.cleaned_text or doc.raw_text or ""
         input_rejection = analysis_input_rejection(doc, text)

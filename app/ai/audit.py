@@ -20,8 +20,9 @@ quarantined; duplicating ten string constants is cheaper than coupling to it.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
@@ -30,7 +31,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from app.observability.llm_telemetry import DEFAULT_TELEMETRY_PATH, record_llm_call
+from app.observability.llm_telemetry import record_llm_call
 
 ErrorClass = Literal[
     "timeout",
@@ -64,6 +65,36 @@ _TRANSPORT_MARKERS: tuple[str, ...] = (
     "remoteprotocolerror",
     "apiconnectionerror",
 )
+
+
+# ── correlation propagation ─────────────────────────────────────────────────
+# NEO-F-008: request ids existed at the HTTP edge and died there. A ContextVar
+# carries one across the await boundaries into providers that cannot take an
+# extra argument (BaseAnalysisProvider.analyze is a fixed interface) WITHOUT
+# smuggling it through the prompt ``context`` dict, which would change the
+# prompt text itself.
+
+_CORRELATION_ID: ContextVar[str | None] = ContextVar("kai_llm_correlation_id", default=None)
+
+
+def current_correlation_id() -> str | None:
+    """Correlation id bound to the current async context, if any."""
+    return _CORRELATION_ID.get()
+
+
+@contextmanager
+def correlation_scope(correlation_id: str | None) -> Iterator[str]:
+    """Bind *correlation_id* to every LLM call made inside the block.
+
+    Generates one when ``None`` so a chain is never anonymous. Always resets on
+    exit, so a pipeline awaited inline cannot leak its id into its caller.
+    """
+    resolved = correlation_id or f"llm_{uuid4().hex[:12]}"
+    token = _CORRELATION_ID.set(resolved)
+    try:
+        yield resolved
+    finally:
+        _CORRELATION_ID.reset(token)
 
 
 def http_status(exc: BaseException) -> int | None:
@@ -190,7 +221,7 @@ async def llm_call_scope(
     chain_position: int = 0,
     attempt: int = 1,
     failure_outcome: Outcome = "exhausted",
-    path: Path = DEFAULT_TELEMETRY_PATH,
+    path: Path | None = None,
 ) -> AsyncIterator[CallScope]:
     """Measure exactly one LLM call and append exactly one v2 telemetry row.
 
@@ -199,15 +230,16 @@ async def llm_call_scope(
         provider: provider name, e.g. ``"openai"``.
         model: model name; ``None`` becomes ``""`` (never invented).
         role: ``primary`` | ``shadow`` | ``validator``.
-        correlation_id: request-scoped id; auto-generated when absent so that a
-            row is never anonymous.
+        correlation_id: request-scoped id; falls back to the ambient
+            :func:`correlation_scope` and finally to a generated one, so a row
+            is never anonymous.
         call_id: per-attempt id; auto-generated when absent.
         chain_position: index within a fallback chain; ``-1`` marks an outer
             wrapper row (kept for the v1 dashboard reader).
         attempt: 1-based retry counter.
         failure_outcome: what to record when the body raises - ``fallthrough``
             when a further provider will be tried, ``exhausted`` otherwise.
-        path: telemetry sink; injectable for tests.
+        path: telemetry sink; ``None`` uses the default at call time.
 
     Yields:
         CallScope - call ``set_tokens`` / ``set_outcome`` / ``set_model`` on it.
@@ -216,7 +248,7 @@ async def llm_call_scope(
         Whatever the body raises, unchanged.
     """
     scope = CallScope(
-        correlation_id=correlation_id or f"llm_{uuid4().hex[:12]}",
+        correlation_id=correlation_id or current_correlation_id() or f"llm_{uuid4().hex[:12]}",
         call_id=call_id or f"llmc_{uuid4().hex[:8]}",
         provider=provider,
         model=model or "",
