@@ -1,10 +1,11 @@
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
 from app.ai.health import ai_health_snapshot
+from app.core.config_redaction import redacted_config_snapshot
 from app.core.runtime_identity import drift_report, get_runtime_identity
 from app.core.settings import AppSettings, get_settings
 from app.services.timer_health import read_latest_timer_audit
@@ -151,3 +152,17 @@ async def ai_health(
 
     snapshot = ai_health_snapshot(window_hours=window_hours, settings=settings)
     return AIHealthResponse(**snapshot["ai"])
+
+
+@router.get("/health/config")
+async def health_config(
+    settings: AppSettings = Depends(get_settings),  # noqa: B008
+) -> dict[str, Any]:
+    """Effective configuration without secrets (KAI CORE v1, §9 Observability).
+
+    Every field of the settings tree with its effective value; secret-looking
+    fields are replaced by a sha256 fingerprint, URL credentials are masked.
+    ``explicit`` lists per section which fields came from the environment —
+    a critical field missing there is running on a code default.
+    """
+    return redacted_config_snapshot(settings)
