@@ -43,6 +43,7 @@ import structlog
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.ai.audit import llm_call_scope
 from app.market_data.models import MarketDataPoint
 from app.signals.models import SignalCandidate
 
@@ -206,7 +207,10 @@ class SignalConsensusValidator:
             contradicting="; ".join(signal.contradictory_factors) or "none",
         )
 
-        tasks = [self._validate_single(cfg, user_msg) for cfg in self._configs]
+        tasks = [
+            self._validate_single(cfg, user_msg, chain_position=index)
+            for index, cfg in enumerate(self._configs)
+        ]
         results = await asyncio.gather(*tasks)
 
         all_agreed = all(r.agreed for r in results)
@@ -242,6 +246,8 @@ class SignalConsensusValidator:
         self,
         cfg: ValidatorConfig,
         user_msg: str,
+        *,
+        chain_position: int = 0,
     ) -> SingleValidatorResult:
         """Query one validator backend."""
         client_kwargs: dict[str, Any] = {
@@ -251,17 +257,34 @@ class SignalConsensusValidator:
         if cfg.base_url:
             client_kwargs["base_url"] = cfg.base_url
 
+        # Validators are peers, not a fallback chain: role="validator" and the
+        # index keeps them apart in the telemetry stream. base_url decides the
+        # provider label — the Gemini validator talks OpenAI-compatible.
+        provider_label = "gemini" if cfg.base_url == GEMINI_OPENAI_BASE_URL else "openai"
         try:
             client = AsyncOpenAI(**client_kwargs)
-            response = await client.chat.completions.create(
+            async with llm_call_scope(
+                purpose="consensus",
+                provider=provider_label,
                 model=cfg.model,
-                messages=[
-                    {"role": "system", "content": _CONSENSUS_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                max_tokens=cfg.max_tokens,
-                temperature=0.2,
-            )
+                role="validator",
+                chain_position=chain_position,
+            ) as scope:
+                response = await client.chat.completions.create(
+                    model=cfg.model,
+                    messages=[
+                        {"role": "system", "content": _CONSENSUS_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    max_tokens=cfg.max_tokens,
+                    temperature=0.2,
+                )
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    scope.set_tokens(
+                        getattr(usage, "prompt_tokens", 0),
+                        getattr(usage, "completion_tokens", 0),
+                    )
         except Exception as exc:
             log.error(
                 "consensus.llm_error",

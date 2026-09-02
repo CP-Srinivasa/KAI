@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 
+from app.ai.audit import llm_call_scope
+
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
@@ -111,7 +113,9 @@ class TextIntentProcessor:
     def is_configured(self) -> bool:
         return bool(self._api_key)
 
-    async def process(self, text: str, context: str = "") -> IntentResult:
+    async def process(
+        self, text: str, context: str = "", *, correlation_id: str | None = None
+    ) -> IntentResult:
         """Classify *text* and return an ``IntentResult``.
 
         Parameters
@@ -121,6 +125,10 @@ class TextIntentProcessor:
         context:
             Optional context string (e.g. recent analyses) injected into
             the user message so the LLM can give data-backed answers.
+        correlation_id:
+            Optional request id from the caller. Keyword-only and optional, so
+            every existing call site stays valid; when absent the audit scope
+            generates one (NEO-F-008).
         """
         if not self._api_key:
             return _NOT_CONFIGURED
@@ -136,20 +144,34 @@ class TextIntentProcessor:
         # Rest des Systems; CLAUDE.md §LLM Integration.
         try:
             client = AsyncOpenAI(api_key=self._api_key, timeout=self._timeout)
-            resp = await client.chat.completions.create(
+            # NEO-F-005: audit scope only — same client, same timeout, so the
+            # existing AsyncOpenAI patch points in the tests stay valid.
+            async with llm_call_scope(
+                purpose="intent",
+                provider="openai",
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.3,
-                max_tokens=800,
-            )
-            content = resp.choices[0].message.content or ""
-            parsed = json.loads(content)
-            if not isinstance(parsed, dict):
-                raise ValueError("intent payload is not a JSON object")
+                correlation_id=correlation_id,
+            ) as scope:
+                resp = await client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                    max_tokens=800,
+                )
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    scope.set_tokens(
+                        getattr(usage, "prompt_tokens", 0),
+                        getattr(usage, "completion_tokens", 0),
+                    )
+                content = resp.choices[0].message.content or ""
+                parsed = json.loads(content)
+                if not isinstance(parsed, dict):
+                    raise ValueError("intent payload is not a JSON object")
             return IntentResult(
                 intent=parsed.get("intent", "chat"),
                 response=parsed.get("response", "Keine Antwort generiert."),
