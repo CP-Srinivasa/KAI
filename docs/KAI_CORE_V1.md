@@ -148,6 +148,27 @@ chmod 0600 artifacts/telegram_channel.session
 
 ## 13. Release-Stand und Evidenz
 
-Wird am Sprint-Ende ausgefüllt (Commit-SHAs, PR, CI-Lauf, Deploy-Urteil, `/health`-Body, Testzahlen). Bis dahin: **UNVERIFIED**.
+**Branch:** `core/kai-core-v1-20260902` (Basis Mainline `9293c423`), Sprint-Commits in Reihenfolge:
 
-<<EVIDENCE>>
+| Commit | Inhalt |
+|---|---|
+| `1f39fdb7` | Docker/Postgres-Welt + CI-Postgres raus, 6 Deps raus, Lock regeneriert, SQLite-Default, `DB_URL` in Production Pflicht (+Test), Gründungs-Spec archiviert |
+| `d78e247b` | God-File-Ratchet-Fix (`settings.py` 1883/1883) |
+| `579f2b90` · `3c6875f0` · `e0260609` | Reduktion: 5 Shims · 37 tote Module + 22 exklusive Tests · 25 Waisen-Skripte (−18.714 Zeilen; Beleg: Import-Graph fan-in 0 + grep Punkt-/Slash-/Basename-Form je Kandidat) |
+| `a18a9819` | `app/core/config_redaction.py` (+5 Tests) · `EnvironmentFile=` Pflicht in 59 Units |
+| `e845e461` · `aee456aa` | Kern-Doku, D-CORE-001, CHANGELOG, README, CLAUDE.md-Modulkarte, KAI_IDENTITY-Wahrheit |
+| `2b3555da` · `063cdef9` · `8b28302b` · `a8f77326` · `8ff60a96` · `52a9d045` · `580beb9d` | AI-Gateway NEO-P-001…005, Use Case A, CODEMAP/ADR-0015 (+110 Tests) |
+| `dbb596fb` | `GET /health/config` (+2 Tests), CODEMAP-Anker Konfiguration/Boot |
+| `84d3ac47` | `llm_telemetry.jsonl` in die Audit-Rotation; Grok-Status verifiziert |
+| `d16f5824` | Use Case B (TV-Kette Webhook→Fill→TP-Close, Telegram-Kette Fill→Partial-TP→Stop) + realer Minimal-Env-Startup (+6 Tests) |
+
+**Gates (lokal, wörtlich):** `ruff check .` → All checks passed · `ruff format --check .` → formatiert · `godfile_ratchet.py` → all god-files at or below baseline · `stream_consumer_ratchet.py` → ok · `mypy app/` → `Success: no issues found in 637 source files` · Vollsuite `pytest tests -n auto --dist loadfile --ignore=tests/benchmarks` → **8849 passed, 43 skipped, 2 xfailed in 224 s (Exit 0)** (Baseline Mainline vor Sprint: 8983 unit passed / 9087 gesamt).
+
+**Laufzeit-Verifikation (Pi, direkt, 2026-09-02):** `PIPELINE_PROVIDER` nicht gesetzt (0 Treffer) · `XAI_FALLBACK_ENABLED=true` nicht gesetzt (0) · `APP_ENV` nicht gesetzt (0) · `/health` vor Sprint: `runtime_commit == checkout_commit == 9293c423`, `drift_commits: 0`.
+
+**PR / CI / Deploy:** <<SHIP>>
+
+**Verbleibende Blocker (extern / Operator):** `APP_ENV=production` (Reihenfolge § 8) · `pi_apply_systemd_units.sh` (Unit-Drift `EnvironmentFile=`) · drei Units mit Code außerhalb des Repos (Provenance P0) · Branch-/Worktree-Bereinigung (`/c/tmp/kai-core-v1-reports/blockA.sh`, vom Auto-Modus blockiert) · Remote-Archiv-Tags/Löschungen Block B–D (outward-facing, Operator-OK) · Salvage-Merges #759/#790/#789/#791 nach diesem PR.
+
+**Nächste Mission (max. 3):** 1. **KAI SOVEREIGN VALUE-OS / Lightning Payment Fabric** — eigener Architektur-Sprint auf dem quarantänisierten Adapter. 2. Hash-Chain am Execution-Stream (`paper_execution_audit.jsonl` `prev_hash`) + Alembic-Migrationstest. 3. Nach zwei Wochen v2-Telemetrie: Shadow im Server-Pfad + Modell-Routing entscheiden; `observability`-Split.
+
