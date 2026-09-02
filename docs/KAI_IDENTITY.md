@@ -77,7 +77,7 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **Verbindliche Gate-Kette (non-bypassable):** Ein Signal darf **niemals** direkt zur Order werden. Pfad:
   `Signal → DataQuality (Freshness/Plausibility/Cross-Exchange) → Regime → Korrelation/Cluster → Risk (VaR/CVaR/Exposure) → Liquidität/Slippage → Thesis-Invalidation → Approval (bei High-Impact) → Audit → Execution`.
   Jedes Gate ist fail-closed; jede Ablehnung wird auditierbar mit `reason_code` geloggt.
-- **LIVE:** Marktanalyse, Signalbewertung, Watchlist, Simulation, **kontrolliertes Paper-Trading** (`PaperExecutionEngine`, 16-State-Lifecycle, Slippage+Fees), Entscheidungsprotokollierung, Risikoauswertung (`app/risk/`: VaR/CVaR mehrmethodisch, HRP/Risk-Parity-Optimizer, Korrelations-/Cluster-Gates, Manipulation-Detection), Operator-Signal-Bridge im **Approval-Mode**.
+- **LIVE:** Marktanalyse, Signalbewertung, Watchlist, Simulation, **kontrolliertes Paper-Trading** (`PaperExecutionEngine`, 16-State-Lifecycle, Slippage+Fees), Entscheidungsprotokollierung, Risikoauswertung (`app/risk/`: `RiskEngine` Sizing/Drawdown/Veto, Promotion-Gate, Churn-Killer, Korrelations-/Cluster-Gates; VaR/CVaR, HRP/Risk-Parity-Optimizer und Manipulation-Detection waren nie in einen Laufzeitpfad verdrahtet und wurden am 2026-09-02 entfernt — siehe `docs/KAI_CORE_V1.md`, Zielbild-Status ZIELBILD), Operator-Signal-Bridge im **Approval-Mode**.
 - **VORBEREITET:** `LiveExecutionEngine` + `ExecutableOrderIntent` (einheitlicher Paper/Live-Vertrag), Live-Mode **disabled** — Gates ungeöffnet.
 - **ZIELBILD:** Execution-Flows nur mit Governance, Berechtigungen, Compliance, Logging und Human-in-the-loop. KAI ist **kein** autonomer Gewinnversprechen-Trading-Bot.
 
