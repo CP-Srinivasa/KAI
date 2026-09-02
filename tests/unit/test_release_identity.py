@@ -525,3 +525,249 @@ def test_vorwaerts_und_rollback_benutzen_denselben_codepfad() -> None:
         if f.name != "pi_activate_release.sh" and "mv -T" in f.read_text(encoding="utf-8")
     ]
     assert andere == [], f"zweiter Umschaltpfad ohne Marker: {[f.name for f in andere]}"
+
+
+# --------------------------------------------------------------------------
+# Der Attestierungspfad selbst — mit SYMLINKTEM --repo.
+#
+# Der bisherige Race-Test baute den Marker aus dem bereits aufgeloesten
+# Release-Verzeichnis. Er belegt die Evaluator-Logik, kann den Attestierungspfad
+# aber prinzipiell nicht sehen — und genau dort sass der Defekt: `argv` und das
+# Arbeitsverzeichnis zeigten weiter auf `current`, und beide werden erst beim
+# Exec bzw. beim Import aufgeloest, also NACH dem Lesen des Manifests.
+# --------------------------------------------------------------------------
+
+
+class _ExecSpy:
+    """Faengt Executable, argv und Arbeitsverzeichnis ab, statt zu exec'en."""
+
+    def __init__(self) -> None:
+        self.argv: list[str] = []
+        self.cwd: str = ""
+
+    def execv(self, path: str, argv) -> None:  # noqa: ANN001
+        self.argv = [path, *list(argv)[1:]]
+
+    def chdir(self, path: str) -> None:
+        self.cwd = path
+
+
+def _identity(sha: str):
+    from app.core.runtime_identity import RuntimeIdentity
+
+    return RuntimeIdentity(
+        schema="runtime_identity/v1",
+        runtime_commit=sha,
+        started_at_utc=STARTED,
+        lock_sha256_at_start=LOCK,
+        pid=os.getpid(),
+    )
+
+
+def _venv(release: Path) -> Path:
+    exe = release / ".venv" / "bin" / "python"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    return exe
+
+
+def test_attestierung_bindet_marker_argv_und_cwd_an_das_aufgeloeste_release(
+    tmp_path: Path,
+) -> None:
+    """current -> OLD, danach Switch auf NEW: der Prozess bleibt vollstaendig OLD."""
+    from app.observability.process_runtime_marker import (
+        read_process_markers,
+        self_attest_and_exec,
+    )
+
+    alt = _release(tmp_path, "a" * 40, code="print('alt')")
+    neu = _release(tmp_path, "b" * 40, code="print('neu')")
+    _venv(alt)
+    _venv(neu)
+    link = _switch(tmp_path, alt)
+    if link is None:
+        # Ohne Symlink-Recht laesst sich der Symlink-Defekt nicht nachstellen;
+        # dann wird derselbe Vertrag direkt am aufgeloesten Pfad geprueft — kein
+        # Skip, denn die Aussage darf auf keiner Plattform verschwinden.
+        link = alt
+
+    spy = _ExecSpy()
+    self_attest_and_exec(
+        _identity("a" * 40),
+        unit="kai-server.service",
+        repo_root=link,
+        argv=[f"{link}/.venv/bin/python", "-m", "uvicorn", "app.api.main:app"],
+        execv=spy.execv,
+        chdir=spy.chdir,
+    )
+    # Nach der Bindung schaltet current weiter — das darf nichts mehr aendern.
+    _switch(tmp_path, neu)
+
+    marker = read_process_markers(["kai-server.service"], root=alt)["kai-server.service"]
+    assert marker is not None
+    assert marker["release_path"] == str(alt)
+    assert marker["repo_root"] == str(alt)
+    assert marker["runtime_code_sha"] == "a" * 40
+    assert marker["release_tree_sha256"] == release_tree_sha256(alt)
+
+    # Executable und Arbeitsverzeichnis haengen am AUFGELOESTEN Release,
+    # nicht am beweglichen Symlink und nicht am neuen Release.
+    assert spy.argv[0] == f"{alt}/.venv/bin/python"
+    assert spy.cwd == str(alt)
+    assert "current" not in spy.argv[0]
+    assert str(neu) not in " ".join(spy.argv)
+
+
+def test_positivfall_current_zeigt_vor_dem_start_auf_das_neue_release(tmp_path: Path) -> None:
+    from app.observability.process_runtime_marker import (
+        read_process_markers,
+        self_attest_and_exec,
+    )
+
+    neu = _release(tmp_path, "c" * 40, code="print('neu')")
+    _venv(neu)
+    link = _switch(tmp_path, neu) or neu
+
+    spy = _ExecSpy()
+    self_attest_and_exec(
+        _identity("c" * 40),
+        unit="kai-server.service",
+        repo_root=link,
+        argv=[f"{link}/.venv/bin/python", "-m", "uvicorn"],
+        execv=spy.execv,
+        chdir=spy.chdir,
+    )
+    marker = read_process_markers(["kai-server.service"], root=neu)["kai-server.service"]
+    assert marker is not None
+    assert marker["release_path"] == str(neu)
+    assert marker["release_tree_sha256"] == release_tree_sha256(neu)
+    assert spy.argv[0] == f"{neu}/.venv/bin/python"
+    assert spy.cwd == str(neu)
+
+
+def test_ein_manipulierter_release_wird_nicht_attestiert(tmp_path: Path) -> None:
+    """Traegt der Baum seinen Anspruch nicht mehr, gibt es keinen Marker und kein Exec."""
+    from app.observability.process_runtime_marker import self_attest_and_exec
+
+    rel = _release(tmp_path, "d" * 40)
+    _venv(rel)
+    (rel / "app" / "main.py").write_text("print('manipuliert')", encoding="utf-8")
+    spy = _ExecSpy()
+    with pytest.raises(RuntimeError):
+        self_attest_and_exec(
+            _identity("d" * 40),
+            unit="kai-server.service",
+            repo_root=rel,
+            argv=[f"{rel}/.venv/bin/python"],
+            execv=spy.execv,
+            chdir=spy.chdir,
+        )
+    assert spy.argv == [] and spy.cwd == ""
+
+
+def test_ein_nicht_aufloesbarer_pfad_startet_nichts(tmp_path: Path) -> None:
+    from app.observability.process_runtime_marker import self_attest_and_exec
+
+    spy = _ExecSpy()
+    with pytest.raises(FileNotFoundError):
+        self_attest_and_exec(
+            _identity("e" * 40),
+            unit="kai-server.service",
+            repo_root=tmp_path / "gibtsnicht",
+            argv=["/x/python"],
+            execv=spy.execv,
+            chdir=spy.chdir,
+        )
+    assert spy.argv == []
+
+
+def test_argv_umschreibung_trifft_nur_den_praefix() -> None:
+    from app.observability.process_runtime_marker import bind_argv_to_release
+
+    argv = ["/k/current/.venv/bin/python", "-m", "uvicorn", "--repo", "/k/current"]
+    gebunden = bind_argv_to_release(argv, given="/k/current", resolved="/k/releases/abc")
+    assert gebunden[0] == "/k/releases/abc/.venv/bin/python"
+    assert gebunden[1:4] == ["-m", "uvicorn", "--repo"]
+    assert gebunden[4] == "/k/releases/abc"
+
+
+def test_argv_bleibt_unveraendert_wenn_kein_symlink_im_spiel_ist() -> None:
+    from app.observability.process_runtime_marker import bind_argv_to_release
+
+    argv = ["/k/releases/abc/.venv/bin/python", "-m", "uvicorn"]
+    assert bind_argv_to_release(argv, given="/k/releases/abc", resolved="/k/releases/abc") == argv
+
+
+def test_symlink_indirektion_ist_auf_jeder_plattform_pruefbar(tmp_path: Path) -> None:
+    """Ohne echten Symlink: die Aufloesung wird injiziert, der Vertrag bleibt derselbe.
+
+    Unter Windows fehlt das Symlink-Recht, ``given`` und ``resolved`` waeren
+    identisch, und der Test waere auch OHNE die Bindung gruen. Die Injektion
+    stellt die Indirektion nach, sodass die Aussage nicht an der Plattform haengt.
+    """
+    from app.observability.process_runtime_marker import (
+        read_process_markers,
+        self_attest_and_exec,
+    )
+
+    alt = _release(tmp_path, "a" * 40, code="print('alt')")
+    _venv(alt)
+    current = tmp_path / "current"  # existiert bewusst NICHT als Symlink
+
+    spy = _ExecSpy()
+    self_attest_and_exec(
+        _identity("a" * 40),
+        unit="kai-server.service",
+        repo_root=current,
+        argv=[f"{current}/.venv/bin/python", "-m", "uvicorn"],
+        execv=spy.execv,
+        chdir=spy.chdir,
+        resolve=lambda _p: alt,
+    )
+    marker = read_process_markers(["kai-server.service"], root=alt)["kai-server.service"]
+    assert marker is not None
+    assert marker["release_path"] == str(alt)
+    assert marker["repo_root"] == str(alt)
+    assert spy.argv[0] == f"{alt}/.venv/bin/python"
+    assert spy.cwd == str(alt)
+    assert str(current) not in spy.argv[0]
+    assert str(current) != spy.cwd
+
+
+def test_ohne_die_bindung_liefe_der_prozess_ueber_den_symlink(tmp_path: Path) -> None:
+    """Negativkontrolle zur Bindung selbst — sonst prueft der Test oben nichts."""
+    from app.observability.process_runtime_marker import bind_argv_to_release
+
+    ohne = ["/k/current/.venv/bin/python", "-m", "uvicorn"]
+    # Ohne Umschreibung bliebe genau dieser Pfad stehen und wuerde erst beim
+    # Exec aufgeloest — nach dem Lesen des Manifests.
+    assert ohne[0].startswith("/k/current")
+    mit = bind_argv_to_release(ohne, given="/k/current", resolved="/k/releases/abc")
+    assert mit[0] == "/k/releases/abc/.venv/bin/python"
+    assert mit != ohne
+
+
+def test_kein_test_veraendert_das_arbeitsverzeichnis_des_workers(tmp_path: Path) -> None:
+    """Waechter gegen genau den Fehler, der sieben fremde Tests gerissen hat.
+
+    ``self_attest_and_exec`` wechselt in Produktion das Arbeitsverzeichnis, damit
+    Python seine Module aus dem Release aufloest — direkt vor dem ``execv``, das
+    den Prozess ohnehin ersetzt. In einem Test ohne injiziertes ``chdir`` bleibt
+    der Wechsel stehen und trifft jeden folgenden Test im selben Worker.
+    """
+    from app.observability.process_runtime_marker import self_attest_and_exec
+
+    rel = _release(tmp_path, "9" * 40)
+    _venv(rel)
+    vorher = os.getcwd()
+    spy = _ExecSpy()
+    self_attest_and_exec(
+        _identity("9" * 40),
+        unit="kai-server.service",
+        repo_root=rel,
+        argv=[f"{rel}/.venv/bin/python"],
+        execv=spy.execv,
+        chdir=spy.chdir,
+    )
+    assert os.getcwd() == vorher
+    assert spy.cwd == str(rel), "der Wechsel muss angefordert, nur eben injiziert sein"

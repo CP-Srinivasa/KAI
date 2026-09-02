@@ -651,9 +651,15 @@ def trading_runtime_exec(
         console.print("[red]runtime-exec ohne Kommando[/red] — nach `--` gehoert der Dienst.")
         raise typer.Exit(code=2)
 
-    root = Path(repo).resolve()
+    # BEWUSST NICHT hier aufloesen: ``self_attest_and_exec`` bekommt den Pfad so,
+    # wie die Unit ihn nennt (``/home/kai/current``), und loest ihn genau einmal
+    # kanonisch auf. Nur so kann es auch ``argv`` und das Arbeitsverzeichnis vom
+    # Symlink auf dasselbe Release umschreiben — sonst zeigte der Marker auf das
+    # alte Release, waehrend Executable und Importpfad ueber den beweglichen
+    # Symlink liefen und erst spaeter aufgeloest wuerden.
+    root = Path(repo)
     self_attest_and_exec(
-        capture_runtime_identity(root),
+        capture_runtime_identity(root.resolve()),
         unit=unit,
         repo_root=root,
         argv=argv,

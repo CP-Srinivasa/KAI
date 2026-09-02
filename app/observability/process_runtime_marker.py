@@ -216,6 +216,22 @@ def marker_from_release(
     )
 
 
+def bind_argv_to_release(argv: Sequence[str], *, given: str, resolved: str) -> list[str]:
+    """Jeden Pfad im Kommando vom Symlink auf das aufgeloeste Release umschreiben.
+
+    ``execv`` loest ``argv[0]`` ERST beim Exec auf, und Python loest Importpfade
+    erst beim Import auf — beides also NACH dem Lesen des Manifests. Bliebe
+    ``/home/kai/current/.venv/bin/python`` stehen, koennte ein Switch dazwischen
+    den Prozess aus dem NEUEN Release starten, waehrend der Marker das ALTE
+    nennt. Das Fenster ist klein; geschlossen war die Bedingung.
+    """
+    g = given.rstrip("/\\")
+    r = resolved.rstrip("/\\")
+    if not g or g == r:
+        return list(argv)
+    return [r + a[len(g) :] if a.startswith(g) else a for a in argv]
+
+
 def self_attest_and_exec(
     identity: RuntimeIdentityLike,
     *,
@@ -223,40 +239,65 @@ def self_attest_and_exec(
     repo_root: Path | str,
     argv: Sequence[str],
     execv: Callable[[str, Sequence[str]], None] | None = None,
+    chdir: Callable[[str], None] | None = None,
+    resolve: Callable[[Path], Path | None] | None = None,
 ) -> None:
-    """Im EIGENEN Prozess bezeugen, dann zum Dienst werden.
+    """Sich selbst bezeugen und dann zum Dienst werden — an EIN Release gebunden.
 
-    Der Marker wird unter ``os.getpid()`` geschrieben — und ``os.execv`` ersetzt
-    danach das Prozessabbild, **behaelt aber PID und Kernel-Startzeit**. Marker
-    und laufender Dienst sind damit dieselbe Kernel-Identitaet.
+    ``os.execv`` ersetzt das Prozessabbild, behaelt aber PID und Kernel-Startzeit;
+    Marker und laufender Dienst sind damit dieselbe Kernel-Identitaet.
 
-    Warum nicht ``ExecStartPost``: das ist ein ZWEITER Prozess. Er liest den
-    Checkout und schreibt die Revision unter einer per ``systemctl show MainPID``
-    abgefragten FREMDEN PID. Bewegt sich der Checkout zwischen dem Start des
-    Dienstes und diesem Nachlauf, behauptet der Marker den neuen Commit fuer
-    einen Prozess, der den alten geladen hat — ein falsches MATCH aus genau der
-    Luecke, die dieser Marker schliessen soll.
+    ``ExecStartPost`` koennte das nicht: ein zweiter Prozess wuerde einen selbst
+    gelesenen Commit einer per ``systemctl show MainPID`` abgefragten FREMDEN PID
+    zuschreiben.
+
+    Und die Bindung endet nicht beim Marker. Nach dem Aufloesen darf **kein**
+    Pfad mehr ueber den beweglichen Symlink laufen — weder das Executable noch
+    das Arbeitsverzeichnis, aus dem Python seine Module aufloest. Sonst zeigt der
+    Marker auf das alte Release, waehrend der Prozess aus dem neuen laedt.
     """
-    root = Path(repo_root)
-    from app.observability.release_identity import read_release_manifest
+    from app.observability.release_identity import (
+        read_release_manifest,
+        resolve_current,
+        verify_release,
+    )
 
-    manifest = read_release_manifest(root)
+    given = Path(repo_root)
+    # Der Aufloesungspunkt ist injizierbar, damit die Symlink-Indirektion auf
+    # JEDER Plattform pruefbar bleibt. Ohne das waere der entscheidende Test auf
+    # Windows gruen, ohne den Defekt sehen zu koennen — die Blindstelle, gegen
+    # die diese Datei gebaut ist.
+    resolved = (resolve or resolve_current)(given)
+    if resolved is None:
+        # Kein aufloesbarer Pfad: hier wird nichts mit angeblicher
+        # Release-Provenienz gestartet.
+        raise FileNotFoundError(f"Release-Pfad nicht aufloesbar: {given}")
+
+    manifest = read_release_manifest(resolved)
     if manifest is not None:
-        # Der Regelfall in Produktion: unveraenderlicher Release-Baum.
+        problems = verify_release(resolved)
+        if problems:
+            # Der Baum traegt seinen eigenen Anspruch nicht mehr. Ein Marker
+            # darueber waere eine Behauptung ohne Deckung.
+            raise RuntimeError(f"Release nicht verifizierbar: {', '.join(problems)}")
         marker = marker_from_release(
             manifest,
             unit=unit,
             pid=os.getpid(),
-            release_path=root,
+            release_path=resolved,
             started_at_utc=identity.started_at_utc,
         )
     else:
         # Kein Release-Baum (Entwicklungsumgebung): der Marker traegt dann KEINE
         # Release-Identitaet, und der Evaluator behandelt das als unbelegt statt
         # als bestanden.
-        marker = marker_from_identity(identity, unit=unit, pid=os.getpid(), repo_root=root)
-    write_process_marker(marker, root=root)
-    (execv or os.execv)(argv[0], list(argv))
+        marker = marker_from_identity(identity, unit=unit, pid=os.getpid(), repo_root=resolved)
+
+    write_process_marker(marker, root=resolved)
+
+    bound = bind_argv_to_release(argv, given=str(given), resolved=str(resolved))
+    (chdir or os.chdir)(str(resolved))
+    (execv or os.execv)(bound[0], bound)
 
 
 def marker_from_identity(
@@ -675,6 +716,7 @@ __all__ = [
     "build_deployment_marker",
     "RuntimeIdentityLike",
     "build_process_marker",
+    "bind_argv_to_release",
     "self_attest_and_exec",
     "marker_from_identity",
     "marker_from_release",

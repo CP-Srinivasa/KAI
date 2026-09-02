@@ -739,13 +739,21 @@ def test_p1c7_der_wrapper_schreibt_erst_und_exect_dann(tmp_path: Path) -> None:
         assert marker_path("kai-server.service", root=tmp_path).is_file()
         gesehen.append(list(argv))
 
+    # ``chdir`` MUSS injiziert werden. In Produktion bindet der echte
+    # ``os.chdir`` den Importpfad an das Release und wird sofort vom ``execv``
+    # abgeloest; in einem Test bliebe er stehen und veraenderte das
+    # Arbeitsverzeichnis des ganzen pytest-Workers — spaetere Tests fanden dann
+    # kein Git-Repo mehr (7 Fehlschlaege, gemessen).
+    gewechselt: list[str] = []
     self_attest_and_exec(
         _FrozenIdentity(NEW, LOCK, "2026-09-02T05:00:00+00:00"),
         unit="kai-server.service",
         repo_root=tmp_path,
         argv=["/x/python", "-m", "app.api"],
         execv=fake_execv,
+        chdir=gewechselt.append,
     )
+    assert gewechselt == [str(tmp_path)]
     assert gesehen == [["/x/python", "-m", "app.api"]]
     back = read_process_markers(["kai-server.service"], root=tmp_path)
     assert back["kai-server.service"]["pid"] == os.getpid()  # type: ignore[index]
