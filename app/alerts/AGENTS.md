@@ -29,7 +29,6 @@ app/alerts/
     email.py          → EmailAlertChannel (smtplib via executor)
   formatters.py       → Pure-function text formatters (Telegram Markdown + plain Email)
   threshold.py        → ThresholdEngine — wraps is_alert_worthy()
-  digest.py           → DigestCollector — deque-basierter Akkumulator
   service.py          → AlertService — einziger Entry-Point für Alert-Dispatch
 ```
 
@@ -55,7 +54,6 @@ app/alerts/
 | `AlertDeliveryResult` | `base/interfaces.py` | Ergebnis eines einzelnen Delivery-Versuchs |
 | `BaseAlertChannel` | `base/interfaces.py` | ABC für alle Channels |
 | `ThresholdEngine` | `threshold.py` | Konfigurierbare Schwellwert-Prüfung |
-| `DigestCollector` | `digest.py` | Batch-Akkumulator mit maxlen-Schutz |
 | `AlertService` | `service.py` | Orchestrierung (from_settings factory) |
 
 ---

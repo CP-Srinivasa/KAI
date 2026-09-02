@@ -13,7 +13,6 @@ No storage calls. No HTTP (transport isolated in `app/integrations/`). Stateless
 | `keywords/engine.py` | `KeywordEngine`, `KeywordHit` | Multi-layer text matcher |
 | `keywords/watchlist.py` | `WatchlistEntry`, `load_watchlist` | Loads monitor/watchlists.yml |
 | `keywords/aliases.py` | `EntityAlias`, `load_entity_aliases` | Loads monitor/entity_aliases.yml |
-| `query/executor.py` | `QueryExecutor` | In-memory QuerySpec filter |
 | `pipeline.py` | `AnalysisPipeline`, `PipelineResult` | Full analysis orchestrator |
 
 ## Provider Pattern
