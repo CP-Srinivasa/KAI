@@ -1554,7 +1554,7 @@ async def get_decision_journal_summary(
 
     execution_enabled and write_back_allowed are always False.
     """
-    from app.decisions.journal import (
+    from app.orchestrator.decision_journal import (
         build_decision_journal_summary,
         load_decision_journal,
     )

@@ -14,9 +14,9 @@ from app.audit.stream_validation import (
     AuditStreamValidationError,
     load_audit_stream,
 )
-from app.decisions.journal import RiskAssessment, create_decision_instance
 from app.execution.models import append_decision_record_jsonl
 from app.execution.paper_engine import PaperExecutionEngine
+from app.orchestrator.decision_journal import RiskAssessment, create_decision_instance
 from app.signals.bayes_journal import append_bayes_report
 from app.signals.bayesian_confidence import ConfidenceReport
 

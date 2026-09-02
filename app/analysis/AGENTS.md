@@ -82,7 +82,7 @@ Sprint 4C tasks (for Codex):
 - No DB imports
 - No HTTP in analysis logic (provider transport lives in `app/integrations/`)
 - All output models are Pydantic v2, all scores validated
-- Prompts versioned in `app/integrations/openai/prompts.py`
+- Prompts versioned in `app/analysis/prompts.py`
 
 ## Tests
 
