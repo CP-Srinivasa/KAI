@@ -48,7 +48,7 @@ Querschnitt: `app/pipeline/service.py` (Ingest → Analyse) ruft `app/orchestrat
   > [ADR 0017](adr/0017-ai-control-plane-and-litellm-transport.md):
   > `codex/llm-router-migration-20260901` = ARCHIVED / DO NOT MERGE AS A WHOLE ·
   > LiteLLM als Transport = NOT REJECTED · künftige Integration = **unterhalb**
-  > der `app/ai`-Control-Plane · eine parallele `app/inference`-Control-Plane =
+  > der `app/ai`-Control-Plane · eine parallele `app/inference`-Control-Plane = **REJECTED**.
 
 ## 4. Aktive Komponenten (KEEP) und Laufzeit
 
@@ -119,7 +119,7 @@ Ausführung: `python -m pytest tests -q -n auto --dist loadfile --ignore=tests/b
 
 ## 10. Monitoring
 
-`GET /health` (Liveness + Runtime-Identität: laufender Commit vs. Checkout, Drift, Lock-Hash) · `GET /health/timers` (systemd-Timer-Freshness) · `GET /health/ai` (Provider-Zustand aus Telemetrie) · `GET /health/config` (effektive Konfiguration, redigiert, `explicit`-Liste) · `kai-health-check.timer` (Pi-seitige Probe mit Telegram-bei-Problem) · `kai-service-watchdog.timer` (5 min, Restart + Push) · Dashboard `https://kai-trader.org` (CF-Access) · `/metrics` (Prometheus-Text: Event-Loop-Lag, Latenz).
+`GET /health` (Liveness + Runtime-Identität: laufender Commit vs. Checkout, Drift, Lock-Hash) · `GET /health/timers` (systemd-Timer-Freshness) · `GET /health/ai` (Provider-Zustand aus Telemetriestrom) · `GET /health/config` (effektive Konfiguration, redigiert, `explicit`-Liste) · `kai-health-check.timer` (Pi-seitige Probe mit Telegram-bei-Problem) · `kai-service-watchdog.timer` (5 min, Restart + Push) · Dashboard `https://kai-trader.org` (CF-Access) · `/metrics` (Prometheus-Text: Event-Loop-Lag, Latenz).
 
 Grenze: `journalctl -p err` ist für App-Fehler blind (strukturiertes stdout ohne Syslog-Priority) — Fehler sind in den JSONL-Strömen und `/health/ai`, nicht im Journal-Prioritätsfilter.
 
