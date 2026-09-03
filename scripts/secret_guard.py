@@ -4,7 +4,8 @@
 WARUM DIESES MODUL EXISTIERT (2026-09-02)
 
 Der Guard lag als Bash-Schleife in ``.github/workflows/ci.yml`` und kannte fuer
-GitHub genau EIN Muster: ``ghp_[A-Za-z0-9]{36}`` — Personal Access Tokens.
+GitHub genau EIN Praefix -- ``ghp_``, bei fester Laenge 36 -- also nur
+Personal Access Tokens.
 
 GitHub vergibt aber sechs Praefixe, und der Rest fiel durch:
 
@@ -33,6 +34,16 @@ Zwei weitere Entscheidungen, beide aus demselben Vorfall:
     exaktes ``{36}`` ist eine Wette auf ein Format, das der Emittent jederzeit
     aendern darf — und eine verlorene Wette bedeutet hier: kein Alarm.
 
+SEIT 2026-09-03: DER GITHUB-TEIL WOHNT NICHT MEHR HIER
+
+Dieselbe Luecke steckte ein zweites Mal im Repository -- in der
+Laufzeit-Redaction ``app/audit/sanitization.py``. Sie kannte ``ghp_``,
+``gho_``, ``ghs_`` und ``ghr_`` bei fester Laenge 36 und liess damit
+``ghu_``, ``github_pat_`` und jede abweichende Laenge durch. Zwei Kataloge
+fuer dieselbe Sache driften; einer wurde repariert, der andere nicht.
+Die sechs Praefixe kommen deshalb jetzt aus ``app/security/secret_patterns.py``
+und werden von beiden Waechtern benutzt.
+
 Aufruf::
 
     python scripts/secret_guard.py --tracked
@@ -52,20 +63,28 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# Der CI-Hygiene-Job installiert nichts -- kein ``pip install -r
+# requirements.lock``, kein ``pip install -e .``. Und weil dieses Skript als
+# ``python scripts/secret_guard.py`` startet, ist ``sys.path[0]`` das
+# Verzeichnis ``scripts/`` und nicht die Repo-Wurzel: ohne diesen Einschub
+# findet der Import unten das Paket ``app`` nicht.
+#
+# Der Katalog selbst ist stdlib-only, damit dieser Import auch ohne
+# installierte Abhaengigkeiten traegt.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.security.secret_patterns import github_patterns  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Musterkatalog
 # ---------------------------------------------------------------------------
-# ``{20,}`` statt einer exakten Laenge: siehe Modul-Docstring. Der Emittent darf
-# das Format aendern, unsere Wache darf davon nicht abhaengen.
-SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
-    # --- GitHub, alle sechs Praefixe ------------------------------------
-    ("GitHub Personal Access Token", r"ghp_[A-Za-z0-9]{20,}"),
-    ("GitHub OAuth token", r"gho_[A-Za-z0-9]{20,}"),
-    ("GitHub server-to-server token", r"ghs_[A-Za-z0-9]{20,}"),
-    ("GitHub user-to-server token", r"ghu_[A-Za-z0-9]{20,}"),
-    ("GitHub refresh token", r"ghr_[A-Za-z0-9]{20,}"),
-    ("GitHub fine-grained PAT", r"github_pat_[A-Za-z0-9_]{20,}"),
-    # --- unveraendert aus dem bisherigen CI-Guard ------------------------
+#: Die sechs GitHub-Praefixe kommen aus dem gemeinsamen Katalog in
+#: ``app/security/secret_patterns.py``. Sie hier zu wiederholen waere genau
+#: der Fehler, den dieser PR behebt: zwei Kataloge, die dasselbe beschreiben
+#: sollen, driften -- und zwar unbemerkt, weil jeder fuer sich plausibel
+#: aussieht. Genau so ueberlebte ``ghu_`` in der Laufzeit-Redaction, nachdem
+#: die CI-Wache in #849 laengst alle sechs kannte.
+OTHER_PATTERNS: tuple[tuple[str, str], ...] = (
     ("OpenAI project key", r"sk-proj-[A-Za-z0-9_-]{20,}"),
     ("OpenAI legacy key", r"sk-[A-Za-z0-9]{40,}"),
     ("Google API key", r"AIzaSy[A-Za-z0-9_-]{33}"),
@@ -75,6 +94,8 @@ SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
     ("Telegram bot token", r"[0-9]{8,10}:[A-Za-z0-9_-]{35}"),
 )
 
+SECRET_PATTERNS: tuple[tuple[str, str], ...] = github_patterns() + OTHER_PATTERNS
+
 #: Dateien, die realistisch aussehende FIXTURES brauchen, um Redaction ueberhaupt
 #: testen zu koennen. Eine Wache, die ihre eigenen Testdaten anschlaegt, wird
 #: abgeschaltet — und dann faellt das Echte mit durch.
@@ -83,6 +104,7 @@ ALLOWLISTED_PATHS: frozenset[str] = frozenset(
         ".github/workflows/ci.yml",
         "scripts/secret_guard.py",
         "tests/unit/test_secret_guard.py",
+        "tests/unit/test_secret_pattern_parity.py",
         "tests/unit/test_audit_sanitization.py",
         "tests/unit/test_structured_reasoning.py",
         "tests/unit/test_bayes_journal_sanitize.py",
