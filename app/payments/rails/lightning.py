@@ -1,4 +1,4 @@
-"""Lightning als erster Rail-Adapter (ADR 0017 §7).
+"""Lightning als erster Rail-Adapter (ADR 0018 §7).
 
 Wrappt ``app.lightning.client``/``adapter``. Der Adapter uebersetzt in beide
 Richtungen und haelt dabei drei Zusagen, die im Bestand fehlten:

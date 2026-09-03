@@ -1,4 +1,4 @@
-# Runbook — Payment Fabric (ADR 0017)
+# Runbook — Payment Fabric (ADR 0018)
 
 Für den Operator am Gerät. Drei Modi, ein Journal, ein sendender Prozess.
 
@@ -175,7 +175,7 @@ Fenster geschlossen.
 | Lage | Schritt |
 |---|---|
 | Zahlung hängt in `RECONCILIATION_REQUIRED` | `kai-ln-reconcile.service` starten, `reconcile_state.json` lesen. Nicht senden. |
-| Journal-Kette gebrochen | Server **nicht** neu starten (er verweigert ohnehin den Boot). Journal sichern, `python -c "from app.payments.journal import PaymentJournal; print(PaymentJournal().verify_chain())"`, Backup ziehen, ADR 0017 §5 folgen. |
+| Journal-Kette gebrochen | Server **nicht** neu starten (er verweigert ohnehin den Boot). Journal sichern, `python -c "from app.payments.journal import PaymentJournal; print(PaymentJournal().verify_chain())"`, Backup ziehen, ADR 0018 §5 folgen. |
 | Waisen-Settlement gemeldet | `artifacts/payments/payment_journal.jsonl` nach `orphan_settlement` durchsuchen, `rail_dedup_key` am Node nachschlagen. Bei Erstinbetriebnahme ist eine einmalige Meldung der Alt-Historie erwartbar (`window_enforced=false`). |
 | Modus versehentlich `live` | `APP_LN_PAY_ENABLED=false` genügt: der Kill-Switch sitzt ausserhalb des Modus, `LightningRail.pay` verweigert. Danach Modus zurückstellen. |
 | Control Plane nicht verdrahtet | `/health/payment` meldet `degraded` mit Grund, `/payments/*` antwortet 503. Server-Log auf `validate_payment_boot` prüfen. |

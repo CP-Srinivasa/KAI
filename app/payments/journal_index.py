@@ -1,4 +1,4 @@
-"""In-Prozess-Index ueber das Geld-Journal (ADR 0017 §5).
+"""In-Prozess-Index ueber das Geld-Journal (ADR 0018 §5).
 
 Warum es diesen Index gibt: ``ops_ledger.spent_today_sat_v2`` liest und
 verifiziert bei JEDER Policy-Auswertung die ganze Datei, und

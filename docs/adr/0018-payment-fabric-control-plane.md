@@ -1,4 +1,4 @@
-# ADR 0017 — Payment Fabric: Payment Control Plane mit Lightning als erstem Rail
+# ADR 0018 — Payment Fabric: Payment Control Plane mit Lightning als erstem Rail
 
 **Status:** Angenommen (v0.1-Bauvorgabe) · **Datum:** 2026-09-03 · **Bezug:** ADR 0014 (Schicht 4 Intent Layer), ADR 0016 (Sovereign Value OS, Self-Use, Invarianten 1–5), `docs/KAI_CORE_V1.md` (Kern bleibt schlank, `app/lightning/` war QUARANTINE).
 **Forensische Grundlage:** SATOSHI (`satoshi_ln_forensics.md`), SENTR (`sentr_payment_p0.md`), Architect (`architect_payment_domain.md`), Red-Team (`redteam_payment_fabric.md`) — Sprint-Artefakte 2026-09-03.

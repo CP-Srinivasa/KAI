@@ -1,4 +1,4 @@
-"""Fehler-Injektion: die fuenfzehn Faelle aus Mission §20 (ADR 0017 §4/§8).
+"""Fehler-Injektion: die fuenfzehn Faelle aus Mission §20 (ADR 0018 §4/§8).
 
 Der Happy Path ist nicht der, an dem Geld verlorengeht. Diese Datei fuehrt
 jeden benannten Ausfall herbei und prueft in JEDEM Fall dieselben zwei

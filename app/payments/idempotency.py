@@ -1,4 +1,4 @@
-"""Idempotenz-Konsum unter dem Journal-Lock (ADR 0017 §5).
+"""Idempotenz-Konsum unter dem Journal-Lock (ADR 0018 §5).
 
 **Kein zweites Artefakt.** Der Bestand fuehrt einen eigenen Store
 (``lightning/idempotency_store.py``) mit ``threading.Lock`` und einem

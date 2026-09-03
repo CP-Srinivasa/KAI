@@ -1,4 +1,4 @@
-"""Reconciliation in beide Richtungen (ADR 0017 §8).
+"""Reconciliation in beide Richtungen (ADR 0018 §8).
 
 Der Reconciler ist die Stelle, an der aus *unbekannt* wieder *belegt* wird. Er
 ist deshalb der einzige Weg zurueck aus ``RECONCILIATION_REQUIRED`` — und er

@@ -1,6 +1,6 @@
 """Deprecated re-export — der Strom ist nach ``app.payments.input_rejections`` umgezogen.
 
-ADR 0017 §2/§12: der Umzug dreht die Kante ``audit -> lightning`` zu
+ADR 0018 §2/§12: der Umzug dreht die Kante ``audit -> lightning`` zu
 ``audit -> payments`` und bricht damit den Importzyklus
 ``audit -> lightning -> truth -> audit``. Dieser Pfad bleibt 7 Tage lesbar
 (Dual-Read-Fenster) und wird danach geloescht — er darf niemals eigene Logik

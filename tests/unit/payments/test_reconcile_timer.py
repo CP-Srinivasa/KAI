@@ -1,4 +1,4 @@
-"""Der Reconcile-Timer als PROZESS (ADR 0017 §5/§8, Health-Pfad §10).
+"""Der Reconcile-Timer als PROZESS (ADR 0018 §5/§8, Health-Pfad §10).
 
 Zwei Fragen, die kein Modultest beantwortet:
 

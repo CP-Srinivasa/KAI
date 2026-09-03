@@ -1,13 +1,13 @@
 # Fiat-Bridge-Architektur — SEPA, Karten, PSP und Banken am Payment Control Plane
 
 **Status:** **DESIGNED** · **Datum:** 2026-09-03 · **Baum:** `core/value-os-fiat-bridge-doc` @ `f18ded6c`
-**Bezug:** ADR 0017 (Domänenmodell §3, State Machine §4, Rail-Interface §7), ADR 0016 (Self-Use-Test, Tier-2-STOP, Invarianten 1–5), ADR 0014 (Schicht 4 Intent Layer), Red-Team `redteam_payment_fabric.md` §3.
+**Bezug:** ADR 0018 (Domänenmodell §3, State Machine §4, Rail-Interface §7), ADR 0016 (Self-Use-Test, Tier-2-STOP, Invarianten 1–5), ADR 0014 (Schicht 4 Intent Layer), Red-Team `redteam_payment_fabric.md` §3.
 **Auftrag:** Mission §14/§15 — „Die Brücke zu SEPA, Karten, PSP und Banken wird architektonisch vollständig vorbereitet, aber noch nicht zu fünf halb fertigen Integrationen aufgeblasen."
 
 > **Geltungsgrenze (bindend, vor jedem Lesen der Tabellen):**
 > Dieses Dokument ist ein **Entwurf**, kein Zustandsbericht. Es existiert **kein** Fiat-Rail,
 > **kein** PSP-Adapter, **kein** Bankkonto-Anschluss und **keine** Zeile Code dafür im Baum.
-> Es beschreibt, **wie** eine Anbindung aussähe, damit sie später ohne Umbau des ADR-0017-Kerns
+> Es beschreibt, **wie** eine Anbindung aussähe, damit sie später ohne Umbau des ADR-0018-Kerns
 > möglich ist — und **was dafür zuerst entschieden** werden muss. Es ist **keine Freigabe**,
 > **keine Rechtsberatung** und **kein Nachweis**, dass ein regulatorisches Problem gelöst wäre.
 
@@ -25,14 +25,14 @@
 
 | Gegenstand | Pfad | Klassifikation | Beleg |
 |---|---|---|---|
-| Payment Control Plane | `app/payments/` | `DESIGNED` | ADR 0017 §2 — Verzeichnis existiert im Baum **nicht** |
-| Lightning-Rail-Adapter | `app/payments/rails/lightning.py` | `DESIGNED` | ADR 0017 §2 |
+| Payment Control Plane | `app/payments/` | `DESIGNED` | ADR 0018 §2 — Verzeichnis existiert im Baum **nicht** |
+| Lightning-Rail-Adapter | `app/payments/rails/lightning.py` | `DESIGNED` | ADR 0018 §2 |
 | LN-Client/Adapter (vor Control Plane) | `app/lightning/client.py`, `adapter.py` | `IMPLEMENTED` | im Baum vorhanden |
 | LN-Reconciliation (outcome-only) | `app/lightning/reconciliation.py`, `scripts/ln_reconcile.py`, `kai-ln-reconcile.timer` | `IMPLEMENTED` | `docs/CODEMAP.md:85` |
 | Provenance-/SoF-Export | `app/compliance/provenance.py` | `IMPLEMENTED` | ADR 0014 §2 Schicht 6 |
 | Dritt-Gate (fail-closed) | `app/governance/third_party_gate.py` | `IMPLEMENTED` | ADR 0014 §2 Schicht 6 |
 | Kapital-Buckets / Reserve-Floor | `app/capital/reserve_policy.py`, `segmentation.py` | `IMPLEMENTED` (inert) | ADR 0014 §2 Schicht 7 |
-| Fiat-Rails (SEPA/Karte/PSP/Bank) | — | `BLOCKED` | ADR 0017 §1 „Fremd-Rails": kein Modul, kein Stub |
+| Fiat-Rails (SEPA/Karte/PSP/Bank) | — | `BLOCKED` | ADR 0018 §1 „Fremd-Rails": kein Modul, kein Stub |
 | Verwahrung fremder Gelder | — | `BLOCKED` (dauerhaft) | ADR 0016 Invariante 2, §Was gesperrt bleibt |
 | KYT/AML/Sanktions-Prüfung | — | `BLOCKED` | ADR 0014 §2 Schicht 6: „STOP-Schild, kein baubares Modul" |
 
@@ -83,7 +83,7 @@ FLUSS A (DESIGNED)                                   correlation_id = C
   [Journal-Kette: intent_created ... settled ... final]  ->  Accounting-Projektion
 ```
 
-| # | Schritt | Objekt (ADR 0017 §3) | Zustand (§4) | Trägt das Modell? | Klassifikation |
+| # | Schritt | Objekt (ADR 0018 §3) | Zustand (§4) | Trägt das Modell? | Klassifikation |
 |---|---|---|---|---|---|
 | A1 | Fiat-Einlauf erkannt | `Invoice` + `Settlement` | — → `SETTLED_REVERSIBLE` | ja, unverändert | `DESIGNED` |
 | A2 | Reversal-Fenster läuft | `RailCapabilities.reversal_window` | bleibt `SETTLED_REVERSIBLE` | ja | `DESIGNED` |
@@ -166,11 +166,11 @@ Neun Domänen, je genau **eine** Owner-Komponente. Wo keine existiert, steht `DE
 
 | Domäne | Verantwortung (genau) | Owner-Komponente | Schnittstelle | Klassifikation |
 |---|---|---|---|---|
-| **Payment Orchestration** | Intent-Lebenszyklus, Serialisierung, Policy-Aufruf, Zustandsvergabe; kennt **keinen** Rail im Detail | `app/payments/service.py` + `status.py` (einzige Vergabestelle, ADR 0017 §4) | `POST /payments/intents`, `execute`, `simulate` | `DESIGNED` |
-| **Custody (LN/Onchain)** | Schlüsselbesitz und Signatur — ausschließlich LND, nie KAI, nie ein Agent | LND-Node + `app/lightning/client.py` | gRPC/REST mit getrennten Macaroons (ADR 0017 §11) | `IMPLEMENTED` |
+| **Payment Orchestration** | Intent-Lebenszyklus, Serialisierung, Policy-Aufruf, Zustandsvergabe; kennt **keinen** Rail im Detail | `app/payments/service.py` + `status.py` (einzige Vergabestelle, ADR 0018 §4) | `POST /payments/intents`, `execute`, `simulate` | `DESIGNED` |
+| **Custody (LN/Onchain)** | Schlüsselbesitz und Signatur — ausschließlich LND, nie KAI, nie ein Agent | LND-Node + `app/lightning/client.py` | gRPC/REST mit getrennten Macaroons (ADR 0018 §11) | `IMPLEMENTED` |
 | **Custody (Fiat)** | Halten von Geld auf einem Konto | **regulierter Dritter oder eigene Bank — niemals KAI** | keine | `BLOCKED` (dauerhaft, ADR 0016 Inv. 2) |
 | **Custody (fremde Mittel)** | Geld Dritter halten, weiterleiten, treuhänderisch verwalten | — | keine | `BLOCKED` (Tier-2-STOP) |
-| **Liquidity (LN)** | Kanal-Kapazität, Reserve-Floor, Reservierung offener Intents | `app/lightning/treasury.py`, `app/capital/reserve_policy.py` | Policy-Regel `liquidity` (ADR 0017 §6) | `IMPLEMENTED` (inert) |
+| **Liquidity (LN)** | Kanal-Kapazität, Reserve-Floor, Reservierung offener Intents | `app/lightning/treasury.py`, `app/capital/reserve_policy.py` | Policy-Regel `liquidity` (ADR 0018 §6) | `IMPLEMENTED` (inert) |
 | **Liquidity (Fiat)** | Kontodeckung, reservierte Beträge für offene Payouts | keine — Bankkonto des Operators, manuell | Reservierung als Journal-Zähler | `DEFERRED` (Welle 2) |
 | **FX** | Kurs-Quelle, Kursbindung, TTL, Slippage-Grenze, Kurs-Beweis im Journal | `app/payments/fx.py` | `Quote` + `ExchangeRateReference(source, rate, ts)`; abgelaufene Quote = `DENY` | `DESIGNED` |
 | **Settlement** | Finalitätsentscheid je Rail; **nur** mit Rail-Evidenz | `app/payments/rails/*` + `status.transition` | `RailResult`, `RailLookup`, `Settlement.proof` | `DESIGNED` (LN-Rail v0.1) |
@@ -196,7 +196,7 @@ Neun Domänen, je genau **eine** Owner-Komponente. Wo keine existiert, steht `DE
 
 ## 3. RailCapabilities-Matrix
 
-Felder wie in ADR 0017 §7 (Herkunft: Red-Team §3 „Konkrete Feldvorschläge"). Die Werte sind
+Felder wie in ADR 0018 §7 (Herkunft: Red-Team §3 „Konkrete Feldvorschläge"). Die Werte sind
 **Entwurfsannahmen** für einen späteren Adapter, keine gemessenen Eigenschaften eines
 angeschlossenen Dienstes.
 
@@ -205,7 +205,7 @@ angeschlossenen Dienstes.
 | Rail | `settlement_finality` | `confirmation_depth_required` | `reversal_supported` | `reversal_window` | `dedup_guarantee` | `max_inflight_window` | Klassifikation |
 |---|---|---|---|---|---|---|---|
 | LIGHTNING | `INSTANT` | 0 | nein | — | `BY_PAYMENT_HASH` | aus CLTV-Obergrenze | `DESIGNED` (v0.1-Ziel `IMPLEMENTED`) |
-| BITCOIN ONCHAIN | `PROBABILISTIC` | 6 | nein (Reorg ≠ Reversal) | — | `BY_RAIL_KEY` (txid) | ~24 h (Fee-Bump/RBF) | `DEFERRED` (ADR 0017 §1 DENY `unsupported_action`) |
+| BITCOIN ONCHAIN | `PROBABILISTIC` | 6 | nein (Reorg ≠ Reversal) | — | `BY_RAIL_KEY` (txid) | ~24 h (Fee-Bump/RBF) | `DEFERRED` (ADR 0018 §1 DENY `unsupported_action`) |
 | SEPA (SCT/SDD) | `BUSINESS_DAYS` | 0 | ja | 8 Wochen (SDD); 13 Monate unautorisiert | `BY_RAIL_KEY` (EndToEndId) | T+2 | `BLOCKED` (eigenes ADR nötig) |
 | SEPA INSTANT | `INSTANT` (bankseitig final) | 0 | nein (nur Recall-Bitte) | Recall ohne Anspruch | `BY_RAIL_KEY` | 20 s Timeout, dann unbekannt | `BLOCKED` |
 | BANK ACCOUNT (Payout) | `BUSINESS_DAYS` | 0 | ja (Return) | Rückleitungsfrist des Instituts | `BY_RAIL_KEY` (Auftragsref.) | T+2 | `BLOCKED` |
@@ -226,7 +226,7 @@ angeschlossenen Dienstes.
 | MERCHANT PSP | `AUTH_CAPTURE` | `BATCH_PARTIAL` | `POST_SETTLEMENT` | wie oben + `payout`, `chargeback` | `PROVIDER_REF` | Payout-Report n:1 gegen Journal | `BLOCKED` |
 | STABLECOIN | `IMMEDIATE` | `PER_ITEM` | `POST_SETTLEMENT` (Gas) | `transfer` | `TXID` | Chain-Indexer | `BLOCKED` |
 
-### 3.3 Was das ADR-0017-Modell trägt — und die drei Stellen, an denen es nicht reicht
+### 3.3 Was das ADR-0018-Modell trägt — und die drei Stellen, an denen es nicht reicht
 
 **Trägt ohne Umbau:** Alle acht Rails oben lassen sich über `PaymentIntent → Policy →
 Authorization → Attempt → Settlement → Reconciliation` abbilden. Die vier getrennten Beträge
@@ -242,10 +242,10 @@ dieses Absatzes: `DESIGNED` (analytisch geprüft, nicht implementiert, nicht get
 | ID | Lücke | Warum das Modell bricht | Minimaler Zusatz | Zustandsmaschine ändert sich? | Klassifikation |
 |---|---|---|---|---|---|
 | **G-1** | **Batch-Settlement mit n:1-Zuordnung** | `Settlement` hängt 1:1 am Intent. Ein PSP-Payout oder eine SEPA-Sammelbuchung deckt *n* Intents mit **einem** Bankbeleg und **einem** Nettobetrag (Brutto − Gebühren − Rückbelastungen). Der Reconciler kann Beleg und Intent nicht zuordnen. | `SettlementGroup(group_id, rail, external_ref_hash, amount_gross, amount_net, fee_total, member_intent_ids[], allocation_method)` + optionales `Settlement.group_ref`. Zuordnung wird **berechnet und im Journal festgeschrieben**, nicht geraten. | **nein** — jeder Intent durchläuft weiterhin einzeln `SETTLED`; die Gruppe ist nur der Beweisträger | `DESIGNED` |
-| **G-2** | **Reversal nach Terminalzustand** (Chargeback nach Monaten, SEPA unautorisiert 13 Monate, Onchain-Reorg nach Tiefe) | `SETTLED` ist terminal (ADR 0017 §4). `SETTLED_REVERSIBLE → REVERSED` gilt nur im *bekannten* Fenster. Danach gibt es keine Kante — und es darf auch keine geben, sonst ist „terminal" wertlos und Invariante 1 (append-only, keine Rückschreibung) verletzt. | **Kein neuer Zustand, kein Rückwärts-Übergang.** Stattdessen ein **Kompensations-Intent**: `PaymentIntent(kind=COMPENSATION, compensates=<intent_id>, correlation_id=<original>)` mit eigener Policy und eigenem Lebenszyklus. Zusätzlich `RailCapabilities.reversal_window_max` (harte Obergrenze) getrennt vom Normalfenster. | **nein** — der Originalintent bleibt terminal; die Umkehr ist eine **eigene** Geldbewegung mit eigenem Beweis | `DESIGNED` |
-| **G-3** | **Langlebiges Autorisierungsartefakt** (SEPA-Mandat mit UMR/Gläubiger-ID, Karten-Token/Network-Transaction-ID, PSP-Kundenreferenz) | ADR 0017 kennt nur `Counterparty.ref_hash` **pro Intent**. Ein Mandat überdauert viele Intents, hat eigene Zustände (aktiv/ausgesetzt/widerrufen/verfallen) und ist bei Missbrauch die haftungsrelevante Tatsache. In `Counterparty` versteckt, ist es weder prüfbar noch widerrufbar. | `PaymentMandate(mandate_id, rail, scheme_ref_hash, debtor_hash, creditor_id_hash, valid_from, valid_until, revoked_at, status)` als eigenes Journal-Objekt + `PaymentIntent.mandate_ref`. Policy-Regel `mandate_valid` vor `destination_allowlist`. | **nein** für den Intent; das Mandat bekommt eine **eigene**, sehr kleine Zustandsmaschine | `DESIGNED` |
+| **G-2** | **Reversal nach Terminalzustand** (Chargeback nach Monaten, SEPA unautorisiert 13 Monate, Onchain-Reorg nach Tiefe) | `SETTLED` ist terminal (ADR 0018 §4). `SETTLED_REVERSIBLE → REVERSED` gilt nur im *bekannten* Fenster. Danach gibt es keine Kante — und es darf auch keine geben, sonst ist „terminal" wertlos und Invariante 1 (append-only, keine Rückschreibung) verletzt. | **Kein neuer Zustand, kein Rückwärts-Übergang.** Stattdessen ein **Kompensations-Intent**: `PaymentIntent(kind=COMPENSATION, compensates=<intent_id>, correlation_id=<original>)` mit eigener Policy und eigenem Lebenszyklus. Zusätzlich `RailCapabilities.reversal_window_max` (harte Obergrenze) getrennt vom Normalfenster. | **nein** — der Originalintent bleibt terminal; die Umkehr ist eine **eigene** Geldbewegung mit eigenem Beweis | `DESIGNED` |
+| **G-3** | **Langlebiges Autorisierungsartefakt** (SEPA-Mandat mit UMR/Gläubiger-ID, Karten-Token/Network-Transaction-ID, PSP-Kundenreferenz) | ADR 0018 kennt nur `Counterparty.ref_hash` **pro Intent**. Ein Mandat überdauert viele Intents, hat eigene Zustände (aktiv/ausgesetzt/widerrufen/verfallen) und ist bei Missbrauch die haftungsrelevante Tatsache. In `Counterparty` versteckt, ist es weder prüfbar noch widerrufbar. | `PaymentMandate(mandate_id, rail, scheme_ref_hash, debtor_hash, creditor_id_hash, valid_from, valid_until, revoked_at, status)` als eigenes Journal-Objekt + `PaymentIntent.mandate_ref`. Policy-Regel `mandate_valid` vor `destination_allowlist`. | **nein** für den Intent; das Mandat bekommt eine **eigene**, sehr kleine Zustandsmaschine | `DESIGNED` |
 
-**Kein Modellfehler, aber ein Benennungsrisiko:** `AUTHORIZED` bedeutet in ADR 0017 §4
+**Kein Modellfehler, aber ein Benennungsrisiko:** `AUTHORIZED` bedeutet in ADR 0018 §4
 *„KAI-Policy hat freigegeben"*. Bei Karte bedeutet *Authorization* *„der Emittent hat den Betrag
 reserviert"* — ein Rail-Ereignis nach `SUBMITTED`. Wird das nicht getrennt, liest sich ein
 Karten-Intent falsch. Auflösung ohne neuen Zustand: `PaymentAttempt.hold_ref` +
@@ -286,7 +286,7 @@ Zeitfenster, in dem Kapital gebunden ist. Nicht gebaut wird: Swap-Vermittlung f�
 **P-3 — Voraussetzungen und Risiko.** Voraussetzung: ausschließlich Lese-Scopes; getrennte
 Credentials mit `0600`; Kontodaten im Journal **nur als Hash** plus Betrag/Valuta/Referenz;
 Aufbewahrung nach demselben Append-only-Prinzip. Risiko: (a) Scope-Creep in Richtung
-Zahlungsauslösung — deshalb Boot-Guard analog ADR 0017 §11 (Prozessabbruch, wenn ein
+Zahlungsauslösung — deshalb Boot-Guard analog ADR 0018 §11 (Prozessabbruch, wenn ein
 Schreib-Scope gesetzt ist); (b) personenbezogene Daten Dritter aus Gegenbuchungen — Redaktion
 im Writer ist Pflicht, nicht Option. Nicht gebaut wird: jede Form von Zahlungsauslösung über die
 Bank-API. `DESIGNED`
@@ -331,7 +331,7 @@ Eigengebrauch ist **kein** Nachfragesignal und **keine** Begründung für den n�
 
 | Welle | Inhalt | Vorbedingung (fail-closed) | Klassifikation |
 |---|---|---|---|
-| **Welle 0** | ADR-0017-v0.1: Control Plane + Lightning-Rail, `SIMULATION`/`SHADOW`, Journal, Policy, Reconciliation | keine — bindende Bauvorgabe | `DESIGNED` (Bau offen) |
+| **Welle 0** | ADR-0018-v0.1: Control Plane + Lightning-Rail, `SIMULATION`/`SHADOW`, Journal, Policy, Reconciliation | keine — bindende Bauvorgabe | `DESIGNED` (Bau offen) |
 | **Welle 1** | Onchain-Rail **nur Self-Use** (eigene Wallet zu eigener Wallet), P-2 Submarine Swap | Welle 0 mit Reconciliation-Beweis; eigenes ADR; Dedup-Design ohne `payment_hash` | `DEFERRED` |
 | **Welle 2** | Bank-**Read-only**-Reconciliation (P-3/P-4), G-1-Zuordnungslogik an echten Belegen | Welle 1 abgeschlossen; kleines ADR; Beweis „keine Schreib-Scopes" | `DEFERRED` |
 | **Welle 3** | **erster** Fiat-Rail (Auslauf, Self-Use) | eigenes ADR **und** angeschlossener Compliance-Dienst **und** Rechtsprüfung **und** Operator-Go mit Kapitalgrenze | `BLOCKED` |
@@ -375,10 +375,10 @@ sondern **nicht vorgesehen** — es gibt keinen Zustand, keinen Endpunkt und kei
 4. Wie werden die FX-/BTC-Legs eines Cross-Rail-Flusses steuerlich behandelt — ist jeder Hop
    ein eigenes Veräußerungsgeschäft?
 5. Welche Aufbewahrungs- und Unveränderbarkeitspflichten (GoBD) gelten für das
-   Payment-Journal, und kollidieren sie mit der Redaktions-/Hash-Praxis aus ADR 0017 §9?
+   Payment-Journal, und kollidieren sie mit der Redaktions-/Hash-Praxis aus ADR 0018 §9?
 6. Wie ist mit personenbezogenen Daten Dritter umzugehen, die ungefragt im eigenen
    Kontoauszug erscheinen (Gegenbuchungen, P-3)?
-7. Löst ein Self-Use-Receivable (ADR 0017 §1) Umsatzsteuer- oder Buchführungspflichten aus,
+7. Löst ein Self-Use-Receivable (ADR 0018 §1) Umsatzsteuer- oder Buchführungspflichten aus,
    die heute nicht abgebildet sind?
 8. Berührt ein Submarine-Swap-Anbieter (P-2) die Travel Rule, und wenn ja: wen trifft die
    Pflicht?
@@ -393,7 +393,7 @@ Keine dieser Fragen ist beantwortet. Solange auch nur Frage 1 oder 3 offen ist, 
 - **Kein Nachweis** eines funktionierenden Fiat-Pfads — es existiert keiner.
 - **Keine Freigabe** für Welle 1, 2 oder 3; jede Welle braucht ihr eigenes ADR und ein Operator-Go.
 - **Keine Compliance-Lösung** — `compliance_gate` liefert ohne angeschlossenen Dienst `DENY`.
-- **Kein Ersatz** für ADR 0017 (bei Widerspruch gilt das ADR) und **keine Rechtsberatung**.
+- **Kein Ersatz** für ADR 0018 (bei Widerspruch gilt das ADR) und **keine Rechtsberatung**.
 
 **Änderungsregel:** Dieses Dokument wird nur zusammen mit dem ADR geändert, das den jeweiligen
 Rail freigibt. Wird ein Rail gebaut, wandert seine Zeile von `DESIGNED`/`BLOCKED` nach

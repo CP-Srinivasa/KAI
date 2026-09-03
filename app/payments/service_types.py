@@ -1,4 +1,4 @@
-"""Ein- und Ausgaben des Control Plane (ADR 0017 §3/§10).
+"""Ein- und Ausgaben des Control Plane (ADR 0018 §3/§10).
 
 Getrennt von :mod:`app.payments.service`, weil hier steht, WAS ueber die
 Grenze geht, und dort, WAS damit geschieht. Der API-Layer und der Reconciler

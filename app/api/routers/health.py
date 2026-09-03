@@ -163,7 +163,7 @@ async def payment_health(
     window_hours: float = 24.0,
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> dict[str, Any]:
-    """Zustand des Geldpfads (ADR 0017 §10).
+    """Zustand des Geldpfads (ADR 0018 §10).
 
     Auth: wie ``/health/ai`` bewusst NICHT in der oeffentlichen Pfadliste in
     ``app/security/auth.py``. Dieser Endpunkt zeigt Modus, Node-Zustand,

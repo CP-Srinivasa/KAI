@@ -1,4 +1,4 @@
-"""Die Agenten-Tabelle (ADR 0017 §1 Agent-Flow, §6 ``actor_limits``).
+"""Die Agenten-Tabelle (ADR 0018 §1 Agent-Flow, §6 ``actor_limits``).
 
 Eine Zeile in dieser Tabelle ist eine **Erlaubnis**, kein Vermerk: fehlt sie,
 darf der Agent nichts. Deshalb ist jeder Fehler beim Laden ein LEERES

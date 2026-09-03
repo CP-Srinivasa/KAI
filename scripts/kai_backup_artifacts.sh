@@ -129,7 +129,7 @@ DEFAULT_SOURCES=(
     "artifacts/telegram_channel_raw.jsonl"
     "artifacts/telegram_channel_checkpoint.json"
     "artifacts/ph5_hold_metrics_report.json"
-    # --- Geld-Journale (ADR 0017 §5, Architect P1) --------------------------
+    # --- Geld-Journale (ADR 0018 §5, Architect P1) --------------------------
     # Jede Wertbewegung, jede Freigabe, jeder HOTP-Counter. Aus Code nicht
     # rekonstruierbar, aus der DB auch nicht — und ohne den HOTP-Counter ist
     # der Geldpfad nach einem Restore fail-closed dicht.

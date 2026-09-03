@@ -1,4 +1,4 @@
-"""Der Payment Control Plane — die eine Orchestrierung (ADR 0017 §5/§9).
+"""Der Payment Control Plane — die eine Orchestrierung (ADR 0018 §5/§9).
 
 ``PaymentIntent -> Policy -> Authorization -> Rail -> Settlement``. Es gibt
 genau einen Aufrufer von ``rail.pay()``, und er steht in

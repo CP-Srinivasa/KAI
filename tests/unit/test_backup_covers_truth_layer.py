@@ -109,7 +109,7 @@ def test_backup_unit_ist_gehaertet() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Geld-Journale (ADR 0017 §5, Architect P1)
+# Geld-Journale (ADR 0018 §5, Architect P1)
 # --------------------------------------------------------------------------- #
 
 # Diese drei tragen jede Wertbewegung, jede Freigabe und jeden HOTP-Counter.

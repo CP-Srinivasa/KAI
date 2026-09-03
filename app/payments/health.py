@@ -1,4 +1,4 @@
-"""Der Gesundheitszustand des Geldpfads (ADR 0017 §10).
+"""Der Gesundheitszustand des Geldpfads (ADR 0018 §10).
 
 Die Leitfrage ist nicht *"laeuft der Dienst?"* — das beantwortet ``/health``
 — sondern **"ist die Aussage ueber das Geld gedeckt?"**. Deshalb gibt es hier

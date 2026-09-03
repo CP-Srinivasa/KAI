@@ -1,4 +1,4 @@
-"""Reconciliation in beide Richtungen (ADR 0017 §8).
+"""Reconciliation in beide Richtungen (ADR 0018 §8).
 
 Der einzige Weg zurueck aus ``RECONCILIATION_REQUIRED``. Er fuehrt ueber
 Node-Evidenz und ueber nichts sonst.

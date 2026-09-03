@@ -1,4 +1,4 @@
-"""Self-Use-Receivable von Ende zu Ende (ADR 0016 Self-Use-Test, ADR 0017 §1/§8).
+"""Self-Use-Receivable von Ende zu Ende (ADR 0016 Self-Use-Test, ADR 0018 §1/§8).
 
 KAI stellt eine Forderung fuer eine EIGENE Leistung aus, erkennt ihre
 Begleichung und bucht die eigene Bestellung. Kein Dritt-Merchant, kein

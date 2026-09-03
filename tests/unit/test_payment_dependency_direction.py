@@ -1,6 +1,6 @@
 """Import-Richtung des Payment Control Plane — mechanisch, nicht als Absicht.
 
-ADR 0017 §2: ``payments -> lightning``, nie umgekehrt. Ohne diesen Test ist die
+ADR 0018 §2: ``payments -> lightning``, nie umgekehrt. Ohne diesen Test ist die
 Richtung eine Zusage im Dokument; mit ihm ist sie ein Merge-Gate.
 
 Zwei getrennte Aussagen, weil sie zwei verschiedene Defekte fangen:
@@ -26,7 +26,7 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
-#: Die vier Pakete, deren Verflechtung ADR 0017 §2 aufloest.
+#: Die vier Pakete, deren Verflechtung ADR 0018 §2 aufloest.
 WATCHED_PACKAGES = frozenset({"app.payments", "app.lightning", "app.audit", "app.truth"})
 
 #: Ausnahmen der Richtungsregel — beide strukturell abgesichert, nicht behauptet:
@@ -162,7 +162,7 @@ def test_lightning_never_imports_payments() -> None:
                 continue
             offenders.append(f"{path.relative_to(APP_ROOT.parent).as_posix()} -> {imported}")
     assert not offenders, (
-        "app/lightning importiert app.payments — ADR 0017 §2 verlangt die Gegenrichtung: "
+        "app/lightning importiert app.payments — ADR 0018 §2 verlangt die Gegenrichtung: "
         + ", ".join(sorted(offenders))
     )
 
@@ -195,7 +195,7 @@ def test_payments_input_rejections_is_a_leaf_module() -> None:
 
 
 def test_audit_reads_the_rejection_stream_from_payments() -> None:
-    """Der Umzug ist vollzogen, nicht nur angekuendigt (ADR 0017 §2)."""
+    """Der Umzug ist vollzogen, nicht nur angekuendigt (ADR 0018 §2)."""
     source = (APP_ROOT / "audit" / "input_contract_rejections.py").read_text(encoding="utf-8")
     assert "app.payments.input_rejections" in source
     assert "app.lightning.input_contract_rejections" not in source

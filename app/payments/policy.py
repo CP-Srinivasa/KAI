@@ -1,4 +1,4 @@
-"""Die Regelkette (ADR 0017 §6) — fail-closed und deterministisch.
+"""Die Regelkette (ADR 0018 §6) — fail-closed und deterministisch.
 
 Elf Regeln in fester Reihenfolge, jede eine Funktion ``(ctx) -> RuleResult``,
 die erste DENY gewinnt. Das Ergebnis nennt immer die Regel, die es getragen

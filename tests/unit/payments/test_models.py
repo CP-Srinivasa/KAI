@@ -1,4 +1,4 @@
-"""Domaenenmodell des Payment Control Plane (ADR 0017 §3).
+"""Domaenenmodell des Payment Control Plane (ADR 0018 §3).
 
 Was hier geprueft wird, ist nicht "Pydantic funktioniert", sondern drei
 Zusagen, an denen im Bestand Geld verloren ging:

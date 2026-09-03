@@ -1,4 +1,4 @@
-"""``pay_invoice`` aus dem Cockpit → Payment Control Plane (ADR 0017 §12).
+"""``pay_invoice`` aus dem Cockpit → Payment Control Plane (ADR 0018 §12).
 
 **Es gibt ab hier genau einen Sendeweg.** Vorher fuehrte ``ln_control`` seine
 eigene Kette: eigene Policy (``lightning/policy.py``), eigenes Journal
@@ -50,7 +50,7 @@ async def legacy_pay_invoice_moved(**_kwargs: Any) -> Any:
     damit einen zweiten Sendeweg wiederhergestellt — lieber ein lauter Fehler
     als eine zweite Wahrheit ueber dieselbe Zahlung.
     """
-    raise RuntimeError("pay_invoice is routed through the payment control plane (ADR 0017 §12)")
+    raise RuntimeError("pay_invoice is routed through the payment control plane (ADR 0018 §12)")
 
 
 def bind_idempotency_key(plan_hash: str, cockpit_key: str) -> str:

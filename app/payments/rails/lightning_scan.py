@@ -1,4 +1,4 @@
-"""Seitenweises Lesen von ``ListPayments`` (ADR 0017 §8).
+"""Seitenweises Lesen von ``ListPayments`` (ADR 0018 §8).
 
 Beide Reconciliation-Richtungen brauchen dieselbe Schleife: die Vorwaerts-Frage
 ``kennt der Node DIESEN payment_hash?`` und die Rueckwaerts-Frage ``welche Sends

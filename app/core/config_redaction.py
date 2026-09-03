@@ -83,7 +83,7 @@ def redacted_config_snapshot(
     default. A critical field missing from ``explicit`` is the operator's cue.
 
     ``extra_sections`` haengt Settings-Baeume an, die BEWUSST nicht in
-    ``AppSettings`` haengen (ADR 0017 §2: keine Zeile in ``settings.py``).
+    ``AppSettings`` haengen (ADR 0018 §2: keine Zeile in ``settings.py``).
     Ohne diesen Parameter waere der Geldpfad die einzige Konfiguration, die
     der Operator nicht nachweisen kann — und ein God-File-Ratchet, der zu
     einem blinden Fleck fuehrt, hat sein Ziel verfehlt.

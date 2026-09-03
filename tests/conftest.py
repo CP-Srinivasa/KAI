@@ -93,7 +93,7 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
         ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
     )
 
-    # 4. **Geld-Journal-Redirect (ADR 0017 §5).** Seit dem Lifespan den
+    # 4. **Geld-Journal-Redirect (ADR 0018 §5).** Seit dem Lifespan den
     #    ``PaymentService`` baut, oeffnet JEDER Test, der die App hochfaehrt,
     #    ``artifacts/payments/payment_journal.jsonl`` — die Datei, die jede
     #    Wertbewegung traegt und nie rotiert wird. Ein Test-Record darin waere

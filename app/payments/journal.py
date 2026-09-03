@@ -1,4 +1,4 @@
-"""Das eine Geld-Journal: append-only, hash-verkettet, ein Lock (ADR 0017 §5).
+"""Das eine Geld-Journal: append-only, hash-verkettet, ein Lock (ADR 0018 §5).
 
 ``artifacts/payments/payment_journal.jsonl``. Ein Artefakt, ein Format, ein
 Lock — und nie rotiert, weil es die Wahrheit ueber jede Wertbewegung traegt.

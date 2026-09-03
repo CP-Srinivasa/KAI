@@ -1,4 +1,4 @@
-"""Ein Agent zahlt — von Ende zu Ende (ADR 0017 §1 Agent-Flow, §6 ``actor_limits``).
+"""Ein Agent zahlt — von Ende zu Ende (ADR 0018 §1 Agent-Flow, §6 ``actor_limits``).
 
 Der Agent bekommt **kein Macaroon**. Er erzeugt einen Intent, die Regelkette
 entscheidet, und er bekommt Status und Beleg zurueck. Das ist der ganze

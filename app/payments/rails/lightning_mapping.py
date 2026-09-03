@@ -1,4 +1,4 @@
-"""Uebersetzung zwischen lnd-Antworten und dem Domaenenmodell (ADR 0017 §7).
+"""Uebersetzung zwischen lnd-Antworten und dem Domaenenmodell (ADR 0018 §7).
 
 Getrennt von :mod:`app.payments.rails.lightning`, weil es zwei verschiedene
 Fragen sind: *"was bedeutet diese Antwort?"* braucht keinen Node, keine

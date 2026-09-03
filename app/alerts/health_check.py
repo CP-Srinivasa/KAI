@@ -508,7 +508,7 @@ def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
 
 
 def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
-    """Waechter des Geld-Journals (ADR 0017 §5/§10, Stream-Vertrag G4).
+    """Waechter des Geld-Journals (ADR 0018 §5/§10, Stream-Vertrag G4).
 
     Ueberwacht wird die KETTE, nicht die Kadenz: der Strom ist
     ereignisgetrieben und im Default-Modus SIMULATION legitim tagelang still.
@@ -545,7 +545,7 @@ def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
 
 
 def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
-    """Waechter des Reconcile-Laufs (ADR 0017 §8/§10).
+    """Waechter des Reconcile-Laufs (ADR 0018 §8/§10).
 
     Der Reconcile-Timer laeuft als eigener Prozess und hinterlaesst sein
     Ergebnis in ``artifacts/payments/reconcile_state.json``. Ohne diesen

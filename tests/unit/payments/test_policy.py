@@ -1,4 +1,4 @@
-"""Die Regelkette (ADR 0017 §6).
+"""Die Regelkette (ADR 0018 §6).
 
 Deterministisch, feste Reihenfolge, erste DENY gewinnt. Zwei Eigenschaften
 sind wichtiger als jede Einzelregel:

@@ -1,4 +1,4 @@
-"""Rail-Adapter (ADR 0017 §7).
+"""Rail-Adapter (ADR 0018 §7).
 
 Jeder Adapter uebersetzt genau EIN fremdes Protokoll in das Domaenenmodell und
 kennt vom Control Plane nur :mod:`app.payments.rail`. Bewusst ohne

@@ -1,4 +1,4 @@
-"""Der lnd-Adapter (ADR 0017 §7).
+"""Der lnd-Adapter (ADR 0018 §7).
 
 Kein Test spricht mit einem Node: der Client wird ueber ``client_factory``
 injiziert. Was geprueft wird, sind die drei Zusagen, an denen im Bestand Geld

@@ -1,4 +1,4 @@
-"""Der Konsument des Geld-Journals (Stream-Vertrag G4 + ADR 0017 §10).
+"""Der Konsument des Geld-Journals (Stream-Vertrag G4 + ADR 0018 §10).
 
 Ein Strom ohne Leser ist ein Produzent, kein System — und ein Geld-Journal,
 dessen Kettenbruch niemandem auffaellt, ist schlimmer als keins: es sieht

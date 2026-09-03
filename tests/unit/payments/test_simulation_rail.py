@@ -1,4 +1,4 @@
-"""Der deterministische Rail (ADR 0017 §1).
+"""Der deterministische Rail (ADR 0018 §1).
 
 Zwei Teile: die gemeinsame Contract-Suite (:mod:`rail_contract`) und die
 Faelle, die NUR dieser Rail erzeugen kann — vor allem der wichtigste von allen:

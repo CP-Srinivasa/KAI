@@ -1,4 +1,4 @@
-"""Konfiguration des Payment Control Plane (ADR 0017 §11).
+"""Konfiguration des Payment Control Plane (ADR 0018 §11).
 
 Eigene ``BaseSettings``-Klasse, Muster ``lightning_settings.py`` — und
 ausdruecklich **keine Zeile** in ``app/core/settings.py`` (God-File-Ratchet,

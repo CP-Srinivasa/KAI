@@ -98,12 +98,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _logger.warning("runtime_identity_unavailable", exc_info=True)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
-    # ADR 0017 §11: NACH dem Lightning-Guard, weil der Payment-Guard auf einem
+    # ADR 0018 §11: NACH dem Lightning-Guard, weil der Payment-Guard auf einem
     # bereits als vertrauenswuerdig erwiesenen Transport aufsetzt. Er prueft die
     # Macaroon-Scope-Kollision (in JEDEM Modus) und die vier LIVE-Vorbedingungen.
     payment_settings = get_payment_settings()
     validate_payment_boot(payment_settings, app_env=settings.env, lightning=settings.lightning)
-    # ADR 0017 §5: DIESER Prozess ist der sendende. Er oeffnet das Geld-Journal
+    # ADR 0018 §5: DIESER Prozess ist der sendende. Er oeffnet das Geld-Journal
     # (volle Kettenpruefung) und klaert offene Sends, BEVOR er Verkehr annimmt —
     # ein ``submitted`` ohne Antwort heisst, dass der Vorgaenger abgestuerzt ist,
     # waehrend Geld unterwegs war. Ein Fehler hier ist ein Boot-Abbruch: ein

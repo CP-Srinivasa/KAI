@@ -88,14 +88,14 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # — genau die Klasse, die das Buch am 18.08. unbrauchbar gemacht hat.
     "close_price_sanity": AlertClass.P0,
     # Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung
-    # (ADR 0017 §5). Eine gebrochene Kette ist schlimmer als eine fehlende
+    # (ADR 0018 §5). Eine gebrochene Kette ist schlimmer als eine fehlende
     # Datei: sie sieht weiterhin aus wie ein Beweis, und Idempotenz, Tages-Cap
     # und Reconciliation verlieren gleichzeitig ihre Grundlage.
     "payment_journal": AlertClass.P0,
     # Ein Waisen-Settlement ist Geld, das der Node bewegt hat, ohne dass ein
     # Intent es beauftragt haette; ein ungeklaerter Send ist Geld, ueber dessen
     # Verbleib niemand etwas sagen kann. Beide sind offene Fragen ueber Kapital
-    # und gehoeren nicht in die Sammelmeldung (ADR 0017 §8).
+    # und gehoeren nicht in die Sammelmeldung (ADR 0018 §8).
     "payment_reconciliation": AlertClass.P0,
     # --- P1: stilles Versagen, toter Eingang, Drift, Auth ---------------
     # Der Alarmkanal selbst: 15 von 19 Alarmen kamen nie an (A4-017).

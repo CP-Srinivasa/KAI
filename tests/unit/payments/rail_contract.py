@@ -1,4 +1,4 @@
-"""Wiederverwendbare Contract-Suite fuer JEDE Rail-Implementierung (ADR 0017 §7).
+"""Wiederverwendbare Contract-Suite fuer JEDE Rail-Implementierung (ADR 0018 §7).
 
 Keine Testdatei, sondern eine Basisklasse: eine konkrete Rail erbt davon und
 liefert drei Fixtures (``rail``, ``valid_destination``,

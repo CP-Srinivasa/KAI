@@ -1,4 +1,4 @@
-"""Verdrahtung und Auth des Geldpfads (ADR 0017 §10/§11).
+"""Verdrahtung und Auth des Geldpfads (ADR 0018 §10/§11).
 
 Zwei Fragen, die nur die ECHTE App beantwortet:
 

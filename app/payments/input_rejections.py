@@ -5,7 +5,7 @@ therefore the only durable explanation of why the writer refused an intent.  It
 must never contain the plan itself: invoices, pubkeys and addresses are value-
 layer material, not diagnostics.
 
-Lives in ``app.payments`` since ADR 0017 §2 (moved from
+Lives in ``app.payments`` since ADR 0018 §2 (moved from
 ``app.lightning.input_contract_rejections``): ``app.audit`` needs
 ``LN_INPUT_REJECTIONS_FILENAME``, and reading it out of ``app.lightning`` closed
 the import cycle ``audit -> lightning -> truth -> audit``.  The STREAM NAME is

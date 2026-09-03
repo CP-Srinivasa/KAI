@@ -1,4 +1,4 @@
-"""Der Send und was danach kommt (ADR 0017 §4/§8/§9).
+"""Der Send und was danach kommt (ADR 0018 §4/§8/§9).
 
 Getrennt von :mod:`app.payments.service`, weil hier die Grenze liegt, an der
 Geld unwiderruflich wird. Alles davor (Aufnahme, Policy, Freigabe) ist

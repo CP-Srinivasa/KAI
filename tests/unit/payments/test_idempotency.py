@@ -1,4 +1,4 @@
-"""Idempotenz im Journal, nicht daneben (ADR 0017 §5).
+"""Idempotenz im Journal, nicht daneben (ADR 0018 §5).
 
 Der Bestand hat dafuer ein zweites Artefakt (``lightning/idempotency_store.py``)
 mit drei Defekten, die hier alle strukturell entfallen:

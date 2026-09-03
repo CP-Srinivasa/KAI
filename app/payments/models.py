@@ -1,4 +1,4 @@
-"""Domaenenmodell des Payment Control Plane (ADR 0017 §3).
+"""Domaenenmodell des Payment Control Plane (ADR 0018 §3).
 
 Alle Typen sind ``frozen`` und ``extra="forbid"``. Beides ist im Geldpfad kein
 Stilmittel: ein veraenderbarer Betrag ist ein Betrag ohne Zeuge, und ein
@@ -254,7 +254,7 @@ class PaymentAuditEvent(BaseModel):
     @classmethod
     def _known_event(cls, value: str) -> str:
         if value not in AUDIT_EVENT_TYPES:
-            raise ValueError(f"unknown event_type {value!r} (ADR 0017 §9 is exhaustive)")
+            raise ValueError(f"unknown event_type {value!r} (ADR 0018 §9 is exhaustive)")
         return value
 
     @field_validator("prev_hash", "record_hash")

@@ -1,4 +1,4 @@
-"""Der Zusammenbau des Control Plane beim Start (ADR 0017 §1/§5).
+"""Der Zusammenbau des Control Plane beim Start (ADR 0018 §1/§5).
 
 Steht hier und nicht im ``lifespan``, weil zwei Prozesse ihn brauchen — der
 Server und (in der Zukunft) jede CLI, die den Geldpfad anfasst — und weil

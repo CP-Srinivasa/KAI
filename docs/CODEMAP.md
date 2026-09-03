@@ -90,7 +90,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/security/hotp_auth.py` + `scripts/hotp_bootstrap.py` → HOTP-Read→Verify→Append unter strict Lock + `fsync`; fehlendes/leeres/korruptes Journal ist **deny**, Erst-Inbetriebnahme nur explizit mit `--next-counter` (bestehende Journale werden nie überschrieben)
 - `app/security/auth.py::_LN_LOCAL_BYPASS_READS` → `/dashboard/api/ln/ops` ist bewusst NICHT drin (Geldpfad-Audit ≠ lokale Dashboard-Bequemlichkeit); einziger Konsument = Browser-Panel via CF-Access
 
-### Payment Control Plane (`app/payments/`, ADR 0017)
+### Payment Control Plane (`app/payments/`, ADR 0018)
 - **Der Serialisierungspunkt** ist `PaymentService.create_intent`: Idempotenz-Konsum, Cap-Lesung aus dem Index, Policy-Verdikt und beide Records laufen unter EINEM `journal.transaction()`. Decode und Node-Health passieren VORHER und sind ausdrücklich Vorschau — ein Node-Aufruf unter dem Lock hielte jeden anderen Schreiber für die Dauer eines Netzaufrufs an
 - **Der einzige `rail.pay()`-Aufruf im ganzen Repo** steht in `PaymentService.execute`. `ln_control` delegiert seit ADR §12 dorthin (`ln_control_delegate.py`); ein AST-Test verbietet `vl.pay_invoice` in `ln_control`
 - `artifacts/payments/payment_journal.jsonl` — **das eine Geld-Journal**: append-only, `prev_hash`/`record_hash`, fsync, `0600`, **nie rotiert**, portalocker-Interprozess-Lock auch für LESENDE Zugriffe. Torn Tail = Deny (nicht „auf der letzten lesbaren Zeile weiterschreiben“ — das forkt still). Pfad NUR über `PaymentSettings.journal_path`, absolut zur Repo-Wurzel
@@ -121,7 +121,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `shadow_real_feed_funnel.jsonl` — Funnel seen→eligible→injected→candidate
 - `blocked_outcomes.jsonl` — geblockte Alerts + ~28h-Outcome (asset/dir/move im `note`)
 - `blocked_alerts.jsonl` — geblockte Alerts (reason; KEIN Symbol/Dir)
-- `payments/payment_journal.jsonl` — **jede Wertbewegung** (ADR 0017 §5); nie rotiert, `0600`, hash-verkettet. Zusammen mit `ln_ops_ledger_v2.jsonl` und `ln_hotp_journal.jsonl` in `kai_backup_artifacts.sh::DEFAULT_SOURCES`; `MONEY_SOURCES` bricht ab, wenn eines davon aus dem letzten Archiv-Manifest verschwindet
+- `payments/payment_journal.jsonl` — **jede Wertbewegung** (ADR 0018 §5); nie rotiert, `0600`, hash-verkettet. Zusammen mit `ln_ops_ledger_v2.jsonl` und `ln_hotp_journal.jsonl` in `kai_backup_artifacts.sh::DEFAULT_SOURCES`; `MONEY_SOURCES` bricht ab, wenn eines davon aus dem letzten Archiv-Manifest verschwindet
 - `alert_outcomes.jsonl` — resolved directional alerts (hit/miss)
 - `app/intelligence/` — Local Intelligence Layer (ADR 0015): TaskRouter/Provider/ContextBuilder/Audit; Flags `KAI_LLM_*` (default-off); Trail `artifacts/intelligence_audit.jsonl`; CLI `intelligence {daily-summary,anomaly-explain,doc-qa}`
 - `funding_evidence_shadow.jsonl` / `oi_evidence_shadow.jsonl` / `hype_evidence_shadow.jsonl` — V5-Evidence (shadow)

@@ -1,4 +1,4 @@
-"""Die Freigabe-Zeremonie (ADR 0017 §4/§11).
+"""Die Freigabe-Zeremonie (ADR 0018 §4/§11).
 
 Getrennt von :mod:`app.payments.service`, weil sie eine eigene Zusage traegt:
 **ohne Verifier gibt es keine Freigabe.** Der naheliegende Fehler waere ein

@@ -1,4 +1,4 @@
-"""Ergebnis und Gedaechtnis des Reconcilers (ADR 0017 §8).
+"""Ergebnis und Gedaechtnis des Reconcilers (ADR 0018 §8).
 
 Getrennt von :mod:`app.payments.reconcile`, weil zwei verschiedene Leser diese
 Typen brauchen: der Reconciler selbst und — in einem ANDEREN Prozess — der

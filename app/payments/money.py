@@ -1,4 +1,4 @@
-"""Geldwerte des Payment Control Plane (ADR 0017 §3).
+"""Geldwerte des Payment Control Plane (ADR 0018 §3).
 
 Getrennt von :mod:`app.payments.models`, weil hier die einzige Arithmetik des
 Pakets liegt: was ein Betrag ist, wann zwei Betraege zusammenpassen und warum

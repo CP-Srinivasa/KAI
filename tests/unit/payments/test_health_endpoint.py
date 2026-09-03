@@ -1,4 +1,4 @@
-"""``/health/payment`` und ``/health/config`` an der HTTP-Grenze (ADR 0017 §10).
+"""``/health/payment`` und ``/health/config`` an der HTTP-Grenze (ADR 0018 §10).
 
 Drei Zusagen, die ein Modultest des Schnappschusses nicht abdeckt:
 

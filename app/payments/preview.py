@@ -1,4 +1,4 @@
-"""Was VOR dem Journal-Lock passiert (ADR 0017 §5).
+"""Was VOR dem Journal-Lock passiert (ADR 0018 §5).
 
 Decode und Node-Health sind Netzaufrufe. Sie laufen ausdruecklich ausserhalb
 des Serialisierungspunkts und sind damit **Vorschau**: was sie liefern, kann in

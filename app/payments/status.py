@@ -1,4 +1,4 @@
-"""Die einzige Vergabestelle fuer ``PaymentStatus`` (ADR 0017 §4).
+"""Die einzige Vergabestelle fuer ``PaymentStatus`` (ADR 0018 §4).
 
 Der Bestand hatte drei ueberlappende Zustandsvokabulare (``ops_ledger``
 ``{intent,in_flight,unknown,executed,error}``, ``value_layer``

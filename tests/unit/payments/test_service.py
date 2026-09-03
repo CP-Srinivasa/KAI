@@ -1,4 +1,4 @@
-"""Der Control Plane (ADR 0017 §5/§9).
+"""Der Control Plane (ADR 0018 §5/§9).
 
 Die eine Kette: Intent -> Policy -> Autorisierung -> Rail -> Settlement. Was
 hier geprueft wird, sind die Stellen, an denen sie reissen kann:

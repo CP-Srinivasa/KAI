@@ -1,4 +1,4 @@
-"""Eingaben und Ergebnisform der Regelkette (ADR 0017 §6).
+"""Eingaben und Ergebnisform der Regelkette (ADR 0018 §6).
 
 Getrennt von :mod:`app.payments.policy`, weil hier steht, WORUEBER entschieden
 wird, und dort, WIE. Die Trennung haelt beide Module unter der

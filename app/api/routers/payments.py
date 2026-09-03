@@ -1,4 +1,4 @@
-"""Die HTTP-Grenze des Payment Control Plane (ADR 0017 §10/§11).
+"""Die HTTP-Grenze des Payment Control Plane (ADR 0018 §10/§11).
 
 Sieben Endpunkte, ein Dienst. Der Router entscheidet **nichts** ueber Geld: er
 uebersetzt HTTP in einen Aufruf an :class:`~app.payments.service.PaymentService`

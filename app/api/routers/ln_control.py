@@ -26,7 +26,7 @@ of five allowlisted read-only endpoints — ``/value-action`` is not among them.
 The earlier note ("a separate PR") was stale and read as if this control surface
 were still locally reachable (SENTR).
 
-ADR 0017 §12: ``pay_invoice`` is delegated to the Payment Control Plane
+ADR 0018 §12: ``pay_invoice`` is delegated to the Payment Control Plane
 (``ln_control_delegate``) — exactly ONE send path. The confirm ceremony below
 (plan_hash binding, fresh idempotency key, HOTP) is unchanged.
 """
@@ -216,7 +216,7 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         except TypeError as exc:  # bad/typo'd params for this action
             raise HTTPException(status_code=422, detail=f"invalid params: {exc}") from exc
 
-    # ── ADR 0017 §12: pay_invoice gehoert dem Control Plane ──────────────────
+    # ── ADR 0018 §12: pay_invoice gehoert dem Control Plane ──────────────────
     if body.action == "pay_invoice":
         amount_sat, _ = _effective_amount_sat("pay_invoice", body.params, spec)
         return await delegate.handle_pay_invoice(

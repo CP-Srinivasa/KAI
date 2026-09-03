@@ -1,4 +1,4 @@
-"""Redaktionsgrenze des Geld-Journals (ADR 0017 §9).
+"""Redaktionsgrenze des Geld-Journals (ADR 0018 §9).
 
 Eine **Allowlist**, keine Blocklist. Der Unterschied ist nicht Geschmack: eine
 Blocklist muss jedes zukuenftige Geheimnis kennen, eine Allowlist muss nur

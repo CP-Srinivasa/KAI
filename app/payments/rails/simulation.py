@@ -1,4 +1,4 @@
-"""Deterministischer Rail fuer SIMULATION und Tests (ADR 0017 §1).
+"""Deterministischer Rail fuer SIMULATION und Tests (ADR 0018 §1).
 
 Kein Node, kein Netz, keine Uhr-Abhaengigkeit — und trotzdem ein Rail, der die
 unangenehmen Faelle liefert. Das ist der Punkt: ein Simulationsrail, der immer

@@ -1,4 +1,4 @@
-"""Was eine gueltige Journal-Kette ausmacht (ADR 0017 §5).
+"""Was eine gueltige Journal-Kette ausmacht (ADR 0018 §5).
 
 Getrennt vom Schreibpfad (:mod:`app.payments.journal`), weil es zwei
 verschiedene Fragen sind: *"ist diese Folge von Records ehrlich?"* laesst sich
@@ -26,7 +26,7 @@ GENESIS_HASH = "0" * 64
 
 SCHEMA = "payment-journal/v1"
 
-RUNBOOK = "docs/adr/0017-payment-fabric-control-plane.md"
+RUNBOOK = "docs/adr/0018-payment-fabric-control-plane.md"
 
 
 class JournalIntegrityError(RuntimeError):

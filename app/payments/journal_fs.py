@@ -1,4 +1,4 @@
-"""Dateisystem-Haertung fuer Geld-Artefakte (ADR 0017 §5/§11).
+"""Dateisystem-Haertung fuer Geld-Artefakte (ADR 0018 §5/§11).
 
 Zwei Massnahmen, die beide nur beim ERSTEN Anlegen einer Datei greifen und
 deshalb leicht vergessen werden:

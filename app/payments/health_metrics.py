@@ -1,4 +1,4 @@
-"""Kennzahlen aus dem Geld-Journal (ADR 0017 §10).
+"""Kennzahlen aus dem Geld-Journal (ADR 0018 §10).
 
 Getrennt von :mod:`app.payments.health`, weil es zwei verschiedene Fragen sind:
 *"wie steht es um den Geldpfad?"* braucht Rail, Settings und Umgebung — *"was

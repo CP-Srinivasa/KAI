@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Agenten-Limits des Payment Control Plane (ADR 0017 §1 Agent-Flow, §6 actor_limits).",
+    "Agenten-Limits des Payment Control Plane (ADR 0018 §1 Agent-Flow, §6 actor_limits).",
     "Ein Agent bekommt NIE ein Macaroon; er erzeugt einen Intent und bekommt Status zurueck.",
     "Ein Actor, der hier nicht steht, wird von der Regel actor_limits abgelehnt —",
     "die Tabelle ist eine Allowlist, keine Ausnahmeliste."

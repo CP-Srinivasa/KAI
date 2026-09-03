@@ -1,4 +1,4 @@
-"""Die HTTP-Grenze des Geldpfads (ADR 0017 §10/§11).
+"""Die HTTP-Grenze des Geldpfads (ADR 0018 §10/§11).
 
 Was hier geprueft wird, ist nicht der Dienst — der hat eigene Tests — sondern
 die Grenze:

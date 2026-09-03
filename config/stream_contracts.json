@@ -52,7 +52,7 @@
     },
     "payment_journal.jsonl": {
       "reader": "app/alerts/health_check.py",
-      "failure_consequence": "Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung (ADR 0017 §5). Faellt es aus oder bricht seine Hash-Kette, kann kein Prozess mehr entscheiden, ob ein Intent bereits gesendet wurde — Idempotenz, Tages-Cap und Reconciliation verlieren gleichzeitig ihre Grundlage, und ein gebrochenes Journal sieht weiterhin aus wie ein Beweis.",
+      "failure_consequence": "Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung (ADR 0018 §5). Faellt es aus oder bricht seine Hash-Kette, kann kein Prozess mehr entscheiden, ob ein Intent bereits gesendet wurde — Idempotenz, Tages-Cap und Reconciliation verlieren gleichzeitig ihre Grundlage, und ein gebrochenes Journal sieht weiterhin aus wie ein Beweis.",
       "failure_would_be_noticed_by": "_check_payment_journal_chain in app/alerts/health_check.py verifiziert die Kette bei jedem Health-Check-Lauf und meldet critical; zusaetzlich verweigert PaymentJournal.open() beim Prozessstart den Dienst (fail-closed), sodass kein Send auf einer gebrochenen Kette aufsetzt.",
       "time_to_notice": "Beim naechsten Health-Check-Lauf (5-Minuten-Timer), spaetestens beim naechsten Start von kai-server oder kai-ln-reconcile — dort sofort und blockierend.",
       "decision_that_would_change": "Der Operator repariert das Journal (Tail-Recovery) BEVOR eine weitere Zahlung freigegeben wird, statt eine Zahlung auf einer Kette zu wiederholen, deren Aussage ueber den letzten Send nicht mehr gilt.",

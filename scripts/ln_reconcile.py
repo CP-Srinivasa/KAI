@@ -8,7 +8,7 @@ jemandem auffaellt.
 
 * Zuerst die bestehende v2-Reconciliation (``app/lightning/reconciliation.py``)
   ueber ``artifacts/ln_ops_ledger_v2.jsonl``.
-* Danach der Payment Control Plane (ADR 0017 §8) ueber
+* Danach der Payment Control Plane (ADR 0018 §8) ueber
   ``artifacts/payments/payment_journal.jsonl``.
 
 **Dieser Prozess sendet nie.** Er ruft ``lookup``, ``list_payments`` und

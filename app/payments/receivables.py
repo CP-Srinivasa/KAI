@@ -1,4 +1,4 @@
-"""Die Empfangsseite: eine eigene Forderung und ihr Journal-Record (ADR 0017 §1).
+"""Die Empfangsseite: eine eigene Forderung und ihr Journal-Record (ADR 0018 §1).
 
 Der Sendepfad und der Empfangspfad sind nicht symmetrisch, und das ist der
 Grund fuer dieses Modul. Ein Send hat einen Aufrufer, der auf die Antwort

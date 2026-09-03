@@ -1,4 +1,4 @@
-"""Boot-Guards des Payment Control Plane (ADR 0017 §11).
+"""Boot-Guards des Payment Control Plane (ADR 0018 §11).
 
 Die Fragen hier sind nicht "laedt Pydantic ein Env", sondern: kann eine
 Fehlkonfiguration einen Send freischalten, den niemand gewollt hat? Vier

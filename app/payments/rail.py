@@ -1,4 +1,4 @@
-"""Das Rail-Interface (ADR 0017 §7).
+"""Das Rail-Interface (ADR 0018 §7).
 
 Ein Rail ist ein Adapter, kein Teilhaber: er kennt ``app.payments`` nicht, er
 wird von hier aus benutzt. Was er ueber sich SAGEN muss, steht in

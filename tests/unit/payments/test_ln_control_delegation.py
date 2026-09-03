@@ -1,4 +1,4 @@
-"""Ein Sendeweg, nicht zwei (ADR 0017 §12).
+"""Ein Sendeweg, nicht zwei (ADR 0018 §12).
 
 Der Bestand hatte zwei vollstaendige Ketten zu demselben Node: das Cockpit
 (``ln_control`` -> ``value_layer.pay_invoice``) mit eigener Policy, eigenem
@@ -60,7 +60,7 @@ def test_ln_control_ruft_den_value_layer_nicht_mehr_zum_zahlen() -> None:
     calls = _attribute_calls(Path(lc.__file__))
     assert "vl.pay_invoice" not in calls, (
         "ln_control darf nicht mehr direkt senden — der Weg fuehrt ueber den "
-        "Payment Control Plane (ADR 0017 §12)"
+        "Payment Control Plane (ADR 0018 §12)"
     )
 
 

@@ -1,4 +1,4 @@
-"""Das Geld-Journal gehoert dem Dienstnutzer allein (ADR 0017 §5/§11).
+"""Das Geld-Journal gehoert dem Dienstnutzer allein (ADR 0018 §5/§11).
 
 ``0600`` greift nur beim ERSTEN Anlegen der Datei — danach fasst der Writer
 den Modus nicht mehr an. Genau deshalb ist das die Stelle, an der die Zusage

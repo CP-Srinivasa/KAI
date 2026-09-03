@@ -1,4 +1,4 @@
-"""Was ``/health/payment`` beweisen muss (ADR 0017 §10).
+"""Was ``/health/payment`` beweisen muss (ADR 0018 §10).
 
 Die Leitfrage ist nicht "laeuft der Dienst?", sondern **"ist die Aussage ueber
 das Geld gedeckt?"**. Deshalb kennt dieser Schnappschuss kein gruenes Licht

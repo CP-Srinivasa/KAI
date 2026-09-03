@@ -1,4 +1,4 @@
-"""Das Vokabular des Payment Control Plane (ADR 0017 §3/§4/§9).
+"""Das Vokabular des Payment Control Plane (ADR 0018 §3/§4/§9).
 
 Getrennt von :mod:`app.payments.models`, weil Vokabular und Struktur
 unterschiedlich schnell altern: ein neuer Status ist eine Aenderung an der

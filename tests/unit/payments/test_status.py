@@ -1,4 +1,4 @@
-"""State Machine des Payment Control Plane (ADR 0017 §4).
+"""State Machine des Payment Control Plane (ADR 0018 §4).
 
 Die Matrix ist hier NICHT aus ``app.payments.status`` importiert, sondern
 zweitgeschrieben. Ein Test, der die Tabelle des Prueflings gegen sich selbst

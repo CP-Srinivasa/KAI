@@ -1,4 +1,4 @@
-"""Die drei Durchgaenge eines Reconcile-Laufs (ADR 0017 §8).
+"""Die drei Durchgaenge eines Reconcile-Laufs (ADR 0018 §8).
 
 Getrennt von :mod:`app.payments.reconcile`, weil dort die Frage *"darf dieser
 Lauf ueberhaupt Ablaeufe vergeben?"* beantwortet wird (Uhr, Zustand, Report)

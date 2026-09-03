@@ -1,4 +1,4 @@
-"""Das eine Geld-Journal (ADR 0017 §5).
+"""Das eine Geld-Journal (ADR 0018 §5).
 
 Vier Zusagen, jede einzeln pruefbar:
 

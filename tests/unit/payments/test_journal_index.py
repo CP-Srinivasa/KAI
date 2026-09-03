@@ -1,4 +1,4 @@
-"""Was der Index ueber das Journal WEISS (ADR 0017 §5/§8).
+"""Was der Index ueber das Journal WEISS (ADR 0018 §5/§8).
 
 Der Reconciler stellt drei Fragen, die vorher niemand beantworten konnte:
 
