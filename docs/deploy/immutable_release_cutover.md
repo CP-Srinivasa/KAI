@@ -52,15 +52,44 @@ beide auf demselben alten Stand, weil kein `git pull` stattgefunden hat.
 
 ## Hybrid, und das ist Absicht
 
-Von 63 Units unter `deploy/systemd/` zeigen **fünf** auf `/home/kai/current`:
+Die 63 Units unter `deploy/systemd/` zerfallen in **drei** Gruppen, nicht zwei:
+
+```
+63  TOTAL
+=  5  RELEASE_BOUND    ExecStart aus /home/kai/current
++ 55  CHECKOUT_BOUND   ExecStart aus /home/ubuntu/ai_analyst_trading_bot
++  3  REPO_INDEPENDENT ExecStart-Binary ausserhalb des Repos
+```
+
+**RELEASE_BOUND (5)** — die langlaufenden Daemons, für die Provenienz zählt:
 
 ```
 kai-server.service         kai-agent-worker.service     kai-tg-listener.service
 kai-entry-watch.service    kai-liquidation-stream.service
 ```
 
-Die übrigen 55 — überwiegend Timer-getriebene Einmalläufe — starten weiterhin
-aus `/home/ubuntu/ai_analyst_trading_bot`.
+**CHECKOUT_BOUND (55)** — überwiegend Timer-getriebene Einmalläufe.
+
+**REPO_INDEPENDENT (3)** — sie laden keinen KAI-Code und wandern deshalb weder
+mit `current` noch mit dem Checkout:
+
+| Unit | ExecStart |
+|---|---|
+| `cloudflared.service` | `/usr/local/bin/cloudflared` |
+| `kai-standby-data.service` | `/usr/local/bin/standby_to_usb.sh data` |
+| `kai-standby-system.service` | `/usr/local/bin/standby_to_usb.sh system` |
+
+`cloudflared` berührt den Checkout nur in einem `ExecStartPre`, das dessen
+`logs/`-Verzeichnis anlegt — es lädt keinen KAI-Code.
+
+> **Verifizierter Befund, der den Cutover überlebt und ihn nicht überleben darf.**
+> `/usr/local/bin/standby_to_usb.sh` (root, ausserhalb des Repos, gemessen
+> 2026-09-03) hat in Zeile 26 `REPO=/home/ubuntu/ai_analyst_trading_bot` fest
+> verdrahtet. Der System-Tier sichert damit weiterhin den Checkout — und nach
+> dem Cutover läuft der Code der fünf Daemons aus `/home/ubuntu/releases/<SHA>/`.
+> Die Sicherung erfasst dann nicht mehr, was tatsächlich läuft, und meldet
+> trotzdem Erfolg. Das Skript liegt ausserhalb des Repos; die Korrektur gehört
+> zum Cutover, nicht in einen Repo-PR.
 
 **Folge, die man nicht übersehen darf:** der Checkout bleibt nach dem Cutover
 produktiv. Er darf nicht gelöscht, nicht eingefroren und nicht vergessen werden.
@@ -250,3 +279,5 @@ sonst zeigen neue Units auf ein altes Release.
 - **Keine Zustandsmigration.** `.env`, `artifacts/`, `data/`, `logs/` bleiben, wo
   sie sind.
 - **Keine Vollmigration der 55 Timer-Units** in diesem Schritt.
+- **Keine Korrektur von `/usr/local/bin/standby_to_usb.sh`** durch einen
+  Repo-PR — das Skript liegt ausserhalb des Repos und gehoert dem Operator.
