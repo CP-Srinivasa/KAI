@@ -544,6 +544,50 @@ def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
     ]
 
 
+def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
+    """Waechter des Reconcile-Laufs (ADR 0017 §8/§10).
+
+    Der Reconcile-Timer laeuft als eigener Prozess und hinterlaesst sein
+    Ergebnis in ``artifacts/payments/reconcile_state.json``. Ohne diesen
+    Waechter waere ein Waisen-Settlement — Geld, das der Node bewegt hat, ohne
+    dass ein Intent es beauftragt haette — ein Eintrag in einer Datei, die
+    niemand liest. Der ``OnFailure=``-Pfad der Unit genuegt dafuer NICHT: der
+    Lauf ist erfolgreich, sein BEFUND ist das Problem.
+
+    ``critical``, nicht ``warning``: jeder der drei Ausloeser
+    (Waise, ungeklaerter Send, Uhr-Sprung) ist eine offene Frage ueber Geld.
+    """
+    from app.payments.reconcile_types import STATE_FILENAME, load_state
+
+    path = adir / "payments" / STATE_FILENAME
+    if not path.is_file():
+        return []
+    state = load_state(path)
+    if not state.last_run_utc:
+        # Fail-closed: eine vorhandene, aber unlesbare Zustandsdatei ist kein
+        # "alles in Ordnung" — sie ist ein Reconciler, dessen Ergebnis fehlt.
+        return [
+            HealthIssue(
+                severity="critical",
+                component="payment_reconciliation",
+                message=f"payment reconcile state unreadable: {path}",
+            )
+        ]
+    if state.last_status == "ok":
+        return []
+    return [
+        HealthIssue(
+            severity="critical",
+            component="payment_reconciliation",
+            message=(
+                f"payment reconciliation needs attention (status={state.last_status}, "
+                f"orphan settlements={state.last_orphans}, "
+                f"clock_anomaly={state.last_clock_anomaly}, last run {state.last_run_utc})"
+            ),
+        )
+    ]
+
+
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
     """Append-able hint about paper_execution_audit staleness (V5 secondary signal).
 
@@ -1455,6 +1499,7 @@ def run_health_check_report(
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
     report.issues.extend(_check_payment_journal_chain(adir))
+    report.issues.extend(_check_payment_reconciliation(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).
