@@ -40,6 +40,16 @@ Querschnitt: `app/pipeline/service.py` (Ingest → Analyse) ruft `app/orchestrat
 - **Nicht gebaut (bewusst):** Modell-Routing/Eskalation billig → teuer und Kosten in USD — ohne zwei Wochen v2-Telemetrie wäre jedes Routing geraten (DEFER).
 - **QUARANTINE:** `app/intelligence/` (eingefroren; Löschung, wenn `KAI_LLM_ENABLED` bis zum nächsten Re-Entry nie gesetzt wurde). Branch `codex/llm-router-migration-20260901` (LiteLLM-Proxy, +4.227 LOC, eigener systemd-Dienst, neue externe Dependency, God-File-Ratchet-Verstoß) wird **nicht gemergt** — er wäre der fünfte Pfad plus eine zweite Deployment-Welt. Als Archiv-Branch auf origin gesichert; verwertbare Vorlagen: `app/inference/{errors,mode}.py`.
 
+  > **Addendum 2026-09-03 (ADR 0017).** Diese Zeile ist wiederholt als „LiteLLM
+  > ist verworfen" gelesen worden. Sie sagt das nicht, und so ist sie auch nicht
+  > gemeint: verworfen wurde der **Branch** in seiner damaligen Gestalt — fünfter
+  > Pfad, zweiter Prozess, eigene Deployment-Welt —, nicht die
+  > **Transport-Strategie**. Verbindlich gilt seit
+  > [ADR 0017](adr/0017-ai-control-plane-and-litellm-transport.md):
+  > `codex/llm-router-migration-20260901` = ARCHIVED / DO NOT MERGE AS A WHOLE ·
+  > LiteLLM als Transport = NOT REJECTED · künftige Integration = **unterhalb**
+  > der `app/ai`-Control-Plane · eine parallele `app/inference`-Control-Plane =
+
 ## 4. Aktive Komponenten (KEEP) und Laufzeit
 
 **Dauerläufer (Pi, enabled + aktiv):** `kai-server` (uvicorn `app.api.main:app`, 127.0.0.1:8000), `kai-agent-worker`, `kai-tg-listener`, `kai-entry-watch`, `kai-liquidation-stream`, `cloudflared` (Tunnel `kai-trader.org`).
