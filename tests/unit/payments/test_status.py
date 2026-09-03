@@ -64,9 +64,13 @@ EXPECTED: dict[str, set[str]] = {
 
 EXPECTED_TERMINAL = {"DENIED", "SETTLED", "REVERSED", "FAILED_FINAL", "EXPIRED", "CANCELLED"}
 
-ALL_PAIRS = [(a, b) for a in EXPECTED for b in EXPECTED]
-ALLOWED_PAIRS = [(a, b) for a, targets in EXPECTED.items() for b in targets]
-FORBIDDEN_PAIRS = [pair for pair in ALL_PAIRS if pair not in ALLOWED_PAIRS]
+# SORTIERT, nicht in Set-Reihenfolge: pytest-xdist verteilt anhand der
+# Reihenfolge der gesammelten Tests, und die Iteration ueber ein ``set`` haengt
+# an PYTHONHASHSEED. Jeder Worker haette sonst eine andere Liste gesammelt und
+# die Verteilung waere mit "Different tests were collected" abgebrochen.
+ALL_PAIRS = sorted((a, b) for a in EXPECTED for b in EXPECTED)
+ALLOWED_PAIRS = sorted((a, b) for a, targets in EXPECTED.items() for b in targets)
+FORBIDDEN_PAIRS = [pair for pair in ALL_PAIRS if pair not in set(ALLOWED_PAIRS)]
 
 
 def node_evidence(status: str = "SUCCEEDED") -> TransitionEvidence:

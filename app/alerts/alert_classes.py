@@ -87,6 +87,11 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # Ein Close-Preis, der die Sanity-Pruefung reisst, vergiftet das Paper-Buch
     # — genau die Klasse, die das Buch am 18.08. unbrauchbar gemacht hat.
     "close_price_sanity": AlertClass.P0,
+    # Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung
+    # (ADR 0017 §5). Eine gebrochene Kette ist schlimmer als eine fehlende
+    # Datei: sie sieht weiterhin aus wie ein Beweis, und Idempotenz, Tages-Cap
+    # und Reconciliation verlieren gleichzeitig ihre Grundlage.
+    "payment_journal": AlertClass.P0,
     # --- P1: stilles Versagen, toter Eingang, Drift, Auth ---------------
     # Der Alarmkanal selbst: 15 von 19 Alarmen kamen nie an (A4-017).
     "alert_delivery": AlertClass.P1,

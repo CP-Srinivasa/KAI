@@ -16,7 +16,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+
+from app.payments.models import PaymentAuditEvent
 
 #: Der Vorgaenger des ersten Records.
 GENESIS_HASH = "0" * 64
@@ -57,6 +60,41 @@ def compute_record_hash(record: dict[str, Any]) -> str:
     """SHA-256 ueber den Record OHNE sein eigenes ``record_hash``."""
     without = {key: value for key, value in record.items() if key != "record_hash"}
     return hashlib.sha256(canonical_bytes(without)).hexdigest()
+
+
+def build_record(
+    *,
+    seq: int,
+    ts: datetime,
+    intent_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    prev_hash: str,
+) -> tuple[dict[str, Any], PaymentAuditEvent]:
+    """Baue einen verketteten Record und pruefe seine Form, BEVOR er auf Platte geht.
+
+    Ein unbekannter ``event_type`` oder ein defekter Hash darf nicht erst beim
+    Lesen auffallen — dann steht er bereits unwiderruflich im append-only
+    Journal. Die Validierung gehoert deshalb vor den ``write``.
+    """
+    record: dict[str, Any] = {
+        "schema": SCHEMA,
+        "seq": seq,
+        "ts": ts.isoformat(),
+        "intent_id": intent_id,
+        "event_type": event_type,
+        "payload": payload,
+        "prev_hash": prev_hash,
+    }
+    record["record_hash"] = compute_record_hash(record)
+    return record, as_event(record)
+
+
+def as_event(record: dict[str, Any]) -> PaymentAuditEvent:
+    """Typisierte Sicht auf einen Record (ohne das rein technische ``schema``)."""
+    return PaymentAuditEvent.model_validate(
+        {key: value for key, value in record.items() if key != "schema"}
+    )
 
 
 def parse_record(raw: bytes, *, after_seq: int) -> dict[str, Any]:
@@ -106,6 +144,8 @@ __all__ = [
     "SCHEMA",
     "ChainStatus",
     "JournalIntegrityError",
+    "as_event",
+    "build_record",
     "canonical_bytes",
     "compute_record_hash",
     "parse_record",

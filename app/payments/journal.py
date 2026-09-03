@@ -45,11 +45,14 @@ from app.payments.journal_chain import (
     SCHEMA,
     ChainStatus,
     JournalIntegrityError,
+    as_event,
+    build_record,
     canonical_bytes,
     compute_record_hash,
     parse_record,
     verify_link,
 )
+from app.payments.journal_fs import fsync_directory, harden_permissions
 from app.payments.journal_index import JournalIndex
 from app.payments.models import PaymentAuditEvent
 from app.payments.redaction import redact_payload
@@ -59,24 +62,6 @@ from app.payments.redaction import redact_payload
 PAYMENT_JOURNAL_FILENAME = "payment_journal.jsonl"
 
 _LOCK_TIMEOUT_SECONDS = 15.0
-
-
-def _fsync_directory(directory: Path) -> None:
-    """fsync des Verzeichniseintrags, damit eine NEUE Datei einen Stromausfall
-    ueberlebt (Muster ``ops_ledger._fsync_directory``). POSIX only."""
-    if os.name != "posix":
-        return
-    flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
-    try:
-        fd = os.open(directory, flags)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:  # pragma: no cover - best effort
-        pass
-    finally:
-        os.close(fd)
 
 
 class PaymentJournal:
@@ -214,6 +199,23 @@ class PaymentJournal:
         with self.transaction() as tx:
             return tx.append(intent_id, event_type, payload, ts=ts)
 
+    def events(self, intent_id: str | None = None) -> list[PaymentAuditEvent]:
+        """Die Records — vollstaendig oder nur die eines Intents (ADR §10).
+
+        Liest unter dem Lock und ohne Index: der Audit-Pfad soll die Datei
+        zeigen, nicht eine abgeleitete Sicht auf sie.
+        """
+        with self._rlock, self._hold(create=False) as handle:
+            data = self._read_from(0, handle=handle)
+        out: list[PaymentAuditEvent] = []
+        for raw in data.split(b"\n"):
+            if not raw.strip():
+                continue
+            record = parse_record(raw, after_seq=0)
+            if intent_id is None or record.get("intent_id") == intent_id:
+                out.append(as_event(record))
+        return out
+
     # -- Pruefen ------------------------------------------------------------ #
 
     def verify_chain(self) -> ChainStatus:
@@ -297,20 +299,13 @@ class JournalTransaction:
             raise JournalIntegrityError("nested transaction cannot write without the lock owner")
         journal = self._journal
         moment = (ts or datetime.now(UTC)).astimezone(UTC)
-        record: dict[str, Any] = {
-            "schema": SCHEMA,
-            "seq": journal._tip_seq + 1,
-            "ts": moment.isoformat(),
-            "intent_id": intent_id,
-            "event_type": event_type,
-            "payload": redact_payload(payload),
-            "prev_hash": journal._tip_hash,
-        }
-        record["record_hash"] = compute_record_hash(record)
-        # Form pruefen BEVOR geschrieben wird: ein unbekannter event_type oder
-        # ein defekter Hash darf nicht erst beim Lesen auffallen.
-        event = PaymentAuditEvent.model_validate(
-            {key: value for key, value in record.items() if key != "schema"}
+        record, event = build_record(
+            seq=journal._tip_seq + 1,
+            ts=moment,
+            intent_id=intent_id,
+            event_type=event_type,
+            payload=redact_payload(payload),
+            prev_hash=journal._tip_hash,
         )
 
         line = canonical_bytes(record) + b"\n"
@@ -319,13 +314,9 @@ class JournalTransaction:
         handle.flush()
         os.fsync(handle.fileno())
         if self._created:
-            _fsync_directory(journal.path.parent)
+            fsync_directory(journal.path.parent)
+            harden_permissions(journal.path)
             self._created = False
-            if os.name == "posix":
-                try:
-                    os.chmod(journal.path, 0o600)
-                except OSError:  # pragma: no cover - best effort
-                    pass
 
         journal._tip_seq = record["seq"]
         journal._tip_hash = record["record_hash"]
