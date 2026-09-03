@@ -129,6 +129,13 @@ DEFAULT_SOURCES=(
     "artifacts/telegram_channel_raw.jsonl"
     "artifacts/telegram_channel_checkpoint.json"
     "artifacts/ph5_hold_metrics_report.json"
+    # --- Geld-Journale (ADR 0017 §5, Architect P1) --------------------------
+    # Jede Wertbewegung, jede Freigabe, jeder HOTP-Counter. Aus Code nicht
+    # rekonstruierbar, aus der DB auch nicht — und ohne den HOTP-Counter ist
+    # der Geldpfad nach einem Restore fail-closed dicht.
+    "artifacts/payments/payment_journal.jsonl"
+    "artifacts/ln_ops_ledger_v2.jsonl"
+    "artifacts/ln_hotp_journal.jsonl"
     "DECISION_LOG.md"
 )
 
@@ -145,6 +152,18 @@ DEFAULT_SOURCE_DIRS=(
 REQUIRED_SOURCES=(
     "artifacts/research/prereg_ledger.jsonl"
     "artifacts/truth/attestation_ledger.jsonl"
+)
+
+# Geld-Journale: ihr FEHLEN ist nur dann ein Fehler, wenn sie schon einmal da
+# waren. Vor der ersten Zahlung existiert keins von ihnen, und ein Backup, das
+# auf einer frischen Anlage mit Exit 3 abbricht, wird abgeschaltet — ein
+# Waechter, der immer schlaegt, schuetzt nichts. Die Evidenz fuer "war schon
+# einmal da" liegt im Manifest des letzten Archivs (siehe unten): es haelt
+# fest, was WIRKLICH eingepackt wurde.
+MONEY_SOURCES=(
+    "artifacts/payments/payment_journal.jsonl"
+    "artifacts/ln_ops_ledger_v2.jsonl"
+    "artifacts/ln_hotp_journal.jsonl"
 )
 
 EXTRAS=()
@@ -191,6 +210,24 @@ done
 if [[ ${#ABSENT_REQUIRED[@]} -gt 0 ]]; then
     write_log "ERROR: required truth-layer source(s) missing: ${ABSENT_REQUIRED[*]}"
     write_audit "fail_missing_required" "" "" 0 "" "" "${ABSENT_REQUIRED[*]}"
+    exit 3
+fi
+
+# Ein Geld-Journal, das im letzten Archiv lag und heute fehlt, ist geloescht,
+# umbenannt oder auf einen anderen Pfad umkonfiguriert worden. Alle drei Faelle
+# sind ein Abbruch: das naechste Backup waere sonst still unvollstaendig.
+LAST_MANIFEST="$(ls -1t "$STAGE_DIR"/*/*.manifest.json 2>/dev/null | head -n 1 || true)"
+VANISHED_MONEY=()
+if [[ -n "$LAST_MANIFEST" && -f "$LAST_MANIFEST" ]]; then
+    for f in "${MONEY_SOURCES[@]}"; do
+        if grep -qF "\"$f\"" "$LAST_MANIFEST" && [[ ! -f "$ROOT/$f" ]]; then
+            VANISHED_MONEY+=( "$f" )
+        fi
+    done
+fi
+if [[ ${#VANISHED_MONEY[@]} -gt 0 ]]; then
+    write_log "ERROR: money journal(s) present in the last archive are gone: ${VANISHED_MONEY[*]}"
+    write_audit "fail_missing_money_journal" "" "" 0 "" "" "${VANISHED_MONEY[*]}"
     exit 3
 fi
 

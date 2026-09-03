@@ -106,3 +106,46 @@ def test_backup_unit_ist_gehaertet() -> None:
     assert "User=ubuntu" in text
     assert "NoNewPrivileges=true" in text
     assert "ProtectSystem=strict" in text
+
+
+# --------------------------------------------------------------------------- #
+# Geld-Journale (ADR 0017 §5, Architect P1)
+# --------------------------------------------------------------------------- #
+
+# Diese drei tragen jede Wertbewegung, jede Freigabe und jeden HOTP-Counter.
+# Aus Code sind sie nicht rekonstruierbar, aus der DB auch nicht — und ohne den
+# HOTP-Counter ist der Geldpfad nach einem Restore fail-closed dicht.
+MONEY_JOURNALS = (
+    "artifacts/payments/payment_journal.jsonl",
+    "artifacts/ln_ops_ledger_v2.jsonl",
+    "artifacts/ln_hotp_journal.jsonl",
+)
+
+
+@pytest.mark.parametrize("relpath", MONEY_JOURNALS)
+def test_geldjournale_liegen_im_archiv(script_text: str, relpath: str) -> None:
+    """``REQUIRED_SOURCES`` allein sichert NICHTS.
+
+    Die Liste ist eine reine Anwesenheitspruefung; gepackt wird
+    ``DEFAULT_SOURCES``. Ein Geld-Journal nur dort einzutragen haette eine
+    Zusage erzeugt, die das Skript nicht einloest.
+    """
+    assert relpath in _array_entries(script_text, "DEFAULT_SOURCES")
+
+
+@pytest.mark.parametrize("relpath", MONEY_JOURNALS)
+def test_ein_verschwundenes_geldjournal_ist_ein_fehler(script_text: str, relpath: str) -> None:
+    """Was einmal im Archiv lag, muss es weiter tun.
+
+    In ``REQUIRED_SOURCES`` gehoeren sie NICHT: vor der ersten Zahlung
+    existiert keins von ihnen, und ein Backup, das auf einer frischen Anlage
+    mit Exit 3 abbricht, wird abgeschaltet. Die Bedingung ist deshalb an
+    Evidenz geknuepft — das Manifest des letzten Archivs.
+    """
+    assert relpath in _array_entries(script_text, "MONEY_SOURCES")
+    assert "fail_missing_money_journal" in script_text
+
+
+def test_die_evidenz_fuer_verschwunden_kommt_aus_dem_manifest(script_text: str) -> None:
+    """Ohne Manifest keine Aussage — und dann auch kein Abbruch."""
+    assert "manifest.json" in script_text
