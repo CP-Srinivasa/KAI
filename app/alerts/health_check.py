@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts import health_check_payments as _hcp
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
@@ -492,101 +493,15 @@ def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
 
 
 def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
-    """Validate existing G5 reject streams without inventing a write cadence."""
-    from app.audit.input_contract_rejections import inspect_input_rejection_streams
-
-    return [
-        HealthIssue(
-            severity="warning",
-            component="input_contract_rejection_stream",
-            message=f"{problem.stream}: {problem.detail}",
-        )
-        for problem in inspect_input_rejection_streams(
-            ln_path=adir / "ln_input_contract_rejections.jsonl",
-            analysis_path=adir / "analysis_input_contract_rejections.jsonl",
-        )
-    ]
+    return _hcp.check_input_contract_rejection_streams(adir)  # Waechter-Def hier: Stream-Vertrag G4
 
 
 def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
-    """Waechter des Geld-Journals (ADR 0018 §5/§10, Stream-Vertrag G4).
-
-    Ueberwacht wird die KETTE, nicht die Kadenz: der Strom ist
-    ereignisgetrieben und im Default-Modus SIMULATION legitim tagelang still.
-    Eine Freshness-Schwelle waere hier entweder wirkungslos oder ein
-    Daueralarm — beides Formen, die eine Zusage vortaeuschen.
-
-    Ein gebrochenes Geld-Journal ist schlimmer als ein fehlendes: es sieht
-    weiterhin aus wie ein Beweis. Deshalb ``critical``, nicht ``warning``.
-    """
-    from app.payments.journal import PAYMENT_JOURNAL_FILENAME, PaymentJournal
-
-    path = adir / "payments" / PAYMENT_JOURNAL_FILENAME
-    if not path.is_file():
-        return []
-    try:
-        status = PaymentJournal(path).verify_chain()
-    except Exception as exc:  # noqa: BLE001 - eine unlesbare Kette ist der Befund
-        return [
-            HealthIssue(
-                severity="critical",
-                component="payment_journal",
-                message=f"payment journal unreadable: {type(exc).__name__}: {exc}",
-            )
-        ]
-    if status.ok:
-        return []
-    return [
-        HealthIssue(
-            severity="critical",
-            component="payment_journal",
-            message=f"payment journal chain broken: {status.reason}",
-        )
-    ]
+    return _hcp.check_payment_journal_chain(adir)  # Waechter-Def hier: Stream-Vertrag G4
 
 
 def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
-    """Waechter des Reconcile-Laufs (ADR 0018 §8/§10).
-
-    Der Reconcile-Timer laeuft als eigener Prozess und hinterlaesst sein
-    Ergebnis in ``artifacts/payments/reconcile_state.json``. Ohne diesen
-    Waechter waere ein Waisen-Settlement — Geld, das der Node bewegt hat, ohne
-    dass ein Intent es beauftragt haette — ein Eintrag in einer Datei, die
-    niemand liest. Der ``OnFailure=``-Pfad der Unit genuegt dafuer NICHT: der
-    Lauf ist erfolgreich, sein BEFUND ist das Problem.
-
-    ``critical``, nicht ``warning``: jeder der drei Ausloeser
-    (Waise, ungeklaerter Send, Uhr-Sprung) ist eine offene Frage ueber Geld.
-    """
-    from app.payments.reconcile_types import STATE_FILENAME, load_state
-
-    path = adir / "payments" / STATE_FILENAME
-    if not path.is_file():
-        return []
-    state = load_state(path)
-    if not state.last_run_utc:
-        # Fail-closed: eine vorhandene, aber unlesbare Zustandsdatei ist kein
-        # "alles in Ordnung" — sie ist ein Reconciler, dessen Ergebnis fehlt.
-        return [
-            HealthIssue(
-                severity="critical",
-                component="payment_reconciliation",
-                message=f"payment reconcile state unreadable: {path}",
-            )
-        ]
-    if state.last_status == "ok":
-        return []
-    return [
-        HealthIssue(
-            severity="critical",
-            component="payment_reconciliation",
-            message=(
-                f"payment reconciliation needs attention (status={state.last_status}, "
-                f"orphan settlements={state.last_orphans}, "
-                f"clock_anomaly={state.last_clock_anomaly}, last run {state.last_run_utc})"
-            ),
-        )
-    ]
+    return _hcp.check_payment_reconciliation(adir)
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -1578,8 +1493,7 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
-    report.issues.extend(_check_payment_journal_chain(adir))
-    report.issues.extend(_check_payment_reconciliation(adir))
+    report.issues.extend(_check_payment_journal_chain(adir) + _check_payment_reconciliation(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).
