@@ -34,6 +34,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
+from app.security.secret_patterns import github_combined_regex
+
 DEFAULT_MAX_STRING_LENGTH: Final[int] = 500
 TRUNCATION_MARKER_TEMPLATE: Final[str] = "…[{n} chars truncated]"
 REDACTION_TEMPLATE: Final[str] = "[REDACTED:{name}]"
@@ -87,10 +89,19 @@ DEFAULT_PATTERNS: Final[tuple[SecretPattern, ...]] = (
         name="provider_api_key",
         pattern=re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_\-]{16,}\b"),
     ),
-    # GitHub personal access token (ghp_…, gho_…, ghs_…, etc.)
+    # GitHub token, alle sechs Praefixe. Das Muster wird NICHT hier gepflegt,
+    # sondern in app/security/secret_patterns.py -- derselbe Katalog, aus dem
+    # sich auch die CI-Wache bedient.
+    #
+    # Vorher stand hier ghp_{36} | gh[osr]_{36}: ghu_ fehlte ganz, github_pat_
+    # fehlte ganz, und die feste Laenge 36 traf keinen fine-grained PAT. Der
+    # Kommentar darueber sagte schon damals "etc." und behauptete damit mehr,
+    # als das Muster leistete. Dieselbe Luecke wurde am 2026-09-01 auf der
+    # CI-Seite sichtbar (ein gho_-Token in einem Protokoll) und dort in #849
+    # geschlossen -- hier blieb sie offen, weil es zwei Kataloge gab.
     SecretPattern(
         name="github_token",
-        pattern=re.compile(r"\bghp_[A-Za-z0-9]{36}\b|\bgh[osr]_[A-Za-z0-9]{36}\b"),
+        pattern=re.compile(github_combined_regex()),
     ),
     # Telegram bot token (digits:Base64ish)
     SecretPattern(

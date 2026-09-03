@@ -40,6 +40,16 @@ Querschnitt: `app/pipeline/service.py` (Ingest → Analyse) ruft `app/orchestrat
 - **Nicht gebaut (bewusst):** Modell-Routing/Eskalation billig → teuer und Kosten in USD — ohne zwei Wochen v2-Telemetrie wäre jedes Routing geraten (DEFER).
 - **QUARANTINE:** `app/intelligence/` (eingefroren; Löschung, wenn `KAI_LLM_ENABLED` bis zum nächsten Re-Entry nie gesetzt wurde). Branch `codex/llm-router-migration-20260901` (LiteLLM-Proxy, +4.227 LOC, eigener systemd-Dienst, neue externe Dependency, God-File-Ratchet-Verstoß) wird **nicht gemergt** — er wäre der fünfte Pfad plus eine zweite Deployment-Welt. Als Archiv-Branch auf origin gesichert; verwertbare Vorlagen: `app/inference/{errors,mode}.py`.
 
+  > **Addendum 2026-09-03 (ADR 0017).** Diese Zeile ist wiederholt als „LiteLLM
+  > ist verworfen" gelesen worden. Sie sagt das nicht, und so ist sie auch nicht
+  > gemeint: verworfen wurde der **Branch** in seiner damaligen Gestalt — fünfter
+  > Pfad, zweiter Prozess, eigene Deployment-Welt —, nicht die
+  > **Transport-Strategie**. Verbindlich gilt seit
+  > [ADR 0017](adr/0017-ai-control-plane-and-litellm-transport.md):
+  > `codex/llm-router-migration-20260901` = ARCHIVED / DO NOT MERGE AS A WHOLE ·
+  > LiteLLM als Transport = NOT REJECTED · künftige Integration = **unterhalb**
+  > der `app/ai`-Control-Plane · eine parallele `app/inference`-Control-Plane =
+
 ## 4. Aktive Komponenten (KEEP) und Laufzeit
 
 **Dauerläufer (Pi, enabled + aktiv):** `kai-server` (uvicorn `app.api.main:app`, 127.0.0.1:8000), `kai-agent-worker`, `kai-tg-listener`, `kai-entry-watch`, `kai-liquidation-stream`, `cloudflared` (Tunnel `kai-trader.org`).
@@ -123,7 +133,24 @@ Grenze: `journalctl -p err` ist für App-Fehler blind (strukturiertes stdout ohn
 | **MERGE (DEFER)** | `integrations/*/adapter` → `ingestion`; `truth` + `integrity` + `compliance` → `audit`; `services/timer_health` → `observability`; `decisions/` → `orchestrator` |
 | **DELETE (erledigt)** | Docker/Postgres-Welt + CI-Postgres; 6 Deps; 5 Shim-Module; 37 tote app-Module (fan-in 0, nur test-getragen); 25 Waisen-Skripte — **−18.714 Zeilen** |
 | **QUARANTINE** | `app/intelligence/`, `app/research/` (+ Prereg-Timer `forecaster-*`, `prereg-maturity`, `edge-ic-*`, `min-turnover-calibration`, `exploration-coverage`), `app/lightning/` + `app/chain/` (+ `ln-reconcile*`, `ln-scb-monitor`, `oracle-earnings-booking`), `app/premium/` + Fastlane (+ `premium-healthcheck`, `premium-latency-audit`), Live-Exchange-Teilbaum, `decision_journal(+chain)`, `kai-tv-auto-promote.timer` (79 Tage grün bei 100 % Rejects — der Shadow-Feed ersetzt ihn), Branch `codex/llm-router-migration-20260901`, `test/regtest-ln/`, 12 nur-in-Docs-referenzierte Skripte |
-| **DEFER** | Modell-Routing/Kosten-USD (nach 2 Wochen v2-Telemetrie), Hash-Chain am Execution-Stream, `observability`-Split, `core/settings.py`-Entkopplung, `cli/commands/trading.py`-Zerlegung, Schatten-Env-Reads → Settings, immutable Release-Pfad `/home/kai/releases/<SHA>/`, `app/capital/`, `kai-llm-shadow` |
+| **DEFER** | Modell-Routing/Kosten-USD (nach 2 Wochen v2-Telemetrie), Hash-Chain am Execution-Stream, `observability`-Split, `core/settings.py`-Entkopplung, `cli/commands/trading.py`-Zerlegung, Schatten-Env-Reads → Settings, `app/capital/`, `kai-llm-shadow` |
+
+> **Nachtrag 2026-09-03 (#848):** Der immutable Release-Pfad `/home/kai/releases/<SHA>/` stand hier als DEFER und ist es nicht mehr — er ist seit #848 die **verbindliche Laufzeitgrundlage** der fünf langlebigen Dienste.
+>
+> Der Grund war nicht Aufräumen, sondern ein Beweisproblem: aus einem beweglichen
+> Checkout kann ein Prozess nicht belegen, welche Bytes er geladen hat. Python bindet
+> Module erst zur Laufzeit, der Baum darf sich zwischen Attestierung und Import
+> weiterbewegen. Ein Baum, der sich nicht bewegt, löst das; mehr Logik um den
+> beweglichen herum nicht.
+>
+> Verbindliche Deploy-Reihenfolge: `pi_make_release.sh` → `pi_activate_release.sh` →
+> `pi_install_systemd.sh` → `daemon-reload` → Restart → Runtime-Provenance. Der
+> Installer bricht ab, wenn eine release-gebundene Unit auf einen Pfad ohne
+> `release.json` zeigt — sonst starteten fünf Dienste in ein leeres Verzeichnis.
+>
+> Die übrigen Units bleiben bewusst am bisherigen Pfad; kurzlebige Oneshots haben
+> den Capture-zu-Load-Race praktisch nicht, sind damit aber auch nicht
+> release-gebunden.
 
 Quarantäne bedeutet: Code bleibt im Repo, Units bleiben wie sie sind (Disable ist eine Operator-Entscheidung — Befehle in § 12), aber **nichts davon ist Bestandteil von KAI CORE v1** und nichts davon wird ohne eigene Freigabe erweitert.
 

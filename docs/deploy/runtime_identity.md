@@ -1,5 +1,28 @@
 # Runtime-Identität — welcher Code läuft wirklich? (STAB-02)
 
+> **LEGACY-MODELL (Stand 2026-09-03).** Dieses Dokument beschreibt die
+> **Checkout-Achse**: Prozess-Commit gegen Checkout-`HEAD`, gemessen als
+> `drift_commits`. Seit #848 ist sie nicht mehr das führende Modell. An ihre
+> Stelle tritt der unveränderliche Release-Baum —
+> [`immutable_release_cutover.md`](immutable_release_cutover.md).
+>
+> **Sie ist aber nicht tot.** `app/alerts/process_runtime_probe.checkout_axis_active()`
+> liefert `not release_governs(state_root)`: solange auf einem Host kein
+> `release.json` regiert, gilt weiterhin genau das, was hier steht. Auf der Pi
+> ist das am 2026-09-03 der Fall — `/home/ubuntu/releases` und
+> `/home/ubuntu/current` existieren dort noch nicht.
+>
+> Was der Release-Baum ersetzt: `drift_commits` beantwortet nur, ob der Prozess
+> mit demselben Commit gestartet ist, auf dem der Checkout *jetzt* steht. Es
+> beweist nicht, welche Bytes er importiert hat — ein beweglicher Baum darf
+> zwischen Attestierung und Import weiterwandern. Der Parameter der Sonde heißt
+> deshalb bewusst `checkout_sha` und nicht mehr `expected_sha`.
+>
+> Was gültig bleibt: die Lehre vom 18.08. — ein gesunder Ausgang beweist keinen
+> aktuellen Code, und der Abstand zwischen Prozess und Baum ist selbst der
+> Befund.
+
+
 **Befund 25.08.2026 (live):** `kai-server` (MainPID 2736616) lief seit 18.08. 22:30:09 auf
 `79e6fca7`. Der Checkout stand auf `52145cc1` (23 Commits weiter), die Mainline auf `2ebf13d4`
 (27). Vier Fast-Forward-Merges am 20./21.08. hatten den Checkout bewegt, ohne den Prozess neu

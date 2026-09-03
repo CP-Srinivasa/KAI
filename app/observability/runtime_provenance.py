@@ -83,10 +83,33 @@ class ServiceRuntime:
     lock_sha256: str | None = None
     measurable: bool = True
     note: str = ""
+    #: Gesetzt, wenn der Prozess aus einem unveraenderlichen Release laeuft.
+    #: Ein solcher Baum traegt bewusst KEIN ``.git`` — er ist nicht weniger
+    #: nachweisbar als ein Checkout, sondern staerker: sein ``release.json``
+    #: nennt Commit UND Baum-Hash, und der Baum kann sich nicht bewegen.
+    release_root: str | None = None
+    release_tree_sha256: str | None = None
 
     @property
     def repo_based(self) -> bool:
+        """Laeuft aus einem beweglichen Checkout — NICHT aus einem Release.
+
+        Bewusst exklusiv: die beiden Modelle werden von verschiedenen Sonden
+        beurteilt. ``evaluate_provenance`` vergleicht Checkout-Dienste gegen den
+        HEAD ihres Baums; fuer Release-Dienste waere dieser Vergleich falsch,
+        weil ihr Soll aus der Deploy-Provenienz kommt und nicht aus dem
+        Quell-Checkout — bei einem Rollback stehen die beiden auseinander.
+        """
         return self.repo_root is not None
+
+    @property
+    def release_based(self) -> bool:
+        return self.release_root is not None
+
+    @property
+    def code_bearing(self) -> bool:
+        """Traegt ueberhaupt KAI-Code — egal nach welchem Modell."""
+        return self.repo_based or self.release_based
 
 
 @dataclass(frozen=True)
@@ -279,6 +302,18 @@ def _run(cmd: list[str]) -> str:
         return ""
 
 
+def _release_manifest_of(candidate: Path) -> Any | None:
+    """Das ``release.json`` eines Verzeichnisses — ``None``, wenn keins da ist.
+
+    Bewusst tolerant: fehlt die Datei, ist es schlicht kein Release-Baum. Ein
+    VORHANDENES, aber unstimmiges Manifest ist dagegen ein Befund und wird von
+    ``verify_release`` in der Sonde behandelt, nicht hier verschluckt.
+    """
+    from app.observability.release_identity import read_release_manifest
+
+    return read_release_manifest(candidate)
+
+
 def collect_runtime_services(
     *,
     unit_glob: str = "kai-*.service",
@@ -323,8 +358,19 @@ def collect_runtime_services(
             continue
 
         repo_root = repo_sha = venv = lock = None
+        release_root = release_tree = None
         candidate = Path(cwd)
-        if (candidate / ".git").exists():
+        # Release ZUERST: ein Prozess aus einem unveraenderlichen Baum hat kein
+        # ``.git``, und genau daran hat ihn die Vorgaengerfassung uebersehen —
+        # `repo_based` blieb False, die neue Sonde verwarf ihn, und aus fuenf
+        # korrekt laufenden Diensten wurden fuenf EXPECTED_UNIT_NOT_RUNNING.
+        manifest = _release_manifest_of(candidate)
+        if manifest is not None:
+            release_root = str(candidate)
+            release_tree = manifest.release_tree_sha256
+            repo_sha = manifest.repo_sha or None
+            lock = manifest.requirements_lock_sha256 or None
+        elif (candidate / ".git").exists():
             repo_root = str(candidate)
             repo_sha = runner(["git", "-C", repo_root, "rev-parse", "HEAD"]) or None
             lock = sha256_of(candidate / "requirements.lock")
@@ -342,6 +388,8 @@ def collect_runtime_services(
                 repo_sha=repo_sha,
                 venv=venv,
                 lock_sha256=lock,
+                release_root=release_root,
+                release_tree_sha256=release_tree,
             )
         )
     return out

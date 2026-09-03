@@ -34,6 +34,12 @@ class AlertMessage:
     # D-116: LLM directional signal quality fields
     directional_confidence: float | None = None
     event_timing: str | None = None
+    # STAB-2026-09-01 §3: the MEASURED high-priority tier lift in percentage
+    # points, carried alongside the alert so a quality label can be justified at
+    # render time instead of asserted from a stale in-code claim. ``None`` means
+    # "no current measurement" and is treated exactly like a non-positive one:
+    # no positive label. See formatters._is_high_conviction.
+    priority_tier_lift_pct: float | None = None
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,18 @@ class BriefingData:
 
     # Portfolio (live mark-to-market)
     portfolio_available: bool = False
+    # STAB-2026-09-01 §24: WHY it is unavailable. A bare ``except Exception`` used
+    # to collapse every distinct failure into one boolean, so the brief printed
+    # "Paper Portfolio: nicht verfuegbar" whether the audit file was missing, the
+    # replay had failed, or -- as was actually the case -- the reader had simply
+    # been handed a narrower market-data provider than the canonical payload.
+    # One of:
+    #   PASS | FILE_MISSING | SCHEMA_INVALID | REPLAY_FAILED | EPOCH_MISMATCH
+    #   | NO_POSITIONS | NO_CANONICAL_SNAPSHOT | MARKET_DATA_UNAVAILABLE
+    #   | INTERNAL_ERROR
+    portfolio_status_reason: str = "PASS"
+    portfolio_status_detail: str = ""
+    portfolio_provider: str = ""
     portfolio_cash_usd: float = 0.0
     portfolio_market_value_usd: float = 0.0
     portfolio_equity_usd: float = 0.0
@@ -168,7 +180,11 @@ class BriefingData:
                     s = "+" if pnl_value >= 0 else ""
                     lines.append(f"    {sym}: ${price_value:,.2f} ({s}${pnl_value:,.2f})")
         else:
-            lines.append("Paper Portfolio: nicht verfuegbar")
+            # §24: never a bare "nicht verfuegbar" when a typed cause exists.
+            reason = self.portfolio_status_reason or "INTERNAL_ERROR"
+            detail = f" — {self.portfolio_status_detail}" if self.portfolio_status_detail else ""
+            provider = f" (provider={self.portfolio_provider})" if self.portfolio_provider else ""
+            lines.append(f"Paper Portfolio: nicht verfuegbar [{reason}]{provider}{detail}")
 
         return "\n".join(lines)
 
@@ -311,6 +327,34 @@ def build_daily_briefing(
     return data
 
 
+def classify_portfolio_unavailable(snapshot: object) -> str:
+    """Map an unavailable canonical snapshot onto a typed reason.
+
+    STAB-2026-09-01 §24. The reader already knows why it could not mark to
+    market; it just had nowhere to say so. Fail-CLOSED: an unrecognised state is
+    ``NO_CANONICAL_SNAPSHOT``, never silently "fine".
+    """
+    error = str(getattr(snapshot, "error", "") or "")
+    if not error:
+        if getattr(snapshot, "position_count", 0) == 0:
+            return "NO_POSITIONS"
+        return "NO_CANONICAL_SNAPSHOT"
+    lowered = error.lower()
+    if "market_data_unavailable" in lowered or "market data" in lowered:
+        return "MARKET_DATA_UNAVAILABLE"
+    if "epoch" in lowered:
+        return "EPOCH_MISMATCH"
+    if "replay" in lowered:
+        return "REPLAY_FAILED"
+    # Order matters: "schema invalid: missing side" contains "missing" but is a
+    # schema fault, not an absent file. The narrower cause wins.
+    if "schema" in lowered or "invalid" in lowered:
+        return "SCHEMA_INVALID"
+    if "not found" in lowered or "missing" in lowered or "no such file" in lowered:
+        return "FILE_MISSING"
+    return "NO_CANONICAL_SNAPSHOT"
+
+
 async def build_daily_briefing_with_portfolio(
     artifacts_dir: Path | None = None,
     lookback_hours: int = 24,
@@ -318,12 +362,24 @@ async def build_daily_briefing_with_portfolio(
     """Build daily briefing including live portfolio snapshot (async)."""
     data = build_daily_briefing(artifacts_dir=artifacts_dir, lookback_hours=lookback_hours)
 
+    # STAB-2026-09-01 §24: read the SAME canonical snapshot the operator payload
+    # reads. This call used to be bare, which silently meant provider="coingecko"
+    # while settings.market_data_provider is "fallback" — measured on the Pi at
+    # the same instant against the same audit file, coingecko priced 0 of 6 open
+    # positions (available=False) and fallback priced 6 of 6 (mv=5299.56). Two
+    # populations, both rendered to the operator as "the paper portfolio".
+    from app.core.settings import get_settings
+
+    provider = get_settings().market_data_provider
+    data.portfolio_provider = provider
+
     try:
         from app.execution.portfolio_read import build_portfolio_snapshot
 
-        snapshot = await build_portfolio_snapshot()
+        snapshot = await build_portfolio_snapshot(provider=provider)
         if snapshot.available:
             data.portfolio_available = True
+            data.portfolio_status_reason = "PASS"
             data.portfolio_cash_usd = snapshot.cash_usd
             data.portfolio_market_value_usd = snapshot.total_market_value_usd
             data.portfolio_equity_usd = snapshot.total_equity_usd
@@ -333,9 +389,20 @@ async def build_daily_briefing_with_portfolio(
                 p.unrealized_pnl_usd or 0.0 for p in snapshot.positions
             )
             data.portfolio_positions = [p.to_json_dict() for p in snapshot.positions]
+        else:
+            data.portfolio_status_reason = classify_portfolio_unavailable(snapshot)
+            data.portfolio_status_detail = str(getattr(snapshot, "error", "") or "")
+    except FileNotFoundError as exc:
+        data.portfolio_status_reason = "FILE_MISSING"
+        data.portfolio_status_detail = str(exc)
+    except (ValueError, KeyError, TypeError) as exc:
+        data.portfolio_status_reason = "SCHEMA_INVALID"
+        data.portfolio_status_detail = f"{type(exc).__name__}: {exc}"
     except Exception as exc:
         import logging
 
+        data.portfolio_status_reason = "INTERNAL_ERROR"
+        data.portfolio_status_detail = f"{type(exc).__name__}: {exc}"
         logging.getLogger(__name__).warning("portfolio_snapshot_failed: %s", exc)
 
     return data

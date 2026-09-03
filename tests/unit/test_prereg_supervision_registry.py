@@ -60,6 +60,12 @@ _TERMINAL_STATES = {
     # 2026-09-01: eine vor ihrem Ende formal invalidierte Messung ist terminal —
     # sie wird nicht weiterbeobachtet und traegt kein Sachverdikt.
     "INVALIDATED_BEFORE_MEASUREMENT",
+    # 2026-09-01T20:38:51Z, Abbruch des ZWEITEN G8-Akts: derselbe terminale
+    # Zustand, aber der Nachfolger ist noch nicht bestimmbar — die neue prereg_id
+    # faellt deterministisch aus dem DEPLOYTEN Code, und der Deploy steht aus.
+    # Eine vorausberechnete Platzhalter-ID waere genau der Fehler, den #843
+    # nachgewiesen hat.
+    "INVALIDATED_PENDING_SUCCESSOR",
 }
 _FORBIDDEN_STATES = {"UNWATCHED", "UNRESOLVED", "PENDING", None, ""}
 
@@ -376,12 +382,22 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     # b7f9a8e204e40e23 bekam seine Aufsicht VOR der Registrierung — sonst
     # meldet der Health-Check die Aufsichtsluecke der Messung selbst in ihre
     # eigene Population. TOTAL 8 -> 9, WATCH bleibt 2 (v1 raus, v2 rein).
+    # 2026-09-01T20:38:51Z, Abbruch des zweiten G8-Akts (ebbf451f432cbc80):
+    # MEASUREMENT_INSTRUMENT_DEFECT_DISCOVERED_POST_T0. Der Health-Check hat nach
+    # T0 15 mal eine altersblinde Annotations-Warnung in die gemessene Population
+    # geschrieben, und bei JEDER dieser Emissionen war die Zahl der tatsaechlich
+    # ueberfaelligen Annotationen null. Damit ist die Population keine Stichprobe
+    # von Befunden, auf die der Operator haette reagieren sollen.
+    # WATCH 2 -> 1 (v2 raus), INVALIDATED_PENDING_SUCCESSOR 0 -> 1.
     assert agg["TOTAL"] == len(entries) == 9
-    assert agg["WATCH"] == counts.get("WATCH", 0) == 2
+    assert agg["WATCH"] == counts.get("WATCH", 0) == 1
     assert (
         agg["INVALIDATED_BEFORE_MEASUREMENT"]
         == counts.get("INVALIDATED_BEFORE_MEASUREMENT", 0)
         == 1
+    )
+    assert (
+        agg["INVALIDATED_PENDING_SUCCESSOR"] == counts.get("INVALIDATED_PENDING_SUCCESSOR", 0) == 1
     )
     assert agg["SUPERSEDED"] == counts.get("SUPERSEDED", 0) == 1
     assert agg["MANUAL_IMMEDIATE_VERDICT"] == counts.get("MANUAL_IMMEDIATE_VERDICT", 0) == 4

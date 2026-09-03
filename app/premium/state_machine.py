@@ -63,6 +63,130 @@ class PremiumSignalState(StrEnum):
     FASTLANE_REJECTED_ROUTING = "fastlane_rejected_routing"
 
 
+# ---------------------------------------------------------------------------
+# STAB-2026-09-01 §10 — the canonical lifecycle partition
+# ---------------------------------------------------------------------------
+# The signal matrix rendered six columns next to a header total, as though the
+# columns partitioned the population. They did not, in two separate ways:
+#
+#   1. The frontend bucketed with six independent ``if`` statements, so a state
+#      could land in none of them while still incrementing the total. 21 of the
+#      45 enum values mapped to NO column at all.
+#   2. Over the live log that is 207 of 3890 rows (5.3%) counted in the header
+#      and rendered nowhere: 205 requires_review (TTL expired — the setup was
+#      fine but the entry never printed) and 5 invalid. Precisely the actionable
+#      class was the invisible one.
+#
+# The fix is a TOTAL function: every state maps to exactly one bucket, the
+# buckets sum to the population by construction, and an exhaustiveness test makes
+# it impossible to add an enum member without giving it a home.
+#
+# The buckets are lifecycle STAGES, named so the UI cannot present a
+# recognised-but-not-traded signal as a traded one:
+#
+#   recognised      the envelope parsed; nothing has been decided
+#   eligible        approved / awaiting approval — allowed, not yet submitted
+#   rejected        refused by a gate; terminal
+#   review          expired or invalid — needs a human, is NOT a rejection
+#   submitted_paper an order exists, no position yet
+#   opened_paper    a paper position is open
+#   closed_paper    the paper position is gone; terminal
+LIFECYCLE_RECOGNISED = "recognised"
+LIFECYCLE_ELIGIBLE = "eligible"
+LIFECYCLE_REJECTED = "rejected"
+LIFECYCLE_REVIEW = "review"
+LIFECYCLE_SUBMITTED_PAPER = "submitted_paper"
+LIFECYCLE_OPENED_PAPER = "opened_paper"
+LIFECYCLE_CLOSED_PAPER = "closed_paper"
+
+#: Declared bucket order — also the column order the UI must render.
+LIFECYCLE_BUCKETS: tuple[str, ...] = (
+    LIFECYCLE_RECOGNISED,
+    LIFECYCLE_ELIGIBLE,
+    LIFECYCLE_REJECTED,
+    LIFECYCLE_REVIEW,
+    LIFECYCLE_SUBMITTED_PAPER,
+    LIFECYCLE_OPENED_PAPER,
+    LIFECYCLE_CLOSED_PAPER,
+)
+
+_LIFECYCLE_BY_STATE: dict[str, str] = {
+    # recognised
+    PremiumSignalState.PARSED: LIFECYCLE_RECOGNISED,
+    PremiumSignalState.ENVELOPE_ACCEPTED: LIFECYCLE_RECOGNISED,
+    PremiumSignalState.FASTLANE_RECEIVED: LIFECYCLE_RECOGNISED,
+    PremiumSignalState.FASTLANE_VALIDATED: LIFECYCLE_RECOGNISED,
+    # eligible
+    PremiumSignalState.AWAITING_APPROVAL: LIFECYCLE_ELIGIBLE,
+    PremiumSignalState.APPROVED: LIFECYCLE_ELIGIBLE,
+    PremiumSignalState.FASTLANE_AUTO_APPROVED: LIFECYCLE_ELIGIBLE,
+    PremiumSignalState.FASTLANE_BYPASSED_APPROVAL: LIFECYCLE_ELIGIBLE,
+    PremiumSignalState.FASTLANE_BYPASSED_ALLOWLIST: LIFECYCLE_ELIGIBLE,
+    PremiumSignalState.FASTLANE_BYPASSED_ENTRY_MODE: LIFECYCLE_ELIGIBLE,
+    # rejected
+    PremiumSignalState.SOURCE_SKIPPED: LIFECYCLE_REJECTED,
+    PremiumSignalState.BRIDGE_REJECTED: LIFECYCLE_REJECTED,
+    PremiumSignalState.ENTRY_DISABLED: LIFECYCLE_REJECTED,
+    PremiumSignalState.SCALE_REJECTED: LIFECYCLE_REJECTED,
+    PremiumSignalState.RISK_REJECTED: LIFECYCLE_REJECTED,
+    PremiumSignalState.PAPER_EXECUTION_FAILED: LIFECYCLE_REJECTED,
+    PremiumSignalState.MARKET_DATA_FAILED: LIFECYCLE_REJECTED,
+    PremiumSignalState.FASTLANE_REJECTED_SCHEMA: LIFECYCLE_REJECTED,
+    PremiumSignalState.FASTLANE_REJECTED_DUPLICATE: LIFECYCLE_REJECTED,
+    PremiumSignalState.FASTLANE_REJECTED_ROUTING: LIFECYCLE_REJECTED,
+    # review — expired or invalid. NOT rejections: nothing refused these, the
+    # window simply closed or the payload could not be read.
+    PremiumSignalState.REQUIRES_REVIEW: LIFECYCLE_REVIEW,
+    PremiumSignalState.REQUIRES_SCALE_REVIEW: LIFECYCLE_REVIEW,
+    PremiumSignalState.FASTLANE_REQUIRES_SCALE_REVIEW: LIFECYCLE_REVIEW,
+    PremiumSignalState.INVALID: LIFECYCLE_REVIEW,
+    # submitted (paper) — an order exists, no position yet
+    PremiumSignalState.BRIDGE_PENDING: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.PENDING_ENTRY: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.PAPER_ORDER_CREATED: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.FASTLANE_ORDER_INTENT_CREATED: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.FASTLANE_ORDER_SUBMITTED: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.FASTLANE_BRACKET_ATTACHED: LIFECYCLE_SUBMITTED_PAPER,
+    PremiumSignalState.FASTLANE_PENDING_ENTRY: LIFECYCLE_SUBMITTED_PAPER,
+    # opened (paper)
+    PremiumSignalState.POSITION_OPEN: LIFECYCLE_OPENED_PAPER,
+    PremiumSignalState.PARTIALLY_CLOSED: LIFECYCLE_OPENED_PAPER,
+    PremiumSignalState.FASTLANE_POSITION_OPEN: LIFECYCLE_OPENED_PAPER,
+    PremiumSignalState.FASTLANE_PARTIALLY_CLOSED: LIFECYCLE_OPENED_PAPER,
+    # closed (paper)
+    PremiumSignalState.CLOSED_TP: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.CLOSED_SL: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.CLOSED_MANUAL: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.CLOSED_UNKNOWN: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.ORPHAN_COMPLETION: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.RECONCILED_COMPLETION: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.FASTLANE_CLOSED_TP: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.FASTLANE_CLOSED_SL: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.FASTLANE_CLOSED_MANUAL: LIFECYCLE_CLOSED_PAPER,
+    PremiumSignalState.FASTLANE_ORPHAN_COMPLETION: LIFECYCLE_CLOSED_PAPER,
+}
+
+
+def lifecycle_bucket(state: str | None) -> str:
+    """The ONE bucket a signal state belongs to. Total by construction.
+
+    Fail-CLOSED: an unrecognised state goes to ``review`` (a human must look),
+    never silently to nothing and never to a terminal bucket that would let it
+    disappear from the operator's attention.
+    """
+    if state is None:
+        return LIFECYCLE_REVIEW
+    key = str(state).strip().lower()
+    if not key:
+        return LIFECYCLE_REVIEW
+    return _LIFECYCLE_BY_STATE.get(key, LIFECYCLE_REVIEW)
+
+
+def unmapped_lifecycle_states() -> list[str]:
+    """Enum members with no explicit bucket. MUST be empty — see the test."""
+    return sorted({str(m.value) for m in PremiumSignalState} - set(_LIFECYCLE_BY_STATE))
+
+
 GREEN_STATES = frozenset(
     {
         PremiumSignalState.POSITION_OPEN,

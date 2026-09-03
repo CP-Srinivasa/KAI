@@ -97,6 +97,72 @@ def test_redacts_provider_api_key():
     assert "[REDACTED:provider_api_key]" in out
 
 
+# --- GitHub tokens ---------------------------------------------------------
+#
+# Until 2026-09-03 this file had NO test for the ``github_token`` pattern at
+# all. That is why the pattern could carry four of six prefixes at a hard-coded
+# length of 36 without anyone noticing -- the same gap that showed up on the CI
+# side on 2026-09-01 and was closed there in #849.
+#
+# Synthetic fixtures. None of these values was ever valid; they are long enough
+# to hit the patterns and typed arbitrarily.
+
+GITHUB_FIXTURES = {
+    "ghp_": "ghp_L1k2J3h4G5f6D7s8A9p0O1i2U3y4T5r6E7w8",
+    "gho_": "gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+    "ghs_": "ghs_Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2",
+    "ghu_": "ghu_Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8",
+    "ghr_": "ghr_M1n2B3v4C5x6Z7a8S9d0F1g2H3j4K5l6P7o8",
+    "github_pat_": "github_pat_11ABCDEFG0aB1cD2eF3gH4_i5J6k7L8m9N0oP1qR2sT3uV4wX5yZ6",
+}
+
+
+@pytest.mark.parametrize("prefix", sorted(GITHUB_FIXTURES))
+def test_redacts_every_github_token_prefix(prefix):
+    token = GITHUB_FIXTURES[prefix]
+    out = redact_secrets(f"auth failed for {token}", patterns=DEFAULT_PATTERNS)
+    assert "[REDACTED:github_token]" in out
+    assert token not in out
+    assert token[len(prefix) : len(prefix) + 12] not in out
+
+
+def test_redacts_fine_grained_pat_that_the_old_length_36_pattern_missed():
+    """Regression for the concrete defect: a fine-grained PAT is far longer
+    than 36 chars, so ``{36}`` never matched it -- not even partially."""
+    token = GITHUB_FIXTURES["github_pat_"]
+    assert len(token) > 36 + len("github_pat_")
+    assert "[REDACTED:github_token]" in redact_secrets(token, patterns=DEFAULT_PATTERNS)
+
+
+def test_still_redacts_a_classic_36_char_token():
+    """The widening must not lose the length that used to work."""
+    token = "ghp_" + "a" * 36
+    assert "[REDACTED:github_token]" in redact_secrets(token, patterns=DEFAULT_PATTERNS)
+
+
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "the gho_ prefix denotes OAuth tokens",
+        "the exposed token was gho_****",
+        "the exposed token was gho_<redacted>",
+        "ghost_writer = True",
+        "github_page_url is not a secret",
+        "gho_abc123",
+    ],
+)
+def test_github_pattern_does_not_fire_on_benign_text(benign):
+    """False-positive controls matter as much as the positive ones: a redactor
+    that mangles every mention of ``gho_`` makes the incident itself
+    undocumentable, and an over-eager pattern is the one that gets removed."""
+    assert "[REDACTED:github_token]" not in redact_secrets(benign, patterns=DEFAULT_PATTERNS)
+
+
+def test_github_redaction_is_idempotent():
+    once = redact_secrets(GITHUB_FIXTURES["gho_"], patterns=DEFAULT_PATTERNS)
+    assert redact_secrets(once, patterns=DEFAULT_PATTERNS) == once
+
+
 def test_redacts_telegram_bot_token():
     token = "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
     out = redact_secrets(f"token={token}", patterns=DEFAULT_PATTERNS)

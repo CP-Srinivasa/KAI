@@ -210,7 +210,33 @@ MSG="KAI service-watchdog: ${#ALARMS[@]} alarm(s) @ ${HOSTNAME_SHORT} ${DATE_NOW
 for alarm in "${ALARMS[@]}"; do
     MSG+="- ${alarm}"$'\n'
 done
-MSG+=$'\n'"Next: journalctl -u kai-agent-worker -u kai-tg-listener --since '2026-05-02 20:00' --no-pager"
+# STAB-2026-09-01 §21 — the diagnostic command is built FROM THE INCIDENT.
+#
+# This line used to be a pure string literal with no parameter expansion at all:
+#     "Next: journalctl -u kai-agent-worker -u kai-tg-listener \
+#      --since '2026-05-02 20:00' --no-pager"
+# Both halves were frozen at authoring time (3e13d72d): the unit list was
+# whichever two units had failed that day, and '2026-05-02 20:00' was that day's
+# incident clock. Every alarm since has shipped that same sentence, so an operator
+# investigating a kai-health-check failure was handed a window around an incident
+# from four months earlier on two units that were fine. The loop that knows the
+# failed units ended one line above.
+#
+# The units come from ALARMS with the same extraction the throttle loop below
+# already uses; the window is centred on the detection time.
+HINT_UNITS=""
+for alarm in "${ALARMS[@]}"; do
+    hint_unit="${alarm#\[*\] }"
+    hint_unit="${hint_unit%%=*}"
+    [[ -n "$hint_unit" ]] || continue
+    case " $HINT_UNITS " in *" -u $hint_unit "*) continue ;; esac
+    HINT_UNITS+=" -u $hint_unit"
+done
+INCIDENT_FROM="$(date -u -d '10 minutes ago' '+%Y-%m-%d %H:%M' 2>/dev/null || date -u '+%Y-%m-%d %H:%M')"
+INCIDENT_TO="$(date -u -d '10 minutes' '+%Y-%m-%d %H:%M' 2>/dev/null || date -u '+%Y-%m-%d %H:%M')"
+if [[ -n "$HINT_UNITS" ]]; then
+    MSG+=$'\n'"Next: journalctl${HINT_UNITS} --since '${INCIDENT_FROM}' --until '${INCIDENT_TO}' --no-pager"
+fi
 
 SEND_MSG=""
 for alarm in "${ALARMS[@]}"; do

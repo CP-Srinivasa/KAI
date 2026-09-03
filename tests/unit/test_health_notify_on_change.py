@@ -168,15 +168,25 @@ def test_escalation_to_critical_breaks_through(tmp_path: Path) -> None:
 
 
 def test_recovery_is_announced_once(tmp_path: Path) -> None:
-    """Entwarnung gab es vorher NICHT -- der Operator erfuhr nie, dass es klar ist."""
+    """Entwarnung gab es vorher NICHT -- der Operator erfuhr nie, dass es klar ist.
+
+    STAB-2026-09-01 §7: die Entwarnung nennt jetzt den BEFUND statt nur "alles
+    aufgeloest", mit first_seen, recovered_at und Dauer.
+    """
     state = tmp_path / "s.json"
     sent: list[str] = []
     _dispatch(_Report(issues=[_tv_stale(1000)]), state, sent, now_ts=0.0)
     _dispatch(_Report(issues=[]), state, sent, now_ts=600.0)
     assert len(sent) == 2
-    assert "behoben" in sent[-1].lower() or "aufgeloest" in sent[-1].lower()
+    assert "RECOVERED" in sent[-1]
+    assert "tradingview_ingress_freshness" in sent[-1]
+    assert "first_seen=" in sent[-1]
+    assert "recovered_at=" in sent[-1]
+    assert "duration=" in sent[-1]
     # Und danach Ruhe: ein gesundes System schweigt.
     _dispatch(_Report(issues=[]), state, sent, now_ts=1200.0)
+    assert len(sent) == 2
+    _dispatch(_Report(issues=[]), state, sent, now_ts=1800.0)
     assert len(sent) == 2
 
 

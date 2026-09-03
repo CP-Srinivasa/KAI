@@ -125,6 +125,13 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # 2026-09-01 sechs Tage mit Bibliotheken im Speicher, die auf der Platte
     # laengst ersetzt waren, und meldete durchgehend gruen.
     "runtime_provenance": AlertClass.P0,
+    # P0 aus demselben Grund, nur schaerfer gemessen: hier bezeugt der Prozess
+    # SELBST, welchen Commit er beim Start geladen hat. `runtime_provenance`
+    # fragt den Checkout nach seinem heutigen HEAD und ist damit blind, wenn
+    # der Checkout sich nach dem Prozessstart weiterbewegt hat — genau der
+    # Fall am 2026-09-01 um 21:09Z (Prozess dc276bc3, Checkout 9293c423,
+    # gemeldet wurde RUNTIME_CODE_DRIFT = 0).
+    "process_runtime_marker": AlertClass.P0,
     "prereg_ledger_presence": AlertClass.P2,
     # --- P3: Hinweis -----------------------------------------------------
     # Sagt, WO die Sonde lief — eine Eigenschaft der Messung, kein Systemzustand.

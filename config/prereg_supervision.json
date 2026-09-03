@@ -12,7 +12,8 @@
     "RETIRE": "Nicht vergeben.",
     "NO_WATCH_REQUIRED": "Nicht vergeben.",
     "SCHEDULED_REVIEW_COMPLETED": "Die terminierte Wiedervorlage HAT stattgefunden UND endete in einem terminalen Abschluss in der verifizierten Truth-Kette. Genau diese Kette und keine andere: MANUAL_SCHEDULED_REVIEW -> Review durchgefuehrt -> Truth-Kette terminalisiert den Claim -> SCHEDULED_REVIEW_COMPLETED. Neu am 2026-08-31, weil das Register den Zustand vorher nicht ausdruecken konnte: ein vollzogener Review haette entweder ein Datum in der Zukunft luegen oder next_review_utc=null tragen muessen, was der Vertragstest zu Recht zurueckweist ('spaeter' ist kein Termin, H2-Lehre). Der Name ist bewusst ENG (Operator-Entscheidung 2026-08-31): das kuerzere 'REVIEW_COMPLETED' haette gelesen werden koennen als 'irgendein Review ist fertig'. Ein Review kann aber sehr wohl abgeschlossen werden und als Ergebnis 'weiter beobachten, neuer Termin' tragen - das ist WATCH oder erneut MANUAL_SCHEDULED_REVIEW mit einem echten Datum, niemals dieser Zustand. NICHT SUPERSEDED (nicht ersetzt, sondern ausgewertet), NICHT RETIRE (nicht wegen Irrelevanz beendet). Pflicht: owner, previous_decision_state, closure_reason, substantive_verdict, terminal_verdict_class, truth_seq, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Aufsichtsstatus ist NICHT das Sachverdikt: decision_state sagt, wer wann hingesehen hat; outcome/substantive_verdict/terminal_verdict_class sagen, was dabei herauskam.",
-    "INVALIDATED_BEFORE_MEASUREMENT": "Eine versiegelte Messung wurde VOR ihrem Ende formal invalidiert, weil ihre Messoberflaeche nachweislich kontaminiert war - nicht weil die Frage ersetzt wurde (das waere SUPERSEDED) und nicht weil sie beantwortet wurde (das waere ein Sachverdikt). Neu am 2026-09-01: der erste G8-Akt fiel darunter, und das Register konnte den Zustand nicht ausdruecken; ihn als SUPERSEDED zu fuehren haette den Grund verfaelscht, ihn als WATCH zu lassen haette eine tote Messung weiterbeobachtet. Pflicht: owner, invalidation_reason, invalidated_at_utc, replaced_by, substantive_verdict=NONE, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Das Sachverdikt gehoert dem Nachfolge-Akt; dieser Eintrag traegt ausdruecklich KEINES."
+    "INVALIDATED_BEFORE_MEASUREMENT": "Eine versiegelte Messung wurde VOR ihrem Ende formal invalidiert, weil ihre Messoberflaeche nachweislich kontaminiert war - nicht weil die Frage ersetzt wurde (das waere SUPERSEDED) und nicht weil sie beantwortet wurde (das waere ein Sachverdikt). Neu am 2026-09-01: der erste G8-Akt fiel darunter, und das Register konnte den Zustand nicht ausdruecken; ihn als SUPERSEDED zu fuehren haette den Grund verfaelscht, ihn als WATCH zu lassen haette eine tote Messung weiterbeobachtet. Pflicht: owner, invalidation_reason, invalidated_at_utc, replaced_by, substantive_verdict=NONE, rationale, archive_path. Kein Watcher, kein Termin, keine Reifezaehlung. Das Sachverdikt gehoert dem Nachfolge-Akt; dieser Eintrag traegt ausdruecklich KEINES.",
+    "INVALIDATED_PENDING_SUCCESSOR": "Wie INVALIDATED_BEFORE_MEASUREMENT — die Messung ist formal abgebrochen und traegt substantive_verdict=NONE — aber die Nachfolge-ID ist noch NICHT bestimmbar, weil sie deterministisch aus dem DEPLOYTEN Code faellt und der Deploy aussteht. Eingefuehrt am 2026-09-01 beim Abbruch des zweiten G8-Akts: INVALIDATED_BEFORE_MEASUREMENT verlangt replaced_by, und eine vorausberechnete Platzhalter-ID waere genau der Fehler, den #843 nachgewiesen hat (erste Vorausberechnung b7f9a8e204e40e23 traf nicht, weil der gepinnte Evaluator danach bearbeitet wurde). Pflicht: substantive_verdict=NONE, invalidation_reason, invalidated_at_utc, replacement_pending=true, replaced_by=null. Verboten: watcher_id, cadence, next_review_utc, MATURITY_SPEC. Einziger Folgeuebergang: INVALIDATED_PENDING_SUCCESSOR -> INVALIDATED_BEFORE_MEASUREMENT, und erst dann replaced_by = <auf deploytem Code berechnete ID>. invalidated_at_utc bleibt der urspruengliche Entscheid-Zeitpunkt und wandert NICHT auf die Deploy-Zeit."
   },
   "invariants": [
     "Jede prereg_id in diesem Register existiert im versiegelten Ledger.",
@@ -314,19 +315,31 @@
     {
       "prereg_id": "ebbf451f432cbc80",
       "name": "operator_back_edge_v2",
-      "decision_state": "WATCH",
+      "decision_state": "INVALIDATED_PENDING_SUCCESSOR",
       "owner": "operator",
-      "watcher_id": "kai-prereg-maturity",
-      "cadence": "kein Zaehler, ein Frist-Waechter: genau eine Wiedervorlage zum Fensterende",
-      "next_review_utc": "2026-09-15T14:00:00+00:00",
       "decision_question": "Hat im Fenster T0..T0+14d mindestens ein zugestellter Health-Befund eine protokollierte Operator-Handlung mit derselben trigger_id ausgeloest - und welches der drei mechanischen Verdikte (MET / NOT_MET / INVALID) folgt daraus?",
-      "rationale": "Zweiter G8-Akt nach der Invalidierung von f0803d911744e0c2. Dieser Eintrag steht ABSICHTLICH VOR der Registrierung im Ledger: die prereg_id ist deterministisch ueber den Kriterientext und damit vorab berechenbar. Beim ersten Akt entstand zwischen Registrierung und Aufsicht eine Luecke, in der der Health-Check die eigene Aufsichtsluecke meldete und damit die Population vergiftete. Ein Blick auf den Zwischenstand vor dem 15.09. waere Optional Stopping. NACHTRAG 2026-09-01: die erste Vorausberechnung ergab b7f9a8e204e40e23 und traf nicht - der Kriterientext pinnt evaluator_sha256, und die Datei wurde nach der Berechnung noch einmal bearbeitet. Der Pin hat genau das geleistet, wofuer er da ist. Lehre: die prereg_id wird als LETZTER Schritt gegen den DEPLOYTEN Code berechnet, nie gegen einen Arbeitsstand. Es wurde nichts gemessen, als das auffiel; T0 ist auf 2026-09-01T14:00:00Z gesetzt, damit das Register VOR dem Fensterbeginn stimmt.",
+      "rationale": "ABBRUCH 2026-09-01T20:38:51Z. Das Instrument, das die gemessene Population erzeugt, ist selbst defekt, und der Defekt wurde bei offenem Fenster bewiesen: der Health-Check hat nach T0 15 mal eine ALTERSBLINDE Annotations-Warnung in genau die emitted-Population geschrieben, und bei jeder einzelnen dieser Emissionen war die Zahl der tatsaechlich ueberfaelligen Annotationen NULL (Replay 14:00:26Z 44/44/0/0, 14:15:28Z 44/42/2/0, 15:30:42Z 38/29/9/0, 16:30:00Z 29/29/0/0, 17:30:18Z 28/1/27/0 als TOTAL/NOT_DUE/GRACE/DUE). Ueber 60 Tage: 199 Warnstunden, echte Ueberfaelligkeit nie ueber 5 gegen ein >20-Gate. Die Population ist damit keine Stichprobe von Befunden, auf die der Operator haette reagieren sollen, sondern mit Alarmen aufgefuellt, die das Instrument nie haette ausloesen duerfen. AUSDRUECKLICH NICHT der Grund: dass ein noch ungemergter Branch (#848) einen anderen health_notify-Hash traegt — ein wartender Branch veraendert Produktion nicht. Es wurde KEIN Evaluator gelaufen, KEIN acted-Count gelesen und KEIN Zwischenergebnis genommen. Der emitted-Strom wurde ausschließlich insoweit eingesehen, wie der Nachweis des Instrumentendefekts es verlangte (15 Emissionen der altersblinden Warnung); dieses Ergebnis dient allein dem Verwerfen des Fensters, nie seiner Deutung. Der Nachfolge-Akt wird gegen den DEPLOYTEN Code berechnet.",
       "evidence_path": "KAI-mirror/reports/KAI_MASTER_AUDIT_GENESIS_TO_VALUE_OS_20260827/G8_PRE_T0.md",
       "archive_path": "artifacts/research/supervision/b7f9a8e204e40e23/",
       "window_start_utc": "2026-09-01T14:00:00+00:00",
       "window_end_utc": "2026-09-15T14:00:00+00:00",
       "replaces": "f0803d911744e0c2",
-      "spec_installed": false
+      "spec_installed": false,
+      "substantive_verdict": "NONE",
+      "invalidation_reason": "MEASUREMENT_INSTRUMENT_DEFECT_DISCOVERED_POST_T0",
+      "invalidated_at_utc": "2026-09-01T20:38:51Z",
+      "replacement_pending": true,
+      "replaced_by": null,
+      "MATURITY_SPEC": "none",
+      "audit_artifact": "artifacts/research/supervision/ebbf451f432cbc80/G8_ACT2_INVALIDATION_20260901T203851Z.json",
+      "audit_artifact_sha256": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "audit_artifact_mirror": "KAI-mirror/reports/G8_ACT2_INVALIDATION_20260901T203851Z.json",
+      "audit_artifact_mirror_sha256": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "audit_artifact_md_sha256": "4166e30b50e74e068206cf1ce3afd75ffb82c7bd3629de043d53375e9a2c2319",
+      "expected_post_t0_emissions_observed": 15,
+      "previous_invalidation_artifact_sha256": "a6974b985746272e8ec7ac08d65fe5bd158f4fa4ee6ffd075c02ba5537fcb727",
+      "superseded_by_corrected_evidence": "0d5aa5204bc72ef0bc02dc7e66fa39df1707b58f07c3470eff1a7af143355a3d",
+      "evidence_correction_note": "Die erste Fassung des Belegs behauptete emitted_count_inspected=false und 'No count of any kind was read.', waehrend derselbe Beleg post_t0_emissions_observed=15 fuehrt und sich darauf stuetzt. Ein Instrumentendefekt ist nur nachweisbar, indem man ansieht, was das Instrument ausgesendet hat - legitim, aber die Formulierung war falsch. Korrigiert wurde die BEHAUPTUNG, nicht die Entscheidung. Der kanonische Beleg liegt jetzt IM Repo; KAI-mirror bleibt Audit-Spiegel und muss byte-gleich sein."
     }
   ],
   "not_in_this_register": {
@@ -335,7 +348,7 @@
   "known_gap": "Dieses Register liegt im Repo und ist damit versioniert und im Git-Backup. Die Laufzeit-Evidenz unter artifacts/research/supervision/ ist es NICHT: kai_backup_artifacts.sh fuehrt diesen Pfad nicht in DEFAULT_SOURCES. Bewusst nicht hier geaendert - scripts/kai_backup_* liegt unter dem Parallel-Claim 20260827-stab-05c-backup-manifest.",
   "aggregates": {
     "TOTAL": 9,
-    "WATCH": 2,
+    "WATCH": 1,
     "MANUAL": 5,
     "SUPERSEDED": 1,
     "RETIRE": 0,
@@ -348,6 +361,7 @@
     "stab_06a_closed": false,
     "stab_06a_closure_condition": "Erst wenn die vier MANUAL_IMMEDIATE_VERDICT-Faelle tatsaechlich attestiert und archiviert sind. Die Klassifikation allein schliesst STAB-06a NICHT.",
     "SCHEDULED_REVIEW_COMPLETED": 1,
-    "INVALIDATED_BEFORE_MEASUREMENT": 1
+    "INVALIDATED_BEFORE_MEASUREMENT": 1,
+    "INVALIDATED_PENDING_SUCCESSOR": 1
   }
 }

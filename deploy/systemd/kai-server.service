@@ -8,7 +8,13 @@ OnFailure=kai-unit-failure-notify@%n.service
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/kai/ai_analyst_trading_bot
+# Der Code liegt im unveraenderlichen Release; `current` wird vom Wrapper
+# beim Start AUFGELOEST und der aufgeloeste Pfad im Marker gefuehrt — ein
+# spaeter umgeschaltetes current etikettiert diesen Prozess nicht um.
+WorkingDirectory=/home/kai/current
+# Kein __pycache__ im versiegelten Baum — sonst versuchte der Interpreter,
+# genau das zu beschreiben, was unveraenderlich sein soll.
+Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 # D-208: systemd opens StandardOutput=append: as root before dropping to User=,
 # creating root-owned log files that block the service-user from rotating/reading.
@@ -20,7 +26,12 @@ ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && ch
 # (= 90s Default) → jeder Restart riss ein ~90s-Offline-Loch (CF-520 im
 # Dashboard). Mit 15s schließt uvicorn hängende Verbindungen sauber und exitet
 # (verifiziert 2026-06-23: 15s "Deactivated successfully" statt 90s SIGKILL).
-ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --log-level info --timeout-graceful-shutdown 15
+# Selbst-Attestierung: dieser Prozess ermittelt seine Revision, schreibt den
+# Marker unter der EIGENEN PID und wird dann per os.execv zum Dienst. execv
+# behaelt PID und Kernel-Startzeit, also sind Marker und Dienst dieselbe
+# Identitaet. ExecStartPost koennte das nicht: ein zweiter Prozess wuerde
+# einen selbst gelesenen Commit einer fremden MainPID zuschreiben.
+ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --log-level info --timeout-graceful-shutdown 15
 Restart=on-failure
 RestartSec=10
 # Backstop: kappt den Stop hart bei 20s, falls uvicorn doch mal nicht sauber
@@ -33,6 +44,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+# NUR der Zustandspfad ist beschreibbar. Dass der Release-Baum es nicht
+# ist, gehoert zum Beweis: unveraenderlich heisst auch fuer den Dienst.
 ReadWritePaths=/home/kai/ai_analyst_trading_bot
 
 [Install]

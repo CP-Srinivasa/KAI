@@ -35,7 +35,11 @@ from app.alerts.youtube_transcript_coverage import (
     render_message,
 )
 
-NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+# STAB-2026-09-01 §16: moved past the transcript_status instrumentation epoch
+# (2026-08-31T13:47:12Z, #814). Before it, EVERY fixture row lands in the
+# "could not carry a reason" bucket and the defect bucket is unreachable, so the
+# tests below could not exercise the case they were written for.
+NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
 # Am 2026-08-28 auf dem Pi gemessen: 2584 Beschreibungen, laengste 143 Zeichen.
 DESCRIPTION = "x" * 143
@@ -197,7 +201,8 @@ def test_blackout_message_names_the_recorded_reason_when_there_is_one() -> None:
         )
     )
 
-    assert "aufgezeichneter Grund: error:IpBlocked 4x, none_found 1x" in message
+    assert "error:IpBlocked 4x [IP_BLOCKED]" in message
+    assert "none_found 1x [NO_TRANSCRIPT_FOUND]" in message
     assert "kein Grund aufgezeichnet" not in message
 
 
@@ -436,12 +441,16 @@ def test_the_seam_carries_the_recorded_reason_into_the_alert(tmp_path: Path) -> 
 
     (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
 
-    assert "aufgezeichneter Grund: error:IpBlocked 4x, none_found 1x" in issue.message
+    assert "error:IpBlocked 4x [IP_BLOCKED]" in issue.message
+    assert "none_found 1x [NO_TRANSCRIPT_FOUND]" in issue.message
     assert "youtube-transcript-api" not in issue.message
 
 
-def test_the_seam_admits_when_no_reason_was_recorded(tmp_path: Path) -> None:
-    """Altzeilen ohne das Feld: die Meldung raet nicht, sie sagt es."""
+def test_the_seam_flags_a_reasonless_row_written_after_instrumentation(
+    tmp_path: Path,
+) -> None:
+    """STAB §16 POSITIVE CONTROL: a row that COULD have carried a reason and did
+    not is a write-path defect, and must read like one."""
     db = _db(
         tmp_path,
         [("Bankless", DESCRIPTION, "youtube_channel", NOW - timedelta(hours=1)) for _ in range(5)],
@@ -450,8 +459,36 @@ def test_the_seam_admits_when_no_reason_was_recorded(tmp_path: Path) -> None:
 
     (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
 
-    assert "kein Grund aufgezeichnet" in issue.message
-    assert "NICHT durch neue Abrufe messen" in issue.message
+    assert "DEFEKT: 5 Zeile(n) NACH der Instrumentierung ohne Grund" in issue.message
+    assert "vor der Instrumentierung" not in issue.message
+
+
+def test_the_seam_calls_a_pre_instrumentation_row_a_remnant_not_a_defect(
+    tmp_path: Path,
+) -> None:
+    """STAB §16 NEGATIVE CONTROL: the mirror case.
+
+    transcript_status did not exist before 2026-08-31T13:47:12Z (#814). Measured
+    on the Pi: 2660 rows without the field, newest 2026-08-31 12:11:23; 15 rows
+    with it, oldest 2026-08-31 14:07:20; zero rows with the field present but
+    NULL. The two sets do not touch, and the seam is the deploy. Such rows are an
+    explained backlog that leaves the 24h window on its own — rendering them with
+    the same words as a live bug is what made this case need a forensic session.
+    """
+    before_epoch = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+    db = _db(
+        tmp_path,
+        [
+            ("Bankless", DESCRIPTION, "youtube_channel", before_epoch - timedelta(hours=1))
+            for _ in range(5)
+        ],
+        text_source="description",
+    )
+
+    (issue,) = _check_youtube_transcript_coverage(_url(db), before_epoch)
+
+    assert "vor der Instrumentierung" in issue.message
+    assert "DEFEKT" not in issue.message
 
 
 def test_a_placeholder_is_not_a_reason(tmp_path: Path) -> None:
@@ -477,4 +514,4 @@ def test_a_placeholder_is_not_a_reason(tmp_path: Path) -> None:
     (issue,) = _check_youtube_transcript_coverage(_url(db), NOW)
 
     assert "error:IpBlocked 2x" in issue.message
-    assert "(+3 Zeilen ohne Grund)" in issue.message
+    assert "DEFEKT: 3 Zeile(n) NACH der Instrumentierung ohne Grund" in issue.message

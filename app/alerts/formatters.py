@@ -22,14 +22,42 @@ _PRIORITY_RANGES: list[tuple[range, str]] = [
     (range(9, 11), "Critical"),
 ]
 
-# D-149/D-150: priority=10 qualifies as high-conviction tier based on live
-# hit-rate evidence (P10=69.57% precision on n=46, CI95=[55.19,80.92] vs
-# P7-P9=27.87% on n=183).  Marker is visual-only — routing/gating unchanged.
+# D-149/D-150 granted this marker on priority >= 10 alone, justified in-code by
+# "P10=69.57% precision on n=46, CI95=[55.19,80.92] vs P7-P9=27.87% on n=183".
+#
+# STAB-2026-09-01 §3 — THE MEASUREMENT NOW SAYS THE OPPOSITE. The live tier lift
+# is about -7.4pp: high priority is UNDER-performing standard priority. The
+# repo's own dashboard contract already states this
+# (dashboard.py: quality_status="critical" when priority_tier_lift_pct < 0,
+# "do not present it as a validated quality label") — but the Telegram and email
+# formatters kept stamping a positive label on every P10 alert, so the operator
+# surface contradicted the operator dashboard.
+#
+# The marker is therefore no longer a function of priority. It requires a CURRENT,
+# POSITIVE, measured lift, and fails closed in both the "no measurement" and the
+# "negative measurement" directions. High priority is still computed, stored,
+# routed and observed exactly as before — it simply earns no positive adornment
+# while its measured lift is <= 0. Nothing about routing or gating changes, and
+# no historical score is touched.
+#
+# This is deliberately NOT a boolean kill-switch: a flag would have to be flipped
+# back by hand and would rot. When the lift is positively re-established, the
+# label returns on its own, for exactly as long as the evidence holds.
 _HIGH_CONVICTION_THRESHOLD = 10
 _HIGH_CONVICTION_PREFIX = "🔥 HIGH-CONVICTION"
 
 
-def _is_high_conviction(priority: int) -> bool:
+def high_conviction_evidence_supports_label(tier_lift_pct: float | None) -> bool:
+    """Does the CURRENT measurement justify a positive quality label?
+
+    Fail-CLOSED: ``None`` (not measured) and any value <= 0 both mean no.
+    """
+    return tier_lift_pct is not None and tier_lift_pct > 0.0
+
+
+def _is_high_conviction(priority: int, tier_lift_pct: float | None = None) -> bool:
+    if not high_conviction_evidence_supports_label(tier_lift_pct):
+        return False
     return priority >= _HIGH_CONVICTION_THRESHOLD
 
 
@@ -56,7 +84,7 @@ def format_telegram_message(msg: AlertMessage) -> str:
     actionable_str = "Actionable" if msg.actionable else "Informational"
 
     lines = []
-    if _is_high_conviction(msg.priority):
+    if _is_high_conviction(msg.priority, msg.priority_tier_lift_pct):
         lines.append(f"*{_HIGH_CONVICTION_PREFIX}*")
     lines += [
         f"{emoji} *Priority {msg.priority}/10 — {label}*",
@@ -85,7 +113,7 @@ def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
     for msg in messages:
         emoji = _SENTIMENT_EMOJI.get(msg.sentiment_label.lower(), "⚪")
         short_title = msg.title[:60] + ("…" if len(msg.title) > 60 else "")
-        hc_marker = "🔥 " if _is_high_conviction(msg.priority) else ""
+        hc_marker = "🔥 " if _is_high_conviction(msg.priority, msg.priority_tier_lift_pct) else ""
         items.append(f"{hc_marker}{emoji} P{msg.priority} [{_escape_md(short_title)}]({msg.url})")
     return "\n".join(header + items)
 
@@ -96,7 +124,11 @@ def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
 def format_email_subject(msg: AlertMessage) -> str:
     label = _priority_label(msg.priority)
     title_truncated = msg.title[:80]
-    hc_tag = "[HIGH-CONVICTION] " if _is_high_conviction(msg.priority) else ""
+    hc_tag = (
+        "[HIGH-CONVICTION] "
+        if _is_high_conviction(msg.priority, msg.priority_tier_lift_pct)
+        else ""
+    )
     return f"[KAI Alert] {hc_tag}{label} P{msg.priority}: {title_truncated}"
 
 

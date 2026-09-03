@@ -660,11 +660,15 @@ def test_truth_anchor_line_healthy() -> None:
             "records": 76,
             "chain_ok": True,
             "tip_anchored": True,
+            "last_verdict_seq": 76,
+            "latest_ots_anchored_seq": 76,
+            "latest_ots_anchored_hash": "abc123def4567890",
         }
     )
-    assert "Truth-Anchor:* seq 76" in msg
-    assert "Kette ok" in msg
-    assert "Tip OTS-verankert" in msg
+    assert "tip seq 76" in msg
+    assert "76 Records" in msg
+    assert "gueltig" in msg
+    assert "OTS-Anker: seq 76" in msg
 
 
 def test_truth_anchor_line_broken_chain_and_unanchored_are_loud() -> None:
@@ -675,10 +679,65 @@ def test_truth_anchor_line_broken_chain_and_unanchored_are_loud() -> None:
             "records": 40,
             "chain_ok": False,
             "tip_anchored": False,
+            "last_verdict_seq": 75,
+            "latest_ots_anchored_seq": None,
+            "latest_ots_anchored_hash": None,
         }
     )
     assert "KETTE GEBROCHEN" in msg
-    assert "NICHT verankert" in msg
+    assert "OTS-Anker: keiner vorhanden" in msg
+
+
+def test_truth_anchor_separates_tip_from_last_verdict() -> None:
+    """STAB-2026-09-01 §23 — the operator's actual question.
+
+    Live on the Pi the tip is seq 115, a ``canonical_edge_report`` appended by a
+    daily timer, while the last substantive ``verdict`` is seq 114. Printing only
+    the tip invites reading 115 as "the newest verdict". The two are now separate
+    lines whenever they differ.
+    """
+    msg = _compose(
+        truth_anchor={
+            "available": True,
+            "tip_seq": 115,
+            "records": 115,
+            "chain_ok": True,
+            "tip_anchored": False,
+            "last_verdict_seq": 114,
+            "latest_ots_anchored_seq": 114,
+            "latest_ots_anchored_hash": "4546c96c362f8931aaaa",
+            "anchor_lag_records": 1,
+        }
+    )
+    assert "tip seq 115" in msg
+    assert "Letztes inhaltliches Verdikt: seq 114" in msg
+    # And the anchor is reported by SEQ, not as a bare boolean.
+    assert "OTS-Anker: seq 114" in msg
+    assert "4546c96c362f8931" in msg
+
+
+def test_unanchored_tip_names_the_newest_anchor_instead_of_only_complaining() -> None:
+    """§23 — "Tip NICHT verankert" alone was a daily deterministic warning.
+
+    kai-truth-anchor anchors the tip at 04:35 UTC; kai-canonical-edge-attest
+    appends a new record at 06:20 UTC and invalidates that anchor at once, so the
+    tip is unanchored for the great majority of every day. Naming the newest
+    anchor and the lag turns a standing complaint into information.
+    """
+    msg = _compose(
+        truth_anchor={
+            "available": True,
+            "tip_seq": 115,
+            "records": 115,
+            "chain_ok": True,
+            "tip_anchored": False,
+            "last_verdict_seq": 114,
+            "latest_ots_anchored_seq": 114,
+            "latest_ots_anchored_hash": "4546c96c362f8931aaaa",
+            "anchor_lag_records": 1,
+        }
+    )
+    assert "Tip liegt 1 Record(s) davor" in msg
 
 
 def test_truth_anchor_collector_failure_is_honest() -> None:

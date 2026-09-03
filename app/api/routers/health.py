@@ -44,6 +44,21 @@ class TimerHealthInactiveEntry(BaseModel):
     last_trigger: str | None = None
 
 
+class TimerHealthFreshness(BaseModel):
+    """The budget this snapshot is judged against, derived from the producer unit.
+
+    STAB-2026-09-01: replaces a hard-coded 2h rule that contradicted the producer's
+    own daily cadence by a factor of twelve.
+    """
+
+    producer_unit: str
+    expected_cadence_seconds: int | None = None
+    accuracy_seconds: int = 60
+    runtime_margin_seconds: int = 300
+    grace_seconds: int = 600
+    stale_after_seconds: int | None = None
+
+
 class TimerHealthResponse(BaseModel):
     state: TimerHealthState
     # FS-2: overall severity (ok | warning | critical) + taxonomy counts so the
@@ -51,10 +66,29 @@ class TimerHealthResponse(BaseModel):
     severity: str = "ok"
     checked_at: str | None = None
     stale_minutes: int | None = None
-    total: int
-    active: int
+    age_seconds: int | None = None
+
+    # STAB-2026-09-01 §11: ``total``/``active`` are the CURRENT measurement. They
+    # are null whenever the snapshot no longer describes the present, so a stale
+    # card can never render "10 OK". The observed values survive as last_known_*
+    # and consumers must label them as last-known, never as status.
+    counts_are_current: bool = True
+    total: int | None = None
+    active: int | None = None
+    last_known_total: int | None = None
+    last_known_active: int | None = None
+
+    # STAB-2026-09-01 §13: the monitored set is a SUBSET of the installed fleet and
+    # the two are now named separately instead of both being called "Timer".
+    installed_timer_count: int = 0
+    installed_timers: list[str] = []
+    monitored_timer_count: int | None = None
+
     critical_count: int = 0
     expected_inactive_count: int = 0
+    unknown_count: int = 0
+    freshness: TimerHealthFreshness | None = None
+    status_reason: str = "PASS"
     inactive: list[TimerHealthInactiveEntry]
 
 

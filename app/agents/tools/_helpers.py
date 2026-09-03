@@ -182,7 +182,8 @@ async def load_signal_candidates_and_documents(
 async def build_paper_portfolio_snapshot_helper(
     *,
     audit_path: str = PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
-    provider: str = "coingecko",
+    # STAB-2026-09-01 §24: None => settings.market_data_provider (canonical).
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> Any:
