@@ -1252,3 +1252,121 @@ def test_bei_gueltiger_kette_entsteht_kein_kuenstlicher_dependency_drift(
         [], expected_sha="a" * 40, marker=None, checkout_sha=None, checkout_lock_sha256="l"
     )
     assert "DEPENDENCY_DRIFT" not in ohne_achse.reasons
+
+
+# --------------------------------------------------------------------------
+# Der Fail-open: ein Signal schaltete zwei Sicherungen ab.
+#
+# `_active_release` gab bei manipuliertem Baum den Pfad OHNE Hash zurueck. Die
+# Release-Achse entfiel mangels Hash — und derselbe Pfad setzte ueber
+# `not current_path` gleichzeitig die Checkout-Achse aus. Ein Marker, der den
+# Baum-Hash von VOR der Manipulation trug, traf den Deploy-Marker und kam durch.
+# Beide Sonden schwiegen genau in dem Fall, fuer den `verify_release` gebaut ist.
+# --------------------------------------------------------------------------
+
+
+def _live_release(tmp_path: Path, monkeypatch):  # noqa: ANN001
+    """Vollstaendig aufgesetzter Produktionszustand: current, Release, Deploy-Marker."""
+    from app.alerts import process_runtime_probe as probe
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rel = _release(tmp_path, "3" * 40)
+    echt = hashlib.sha256((rel / "requirements.lock").read_bytes()).hexdigest()
+    doc = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    doc["requirements_lock_sha256"] = echt
+    (rel / "release.json").write_text(json.dumps(doc), encoding="utf-8")
+    doc["release_tree_sha256"] = release_tree_sha256(rel)
+    (rel / "release.json").write_text(json.dumps(doc), encoding="utf-8")
+    manifest = read_release_manifest(rel)
+    assert manifest is not None
+    _deploy_marker(state, manifest)
+    monkeypatch.setattr(
+        "app.observability.release_identity.resolve_current", lambda _p: rel, raising=False
+    )
+    return probe, state, rel, manifest
+
+
+def test_der_manipulierte_baum_wird_beim_namen_genannt(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """Reale Sequenz: sauber attestieren, DANN den Baum anfassen, dann pruefen."""
+    from app.observability.release_identity import verify_release
+
+    probe, state, rel, _m = _live_release(tmp_path, monkeypatch)
+    assert probe.release_governs(state) is True  # 1. sauber
+
+    (rel / "app" / "main.py").write_text("print('manipuliert')", encoding="utf-8")  # 2. angefasst
+
+    assert PROBLEM_TREE_TAMPERED in verify_release(rel)
+    probleme = probe.release_provenance_problems(state)
+    assert PROBLEM_TREE_TAMPERED in probleme
+    # 3. Und die Konsequenz: der Checkout-Vertrag lebt wieder, statt dass
+    #    beide Achsen gleichzeitig schweigen.
+    assert probe.checkout_axis_active(state) is True
+    assert probe.release_governs(state) is False
+
+
+def test_beide_achsen_haengen_an_derselben_strengen_quelle() -> None:
+    """Struktur-Ratsche gegen die Rueckkehr der zweiten, losen Definition."""
+    src = (REPO_ROOT / "app" / "alerts" / "process_runtime_probe.py").read_text(encoding="utf-8")
+    assert "checkout_is_authoritative=not current_path" not in src
+    assert "checkout_is_authoritative=chain_problems != []" in src
+    hc = (REPO_ROOT / "app" / "alerts" / "health_check.py").read_text(encoding="utf-8")
+    assert "checkout_axis_active(repo_root)" in hc
+
+
+def test_bei_intakter_kette_bleibt_der_kettenbefund_stumm(
+    tmp_path: Path,
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """Negativkontrolle: sonst meldete die neue Achse einfach immer etwas."""
+    probe, state, _rel, _m = _live_release(tmp_path, monkeypatch)
+    assert probe.release_provenance_problems(state) == []
+    assert probe.checkout_axis_active(state) is False
+
+
+def test_die_sonde_meldet_den_manipulierten_baum_end_to_end(
+    tmp_path: Path,
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """Verhaltenstest, nicht Struktur: `process_runtime_finding` muss reden.
+
+    Der Marker traegt den Baum-Hash von VOR der Manipulation und trifft den
+    Deploy-Marker — per Unit ist also alles gruen. Genau deshalb schwieg die
+    Sonde vorher: die Release-Achse entfiel mangels Hash, und derselbe Pfad
+    setzte die Checkout-Achse aus.
+    """
+    from app.observability import runtime_provenance as rp
+    from app.observability.process_runtime_marker import write_process_marker
+
+    probe, state, rel, manifest = _live_release(tmp_path, monkeypatch)
+    marker = _marker_for(rel)
+    marker["unit"] = "kai-server.service"
+    write_process_marker(marker, root=state)
+
+    dienst = rp.ServiceRuntime(
+        unit="kai-server.service",
+        user="ubuntu",
+        pid=marker["pid"],
+        executable=str(rel / ".venv" / "bin" / "python"),
+        cwd=str(rel),
+        release_root=str(rel),
+        release_tree_sha256=manifest.release_tree_sha256,
+    )
+    monkeypatch.setattr(rp, "collect_runtime_services", lambda *a, **k: [dienst])
+    monkeypatch.setattr(probe, "expected_attesting_units", lambda _r: ("kai-server.service",))
+    monkeypatch.setattr(probe, "unit_active_enter_utc", lambda _u: STARTED)
+    monkeypatch.setattr(
+        "app.observability.process_runtime_marker.proc_start_ticks",
+        lambda *_a, **_k: marker["proc_start_ticks"],
+    )
+    monkeypatch.setattr(
+        "app.observability.process_runtime_marker.current_boot_id", lambda *_a, **_k: BOOT
+    )
+
+    sauber = probe.process_runtime_finding(state, checkout_sha=manifest.repo_sha)
+    (rel / "app" / "main.py").write_text("print('manipuliert')", encoding="utf-8")
+    nach_manipulation = probe.process_runtime_finding(state, checkout_sha=manifest.repo_sha)
+
+    assert nach_manipulation is not None, "die Sonde schweigt ueber einen manipulierten Baum"
+    assert PROBLEM_TREE_TAMPERED in nach_manipulation
+    assert nach_manipulation != sauber

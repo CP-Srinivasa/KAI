@@ -75,6 +75,8 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
     # Release muss seinen eigenen Anspruch noch tragen, sonst ist der Baum
     # nachtraeglich angefasst worden.
     current_path, current_tree = _active_release(repo_root)
+    # Die Beweiskette EINMAL erheben und beide Achsen daraus steuern.
+    chain_problems = release_provenance_problems(repo_root)
     # SOLL kommt AUSSCHLIESSLICH aus der Deploy-Provenienz — auch Baum und Pfad.
     # Sie aus dem gerade aktiven Release zu nehmen hiess, das Aktive mit sich
     # selbst zu vergleichen: deploy koennte TREE_A behaupten, waehrend current
@@ -90,17 +92,30 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
         expected_release_path=str(deploy.get("release_path") or ""),
         current_release_path=current_path,
         current_release_tree_sha256=current_tree,
-        # Der Quell-Checkout ist unter dem Release-Modell NICHT mehr die aktive
-        # Wahrheit. `pi_activate_release.sh` schaltet `current` und schreibt den
-        # Deploy-Marker; ein `git reset` des Quellbaums gehoert nicht dazu. Beim
-        # Rollback steht der Checkout deshalb legitim auf NEU, waehrend deployt,
-        # aktiv und laufend alle drei ALT sind — ein Vergleich gegen den Checkout
-        # meldete dort DEPLOYMENT_PROVENANCE_MISMATCH fuer einen korrekten Zustand.
-        checkout_is_authoritative=not current_path,
+        # DIESELBE strenge Quelle wie die alte Sonde. Vorher stand hier
+        # ``not current_path`` — eine zweite, lose Definition desselben
+        # Praedikats. Bei manipuliertem Baum gab ``_active_release`` den Pfad
+        # OHNE Hash zurueck: die Release-Achse entfiel mangels Hash, und derselbe
+        # Pfad setzte ueber ``not current_path`` gleichzeitig die Checkout-Achse
+        # aus. Ein Signal schaltete zwei Sicherungen ab, und beide Sonden
+        # schwiegen genau in dem Fall, fuer den ``verify_release`` gebaut ist.
+        checkout_is_authoritative=chain_problems != [],
         expected_lock_sha256=deploy.get("requirements_lock_sha256"),
         deployed_at_utc=deploy.get("deployed_at_utc"),
     )
-    return None if result.ok else render_process_provenance(result)
+    # Eine gebrochene Kette wird BEIM NAMEN genannt, nicht nur indirekt ueber
+    # eine wiederbelebte Checkout-Achse. Sie kann auch dann gelten, wenn jeder
+    # Prozess sauber sein Release bezeugt — der Baum wurde eben NACH dem Start
+    # angefasst.
+    kette = (
+        "Release-Provenienz unvollstaendig: " + ", ".join(sorted(chain_problems))
+        if chain_problems and current_path
+        else ""
+    )
+    befund = "" if result.ok else render_process_provenance(result)
+    if kette and befund:
+        return kette + "; " + befund
+    return kette or befund or None
 
 
 def unit_active_enter_utc(unit: str) -> str:
@@ -134,6 +149,28 @@ def unit_active_enter_utc(unit: str) -> str:
     return datetime.fromtimestamp(now - boot + usec / 1_000_000, tz=UTC).isoformat(
         timespec="seconds"
     )
+
+
+def checkout_axis_active(state_root: Path) -> bool:
+    """Gilt der alte Checkout-Vertrag hier noch?
+
+    Die Abhaengigkeits-Achse von ``runtime_provenance`` vergleicht einen
+    ``dependency_marker`` gegen den HEAD des Quellbaums — reines Checkout-Modell.
+    Regiert ein unveraenderliches Release, ist der Quell-Checkout nicht mehr die
+    aktive Wahrheit, und der Lock-Stand ist staerker belegt: ``release.json``
+    pinnt ihn, der Deploy-Marker fuehrt ihn, jeder Prozessmarker traegt ihn.
+
+    Ohne diese Unterscheidung entstuende ein Dauerbefund: das Skript, das den
+    ``dependency_marker`` schrieb (``pi_sync_dependencies.sh``), ist auf der
+    Mainline geloescht und im Release-Fluss durch ``pi_make_release.sh`` und
+    ``pi_activate_release.sh`` ersetzt. Ein fehlender Marker meldete "unbelegt,
+    ob je synchronisiert wurde" — alle 60 Minuten, fuer immer. Genau solche
+    selbstverschuldeten Dauerbefunde haben zwei G8-Akte zerstoert.
+
+    Fail-closed: bei jeder Luecke in der Release-Beweiskette bleibt der alte
+    Vertrag in Kraft und der Befund bestehen.
+    """
+    return not release_governs(state_root)
 
 
 def release_provenance_problems(state_root: Path) -> list[str]:
@@ -256,6 +293,7 @@ def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
 
 __all__ = [
     "expected_attesting_units",
+    "checkout_axis_active",
     "release_governs",
     "release_provenance_problems",
     "process_runtime_finding",
