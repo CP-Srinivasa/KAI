@@ -1,13 +1,15 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from app.ai.health import ai_health_snapshot
 from app.core.config_redaction import redacted_config_snapshot
+from app.core.payment_settings import get_payment_settings
 from app.core.runtime_identity import drift_report, get_runtime_identity
 from app.core.settings import AppSettings, get_settings
+from app.payments.health import payment_health_snapshot
 from app.services.timer_health import read_latest_timer_audit
 
 router = APIRouter(tags=["health"])
@@ -188,6 +190,47 @@ async def ai_health(
     return AIHealthResponse(**snapshot["ai"])
 
 
+@router.get("/health/payment")
+async def payment_health(
+    request: Request,
+    response: Response,
+    window_hours: float = 24.0,
+    settings: AppSettings = Depends(get_settings),  # noqa: B008
+) -> dict[str, Any]:
+    """Zustand des Geldpfads (ADR 0018 §10).
+
+    Auth: wie ``/health/ai`` bewusst NICHT in der oeffentlichen Pfadliste in
+    ``app/security/auth.py``. Dieser Endpunkt zeigt Modus, Node-Zustand,
+    Kettenstatus und Kennzahlen ueber Wertbewegungen — er folgt dem
+    strengeren Nachbarn, nicht dem oeffentlichen ``/health``.
+
+    Keine Probe: gelesen wird das Journal und die Zustandsdatei des
+    Reconcilers. In SIMULATION wird nicht einmal der Rail gefragt.
+
+    Ohne verdrahteten Control Plane (Lifespan nicht gelaufen) meldet der
+    Endpunkt ``degraded`` mit Grund — nicht 200/``ok``: eine Antwort, die
+    Gesundheit behauptet, ohne etwas gemessen zu haben, ist die eine Sorte
+    Health-Endpunkt, die schadet.
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+
+    service = getattr(request.app.state, "payment_service", None)
+    if service is None:
+        return {
+            "status": "degraded",
+            "mode": get_payment_settings().mode,
+            "reason": "payment control plane not wired in this process",
+        }
+    return await payment_health_snapshot(
+        journal=service.journal,
+        rail=service.rail,
+        settings=service.settings,
+        lightning=settings.lightning,
+        app_env=settings.env,
+        window_hours=window_hours,
+    )
+
+
 @router.get("/health/config")
 async def health_config(
     settings: AppSettings = Depends(get_settings),  # noqa: B008
@@ -199,4 +242,4 @@ async def health_config(
     ``explicit`` lists per section which fields came from the environment —
     a critical field missing there is running on a code default.
     """
-    return redacted_config_snapshot(settings)
+    return redacted_config_snapshot(settings, extra_sections={"payments": get_payment_settings()})

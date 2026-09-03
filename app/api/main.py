@@ -48,6 +48,7 @@ from app.api.routers import (
     metrics,
     node_blitz,
     operator,
+    payments,
     premium_signals,
     query,
     research,
@@ -58,6 +59,7 @@ from app.api.routers import (
 )
 from app.core.lightning_settings import validate_lightning_boot
 from app.core.logging import configure_logging, get_logger
+from app.core.payment_settings import get_payment_settings, validate_payment_boot
 from app.core.runtime_identity import (
     ARTIFACT_RELATIVE_PATH,
     REPO_ROOT,
@@ -74,6 +76,7 @@ from app.observability.event_loop_lag import EventLoopLagSampler
 from app.observability.http_latency import install_http_latency_middleware
 from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
+from app.payments.wiring import build_payment_service, recover_on_start
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
@@ -95,6 +98,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _logger.warning("runtime_identity_unavailable", exc_info=True)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
+    # ADR 0018 §11: NACH dem Lightning-Guard, weil der Payment-Guard auf einem
+    # bereits als vertrauenswuerdig erwiesenen Transport aufsetzt. Er prueft die
+    # Macaroon-Scope-Kollision (in JEDEM Modus) und die vier LIVE-Vorbedingungen.
+    payment_settings = get_payment_settings()
+    validate_payment_boot(payment_settings, app_env=settings.env, lightning=settings.lightning)
+    # ADR 0018 §5: DIESER Prozess ist der sendende. Er oeffnet das Geld-Journal
+    # (volle Kettenpruefung) und klaert offene Sends, BEVOR er Verkehr annimmt —
+    # ein ``submitted`` ohne Antwort heisst, dass der Vorgaenger abgestuerzt ist,
+    # waehrend Geld unterwegs war. Ein Fehler hier ist ein Boot-Abbruch: ein
+    # armierter Geldpfad ohne verifizierte Kette ist gefaehrlicher als ein
+    # Dienst, der nicht hochkommt.
+    app.state.payment_service = build_payment_service(
+        payment_settings, settings.lightning, app_env=settings.env
+    )
+    recover_on_start(app.state.payment_service)
     app.state.session_factory = build_session_factory(settings.db)
 
     # Build analysis components for full-pipeline mode
@@ -424,6 +442,7 @@ def create_app() -> FastAPI:
     app.include_router(diversification.router)
     app.include_router(truth_oracle.router)
     app.include_router(ln_control.router)
+    app.include_router(payments.router)
     app.include_router(node_blitz.router)
     app.include_router(metrics.router)
 

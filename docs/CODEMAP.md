@@ -90,6 +90,23 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/security/hotp_auth.py` + `scripts/hotp_bootstrap.py` → HOTP-Read→Verify→Append unter strict Lock + `fsync`; fehlendes/leeres/korruptes Journal ist **deny**, Erst-Inbetriebnahme nur explizit mit `--next-counter` (bestehende Journale werden nie überschrieben)
 - `app/security/auth.py::_LN_LOCAL_BYPASS_READS` → `/dashboard/api/ln/ops` ist bewusst NICHT drin (Geldpfad-Audit ≠ lokale Dashboard-Bequemlichkeit); einziger Konsument = Browser-Panel via CF-Access
 
+### Payment Control Plane (`app/payments/`, ADR 0018)
+- **Der Serialisierungspunkt** ist `PaymentService.create_intent`: Idempotenz-Konsum, Cap-Lesung aus dem Index, Policy-Verdikt und beide Records laufen unter EINEM `journal.transaction()`. Decode und Node-Health passieren VORHER und sind ausdrücklich Vorschau — ein Node-Aufruf unter dem Lock hielte jeden anderen Schreiber für die Dauer eines Netzaufrufs an
+- **Der einzige `rail.pay()`-Aufruf im ganzen Repo** steht in `PaymentService.execute`. `ln_control` delegiert seit ADR §12 dorthin (`ln_control_delegate.py`); ein AST-Test verbietet `vl.pay_invoice` in `ln_control`
+- `artifacts/payments/payment_journal.jsonl` — **das eine Geld-Journal**: append-only, `prev_hash`/`record_hash`, fsync, `0600`, **nie rotiert**, portalocker-Interprozess-Lock auch für LESENDE Zugriffe. Torn Tail = Deny (nicht „auf der letzten lesbaren Zeile weiterschreiben“ — das forkt still). Pfad NUR über `PaymentSettings.journal_path`, absolut zur Repo-Wurzel
+- `app/payments/status.py::transition` — **die einzige Vergabestelle** für `PaymentStatus`. Nach einem Submit ist jede Aussage über den Verbleib des Geldes beweispflichtig (`rail_evidence`); ohne Beleg bleibt nur `RECONCILIATION_REQUIRED`. `FAILED_FINAL` = *bewiesen nichts bewegt*, `RECONCILIATION_REQUIRED` = *unbekannt*
+- `app/payments/reconcile.py` + `reconcile_passes.py` → drei Durchgänge (vorwärts `lookup`, rückwärts `list_payments` → `orphan_settlement`, Forderungen `invoice_status` → `receivable_settled`). Läuft im bestehenden `scripts/ln_reconcile.py::reconcile_payments`; Zustand in `artifacts/payments/reconcile_state.json`
+- `app/payments/health.py` → `GET /health/payment` (auth-gated wie `/health/ai`). Kein Grün ohne Beweis: gebrochene Kette ODER `reconciliation=attention` ⇒ `degraded`. `/health/config` zeigt die `payments`-Sektion über `config_redaction(extra_sections=…)` — `PaymentSettings` hängt bewusst NICHT in `AppSettings`
+
+**Zählfallen (hier stolpert man):**
+- `JournalIndex.open_intents()` ≠ `all_intents()`: die Rückwärts-Richtung fragt „gehört dieser Send zu UNS?“ — nur `open_intents` zu benutzen erklärte jede abgeschlossene Zahlung beim nächsten Lauf zur Waise
+- `RailPaymentList.window_enforced` ist beim `LightningRail` **`False`**: `client.list_payments` reicht kein `creation_date` durch, also kann `since` nicht eingehalten werden. Folge: bei der Inbetriebnahme wird die Alt-Historie EINMAL als Waise gemeldet, danach nie wieder (`JournalIndex.orphan_keys`)
+- Ein Reconcile-Lauf ohne Statuswechsel schreibt **keinen** Record. Ungeklärte Vorgänge stehen trotzdem im Report (`unresolved`) — sonst wäre ein Journal voller offener Sends von einem sauberen nicht zu unterscheiden
+- Tagesgrenze des Caps ist **UTC** (`JournalIndex._day_key`), nicht lokal — auf einem Pi in CEST spränge der Cap sonst zweimal im Jahr
+- `Money.minor_units >= 0`, aber `PaymentIntent.amount_requested > 0`: eine Routing-Gebühr von 0 ist real, ein Zahlbetrag von 0 nicht
+- Settlement-Latenz misst `submitted → settled`, nicht die Node-Zeit: wie lange die Zahlung UNKLAR war. Bei n=0 ist sie `None`, nie `0.0`
+- Der Uhr-Sprung-Guard setzt Ablauf-Übergänge auch dann aus, wenn es KEINE vergleichbare Basislinie gibt (erster Lauf, Neustart — die monotone Uhr ist boot-relativ). `EXPIRED` ist terminal
+
 ## Kern-Env-Flags (Definition; LIVE-Werte = Pi-`.env`, NICHT hier)
 - `EXECUTION_ENTRY_MODE` → `settings.execution.entry_mode` (`EntryMode`) — Master-Entry-Kill-Switch
 - `EXECUTION_PAPER_MIN_PRIORITY` — Paper-Fill-Prioritätsschwelle
@@ -104,6 +121,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `shadow_real_feed_funnel.jsonl` — Funnel seen→eligible→injected→candidate
 - `blocked_outcomes.jsonl` — geblockte Alerts + ~28h-Outcome (asset/dir/move im `note`)
 - `blocked_alerts.jsonl` — geblockte Alerts (reason; KEIN Symbol/Dir)
+- `payments/payment_journal.jsonl` — **jede Wertbewegung** (ADR 0018 §5); nie rotiert, `0600`, hash-verkettet. Zusammen mit `ln_ops_ledger_v2.jsonl` und `ln_hotp_journal.jsonl` in `kai_backup_artifacts.sh::DEFAULT_SOURCES`; `MONEY_SOURCES` bricht ab, wenn eines davon aus dem letzten Archiv-Manifest verschwindet
 - `alert_outcomes.jsonl` — resolved directional alerts (hit/miss)
 - `app/intelligence/` — Local Intelligence Layer (ADR 0015): TaskRouter/Provider/ContextBuilder/Audit; Flags `KAI_LLM_*` (default-off); Trail `artifacts/intelligence_audit.jsonl`; CLI `intelligence {daily-summary,anomaly-explain,doc-qa}`
 - `funding_evidence_shadow.jsonl` / `oi_evidence_shadow.jsonl` / `hype_evidence_shadow.jsonl` — V5-Evidence (shadow)

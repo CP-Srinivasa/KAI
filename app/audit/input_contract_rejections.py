@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analysis.input_contract import ANALYSIS_INPUT_REJECTIONS_FILENAME
-from app.lightning.input_contract_rejections import LN_INPUT_REJECTIONS_FILENAME
+from app.payments.input_rejections import LN_INPUT_REJECTIONS_FILENAME
 
 DEFAULT_LN_INPUT_REJECTIONS_PATH = Path("artifacts") / LN_INPUT_REJECTIONS_FILENAME
 DEFAULT_ANALYSIS_INPUT_REJECTIONS_PATH = Path("artifacts") / ANALYSIS_INPUT_REJECTIONS_FILENAME

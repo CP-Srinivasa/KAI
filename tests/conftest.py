@@ -49,7 +49,7 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Live-Fire-Sperre für die Wert-Schicht (Befund 05.08., W0-Nachtrag).
 
     Die Unit-Suite lief auf dem Pi gegen die SCHARFE Wert-Schicht: ein
@@ -93,6 +93,23 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
         ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
     )
 
+    # 4. **Geld-Journal-Redirect (ADR 0018 §5).** Seit dem Lifespan den
+    #    ``PaymentService`` baut, oeffnet JEDER Test, der die App hochfaehrt,
+    #    ``artifacts/payments/payment_journal.jsonl`` — die Datei, die jede
+    #    Wertbewegung traegt und nie rotiert wird. Ein Test-Record darin waere
+    #    nicht loeschbar (append-only, hash-verkettet) und wuerde die Kette
+    #    dauerhaft mit Fixture-Daten belasten. Der Cache muss mit: die Settings
+    #    sind prozessweit gecacht, ein reines ``setenv`` ohne ``cache_clear``
+    #    bliebe wirkungslos.
+    from app.core.payment_settings import get_payment_settings
+
+    monkeypatch.setenv(
+        "APP_PAYMENT_JOURNAL_PATH", str(tmp_path / "payments" / "payment_journal.jsonl")
+    )
+    get_payment_settings.cache_clear()
+    yield
+    get_payment_settings.cache_clear()
+
 
 _REPO_PAPER_AUDIT = (
     Path(__file__).resolve().parents[1] / "artifacts" / "paper_execution_audit.jsonl"
@@ -134,6 +151,26 @@ def _paper_audit_stream_untouched() -> Iterator[None]:
             "sie darf von der Suite nie berührt werden. Isoliere den Test mit "
             "monkeypatch.chdir(tmp_path) oder übergib audit_log_path explizit."
         )
+
+
+@pytest.fixture(autouse=True)
+def _runtime_identity_artifact_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Kein Test schreibt ``artifacts/runtime/runtime_identity.json`` ins Repo.
+
+    Der Lifespan schreibt das Artefakt bei jedem Start (STAB-02). Ohne diese
+    Umleitung beschreiben Lifespan-Tests aus verschiedenen xdist-Workern die
+    Produktivdatei gleichzeitig — ein Isolationsrennen, das 2026-09-03 den
+    Startup-Test (Repo-Artefakt-Wache) nur unter Parallelitaet rot machte.
+    ``REPO_ROOT / <absoluter Pfad>`` ergibt den absoluten Pfad, deshalb reicht
+    das Umbiegen der relativen Konstante.
+    """
+    import sys
+
+    target = tmp_path / "artifacts" / "runtime" / "runtime_identity.json"
+    monkeypatch.setattr("app.core.runtime_identity.ARTIFACT_RELATIVE_PATH", target, raising=False)
+    api_main = sys.modules.get("app.api.main")
+    if api_main is not None:
+        monkeypatch.setattr(api_main, "ARTIFACT_RELATIVE_PATH", target, raising=False)
 
 
 @pytest.fixture(autouse=True)

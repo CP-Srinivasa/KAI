@@ -24,7 +24,10 @@ from app.alerts.alert_classes import (
     render_grouped,
 )
 
-HEALTH_CHECK_PATH = Path(__file__).resolve().parents[2] / "app" / "alerts" / "health_check.py"
+_ALERTS_DIR = Path(__file__).resolve().parents[2] / "app" / "alerts"
+# health_check.py + die ausgelagerten Payment-/Input-Contract-Waechter: beide
+# Dateien emittieren HealthIssue-Komponenten, beide muessen die Registry treffen.
+HEALTH_CHECK_PATHS = (_ALERTS_DIR / "health_check.py", _ALERTS_DIR / "health_check_payments.py")
 
 
 @dataclass(frozen=True)
@@ -40,10 +43,14 @@ def _components_in_health_check() -> tuple[set[str], set[str]]:
     Bewusst per AST gegen die echte Datei statt gegen eine Liste hier: eine neue
     Sonde soll diesen Test brechen, nicht still durchrutschen.
     """
-    tree = ast.parse(HEALTH_CHECK_PATH.read_text(encoding="utf-8"))
     static: set[str] = set()
     dynamic: set[str] = set()
-    for node in ast.walk(tree):
+    nodes = [
+        node
+        for path in HEALTH_CHECK_PATHS
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+    for node in nodes:
         if not isinstance(node, ast.Call):
             continue
         for kw in node.keywords:

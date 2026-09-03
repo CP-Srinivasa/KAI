@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts import health_check_payments as _hcp
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
@@ -492,20 +493,15 @@ def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
 
 
 def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
-    """Validate existing G5 reject streams without inventing a write cadence."""
-    from app.audit.input_contract_rejections import inspect_input_rejection_streams
+    return _hcp.check_input_contract_rejection_streams(adir)  # Waechter-Def hier: Stream-Vertrag G4
 
-    return [
-        HealthIssue(
-            severity="warning",
-            component="input_contract_rejection_stream",
-            message=f"{problem.stream}: {problem.detail}",
-        )
-        for problem in inspect_input_rejection_streams(
-            ln_path=adir / "ln_input_contract_rejections.jsonl",
-            analysis_path=adir / "analysis_input_contract_rejections.jsonl",
-        )
-    ]
+
+def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
+    return _hcp.check_payment_journal_chain(adir)  # Waechter-Def hier: Stream-Vertrag G4
+
+
+def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
+    return _hcp.check_payment_reconciliation(adir)
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -1497,6 +1493,7 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
+    report.issues.extend(_check_payment_journal_chain(adir) + _check_payment_reconciliation(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).

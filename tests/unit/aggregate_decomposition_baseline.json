@@ -176,11 +176,15 @@
     "app/research/shadow_outcomes.py::load_canonical_outcomes",
     "app/research/shadow_outcomes.py::to_feature_outcomes",
     "app/research/stats.py::summarize_net_bps",
-    "app/research/verdict_bundle.py::evaluate_bundle"
+    "app/research/verdict_bundle.py::evaluate_bundle",
+    "app/api/routers/ln_control_delegate.py::execute_pay_invoice",
+    "app/api/routers/ln_control_delegate.py::plan_view",
+    "app/api/routers/payments.py::create_intent",
+    "app/api/routers/payments.py::simulate_intent"
   ],
   "_extended_2026_08_17": "AGG_TOKENS um Geld-/Risiko-Kennzahlen erweitert (pnl, bps, sharpe, drawdown, fee, drag, edge, equity, mu, ...) und app/execution in SCAN_ROOTS aufgenommen. Die zwoelf urspruenglichen Tokens trafen KEINE einzige Geld-Kennzahl - genau die Zahlen, fuer die die Direktive geschrieben wurde, liefen am Ratchet vorbei. Der Zuwachs ist kein Regress, sondern vorher unsichtbare Schuld.",
   "_notes": {
-    "app/execution/close_verifier.py::verify_close": "Kein Aggregat: urteilt ueber GENAU EINEN Close (eine Audit-Zeile, ein Evidenz-Artefakt, ein Urteil) — es gibt keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das Kwarg `tolerance_pct` (Token 'pct'), eine Toleranzschwelle beim Kerzen-Vergleich. Bewusst hier eingetragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl.",
-    "app/api/routers/signals.py::_resolve_close": "Kein Aggregat: entscheidet ueber GENAU EINEN Envelope, ob sein Paper-Zustand von einem Close-Event ueberstimmt wird — eine Zeile, ein Zustand, keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das durchgereichte Kwarg `realized_pnl_usd` (Token 'pnl'), das an close_reason_to_state geht, um TP von SL zu trennen. Derselbe Fall wie close_verifier.py::verify_close und bewusst genauso behandelt: eintragen statt den Parameter umzubenennen — Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl. (STAB-2026-09-01 §5)"
+    "app/execution/close_verifier.py::verify_close": "Kein Aggregat: urteilt ueber GENAU EINEN Close (eine Audit-Zeile, ein Evidenz-Artefakt, ein Urteil) â€” es gibt keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das Kwarg `tolerance_pct` (Token 'pct'), eine Toleranzschwelle beim Kerzen-Vergleich. Bewusst hier eingetragen statt den Parameter umzubenennen â€” Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl.",
+    "app/api/routers/signals.py::_resolve_close": "Kein Aggregat: entscheidet ueber GENAU EINEN Envelope, ob sein Paper-Zustand von einem Close-Event ueberstimmt wird â€” eine Zeile, ein Zustand, keine Grundgesamtheit und damit nichts zu zerlegen. Der Ratchet trifft auf das durchgereichte Kwarg `realized_pnl_usd` (Token 'pnl'), das an close_reason_to_state geht, um TP von SL zu trennen. Derselbe Fall wie close_verifier.py::verify_close und bewusst genauso behandelt: eintragen statt den Parameter umzubenennen â€” Umbenennen waere Testumgehung durch Kosmetik. Wer spaeter ueber MEHRERE Closes aggregiert, braucht die Zerlegung sehr wohl. (STAB-2026-09-01 Â§5)"
   }
 }
