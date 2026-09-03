@@ -154,6 +154,26 @@ def _paper_audit_stream_untouched() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _runtime_identity_artifact_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Kein Test schreibt ``artifacts/runtime/runtime_identity.json`` ins Repo.
+
+    Der Lifespan schreibt das Artefakt bei jedem Start (STAB-02). Ohne diese
+    Umleitung beschreiben Lifespan-Tests aus verschiedenen xdist-Workern die
+    Produktivdatei gleichzeitig — ein Isolationsrennen, das 2026-09-03 den
+    Startup-Test (Repo-Artefakt-Wache) nur unter Parallelitaet rot machte.
+    ``REPO_ROOT / <absoluter Pfad>`` ergibt den absoluten Pfad, deshalb reicht
+    das Umbiegen der relativen Konstante.
+    """
+    import sys
+
+    target = tmp_path / "artifacts" / "runtime" / "runtime_identity.json"
+    monkeypatch.setattr("app.core.runtime_identity.ARTIFACT_RELATIVE_PATH", target, raising=False)
+    api_main = sys.modules.get("app.api.main")
+    if api_main is not None:
+        monkeypatch.setattr(api_main, "ARTIFACT_RELATIVE_PATH", target, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_settings_cache() -> None:
     """Clear the get_settings() lru_cache around every test (settings-cache fix).
 
