@@ -66,7 +66,15 @@ def test_default_mode_is_simulation() -> None:
     assert PaymentSettings().mode == "simulation"
 
 
-def test_default_journal_path() -> None:
+def test_default_journal_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Der CODE-Default, nicht der Test-Redirect.
+
+    ``tests/conftest.py`` biegt das Geld-Journal fuer die ganze Suite auf tmp
+    um (sonst schriebe jeder App-Boot in die nie rotierte Produktivdatei).
+    Dieser Test prueft, was ohne Umgebung gilt — also muss er die Umgebung
+    ausdruecklich entfernen.
+    """
+    monkeypatch.delenv("APP_PAYMENT_JOURNAL_PATH", raising=False)
     assert PaymentSettings().journal_path == "artifacts/payments/payment_journal.jsonl"
 
 

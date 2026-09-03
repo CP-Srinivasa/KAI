@@ -49,7 +49,7 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Live-Fire-Sperre für die Wert-Schicht (Befund 05.08., W0-Nachtrag).
 
     Die Unit-Suite lief auf dem Pi gegen die SCHARFE Wert-Schicht: ein
@@ -92,6 +92,23 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
     )
+
+    # 4. **Geld-Journal-Redirect (ADR 0017 §5).** Seit dem Lifespan den
+    #    ``PaymentService`` baut, oeffnet JEDER Test, der die App hochfaehrt,
+    #    ``artifacts/payments/payment_journal.jsonl`` — die Datei, die jede
+    #    Wertbewegung traegt und nie rotiert wird. Ein Test-Record darin waere
+    #    nicht loeschbar (append-only, hash-verkettet) und wuerde die Kette
+    #    dauerhaft mit Fixture-Daten belasten. Der Cache muss mit: die Settings
+    #    sind prozessweit gecacht, ein reines ``setenv`` ohne ``cache_clear``
+    #    bliebe wirkungslos.
+    from app.core.payment_settings import get_payment_settings
+
+    monkeypatch.setenv(
+        "APP_PAYMENT_JOURNAL_PATH", str(tmp_path / "payments" / "payment_journal.jsonl")
+    )
+    get_payment_settings.cache_clear()
+    yield
+    get_payment_settings.cache_clear()
 
 
 _REPO_PAPER_AUDIT = (

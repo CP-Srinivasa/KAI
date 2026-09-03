@@ -48,6 +48,7 @@ from app.api.routers import (
     metrics,
     node_blitz,
     operator,
+    payments,
     premium_signals,
     query,
     research,
@@ -75,6 +76,7 @@ from app.observability.event_loop_lag import EventLoopLagSampler
 from app.observability.http_latency import install_http_latency_middleware
 from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
+from app.payments.wiring import build_payment_service, recover_on_start
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
@@ -99,9 +101,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ADR 0017 §11: NACH dem Lightning-Guard, weil der Payment-Guard auf einem
     # bereits als vertrauenswuerdig erwiesenen Transport aufsetzt. Er prueft die
     # Macaroon-Scope-Kollision (in JEDEM Modus) und die vier LIVE-Vorbedingungen.
-    validate_payment_boot(
-        get_payment_settings(), app_env=settings.env, lightning=settings.lightning
+    payment_settings = get_payment_settings()
+    validate_payment_boot(payment_settings, app_env=settings.env, lightning=settings.lightning)
+    # ADR 0017 §5: DIESER Prozess ist der sendende. Er oeffnet das Geld-Journal
+    # (volle Kettenpruefung) und klaert offene Sends, BEVOR er Verkehr annimmt —
+    # ein ``submitted`` ohne Antwort heisst, dass der Vorgaenger abgestuerzt ist,
+    # waehrend Geld unterwegs war. Ein Fehler hier ist ein Boot-Abbruch: ein
+    # armierter Geldpfad ohne verifizierte Kette ist gefaehrlicher als ein
+    # Dienst, der nicht hochkommt.
+    app.state.payment_service = build_payment_service(
+        payment_settings, settings.lightning, app_env=settings.env
     )
+    recover_on_start(app.state.payment_service)
     app.state.session_factory = build_session_factory(settings.db)
 
     # Build analysis components for full-pipeline mode
@@ -431,6 +442,7 @@ def create_app() -> FastAPI:
     app.include_router(diversification.router)
     app.include_router(truth_oracle.router)
     app.include_router(ln_control.router)
+    app.include_router(payments.router)
     app.include_router(node_blitz.router)
     app.include_router(metrics.router)
 
