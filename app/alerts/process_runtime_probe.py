@@ -45,7 +45,12 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
     from app.observability.runtime_provenance import collect_runtime_services
 
     expected = expected_attesting_units(repo_root)
-    services = [s for s in collect_runtime_services() if s.repo_based and s.pid > 0]
+    # ``code_bearing`` statt ``repo_based``: ein Release-Baum traegt bewusst kein
+    # ``.git``, und genau daran hat die Vorgaengerfassung die fuenf korrekt
+    # laufenden Dienste aussortiert — sie wurden zu EXPECTED_UNIT_NOT_RUNNING,
+    # obwohl sie liefen. Das alte Checkout-Weltbild darf hier nicht mehr
+    # entscheiden, WER ueberhaupt beurteilt wird.
+    services = [s for s in collect_runtime_services() if s.code_bearing and s.pid > 0]
     if not services and not expected:
         # Kein systemd, keine erwarteten Units: eine Entwicklungsumgebung. Hier
         # gilt der Vertrag ausdruecklich NICHT — und "nicht anwendbar" ist etwas
@@ -69,10 +74,10 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
     # Release muss seinen eigenen Anspruch noch tragen, sonst ist der Baum
     # nachtraeglich angefasst worden.
     current_path, current_tree = _active_release(repo_root)
-    # Der erwartete Stand ist, WAS DEPLOYT WURDE — nicht, worauf der Checkout
-    # gerade steht. Beides gleichzusetzen hiess, den Checkout mit sich selbst zu
-    # vergleichen: eine Pruefung, die nicht scheitern kann. Auch die Lock-SHA
-    # kommt aus der Deploy-Provenienz, nicht aus einem zweiten Dateihash hier.
+    # SOLL kommt AUSSCHLIESSLICH aus der Deploy-Provenienz — auch Baum und Pfad.
+    # Sie aus dem gerade aktiven Release zu nehmen hiess, das Aktive mit sich
+    # selbst zu vergleichen: deploy koennte TREE_A behaupten, waehrend current
+    # und Prozess beide TREE_B tragen, und die Release-Achse waere trotzdem gruen.
     # Fehlt der Marker, ist der Soll-Stand unbelegt — das ist HOLD, nicht PASS.
     result = evaluate_process_markers(
         observations,
@@ -80,8 +85,17 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
         expected_sha=str(deploy.get("repo_sha") or ""),
         checkout_sha=checkout_sha,
         expected_units=expected,
-        expected_release_tree_sha256=current_tree,
+        expected_release_tree_sha256=str(deploy.get("release_tree_sha256") or ""),
+        expected_release_path=str(deploy.get("release_path") or ""),
         current_release_path=current_path,
+        current_release_tree_sha256=current_tree,
+        # Der Quell-Checkout ist unter dem Release-Modell NICHT mehr die aktive
+        # Wahrheit. `pi_activate_release.sh` schaltet `current` und schreibt den
+        # Deploy-Marker; ein `git reset` des Quellbaums gehoert nicht dazu. Beim
+        # Rollback steht der Checkout deshalb legitim auf NEU, waehrend deployt,
+        # aktiv und laufend alle drei ALT sind — ein Vergleich gegen den Checkout
+        # meldete dort DEPLOYMENT_PROVENANCE_MISMATCH fuer einen korrekten Zustand.
+        checkout_is_authoritative=not current_path,
         expected_lock_sha256=deploy.get("requirements_lock_sha256"),
         deployed_at_utc=deploy.get("deployed_at_utc"),
     )

@@ -22,7 +22,9 @@ from pathlib import Path
 import pytest
 
 from app.observability.process_runtime_marker import (
+    REASON_ACTIVE_RELEASE_NOT_DEPLOYED,
     STATE_CODE_DRIFT,
+    STATE_DEPLOY_PROVENANCE_MISMATCH,
     STATE_MATCH,
     STATE_RELEASE_MISMATCH,
     STATE_UNKNOWN,
@@ -31,6 +33,8 @@ from app.observability.process_runtime_marker import (
     ProcessObservation,
     evaluate_process_markers,
     marker_from_release,
+    render_process_provenance,
+    write_process_marker,
 )
 from app.observability.release_identity import (
     PROBLEM_MANIFEST_MISSING,
@@ -771,3 +775,282 @@ def test_kein_test_veraendert_das_arbeitsverzeichnis_des_workers(tmp_path: Path)
     )
     assert os.getcwd() == vorher
     assert spy.cwd == str(rel), "der Wechsel muss angefordert, nur eben injiziert sein"
+
+
+# --------------------------------------------------------------------------
+# B1 — ein Release-Baum hat kein .git, und das darf ihn nicht unsichtbar machen.
+#
+# Die Vorgaengerfassung filterte die Dienste mit ``s.repo_based``, und
+# ``repo_based`` war genau dann wahr, wenn im Prozess-cwd ein ``.git`` lag. Der
+# Release-Baum traegt bewusst keins. Fuenf korrekt laufende Dienste wurden damit
+# zu fuenf EXPECTED_UNIT_NOT_RUNNING und der erste echte Pi-Deploy dauerhaft rot.
+# --------------------------------------------------------------------------
+
+
+def _fake_systemctl(cwd: str, *, unit: str = "kai-server.service", pid: int = 4711):
+    """Ein Runner, der einen laufenden Dienst mit gegebenem cwd vortaeuscht."""
+
+    def runner(cmd: list[str]) -> str:
+        if cmd[:2] == ["systemctl", "list-units"]:
+            return f"{unit} loaded active running KAI"
+        if "MainPID" in cmd:
+            return str(pid)
+        if "User" in cmd:
+            return "ubuntu"
+        if cmd[:1] == ["readlink"]:
+            return f"{cwd}/.venv/bin/python3" if cmd[-1].endswith("/exe") else cwd
+        return ""
+
+    return runner
+
+
+def test_b1_ein_release_prozess_wird_als_code_tragend_erkannt(tmp_path: Path) -> None:
+    from app.observability.runtime_provenance import collect_runtime_services
+
+    rel = _release(tmp_path, "a" * 40)
+    assert not (rel / ".git").exists()  # das ist der Punkt
+
+    services = collect_runtime_services(runner=_fake_systemctl(str(rel)))
+    assert len(services) == 1
+    s = services[0]
+    assert s.release_based is True
+    assert s.code_bearing is True
+    # Kein Checkout: der HEAD-Vergleich der ALTEN Sonde gilt fuer ihn nicht.
+    assert s.repo_based is False
+    assert s.release_root == str(rel)
+    assert s.repo_sha == "a" * 40
+    assert s.release_tree_sha256 == release_tree_sha256(rel)
+
+
+def test_b1_ein_checkout_prozess_bleibt_checkout_basiert(tmp_path: Path) -> None:
+    """Die Gegenprobe — sonst haette der Fix nur die Klassifikation verschoben."""
+    from app.observability.runtime_provenance import collect_runtime_services
+
+    checkout = tmp_path / "ai_analyst_trading_bot"
+    (checkout / ".git").mkdir(parents=True)
+    (checkout / "requirements.lock").write_text("pkg==1.0\n", encoding="utf-8")
+
+    services = collect_runtime_services(runner=_fake_systemctl(str(checkout)))
+    assert services[0].repo_based is True
+    assert services[0].release_based is False
+    assert services[0].code_bearing is True
+
+
+# --------------------------------------------------------------------------
+# B2 — der Quell-Checkout ist unter dem Release-Modell nicht die aktive Wahrheit.
+# --------------------------------------------------------------------------
+
+
+def test_b2_rollback_mit_stehengebliebenem_quell_checkout_ist_gruen(tmp_path: Path) -> None:
+    """Die reale Rollback-Sequenz, nicht ein gesetzter checkout_sha.
+
+    ``pi_activate_release.sh`` schaltet ``current`` und schreibt den
+    Deploy-Marker — es fasst den Quellbaum NICHT an. Nach einem Rollback steht
+    der Checkout deshalb legitim auf NEU, waehrend deployt, aktiv und laufend
+    alle drei ALT sind. Der Vorgaenger meldete hier DEPLOYMENT_PROVENANCE_MISMATCH.
+    """
+    alt = _release(tmp_path, "a" * 40)
+    neu = _release(tmp_path, "b" * 40)
+    alt_manifest = read_release_manifest(alt)
+    assert alt_manifest is not None
+
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker_for(alt)},
+        expected_sha=alt_manifest.repo_sha,  # Deploy-Marker: ALT
+        checkout_sha=str(neu.name),  # Quell-Checkout: steht auf NEU
+        checkout_is_authoritative=False,  # weil ein Release regiert
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+        expected_release_tree_sha256=alt_manifest.release_tree_sha256,
+        expected_release_path=str(alt),
+        current_release_path=str(alt),
+        current_release_tree_sha256=alt_manifest.release_tree_sha256,
+    )
+    assert p.verdict == VERDICT_OK, render_process_provenance(p)
+
+
+def test_b2_ohne_release_bleibt_der_checkout_massstab(tmp_path: Path) -> None:
+    """Gegenprobe: im Alt-Modell muss der Checkout-Vergleich weiter greifen."""
+    alt = _release(tmp_path, "a" * 40)
+    alt_manifest = read_release_manifest(alt)
+    assert alt_manifest is not None
+
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker_for(alt)},
+        expected_sha=alt_manifest.repo_sha,
+        checkout_sha="c" * 40,
+        checkout_is_authoritative=True,  # kein aktives Release
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+    )
+    assert p.verdict == VERDICT_HOLD
+    assert STATE_DEPLOY_PROVENANCE_MISMATCH in p.reasons
+
+
+# --------------------------------------------------------------------------
+# B3 — der Deploy-Marker ist SSOT, auch fuer Baum und Pfad.
+# --------------------------------------------------------------------------
+
+
+def test_b3_aktives_release_weicht_vom_deploy_marker_ab(tmp_path: Path) -> None:
+    """Jeder Prozess bezeugt sauber SEIN Release — nur hat es niemand deployt.
+
+    Vorher kam das SOLL fuer Baum und Pfad aus dem aktiven Release selbst; der
+    Vergleich konnte deshalb nicht scheitern. deploy fuehrt TREE_A, current und
+    Prozess tragen beide TREE_B — alle Unit-Achsen gruen, und trotzdem laeuft
+    nichts von dem, was deployt wurde.
+    """
+    deployt = _release(tmp_path, "a" * 40)
+    # Anderer INHALT, nicht nur ein anderes Verzeichnis: release_tree_sha256
+    # hasht relative Pfade plus Inhalte, also haben zwei inhaltsgleiche Baeume
+    # denselben Hash — richtig so, aber als Fixture hier wertlos.
+    aktiv = _release(tmp_path, "a" * 40 + "x", code="print('anderer baum')")
+    deployt_m = read_release_manifest(deployt)
+    aktiv_m = read_release_manifest(aktiv)
+    assert deployt_m is not None and aktiv_m is not None
+    assert deployt_m.release_tree_sha256 != aktiv_m.release_tree_sha256
+
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker_for(aktiv)},
+        expected_sha=aktiv_m.repo_sha,
+        checkout_is_authoritative=False,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+        expected_release_tree_sha256=deployt_m.release_tree_sha256,
+        expected_release_path=str(deployt),
+        current_release_path=str(aktiv),
+        current_release_tree_sha256=aktiv_m.release_tree_sha256,
+    )
+    assert p.verdict == VERDICT_HOLD
+    assert REASON_ACTIVE_RELEASE_NOT_DEPLOYED in p.reasons
+    text = render_process_provenance(p)
+    assert "ACTIVE_RELEASE_NOT_DEPLOYED" in text
+
+
+def test_b3_deploy_und_aktiv_einig_ist_gruen(tmp_path: Path) -> None:
+    rel = _release(tmp_path, "a" * 40)
+    m = read_release_manifest(rel)
+    assert m is not None
+    p = evaluate_process_markers(
+        [_obs()],
+        {"kai-server.service": _marker_for(rel)},
+        expected_sha=m.repo_sha,
+        checkout_is_authoritative=False,
+        expected_lock_sha256=LOCK,
+        deployed_at_utc=DEPLOYED,
+        expected_release_tree_sha256=m.release_tree_sha256,
+        expected_release_path=str(rel),
+        current_release_path=str(rel),
+        current_release_tree_sha256=m.release_tree_sha256,
+    )
+    assert p.verdict == VERDICT_OK, render_process_provenance(p)
+
+
+def test_b1_die_sonde_meldet_release_dienste_nicht_als_nicht_laufend(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Der reale Fehlerpfad: laufender Release-Dienst => EXPECTED_UNIT_NOT_RUNNING.
+
+    Nicht der Collector allein, sondern die Kette bis zum Befundtext — genau
+    dort wurde aus fuenf korrekt laufenden Diensten dauerhaft DEPLOY_HOLD.
+    """
+    import app.alerts.process_runtime_probe as probe
+    import app.observability.process_runtime_marker as prm
+    import app.observability.release_identity as ri
+    import app.observability.runtime_provenance as rp
+
+    echt = rp.collect_runtime_services
+
+    rel = _release(tmp_path, "a" * 40)
+    manifest = read_release_manifest(rel)
+    assert manifest is not None
+    _switch(tmp_path, rel)
+
+    state = tmp_path / "state"
+    (state / "artifacts" / "runtime").mkdir(parents=True)
+    (state / "artifacts" / "runtime" / "deployment_marker.json").write_text(
+        json.dumps(
+            {
+                "schema": "deployment_marker/v1",
+                "repo_sha": manifest.repo_sha,
+                "release_path": str(rel),
+                "release_tree_sha256": manifest.release_tree_sha256,
+                "requirements_lock_sha256": LOCK,
+                "deployed_at_utc": DEPLOYED,
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_process_marker(_marker_for(rel), root=state)
+
+    # An der QUELLE patchen: die Sonde importiert diese Namen erst im Funktions-
+    # rumpf, ein Patch am Sondenmodul ginge deshalb ins Leere.
+    monkeypatch.setattr(
+        rp, "collect_runtime_services", lambda: echt(runner=_fake_systemctl(str(rel)))
+    )
+    # Ohne Symlink-Recht (Windows) laesst sich `current` nicht anlegen; dann
+    # bliebe die Release-Achse ungeprueft und der Test waere gruen, ohne etwas
+    # zu zeigen. Aufgeloest wird deshalb injiziert, nicht uebersprungen.
+    monkeypatch.setattr(ri, "resolve_current", lambda link: rel)
+    monkeypatch.setattr(prm, "current_boot_id", lambda: BOOT)
+    monkeypatch.setattr(prm, "proc_start_ticks", lambda pid: 90210)
+    monkeypatch.setattr(probe, "expected_attesting_units", lambda root: ("kai-server.service",))
+    monkeypatch.setattr(probe, "unit_active_enter_utc", lambda unit: STARTED)
+
+    message = probe.process_runtime_finding(state, checkout_sha="c" * 40)
+    assert message is None or "EXPECTED_UNIT_NOT_RUNNING" not in message, message
+
+
+def test_b3_die_sonde_nimmt_soll_baum_und_pfad_aus_dem_deploy_marker(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Verdrahtungsnachweis, nicht nur Logiknachweis.
+
+    B3 war ein Verkabelungsfehler: die Sonde reichte den Baum des AKTIVEN
+    Release als Soll weiter. Damit verglich sie das Aktive mit sich selbst, und
+    ein Deploy-Marker, der etwas ganz anderes fuehrte, fiel nicht auf.
+    """
+    import app.alerts.process_runtime_probe as probe
+    import app.observability.process_runtime_marker as prm
+    import app.observability.release_identity as ri
+    import app.observability.runtime_provenance as rp
+
+    echt = rp.collect_runtime_services
+    aktiv = _release(tmp_path, "a" * 40, code="print('aktiv')")
+    deployt = _release(tmp_path, "b" * 40, code="print('deployt')")
+    aktiv_m, deployt_m = read_release_manifest(aktiv), read_release_manifest(deployt)
+    assert aktiv_m is not None and deployt_m is not None
+    _switch(tmp_path, aktiv)
+
+    state = tmp_path / "state"
+    (state / "artifacts" / "runtime").mkdir(parents=True)
+    (state / "artifacts" / "runtime" / "deployment_marker.json").write_text(
+        json.dumps(
+            {
+                "schema": "deployment_marker/v1",
+                "repo_sha": aktiv_m.repo_sha,  # Commit passt …
+                "release_path": str(deployt),  # … Baum und Pfad nicht
+                "release_tree_sha256": deployt_m.release_tree_sha256,
+                "requirements_lock_sha256": LOCK,
+                "deployed_at_utc": DEPLOYED,
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_process_marker(_marker_for(aktiv), root=state)
+
+    monkeypatch.setattr(
+        rp, "collect_runtime_services", lambda: echt(runner=_fake_systemctl(str(aktiv)))
+    )
+    monkeypatch.setattr(ri, "resolve_current", lambda link: aktiv)
+    monkeypatch.setattr(prm, "current_boot_id", lambda: BOOT)
+    monkeypatch.setattr(prm, "proc_start_ticks", lambda pid: 90210)
+    monkeypatch.setattr(probe, "expected_attesting_units", lambda root: ("kai-server.service",))
+    monkeypatch.setattr(probe, "unit_active_enter_utc", lambda unit: STARTED)
+
+    message = probe.process_runtime_finding(state, checkout_sha="c" * 40)
+    assert message is not None, "aktives Release weicht vom Deploy-Marker ab — das ist HOLD"
+    assert "ACTIVE_RELEASE_NOT_DEPLOYED" in message, message

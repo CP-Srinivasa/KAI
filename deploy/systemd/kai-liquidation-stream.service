@@ -15,8 +15,11 @@ WorkingDirectory=/home/kai/current
 # Kein __pycache__ im versiegelten Baum — sonst versuchte der Interpreter,
 # genau das zu beschreiben, was unveraenderlich sein soll.
 Environment=PYTHONDONTWRITEBYTECODE=1
-Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+# KEIN PYTHONPATH: der Import-Root ist der aufgeloeste Release-Baum, in den
+# der Wrapper vor dem execv wechselt. Ein statischer Pfad hier zeigte in den
+# beweglichen Checkout und haette die Release-Bindung wieder aufgehoben —
+# der Marker haette das Release bezeugt und der Prozess anderen Code geladen.
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 
 # Read-only canary: consumes the FREE public Binance USDT-M futures liquidation
 # stream (wss://fstream.binance.com/ws/!forceOrder@arr, no key) and appends
@@ -29,7 +32,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # behaelt PID und Kernel-Startzeit, also sind Marker und Dienst dieselbe
 # Identitaet. ExecStartPost koennte das nicht: ein zweiter Prozess wuerde
 # einen selbst gelesenen Commit einer fremden MainPID zuschreiben.
-ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.ingestion.liquidations.binance_stream
+ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/.venv/bin/python -m app.ingestion.liquidations.binance_stream
 
 Restart=always
 RestartSec=5

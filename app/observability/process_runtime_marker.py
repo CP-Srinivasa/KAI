@@ -82,6 +82,12 @@ STATE_EXPECTED_UNKNOWN: Final = "EXPECTED_SHA_UNKNOWN"
 STATE_NOT_RUNNING: Final = "EXPECTED_UNIT_NOT_RUNNING"
 STATE_RELEASE_MISMATCH: Final = "RELEASE_IDENTITY_MISMATCH"
 
+#: Kein Zustand einer einzelnen Unit, sondern des Deploys: was `current` aktiv
+#: haelt, ist nicht das, was der Deploy-Marker als deployt fuehrt. Kann auch
+#: dann gelten, wenn JEDER Prozess sauber sein aktives Release bezeugt — dann
+#: laeuft die Flotte geschlossen auf einem Stand, den niemand deployt hat.
+REASON_ACTIVE_RELEASE_NOT_DEPLOYED: Final = "ACTIVE_RELEASE_NOT_DEPLOYED"
+
 #: Zustaende, die niemals als „in Ordnung" durchgehen duerfen.
 NOT_PASSING: Final = frozenset(
     {
@@ -377,7 +383,9 @@ def _one(
     checkout_sha: str,
     deployed_at_utc: str | None,
     expected_release_tree_sha256: str = "",
+    expected_release_path: str = "",
     current_release_path: str = "",
+    checkout_is_authoritative: bool = True,
 ) -> ProcessFinding:
     if marker is None:
         return ProcessFinding(
@@ -403,10 +411,13 @@ def _one(
             code_sha,
             expected_sha,
         )
-    if checkout_sha and checkout_sha != expected_sha:
-        # Der Checkout selbst steht nicht auf dem deployten Stand. Frueher wurde
-        # ``checkout_sha`` auf ``expected_sha`` gesetzt und damit mit sich selbst
-        # verglichen — eine Pruefung, die nicht scheitern konnte.
+    if checkout_is_authoritative and checkout_sha and checkout_sha != expected_sha:
+        # Nur ohne aktives Release ist der Quell-Checkout der Massstab. Regiert
+        # ein Release, ist er es NICHT: `pi_activate_release.sh` schaltet
+        # `current` und schreibt den Deploy-Marker, fasst den Quellbaum aber
+        # nicht an. Beim Rollback steht der Checkout dann legitim auf NEU,
+        # waehrend deployt/aktiv/laufend alle drei ALT sind — dieser Vergleich
+        # meldete dort DEPLOYMENT_PROVENANCE_MISMATCH fuer einen korrekten Zustand.
         return ProcessFinding(
             obs.unit,
             STATE_DEPLOY_PROVENANCE_MISMATCH,
@@ -540,7 +551,10 @@ def evaluate_process_markers(
     deployed_at_utc: str | None = None,
     expected_units: Iterable[str] = (),
     expected_release_tree_sha256: str = "",
+    expected_release_path: str = "",
     current_release_path: str = "",
+    current_release_tree_sha256: str = "",
+    checkout_is_authoritative: bool = True,
 ) -> ProcessProvenance:
     """Rein: aus Marker und Beobachtung ein Urteil. Keine Uhr, kein I/O.
 
@@ -559,7 +573,9 @@ def evaluate_process_markers(
             checkout_sha=checkout_sha,
             deployed_at_utc=deployed_at_utc,
             expected_release_tree_sha256=expected_release_tree_sha256,
+            expected_release_path=expected_release_path,
             current_release_path=current_release_path,
+            checkout_is_authoritative=checkout_is_authoritative,
         )
         for obs in observations
     ) + tuple(
@@ -572,7 +588,29 @@ def evaluate_process_markers(
         for unit in sorted(set(expected_units) - seen)
     )
     matching = sum(1 for f in findings if f.state == STATE_MATCH)
-    reasons = tuple(sorted({f.state for f in findings if not f.passing}))
+    open_reasons = {f.state for f in findings if not f.passing}
+
+    # B3 — der Deploy-Marker ist SSOT, auch fuer Baum und Pfad. Ohne diese Achse
+    # koennte deploy TREE_A fuehren, waehrend `current` und jeder Prozess TREE_B
+    # tragen: alle Unit-Pruefungen gruen, und trotzdem laeuft nichts von dem,
+    # was deployt wurde. Vorher kam das SOLL aus dem aktiven Release selbst —
+    # ein Vergleich des Aktiven mit sich selbst.
+    active_vs_deployed: list[str] = []
+    if expected_release_tree_sha256 and current_release_tree_sha256:
+        if expected_release_tree_sha256 != current_release_tree_sha256:
+            active_vs_deployed.append(
+                f"aktiver Baum {current_release_tree_sha256[:8]} != deployt "
+                f"{expected_release_tree_sha256[:8]}"
+            )
+    if expected_release_path and current_release_path:
+        if os.path.normcase(expected_release_path) != os.path.normcase(current_release_path):
+            active_vs_deployed.append(
+                f"current zeigt auf {current_release_path}, deployt ist {expected_release_path}"
+            )
+    if active_vs_deployed:
+        open_reasons.add(REASON_ACTIVE_RELEASE_NOT_DEPLOYED)
+
+    reasons = tuple(sorted(open_reasons))
     return ProcessProvenance(
         verdict=VERDICT_HOLD if reasons else VERDICT_OK,
         findings=findings,
@@ -584,6 +622,7 @@ def evaluate_process_markers(
             "checkout_sha": checkout_sha,
             "deployed_at_utc": deployed_at_utc,
             "expected_lock_sha256": expected_lock_sha256,
+            "active_vs_deployed": tuple(active_vs_deployed),
         },
     )
 
@@ -595,9 +634,10 @@ def render_process_provenance(p: ProcessProvenance) -> str:
     )
     if p.ok:
         return head + "; jeder laufende Prozess hat seinen Code beim Start bezeugt"
-    return "; ".join(
-        [head] + [f"{f.state} {f.unit}: {f.detail}" for f in p.findings if not f.passing]
-    )
+    lines = [f"{f.state} {f.unit}: {f.detail}" for f in p.findings if not f.passing]
+    for detail in p.detail.get("active_vs_deployed") or ():
+        lines.append(f"{REASON_ACTIVE_RELEASE_NOT_DEPLOYED}: {detail}")
+    return "; ".join([head] + lines)
 
 
 # ── Erhebung (unrein, absichtlich duenn) ────────────────────────────────────
@@ -703,6 +743,7 @@ __all__ = [
     "STATE_INVALID",
     "STATE_MATCH",
     "STATE_NOT_RUNNING",
+    "REASON_ACTIVE_RELEASE_NOT_DEPLOYED",
     "STATE_RELEASE_MISMATCH",
     "STATE_STALE_NO_RESTART",
     "STATE_DEPLOY_PROVENANCE_MISMATCH",
