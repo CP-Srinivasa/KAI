@@ -40,12 +40,12 @@ from typing import Any
 
 import portalocker
 
-from app.lightning.input_contract_rejections import (
+from app.lightning.jsonl_tail import read_recent_jsonl
+from app.lightning.plan_guards import plan_structural_defects
+from app.payments.input_rejections import (
     MoneyInputRejectionAuditError,
     append_money_input_rejection,
 )
-from app.lightning.jsonl_tail import read_recent_jsonl
-from app.lightning.plan_guards import plan_structural_defects
 from app.truth.attestation import compute_attestation
 
 logger = logging.getLogger(__name__)
