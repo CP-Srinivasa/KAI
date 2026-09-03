@@ -22,7 +22,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.payments.enums import PaymentStatus, RailOutcome
+from app.payments.enums import PaymentStatus, RailOutcome, Verdict
 from app.payments.models import Proof
 from app.payments.money import FROZEN, HASH_LENGTH, require_aware
 
@@ -158,6 +158,20 @@ def transition(
     return target
 
 
+def status_for_verdict(verdict: Verdict) -> PaymentStatus:
+    """Welcher Zustand aus einem Policy-Verdikt folgt.
+
+    Steht hier und nicht im Service, weil auch das eine Zustandsvergabe ist.
+    Alles, was NICHT ausdruecklich ALLOW oder REQUIRES_APPROVAL ist, wird
+    ``DENIED`` — ein unbekanntes Verdikt darf nie zu einer Freigabe fuehren.
+    """
+    if verdict is Verdict.ALLOW:
+        return S.AUTHORIZED
+    if verdict is Verdict.REQUIRES_APPROVAL:
+        return S.AWAITING_APPROVAL
+    return S.DENIED
+
+
 def classify_rail_outcome(
     outcome: object,
     *,
@@ -201,5 +215,6 @@ __all__ = [
     "RailEvidence",
     "TransitionEvidence",
     "classify_rail_outcome",
+    "status_for_verdict",
     "transition",
 ]

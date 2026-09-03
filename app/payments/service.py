@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.payment_settings import PaymentSettings
-from app.payments.enums import PaymentMode, PaymentStatus, Verdict
+from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
 from app.payments.idempotency import consume, hash_destination
 from app.payments.journal import PaymentJournal
@@ -45,7 +45,7 @@ from app.payments.service_types import (
     SimulationView,
     Tracked,
 )
-from app.payments.status import TransitionEvidence, transition
+from app.payments.status import TransitionEvidence, status_for_verdict, transition
 
 #: Welcher Rail in welchem Modus arbeitet (ADR §1). SHADOW benutzt denselben
 #: Adapter wie LIVE — read-only; der Unterschied ist nicht der Rail, sondern
@@ -122,7 +122,7 @@ class PaymentService:
             )
             status = transition(
                 PaymentStatus.REQUESTED,
-                self._status_for(decision.verdict),
+                status_for_verdict(decision.verdict),
                 evidence=TransitionEvidence(
                     actor="policy",
                     reason=f"verdict={decision.verdict.value}",
@@ -303,14 +303,6 @@ class PaymentService:
             return await rail.health()
         except RailError:
             return None
-
-    @staticmethod
-    def _status_for(verdict: Verdict) -> PaymentStatus:
-        if verdict is Verdict.ALLOW:
-            return PaymentStatus.AUTHORIZED
-        if verdict is Verdict.REQUIRES_APPROVAL:
-            return PaymentStatus.AWAITING_APPROVAL
-        return PaymentStatus.DENIED
 
     def _dedup_key(self, tracked: Tracked) -> str:
         """Der Schluessel, unter dem der RAIL dedupliziert (ADR §5).
