@@ -186,9 +186,16 @@ def test_der_router_haengt_in_der_app(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = AppSettings(_env_file=None)
     _harness(monkeypatch, settings)
     app = api_main.create_app()
-    paths = {route.path for route in app.routes if hasattr(route, "path")}  # type: ignore[attr-defined]
+    # Bewusst NICHT ueber ``app.routes``: dessen Gestalt haengt an der
+    # Starlette-Major-Version (1.x liefert die per include_router
+    # registrierten Routen dort nicht mehr wie 0.x). Das OpenAPI-Schema ist
+    # die oeffentliche, versionsfeste Wahrheit darueber, was die App bedient.
+    paths = set(app.openapi()["paths"])
     assert "/payments/intents" in paths
     assert "/health/payment" in paths
+    # Und die Wahrheit zweiter Ordnung: ein Aufruf trifft den Router (kein 404).
+    client = TestClient(app)
+    assert client.get("/health/payment").status_code != 404
 
 
 def test_der_simulationsmodus_baut_keinen_lightning_rail() -> None:
