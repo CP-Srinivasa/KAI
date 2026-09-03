@@ -6,5 +6,5 @@ OnFailure=kai-unit-failure-notify@%n.service
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/trading-bot ingestion technical-screen

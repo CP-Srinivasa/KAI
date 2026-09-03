@@ -61,6 +61,9 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
+    # NEO-P-003: without an explicit PIPELINE_PROVIDER the server builds the
+    # primary chain instead of a single provider.
+    monkeypatch.setattr(api_main, "create_primary_provider", lambda: None)
 
     test_app = api_main.create_app()
 
@@ -109,6 +112,9 @@ def test_app_with_api_key_starts_and_auth_middleware_is_active(monkeypatch) -> N
         ),
     )
     monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
+    # NEO-P-003: without an explicit PIPELINE_PROVIDER the server builds the
+    # primary chain instead of a single provider.
+    monkeypatch.setattr(api_main, "create_primary_provider", lambda: None)
 
     test_app = api_main.create_app()
 
@@ -213,6 +219,9 @@ def test_app_lifespan_telegram_poller_is_fail_closed_by_default(monkeypatch) -> 
         type("FakeKE", (), {"from_monitor_dir": staticmethod(lambda _path: "fake-keyword-engine")}),
     )
     monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
+    # NEO-P-003: without an explicit PIPELINE_PROVIDER the server builds the
+    # primary chain instead of a single provider.
+    monkeypatch.setattr(api_main, "create_primary_provider", lambda: None)
     monkeypatch.setattr(api_main, "VoiceTranscriber", lambda **kw: "fake-voice-transcriber")
     monkeypatch.setattr(api_main, "make_context_provider", lambda _sf: None)
 
@@ -330,6 +339,9 @@ def test_app_lifespan_telegram_poller_starts_when_enabled(monkeypatch) -> None:
         type("FakeKE", (), {"from_monitor_dir": staticmethod(lambda _path: "fake-keyword-engine")}),
     )
     monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
+    # NEO-P-003: without an explicit PIPELINE_PROVIDER the server builds the
+    # primary chain instead of a single provider.
+    monkeypatch.setattr(api_main, "create_primary_provider", lambda: None)
     monkeypatch.setattr(api_main, "VoiceTranscriber", lambda **kw: "fake-voice-transcriber")
     monkeypatch.setattr(api_main, "make_context_provider", lambda _sf: None)
 

@@ -1404,6 +1404,7 @@ def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
     ``critical``, nicht ``warning``: ein Dienst auf altem Code macht die Aussage
     „deployt" unwahr.
     """
+    from app.alerts.process_runtime_probe import release_governs
     from app.observability.runtime_provenance import (
         DEFAULT_MARKER_RELPATH,
         collect_runtime_services,
@@ -1416,11 +1417,25 @@ def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
     head = _git_head(repo_root)
     if not head:
         return []  # kein Git-Checkout -> der Vertrag gilt hier nicht
+
+    # Die Abhaengigkeits-Achse gehoert zum Checkout-Modell: sie vergleicht einen
+    # Marker gegen den HEAD des Quellbaums. Regiert ein unveraenderliches
+    # Release, ist der Quell-Checkout nicht mehr die aktive Wahrheit — und der
+    # Lock-Stand ist dort staerker belegt: `release.json` pinnt ihn, der
+    # Deploy-Marker fuehrt ihn, und jeder Prozessmarker traegt ihn.
+    #
+    # Ohne diese Bedingung entstuende ein Dauerbefund: das Skript, das den
+    # `dependency_marker` schrieb (`pi_sync_dependencies.sh`), ist auf der
+    # Mainline geloescht und im Release-Fluss durch `pi_make_release.sh` +
+    # `pi_activate_release.sh` ersetzt. Ein fehlender Marker meldet
+    # "unbelegt, ob je synchronisiert wurde" — alle 60 Minuten, fuer immer.
+    # Genau solche selbstverschuldeten Dauerbefunde haben zwei G8-Akte zerstoert.
+    checkout_axis = not release_governs(repo_root)
     verdict = evaluate_provenance(
         collect_runtime_services(),
         expected_sha=head,
-        marker=read_marker(repo_root / DEFAULT_MARKER_RELPATH),
-        checkout_sha=head,
+        marker=read_marker(repo_root / DEFAULT_MARKER_RELPATH) if checkout_axis else None,
+        checkout_sha=head if checkout_axis else None,
         checkout_lock_sha256=sha256_of(repo_root / "requirements.lock"),
     )
     issues: list[HealthIssue] = []

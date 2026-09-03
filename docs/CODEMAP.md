@@ -48,7 +48,21 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 
 ### Markets / Sources
 - `app/market_data/{momentum,oi_zscore,sentiment,liquidations,coingecko_adapter,binance_adapter}.py` (`binance_adapter.get_ohlcv(start_time_ms=…)` = historischer Backfill-Anker; Payload-Validierung in `_parse_kline_rows`, fail-closed vs NaN/Inf)
-- `app/ingestion/rss/adapter.py` → `RSSFeedAdapter` (published_at via `calendar.timegm`, NICHT `mktime` — TZ-Bug #362) · `app/ingestion/classifier.py` · API-Adapter `app/integration/{cryptopanic,messari}/adapter.py`
+- `app/ingestion/rss/adapter.py` → `RSSFeedAdapter` (published_at via `calendar.timegm`, NICHT `mktime` — TZ-Bug #362) · `app/ingestion/classifier.py` · API-Adapter `app/ingestion/messari/adapter.py` (CryptoPanic-Adapter 2026-09-02 entfernt: nie importiert)
+
+### AI Control Plane (LLM-Aufrufschicht)
+- `app/ai/` → **die Aufruf-Schicht** fuer JEDEN LLM-Call. Besitzt Observability + Ketten-Policy, NICHT Transport und NICHT Provider-Konstruktion. Keine eigene Dependency, kein eigener Prozess, kein eigener Artefakt-Strom.
+  - `app/ai/audit.py` → `llm_call_scope()` (genau EINE Telemetrie-Zeile je Call, Erfolg wie Fehler, reraise immer) · `classify_error()` (geschlossene Taxonomie timeout/rate_limit/auth/quota/schema/refusal/transport/server/cancelled/unknown, duck-typed, wirft nie) · `is_retryable_error()` (Deny-List, speist die `tenacity`-Filter der vier Provider) · `correlation_scope()`/`current_correlation_id()` (ContextVar — die ID darf NICHT durchs Prompt-`context`-dict reisen, das wuerde den Prompt-Text aendern)
+  - `app/ai/health.py` → `ai_health_snapshot()` rein aus dem Telemetriestrom, **keine Probe-Calls**; `state` ist `unknown` bei n=0 (nie `ok`). Endpoint `GET /health/ai` (`app/api/routers/health.py`) — auth-gated wie `/health/timers`, NICHT in der Public-Liste von `app/security/auth.py:298`. `HealthResponse` bleibt unangetastet.
+- `app/analysis/factory.py` → Provider-**Konstruktion**: `create_provider(type, settings)` · `create_primary_provider()` (openai → gemini → (grok), Alias `create_cli_primary_provider`) · `create_shadow_provider()` (anthropic → gemini) · `describe_primary_chain()`/`describe_shadow_chain()` liefern die Namen OHNE Clients zu bauen (Quelle fuer `/health/ai`). Seit NEO-P-003 nutzt auch `app/api/main.py` die Primaerkette; `PIPELINE_PROVIDER` wirkt nur noch als **expliziter** Override (`model_fields_set`).
+- `artifacts/llm_telemetry.jsonl` → **v2** (`app/observability/llm_telemetry.py`): v1-Felder unveraendert an gleicher Stelle + `correlation_id, call_id, purpose, chain_position, attempt, error_class, http_status, prompt_tokens, completion_tokens, outcome`. `chain_position=-1` = aeussere Zeile ueber die ganze Kette, `>=0` = ein Versuch im `EnsembleProvider`. Wer zaehlt, muss deduplizieren (siehe `app/ai/health.py::_load_rows`), sonst zaehlt jeder Ensemble-Call doppelt. `llm_telemetry_summary()` (Dashboard) liest v2 unveraendert.
+- ⚠ **Nicht verwechseln:** `app/intelligence/` (ADR 0015) ist NICHT Teil dieser Schicht — entgegengesetzter Vertrag (fail-closed, „no silent cloud fallback", `influences_execution=false`), synchrones Provider-Interface, Status QUARANTINE.
+
+### Konfiguration / Boot (KAI CORE v1)
+- `app/core/config_redaction.py` → `redacted_config_snapshot(settings)`: effektive Konfiguration ohne Secrets (Fingerprint `(set:xxxxxxxx)`/`(empty)`, URL-userinfo maskiert) + `explicit`-Liste (env-gesetzte Felder je Sektion) — Endpoint `GET /health/config`; bewusst NICHT in `settings.py` (God-File-Ratchet)
+- `app/security/secrets.py::validate_secrets` → fail-closed nur bei `APP_ENV=production` (auf dem Pi bis zur Operator-Umstellung NICHT gesetzt → warn-only); Production verlangt explizites `DB_URL` (`model_fields_set`)
+- `deploy/systemd/*.service` → `EnvironmentFile=` ohne Minus in allen 59 Units (fehlende `.env` = Startverweigerung); Apply auf dem Pi operator-privilegiert (`scripts/pi_apply_systemd_units.sh`)
+- Kern-Doku: `docs/KAI_CORE_V1.md` (8 Schichten → Komponente, KEEP/FIX/MERGE/DELETE/QUARANTINE/DEFER, Deploy-Pfad, Operator-Befehle)
 
 ### Digest / CLI / API / Audit / Regime
 - `scripts/operator_digest.py` (tägl. Telegram-Digest; `collect_*`→`compose_digest_message`; inkl. `collect_edge_discovery` = jüngster `artifacts/research/edge_search_*.json` als 🔎-Sektion) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`

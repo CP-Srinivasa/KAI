@@ -2603,7 +2603,7 @@ def trading_decision_journal_append(
     ),
 ) -> None:
     """Append a validated decision instance to the decision journal."""
-    from app.decisions.journal import (
+    from app.orchestrator.decision_journal import (
         RiskAssessment,
         append_decision_jsonl,
         create_decision_instance,
@@ -2662,7 +2662,7 @@ def trading_decision_journal_summary(
     ),
 ) -> None:
     """Print a read-only summary of the decision journal."""
-    from app.decisions.journal import (
+    from app.orchestrator.decision_journal import (
         build_decision_journal_summary,
         load_decision_journal,
     )

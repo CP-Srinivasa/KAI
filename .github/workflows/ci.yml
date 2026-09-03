@@ -52,22 +52,7 @@ jobs:
     # Bewusst OHNE needs:lint — Tests ist mit Abstand der längste Job (Kritischer
     # Pfad); die Serialisierung hinter Lint kostete ~40s Wallclock pro PR und
     # sparte nur im (seltenen) Lint-Rot-Fall Compute.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: kai_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/kai_test
       APP_ENV: testing
       OPENAI_API_KEY: sk-test-key
       TELEGRAM_ENABLED: "false"
@@ -163,52 +148,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Secrets in tracked files
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 2026-09-02: der Musterkatalog lag als Bash-Schleife hier im Workflow und
+      # kannte fuer GitHub genau EIN Praefix (ghp_). GitHub vergibt sechs; fuenf
+      # fielen durch, darunter gho_ — das Format der GitHub CLI und damit die
+      # Klasse, die auf einer Entwicklermaschine am haeufigsten herumliegt.
+      #
+      # Der Katalog wohnt jetzt in scripts/secret_guard.py, damit CI und Tests
+      # DIESELBE Regel benutzen: eine Wache, deren Muster nur im Workflow stehen,
+      # laesst sich nicht testen, und was sich nicht testen laesst, verrottet.
+      #
+      # Der Guard gibt Funde niemals im Klartext aus — nur Typ, Datei, Zeile und
+      # einen redigierten Praefix. Ein Wachhund, der das gefundene Geheimnis ins
+      # Build-Log schreibt, verlegt das Leck nur.
+      - name: Secrets in tracked files and workspace
         run: |
-          echo "=== Checking for leaked secrets in tracked files ==="
-          FAIL=0
+          echo "=== secret guard: tracked files + CI workspace ==="
+          python scripts/secret_guard.py --tracked --workspace --root .
 
-          # Pattern-based secret detection in all tracked files
-          PATTERNS=(
-            'sk-proj-[A-Za-z0-9_-]{20,}'    # OpenAI keys
-            'sk-[A-Za-z0-9]{40,}'            # OpenAI legacy keys
-            'AIzaSy[A-Za-z0-9_-]{33}'        # Google API keys
-            'pub_[a-f0-9]{20,}'              # NewsData.io keys
-            'xoxb-[0-9]{10,}'               # Slack bot tokens
-            'ghp_[A-Za-z0-9]{36}'            # GitHub PATs
-            'AKIA[A-Z0-9]{16}'              # AWS access keys
-            '[0-9]{8,10}:[A-Za-z0-9_-]{35}'  # Telegram bot tokens
-          )
-
-          # Sanitizer-Tests need realistic-looking fake secrets as fixtures
-          # to verify redaction. They are allowlisted from the guard.
-          EXCLUDE_PATHS=(
-            ':!.github/workflows/ci.yml'
-            ':!tests/unit/test_audit_sanitization.py'
-            ':!tests/unit/test_structured_reasoning.py'
-            ':!tests/unit/test_bayes_journal_sanitize.py'
-          )
-
-          for pat in "${PATTERNS[@]}"; do
-            HITS=$(git grep -lP "$pat" -- "${EXCLUDE_PATHS[@]}" 2>/dev/null || true)
-            if [ -n "$HITS" ]; then
-              echo "FAIL: Pattern '$pat' found in: $HITS"
-              FAIL=1
-            fi
-          done
-
-          # Check no .env files are tracked (allow .env.example as template)
+      - name: No .env files tracked
+        run: |
           ENV_FILES=$(git ls-files '.env' '.env.local' '.env.*.local' '.env.production' '.env.staging' 2>/dev/null || true)
           if [ -n "$ENV_FILES" ]; then
-            echo "FAIL: .env files tracked in git: $ENV_FILES"
-            FAIL=1
-          fi
-
-          if [ "$FAIL" -eq 1 ]; then
-            echo "::error::Secrets or .env files detected in repository!"
+            echo "::error::.env files tracked in git: $ENV_FILES"
             exit 1
           fi
-          echo "OK: No secrets found in tracked files."
+          echo "OK: no .env files tracked."
 
       - name: Gitignore completeness
         run: |

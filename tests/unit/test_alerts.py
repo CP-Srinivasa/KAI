@@ -3,7 +3,6 @@
 Coverage:
 - AlertMessage construction
 - ThresholdEngine.should_alert()
-- DigestCollector add/flush/peek/len
 - Formatters (Telegram + Email) — pure functions
 - TelegramAlertChannel — dry_run mode
 - EmailAlertChannel — dry_run mode
@@ -25,7 +24,6 @@ from app.alerts.audit import load_alert_audits
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
-from app.alerts.digest import DigestCollector
 from app.alerts.formatters import (
     format_email_body,
     format_email_digest_body,
@@ -199,57 +197,6 @@ def test_threshold_borderline():
     # Result should be alert-worthy; exact value depends on formula
     score_result = engine.should_alert(result)
     assert isinstance(score_result, bool)
-
-
-# ── DigestCollector ───────────────────────────────────────────────────────────
-
-
-def test_digest_empty_initially():
-    d = DigestCollector()
-    assert d.is_empty()
-    assert len(d) == 0
-
-
-def test_digest_add_and_len():
-    d = DigestCollector()
-    d.add(_make_alert_msg())
-    assert len(d) == 1
-    assert not d.is_empty()
-
-
-def test_digest_flush_clears():
-    d = DigestCollector()
-    d.add(_make_alert_msg())
-    d.add(_make_alert_msg())
-    messages = d.flush()
-    assert len(messages) == 2
-    assert d.is_empty()
-
-
-def test_digest_peek_does_not_clear():
-    d = DigestCollector()
-    d.add(_make_alert_msg())
-    _ = d.peek()
-    assert not d.is_empty()
-
-
-def test_digest_max_size_drops_oldest():
-    d = DigestCollector(max_size=2)
-    m1 = _make_alert_msg(title="First")
-    m2 = _make_alert_msg(title="Second")
-    m3 = _make_alert_msg(title="Third")
-    d.add(m1)
-    d.add(m2)
-    d.add(m3)  # should drop m1
-    messages = d.flush()
-    assert len(messages) == 2
-    assert messages[0].title == "Second"
-    assert messages[1].title == "Third"
-
-
-def test_digest_invalid_max_size():
-    with pytest.raises(ValueError):
-        DigestCollector(max_size=0)
 
 
 # ── Formatters — Telegram ─────────────────────────────────────────────────────

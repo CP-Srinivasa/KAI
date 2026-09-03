@@ -86,7 +86,7 @@ def validate_json_schema_payload(
 class DBSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", env_file=".env", extra="ignore")
 
-    url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot")
+    url: str = Field(default="sqlite+aiosqlite:///./data/kai.db")  # prod: explicit, see secrets.py
     pool_size: int = Field(default=20)
     max_overflow: int = Field(default=50)
     echo: bool = Field(default=False)

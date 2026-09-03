@@ -10,7 +10,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Step 1 — Scout: füllt monitor/source_proposals.jsonl aus dem Kandidaten-Seed
 # (dedup gegen Registry; Outbound-Probe nur wenn SOURCE_SCOUT_ENABLED=true, sonst

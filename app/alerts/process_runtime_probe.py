@@ -17,6 +17,7 @@ Gibt den Alarmtext zurueck, nicht die ``HealthIssue`` — ``HealthIssue`` wohnt 
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 
@@ -135,6 +136,75 @@ def unit_active_enter_utc(unit: str) -> str:
     )
 
 
+def release_provenance_problems(state_root: Path) -> list[str]:
+    """Alle Luecken in der Release-Beweiskette — leer heisst: vollstaendig belegt.
+
+    Ein vorhandenes ``release.json`` ist KEIN Freifahrtschein. Der alte
+    Abhaengigkeits-Marker darf nur dort entfallen, wo das Release-Modell ihn
+    tatsaechlich ersetzt — und das tut es erst, wenn die Kette geschlossen ist:
+
+        release.json.requirements_lock_sha256
+        == SHA256(<aufgeloestes Release>/requirements.lock)
+        == deployment_marker.requirements_lock_sha256
+
+        release.json.repo_sha == deployment_marker.repo_sha
+
+    Die dritte Stufe, ``process_marker.repo_sha``, prueft
+    :func:`process_runtime_finding` als eigene Achse: dort ist der Soll-Stand der
+    Deploy-Marker, und eine Abweichung ergibt RUNTIME_CODE_DRIFT. Sie hier
+    nochmals zu behaupten, waere eine Zweitmeinung ueber dieselbe Tatsache.
+
+    Fail-closed: jede fehlende oder unlesbare Stufe ist ein Eintrag in dieser
+    Liste, kein stilles Bestehen.
+    """
+    from app.observability.process_runtime_marker import read_deployment_marker
+    from app.observability.release_identity import (
+        read_release_manifest,
+        resolve_current,
+        verify_release,
+    )
+
+    current = resolve_current(state_root.parent / "current")
+    if current is None:
+        return ["RELEASE_NOT_ACTIVE"]
+    problems = list(verify_release(current))
+    manifest = read_release_manifest(current)
+    if manifest is None:
+        return problems + ["RELEASE_MANIFEST_UNREADABLE"]
+
+    lock_path = current / "requirements.lock"
+    try:
+        actual_lock = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    except OSError:
+        problems.append("RELEASE_LOCK_MISSING")
+        actual_lock = ""
+    if actual_lock and actual_lock != manifest.requirements_lock_sha256:
+        problems.append("RELEASE_LOCK_HASH_MISMATCH")
+
+    deploy = read_deployment_marker(state_root)
+    if not deploy:
+        return problems + ["DEPLOY_MARKER_MISSING"]
+    if str(deploy.get("requirements_lock_sha256") or "") != manifest.requirements_lock_sha256:
+        problems.append("DEPLOY_LOCK_MISMATCH")
+    if str(deploy.get("repo_sha") or "") != manifest.repo_sha:
+        problems.append("DEPLOY_REPO_SHA_MISMATCH")
+    return problems
+
+
+def release_governs(state_root: Path) -> bool:
+    """Regiert ein unveraenderliches Release — mit LUECKENLOSEM Beweis?
+
+    Der Unterschied entscheidet, welche Achsen ueberhaupt etwas beweisen. Unter
+    dem Release-Modell ist der Quell-Checkout nicht mehr die aktive Wahrheit; er
+    darf beim Rollback legitim auf NEU stehen, waehrend deployt, aktiv und
+    laufend alle drei ALT sind.
+
+    Regiert wird aber nur bei geschlossener Kette. Jede Luecke laesst den alten
+    Checkout-Vertrag in Kraft — und damit den Befund, statt ihn wegzudefinieren.
+    """
+    return not release_provenance_problems(state_root)
+
+
 def _active_release(state_root: Path) -> tuple[str, str]:
     """``(aufgeloester Release-Pfad, release_tree_sha256)`` — leer, wenn keiner.
 
@@ -186,6 +256,8 @@ def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
 
 __all__ = [
     "expected_attesting_units",
+    "release_governs",
+    "release_provenance_problems",
     "process_runtime_finding",
     "unit_active_enter_utc",
 ]

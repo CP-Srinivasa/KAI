@@ -9,7 +9,7 @@ Type=oneshot
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Das Skript existierte, aber keine Unit rief es auf: unter 52 Timern sicherte
 # keiner (Audit 09.08.). Prae-Reg-Ledger, Attestierungskette und Verdikte lagen

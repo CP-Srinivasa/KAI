@@ -15,6 +15,7 @@ werden kann.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1054,3 +1055,200 @@ def test_b3_die_sonde_nimmt_soll_baum_und_pfad_aus_dem_deploy_marker(
     message = probe.process_runtime_finding(state, checkout_sha="c" * 40)
     assert message is not None, "aktives Release weicht vom Deploy-Marker ab — das ist HOLD"
     assert "ACTIVE_RELEASE_NOT_DEPLOYED" in message, message
+
+
+# --------------------------------------------------------------------------
+# Die Abhaengigkeits-Achse gehoert zum Checkout-Modell.
+#
+# `pi_sync_dependencies.sh` schrieb den `dependency_marker` und ist auf der
+# Mainline geloescht (ersetzt durch den Release-Fluss). Ohne Bedingung meldete
+# `evaluate_dependency_marker(None, ...)` fuer immer "unbelegt, ob je
+# synchronisiert wurde" — ein selbstverschuldeter Dauerbefund, und genau die
+# Klasse, die zwei G8-Akte zerstoert hat.
+# --------------------------------------------------------------------------
+
+
+def test_ohne_release_regiert_der_checkout(tmp_path: Path) -> None:
+    from app.alerts.process_runtime_probe import release_governs
+
+    assert release_governs(tmp_path) is False
+
+
+def test_fehlender_dependency_marker_ist_unter_dem_release_kein_befund(
+    tmp_path: Path,
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """Der entscheidende Regressionstest gegen die Dauer-P0."""
+    from app.observability.runtime_provenance import evaluate_provenance
+
+    # Checkout-Modell: fehlender Marker IST ein Befund.
+    mit_checkout = evaluate_provenance(
+        [], expected_sha="a" * 40, marker=None, checkout_sha="a" * 40, checkout_lock_sha256="l"
+    )
+    assert "DEPENDENCY_DRIFT" in mit_checkout.reasons
+
+    # Release-Modell: die Achse wird gar nicht erst befragt.
+    unter_release = evaluate_provenance(
+        [], expected_sha="a" * 40, marker=None, checkout_sha=None, checkout_lock_sha256="l"
+    )
+    assert "DEPENDENCY_DRIFT" not in unter_release.reasons
+
+
+def test_das_geloeschte_skript_wird_nirgends_mehr_aufgerufen() -> None:
+    """Positivkontrolle zur uebernommenen Loeschung — gemessen, nicht angenommen.
+
+    Gesucht wird die PFADFORM ``scripts/pi_sync_dependencies``, also ein Aufruf.
+    Der blosse Name kommt weiterhin in Erklaertexten vor (hier und in
+    ``health_check.py``, wo begruendet steht, warum die Abhaengigkeits-Achse
+    unter dem Release-Modell schweigt) — eine Erwaehnung ist kein Leser.
+    """
+    assert not (REPO_ROOT / "scripts" / "pi_sync_dependencies.sh").exists()
+    treffer = [
+        f
+        for f in REPO_ROOT.rglob("*")
+        if f.is_file()
+        and f.suffix in {".py", ".sh", ".md", ".service", ".timer", ".yml"}
+        and "node_modules" not in f.parts
+        and ".git" not in f.parts
+        and f != Path(__file__).resolve()  # diese Datei nennt den Pfad in ihrer Zusicherung
+        and "scripts/pi_sync_dependencies" in f.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert treffer == [], f"noch aufgerufen von: {[str(f) for f in treffer]}"
+
+
+# --------------------------------------------------------------------------
+# Die Beweiskette, die den alten Abhaengigkeits-Marker ersetzt.
+#
+# Ein vorhandenes release.json ist KEIN Freifahrtschein. Der Legacy-Marker darf
+# nur dort entfallen, wo das Release-Modell ihn tatsaechlich ersetzt — und das
+# tut es erst bei geschlossener Kette:
+#
+#   release.json.lock == SHA256(release/requirements.lock) == deploy.lock
+#   release.json.repo_sha == deploy.repo_sha
+#
+# Jede Luecke laesst den alten Checkout-Vertrag in Kraft. Fail-closed.
+# --------------------------------------------------------------------------
+
+
+def _deploy_marker(state: Path, manifest, **over) -> None:  # noqa: ANN001
+    doc = {
+        "schema": "deployment_marker/v1",
+        "repo_sha": manifest.repo_sha,
+        "release_path": manifest.release_path,
+        "release_tree_sha256": manifest.release_tree_sha256,
+        "requirements_lock_sha256": manifest.requirements_lock_sha256,
+        "deployed_at_utc": DEPLOYED,
+    }
+    doc.update(over)
+    target = state / "artifacts" / "runtime" / "deployment_marker.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _kette(tmp_path: Path, monkeypatch, **over):  # noqa: ANN001
+    """Vollstaendige, gueltige Kette — Abweichungen ueber ``over``."""
+    from app.alerts import process_runtime_probe as probe
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    rel = _release(tmp_path, "5" * 40)
+    # Der Lock-Hash im Manifest muss den echten Dateiinhalt treffen.
+    manifest = read_release_manifest(rel)
+    assert manifest is not None
+    echt = hashlib.sha256((rel / "requirements.lock").read_bytes()).hexdigest()
+    doc = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    doc["requirements_lock_sha256"] = echt
+    (rel / "release.json").write_text(json.dumps(doc), encoding="utf-8")
+    doc_tree = release_tree_sha256(rel)
+    doc["release_tree_sha256"] = doc_tree
+    (rel / "release.json").write_text(json.dumps(doc), encoding="utf-8")
+    manifest = read_release_manifest(rel)
+    assert manifest is not None
+
+    _deploy_marker(state, manifest, **over)
+    monkeypatch.setattr(probe, "resolve_current", lambda _p: rel, raising=False)
+    monkeypatch.setattr(
+        "app.observability.release_identity.resolve_current", lambda _p: rel, raising=False
+    )
+    return probe, state, rel, manifest
+
+
+def test_kette_vollstaendig_dann_regiert_das_release(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, _rel, _m = _kette(tmp_path, monkeypatch)
+    assert probe.release_provenance_problems(state) == []
+    assert probe.release_governs(state) is True
+
+
+def test_negativ_kein_release_aktiv(tmp_path: Path) -> None:
+    from app.alerts import process_runtime_probe as probe
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    assert "RELEASE_NOT_ACTIVE" in probe.release_provenance_problems(state)
+    assert probe.release_governs(state) is False
+
+
+def test_negativ_release_json_fehlt(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, rel, _m = _kette(tmp_path, monkeypatch)
+    (rel / "release.json").unlink()
+    assert probe.release_governs(state) is False
+
+
+def test_negativ_release_json_unlesbar(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, rel, _m = _kette(tmp_path, monkeypatch)
+    (rel / "release.json").write_text("{kein json", encoding="utf-8")
+    assert probe.release_governs(state) is False
+
+
+def test_negativ_requirements_lock_fehlt(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, rel, _m = _kette(tmp_path, monkeypatch)
+    (rel / "requirements.lock").unlink()
+    probleme = probe.release_provenance_problems(state)
+    assert probe.release_governs(state) is False
+    assert "RELEASE_LOCK_MISSING" in probleme or PROBLEM_TREE_TAMPERED in probleme
+
+
+def test_negativ_lock_hash_weicht_vom_manifest_ab(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, rel, m = _kette(tmp_path, monkeypatch)
+    doc = json.loads((rel / "release.json").read_text(encoding="utf-8"))
+    doc["requirements_lock_sha256"] = "f" * 64
+    (rel / "release.json").write_text(json.dumps(doc), encoding="utf-8")
+    assert probe.release_governs(state) is False
+
+
+def test_negativ_deploy_marker_fehlt(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, _rel, _m = _kette(tmp_path, monkeypatch)
+    (state / "artifacts" / "runtime" / "deployment_marker.json").unlink()
+    assert "DEPLOY_MARKER_MISSING" in probe.release_provenance_problems(state)
+
+
+def test_negativ_deploy_lock_weicht_ab(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, _rel, _m = _kette(tmp_path, monkeypatch, requirements_lock_sha256="e" * 64)
+    assert "DEPLOY_LOCK_MISMATCH" in probe.release_provenance_problems(state)
+
+
+def test_negativ_deploy_repo_sha_weicht_ab(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, _rel, _m = _kette(tmp_path, monkeypatch, repo_sha="d" * 40)
+    assert "DEPLOY_REPO_SHA_MISMATCH" in probe.release_provenance_problems(state)
+
+
+def test_negativ_manipulierter_release_baum(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    probe, state, rel, _m = _kette(tmp_path, monkeypatch)
+    (rel / "app" / "main.py").write_text("print('manipuliert')", encoding="utf-8")
+    assert PROBLEM_TREE_TAMPERED in probe.release_provenance_problems(state)
+    assert probe.release_governs(state) is False
+
+
+def test_bei_gueltiger_kette_entsteht_kein_kuenstlicher_dependency_drift(
+    tmp_path: Path,
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    """Der eigentliche Zweck: der Legacy-Marker darf dann fehlen."""
+    from app.observability.runtime_provenance import evaluate_provenance
+
+    probe, state, _rel, _m = _kette(tmp_path, monkeypatch)
+    assert probe.release_governs(state) is True
+    ohne_achse = evaluate_provenance(
+        [], expected_sha="a" * 40, marker=None, checkout_sha=None, checkout_lock_sha256="l"
+    )
+    assert "DEPENDENCY_DRIFT" not in ohne_achse.reasons

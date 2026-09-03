@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/kai/ai_analyst_trading_bot
 Environment=PYTHONIOENCODING=utf-8
-EnvironmentFile=-/home/kai/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 # Schreibt die Chronik NUR bei Verdikt-Wechsel. Alarmiert und faerbt rot bei
 # FAIL sowie bei INCONCLUSIVE_BY_TIMEOUT (Fenster abgelaufen, n nicht erreicht).
 # IMMATURE ist bis zur Reife der Normalzustand und darf weder alarmieren noch

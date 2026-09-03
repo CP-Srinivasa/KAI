@@ -575,7 +575,7 @@ The repository should evolve into a platform with the following capability layer
 - `app/core/` → settings, logging, domain types, enums, errors, utilities
 - `app/ingestion/` → source adapters, resolvers, registries, schedulers (RSS, TradingView, Telegram MTProto, NewsData, YouTube, X/Twitter)
 - `app/normalization/` → canonical schemas, content cleanup, metadata alignment
-- `app/enrichment/` → entities, tags, language, dedup helpers
+- `app/ai/` → AI-Gateway: die einzige Aufruf-Schicht für LLM-Provider (Fehlerklassifikation, Retry-Filter, Correlation-ID, Tokens, Telemetrie v2, `/health/ai`) — Provider-Konstruktion bleibt `app/analysis/factory.py`
 - `app/analysis/` → keyword logic, DSL, sentiment, scoring, historical comparison, priority-tier gate
 - `app/integrations/` → provider-specific clients and adapters (CoinGecko, Binance, NewsData, YouTube, LLM providers)
 - `app/alerts/` → Telegram, email, alert rules, formatters, provenance persistence, TV-4 bridge, quality-bar

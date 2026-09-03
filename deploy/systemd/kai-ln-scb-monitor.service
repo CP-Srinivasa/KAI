@@ -11,7 +11,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONIOENCODING=utf-8
-EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
 # Read-only SCB inspection plus the local artifacts/scb_baseline.json state.
 # Exit 1 is intentional for missing/changed/stale conditions so systemctl --failed

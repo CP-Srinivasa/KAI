@@ -1,9 +1,11 @@
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
+from app.ai.health import ai_health_snapshot
+from app.core.config_redaction import redacted_config_snapshot
 from app.core.runtime_identity import drift_report, get_runtime_identity
 from app.core.settings import AppSettings, get_settings
 from app.services.timer_health import read_latest_timer_audit
@@ -88,6 +90,38 @@ class TimerHealthResponse(BaseModel):
     inactive: list[TimerHealthInactiveEntry]
 
 
+# NEO-P-005: provider health is a SEPARATE model on a SEPARATE path.
+# HealthResponse stays untouched so no liveness consumer breaks.
+AIProviderState = Literal["ok", "degraded", "down", "unknown"]
+
+
+class AIChain(BaseModel):
+    primary: list[str]
+    shadow: list[str]
+    source: str
+
+
+class AIProviderHealth(BaseModel):
+    name: str
+    configured: bool
+    # "unknown" at n=0 — never "ok" without evidence (No-Fake-Doktrin).
+    state: AIProviderState
+    calls: int
+    failures: int
+    failure_rate_pct: float | None = None
+    latency_p50_ms: float | None = None
+    latency_p95_ms: float | None = None
+    last_ok_ts: str | None = None
+    last_error_class: str | None = None
+    consecutive_failures: int = 0
+
+
+class AIHealthResponse(BaseModel):
+    chain: AIChain
+    window_hours: float
+    providers: list[AIProviderHealth]
+
+
 _RUNTIME_FIELDS = (
     "runtime_commit",
     "checkout_commit",
@@ -126,3 +160,43 @@ async def timer_health(
     audit_file = workspace_root / "artifacts" / "timer_health_audit.jsonl"
     data = read_latest_timer_audit(audit_file)
     return TimerHealthResponse(**data)
+
+
+@router.get("/health/ai", response_model=AIHealthResponse)
+async def ai_health(
+    response: Response,
+    window_hours: float = 24.0,
+    settings: AppSettings = Depends(get_settings),  # noqa: B008
+) -> AIHealthResponse:
+    """Per-provider LLM health derived from the telemetry stream (NEO-P-005).
+
+    Auth: deliberately NOT added to the public path list in
+    ``app/security/auth.py`` (which exempts only ``/health``,
+    ``/health/premium_pipeline``, ``/tradingview/webhook`` and ``/paper``).
+    ``/health/timers`` is auth-gated for the same reason and this endpoint
+    exposes more — chain composition, error classes, latency — so it follows
+    the stricter neighbour, not the public one.
+
+    No probe calls: reads ``artifacts/llm_telemetry.jsonl`` only, so hitting
+    this endpoint costs nothing and cannot fail an upstream provider.
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    snapshot = ai_health_snapshot(window_hours=window_hours, settings=settings)
+    return AIHealthResponse(**snapshot["ai"])
+
+
+@router.get("/health/config")
+async def health_config(
+    settings: AppSettings = Depends(get_settings),  # noqa: B008
+) -> dict[str, Any]:
+    """Effective configuration without secrets (KAI CORE v1, §9 Observability).
+
+    Every field of the settings tree with its effective value; secret-looking
+    fields are replaced by a sha256 fingerprint, URL credentials are masked.
+    ``explicit`` lists per section which fields came from the environment —
+    a critical field missing there is running on a code default.
+    """
+    return redacted_config_snapshot(settings)

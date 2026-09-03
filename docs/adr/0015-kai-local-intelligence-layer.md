@@ -2,6 +2,10 @@
 
 **Status:** ACCEPTED (2026-07-11) · **Kontext-Doku:** `docs/analysis/llm_intelligence_layer_audit_20260711.md` · **Bezug:** ADR 0012 (Truth-Plattform), ADR 0014 (Schichtenkarte/Gates), D-107 (Companion-ML-Entfernung), CLAUDE.md §LLM Integration (:483-485)
 
+## Status 2026-09-02: QUARANTINE
+
+Diese Schicht ist **nicht Teil der AI Control Plane** (`app/ai/`) und wird eingefroren: keine Erweiterung, kein Refactor, keine Verdrahtung in produktive Pfade. Begruendung ist der Vertrag selbst — ADR 0015 verlangt „kein stiller Cloud-Fallback" und erzwingt `influences_execution=false` fail-closed, waehrend die Kernaufgabe der Control Plane genau der stille Fallback fuer wirksame Analysen ist; dazu kommt die technische Inkompatibilitaet (`LLMProvider.complete` ist synchron, `BaseAnalysisProvider.analyze` async). Beides in ein Modul zu legen wuerde die Grenze verwaessern, die dieses ADR gezogen hat. Geloescht wird trotzdem nicht: die Schicht kostet heute nichts (0 Calls, Unit nicht enabled, default-off, Tests gruen), und `core.py` + `audit.py` waren die Vorlage fuer die Fehler-Taxonomie und die Correlation-ID in `app/ai/audit.py` (kopiert, nicht gekoppelt). **Loeschentscheidung:** wenn `KAI_LLM_ENABLED` bis zum Re-Entry nie gesetzt wurde, wird `app/intelligence/` ersatzlos entfernt.
+
 ## 1. Kontext
 
 KAI soll ein lokales LLM (Ollama auf Operator-Hardware; verifiziert: Ollama 0.22.1, `qwen3-coder:30b`, `deepseek-r1:8b`, OpenAI-kompatibler `/v1`-Endpoint) als **austauschbare, vollständig auditierbare Intelligence-Schicht** nutzen können — für read-only-Aufgaben wie Daily-Review-Zusammenfassungen, Anomalie-Erklärungen und Doku-Q&A. KAI Core, Truth Layer, Risk Gates und Execution bleiben deterministisch.

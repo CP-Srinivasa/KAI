@@ -69,7 +69,7 @@ async def append_decision_instance(
     This is an audit-only write. execution_enabled and write_back_allowed remain False.
     No trade is triggered by this call.
     """
-    from app.decisions.journal import (
+    from app.orchestrator.decision_journal import (
         RiskAssessment,
         append_decision_jsonl,
         create_decision_instance,
