@@ -100,3 +100,18 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         "final",
     }
 )
+
+
+class RailOutcome(StrEnum):
+    """Was ein Rail ueber einen Sendeversuch AUSSAGT (ADR §7/§8).
+
+    Vier Werte, keiner davon "Fehler beim Aufruf": ein Timeout oder ein
+    Transportfehler ist keine Aussage des Rails, sondern ihr Ausbleiben — er
+    faellt auf ``UNKNOWN``. Der Bestand hatte fuer beides denselben
+    ``error``-Zustand und musste ihn deshalb widerspruechlich behandeln.
+    """
+
+    SETTLED = "SETTLED"
+    FAILED = "FAILED"
+    IN_FLIGHT = "IN_FLIGHT"
+    UNKNOWN = "UNKNOWN"
