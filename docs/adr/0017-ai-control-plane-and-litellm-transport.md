@@ -166,6 +166,25 @@ getrennt, keine hartkodierten Pfade in einen beweglichen Checkout,
 systemd-Änderungen **vor** dem ersten Restart, vollständig definierter Rollback.
 Keine zweite Deployment-Welt.
 
+**Was das nicht heißt.** Diese Anforderung bindet den *Dienst*, nicht die
+*Entwicklung*. Sie ist bereits so gelesen worden, als müsse der Sprint auf den
+ersten Pi-Cutover warten — dieselbe Art Fehllesart, die dieses ADR bei
+D-CORE-001 korrigiert. Ausdrücklich getrennt:
+
+| | |
+|---|---|
+| Codeentwicklung, lokale Tests, Unit- und Integrationstests | **darf beginnen** |
+| `OFF`-Mode und Shadow-Infrastruktur als Code | **darf beginnen** |
+| Produktivaktivierung auf dem Pi | **HOLD** |
+| realer Shadow-Nachweis auf dem Pi | **HOLD** bis Cutover |
+| `PRIMARY` je Route | **HOLD** bis Graduation |
+
+Der offene Backup-Defekt am Operator-Pfad (`standby_to_usb.sh`, siehe
+[Cutover-Runbook](../deploy/immutable_release_cutover.md)) blockiert den ersten
+produktiven Cutover. Er blockiert keine Transport-Schicht auf einem Git-Branch.
+Andernfalls entstünde ein Deadlock ohne technischen Grund: das Backup-Gate
+blockiert den Deploy, der Deploy blockiert den Code.
+
 ## Konsequenzen
 
 **Positiv:** eine Stelle entscheidet über Policy, Audit, Budget und
