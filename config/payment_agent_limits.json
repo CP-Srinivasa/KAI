@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Agenten-Limits des Payment Control Plane (ADR 0017 §1 Agent-Flow, §6 actor_limits).",
+    "Ein Agent bekommt NIE ein Macaroon; er erzeugt einen Intent und bekommt Status zurueck.",
+    "Ein Actor, der hier nicht steht, wird von der Regel actor_limits abgelehnt —",
+    "die Tabelle ist eine Allowlist, keine Ausnahmeliste."
+  ],
+  "_schema": {
+    "max_amount_sat": "Obergrenze je Einzelzahlung dieses Agenten.",
+    "daily_max_sat": "Tagesbudget dieses Agenten; >= max_amount_sat.",
+    "purposes": "Erlaubte Verwendungszwecke; leer bedeutet KEINEN, nicht ALLE.",
+    "rails": "Erlaubte Rails.",
+    "approval_threshold_sat": "Ab diesem Betrag verlangt dieser Agent zusaetzlich HOTP."
+  },
+  "agents": {
+    "agent:research": {
+      "max_amount_sat": 500,
+      "daily_max_sat": 2000,
+      "purposes": ["data_subscription", "api_credit"],
+      "rails": ["lightning"],
+      "approval_threshold_sat": 250
+    }
+  }
+}

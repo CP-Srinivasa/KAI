@@ -507,6 +507,43 @@ def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
     ]
 
 
+def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
+    """Waechter des Geld-Journals (ADR 0017 §5/§10, Stream-Vertrag G4).
+
+    Ueberwacht wird die KETTE, nicht die Kadenz: der Strom ist
+    ereignisgetrieben und im Default-Modus SIMULATION legitim tagelang still.
+    Eine Freshness-Schwelle waere hier entweder wirkungslos oder ein
+    Daueralarm — beides Formen, die eine Zusage vortaeuschen.
+
+    Ein gebrochenes Geld-Journal ist schlimmer als ein fehlendes: es sieht
+    weiterhin aus wie ein Beweis. Deshalb ``critical``, nicht ``warning``.
+    """
+    from app.payments.journal import PAYMENT_JOURNAL_FILENAME, PaymentJournal
+
+    path = adir / "payments" / PAYMENT_JOURNAL_FILENAME
+    if not path.is_file():
+        return []
+    try:
+        status = PaymentJournal(path).verify_chain()
+    except Exception as exc:  # noqa: BLE001 - eine unlesbare Kette ist der Befund
+        return [
+            HealthIssue(
+                severity="critical",
+                component="payment_journal",
+                message=f"payment journal unreadable: {type(exc).__name__}: {exc}",
+            )
+        ]
+    if status.ok:
+        return []
+    return [
+        HealthIssue(
+            severity="critical",
+            component="payment_journal",
+            message=f"payment journal chain broken: {status.reason}",
+        )
+    ]
+
+
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
     """Append-able hint about paper_execution_audit staleness (V5 secondary signal).
 
@@ -1417,6 +1454,7 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
+    report.issues.extend(_check_payment_journal_chain(adir))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).

@@ -58,6 +58,7 @@ from app.api.routers import (
 )
 from app.core.lightning_settings import validate_lightning_boot
 from app.core.logging import configure_logging, get_logger
+from app.core.payment_settings import get_payment_settings, validate_payment_boot
 from app.core.runtime_identity import (
     ARTIFACT_RELATIVE_PATH,
     REPO_ROOT,
@@ -95,6 +96,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _logger.warning("runtime_identity_unavailable", exc_info=True)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     validate_lightning_boot(settings.lightning)  # fail-closed: abort if LN TLS cert missing/expired
+    # ADR 0017 §11: NACH dem Lightning-Guard, weil der Payment-Guard auf einem
+    # bereits als vertrauenswuerdig erwiesenen Transport aufsetzt. Er prueft die
+    # Macaroon-Scope-Kollision (in JEDEM Modus) und die vier LIVE-Vorbedingungen.
+    validate_payment_boot(
+        get_payment_settings(), app_env=settings.env, lightning=settings.lightning
+    )
     app.state.session_factory = build_session_factory(settings.db)
 
     # Build analysis components for full-pipeline mode
