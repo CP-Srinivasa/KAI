@@ -272,6 +272,57 @@ sonst zeigen neue Units auf ein altes Release.
 
 ---
 
+## Gate vor dem ersten Cutover — der Backup-Vertrag
+
+**Der Cutover ist blockiert, bis dieses Gate steht.** Es blockiert weder das
+Runbook noch den Installer-Guard; es sitzt genau zwischen „Code und Doku fertig"
+und „Pi erstmals umschalten".
+
+Nach dem Cutover existieren **zwei** produktive Code-Welten gleichzeitig:
+
+```
+/home/ubuntu/ai_analyst_trading_bot      55 CHECKOUT_BOUND Units
+/home/ubuntu/current -> releases/<SHA>    5 RELEASE_BOUND Daemons
+```
+
+Ein System-Tier-Backup, das weiterhin nur den Checkout sichert, ist danach kein
+vollständiges „code + .venv"-Backup mehr — und das ist nicht der schlimme Teil.
+Der schlimme Teil ist, dass es **trotzdem erfolgreich endet**. Ein Backup, das
+grün meldet und die Hälfte des laufenden Codes nicht enthält, ist gefährlicher
+als eines, das ausfällt: der Ausfall wird bemerkt.
+
+**Nicht einfach `REPO` von Checkout auf `current` umbiegen.** Das wäre derselbe
+Fehler mit umgekehrtem Vorzeichen — dann fielen die 55 Checkout-Units aus dem
+System-Tier. Der richtige Vertrag nach #848 ist **Checkout UND aktives konkretes
+Release**, nicht entweder/oder. „Konkret" heisst: der aufgelöste Pfad
+`releases/<SHA>`, nicht der Symlink — ein Backup, das den Symlink sichert,
+sichert einen Namen.
+
+Abnahmekriterien:
+
+```
+STANDBY_SYSTEM_BACKUP
+  CHECKOUT_ROOT                          COVERED
+  ACTIVE_RELEASE_PATH  (aufgeloest)      COVERED
+  ACTIVE_RELEASE_VENV                    COVERED
+  release.json                           COVERED
+  deployment_marker.json                 COVERED
+  SYSTEMD_UNIT_STATE                     COVERED / bestehender Vertrag geprueft
+
+FALSE_GREEN_ON_MISSING_ACTIVE_RELEASE    IMPOSSIBLE
+RESTORE_PROOF                            PASS
+```
+
+Die vorletzte Zeile ist die eigentliche Anforderung und keine Formalie: fehlt das
+aktive Release, muss der Lauf **fehlschlagen**, nicht überspringen. Ein
+`[ -d "$X" ] || continue` erfüllt jede der COVERED-Zeilen und verletzt trotzdem
+den Vertrag.
+
+`/usr/local/bin/standby_to_usb.sh` liegt ausserhalb des Repos und gehört dem
+Operator; diese Änderung ist deshalb kein Repo-PR.
+
+---
+
 ## Nicht-Ziele
 
 - **Kein Deploy ohne Operator.** Units anwenden, `daemon-reload` und Restarts
