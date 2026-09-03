@@ -18,6 +18,8 @@ Retry erlaubt ist.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.payments.enums import RailOutcome
@@ -29,6 +31,7 @@ from app.payments.rail import (
     RailCapabilities,
     RailError,
     RailHealth,
+    RailPaymentList,
 )
 
 
@@ -134,3 +137,21 @@ class RailContractTests:
     async def test_invoice_status_of_an_unknown_ref_is_not_settled(self, rail: PaymentRail) -> None:
         status = await rail.invoice_status("e" * 64)
         assert status.settled is False
+
+    # -- Rueckwaerts-Reconciliation (ADR §8) -------------------------------- #
+
+    async def test_list_payments_reports_its_own_window_honesty(self, rail: PaymentRail) -> None:
+        """Ein Rail muss SAGEN, ob er das Zeitfenster einhalten konnte.
+
+        Der Reconciler leitet daraus ab, ob ein unbekannter Send ein echter
+        Waisen-Settlement ist oder nur Node-Historie von vor der Inbetriebnahme.
+        Ein Rail, der ein Fenster nur BEHAUPTET, wuerde jede alte Zahlung als
+        Waise melden — ein Daueralarm am ersten Tag.
+        """
+        listing = await rail.list_payments(datetime(2020, 1, 1, tzinfo=UTC))
+        assert isinstance(listing, RailPaymentList)
+        assert listing.rail == rail.name
+        for payment in listing.payments:
+            assert payment.rail == rail.name
+            assert payment.rail_dedup_key
+            assert payment.observed_at.tzinfo is not None

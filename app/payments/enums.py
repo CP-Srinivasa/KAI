@@ -79,6 +79,12 @@ CounterpartyKind = Literal["ln_node", "ln_invoice", "btc_address", "iban", "inte
 
 #: ADR §9 nennt die Ereignisse abschliessend. Ein Ereignis ausserhalb dieser
 #: Menge waere ein Strom, den kein Leser kennt.
+#:
+#: Zwei Ereignisse kommen aus dem Reconciler hinzu, den §9 noch nicht kannte:
+#: ``receivable_settled`` (die Gegenrichtung des Self-Use-Receivable — ohne sie
+#: haette ein Geldeingang keinen Record, nur eine geaenderte Node-Antwort) und
+#: ``clock_anomaly`` (ein Uhr-Sprung, der Ablauf-Uebergaenge in diesem Lauf
+#: aussetzt — ein unterdrueckter Uebergang ohne Spur waere ein stiller Eingriff).
 AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "intent_created",
@@ -95,6 +101,8 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         "retry_scheduled",
         "reconciled",
         "orphan_settlement",
+        "receivable_settled",
+        "clock_anomaly",
         "expired",
         "cancelled",
         "final",

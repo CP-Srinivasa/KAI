@@ -38,6 +38,8 @@ from app.payments.rail import (
     RailError,
     RailHealth,
     RailLookup,
+    RailPayment,
+    RailPaymentList,
     RailResult,
 )
 
@@ -64,6 +66,7 @@ class SimulationRail:
         #: Feste Zeit fuer reproduzierbare Tests; ``None`` = echte Uhr.
         self._fixed_now = now
         self._inflight: set[str] = set()
+        self._payments: list[RailPayment] = []
         self._invoices: dict[str, Invoice] = {}
         self._settled_invoices: dict[str, datetime] = {}
 
@@ -173,6 +176,7 @@ class SimulationRail:
                 observed_at=moment,
                 raw_status="IN_FLIGHT",
             )
+        self.inject_payment(key, amount=intent.amount_requested)
         return RailResult(
             rail=self.name,
             outcome=RailOutcome.SETTLED,
@@ -206,6 +210,34 @@ class SimulationRail:
             outcome=RailOutcome.UNKNOWN,
             rail_dedup_key=rail_dedup_key,
             observed_at=moment,
+        )
+
+    async def list_payments(self, since: datetime) -> RailPaymentList:
+        """Was dieser Rail bewegt hat — inklusive dem, was KAI nie beauftragt hat.
+
+        Der Simulationsrail fuehrt eine eigene Liste, in die ``pay`` seine
+        Settlements eintraegt und in die ein Test ueber :meth:`inject_payment`
+        eine FREMDE Zahlung legen kann. Ohne diesen Haken haette die
+        Rueckwaerts-Richtung des Reconcilers keinen Ausloeser, und ein
+        Waisen-Settlement waere nur behauptet statt gepruefet.
+        """
+        return RailPaymentList(
+            rail=self.name,
+            payments=tuple(p for p in self._payments if p.observed_at >= since),
+            window_enforced=True,
+            complete=True,
+        )
+
+    def inject_payment(self, rail_dedup_key: str, *, amount: Money | None = None) -> None:
+        """Testhaken: eine Zahlung am Rail, die KEIN Intent begruendet hat."""
+        self._payments.append(
+            RailPayment(
+                rail=self.name,
+                rail_dedup_key=rail_dedup_key,
+                outcome=RailOutcome.SETTLED,
+                observed_at=self._now(),
+                amount_sent=amount,
+            )
         )
 
     async def create_invoice(self, request: InvoiceRequest) -> Invoice:

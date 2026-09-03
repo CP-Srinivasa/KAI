@@ -40,26 +40,23 @@ from app.payments.rail import (
     RailError,
     RailHealth,
     RailLookup,
+    RailPaymentList,
     RailResult,
 )
 from app.payments.rails.lightning_mapping import (
     destination_from_payreq,
     lookup_from_payment,
     normalise_payment_hash,
+    payments_from_rows,
     result_from_send,
     sat,
     sha,
     wallet_is_locked,
 )
+from app.payments.rails.lightning_scan import scan_payments
 
 if TYPE_CHECKING:  # pragma: no cover - nur fuer die Typpruefung
     from app.lightning.client import LndRestClient
-
-#: Seitengroesse und Sicherheitsgrenze der Payment-Suche (Muster
-#: ``reconciliation._scan_all_payments``): eine unbegrenzte Schleife auf dem
-#: Geldpfad ist ein Haenger, kein Ergebnis.
-_PAGE_SIZE = 500
-_MAX_PAGES = 40
 
 
 class LightningRail:
@@ -241,28 +238,46 @@ class LightningRail:
             observed_at=moment,
         )
         try:
-            client = self._client("read")
-            offset = 0
-            for _ in range(_MAX_PAGES):
-                page = await client.list_payments(
-                    include_incomplete=True,
-                    index_offset=offset,
-                    max_payments=_PAGE_SIZE,
-                    reversed=False,
-                    omit_hops=True,
-                )
-                for payment in page.payments:
-                    if payment.payment_hash == wanted:
-                        return lookup_from_payment(payment, rail=self.name, moment=moment)
-                if len(page.payments) < _PAGE_SIZE:
-                    return unknown
-                next_offset = page.next_index_offset
-                if next_offset <= offset:
-                    return unknown
-                offset = next_offset
+            scan = await scan_payments(
+                self._client("read"),
+                include_incomplete=True,
+                keep=lambda row: row.payment_hash == wanted,
+                stop_after_first_hit=True,
+            )
         except Exception:  # noqa: BLE001 - kein Node-Kontakt heisst nicht "nichts da"
             return unknown
-        return unknown
+        if not scan.rows:
+            return unknown
+        return lookup_from_payment(scan.rows[0], rail=self.name, moment=moment)
+
+    async def list_payments(self, since: datetime) -> RailPaymentList:
+        """Alle erfolgreichen Sends, die lnd kennt (ADR §8, Rueckwaerts-Richtung).
+
+        **``since`` kann dieser Rail nicht einhalten, und er sagt das.**
+        ``app/lightning/client.py`` reicht aus ``ListPayments`` nur
+        ``payment_hash``, ``status``, ``failure_reason``, ``value_sat``,
+        ``fee_sat`` und ``payment_index`` durch — kein ``creation_date``. Einen
+        Zeitstempel zu erfinden waere schlimmer als keiner: der Reconciler
+        wuerde ein Fenster ANNEHMEN, das nie geprueft wurde. Stattdessen steht
+        ``window_enforced=False`` in der Antwort, und der Reconciler meldet jede
+        Waise genau einmal — bei der Inbetriebnahme also einmalig die
+        Alt-Historie, danach Ruhe.
+        """
+        moment = datetime.now(UTC)
+        try:
+            scan = await scan_payments(
+                self._client("read"),
+                include_incomplete=False,
+                keep=lambda row: str(row.status).strip().upper() == "SUCCEEDED",
+            )
+        except Exception:  # noqa: BLE001 - kein Node-Kontakt heisst nicht "nichts da"
+            return RailPaymentList(rail=self.name, window_enforced=False, complete=False)
+        return RailPaymentList(
+            rail=self.name,
+            payments=payments_from_rows(scan.rows, rail=self.name, moment=moment),
+            window_enforced=False,
+            complete=scan.complete,
+        )
 
     # -- Empfangen ---------------------------------------------------------- #
 

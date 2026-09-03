@@ -17,7 +17,13 @@ from typing import Any
 
 from app.payments.enums import ProofKind, RailOutcome
 from app.payments.models import Money, PaymentAttempt, Proof
-from app.payments.rail import DecodedDestination, RailError, RailLookup, RailResult
+from app.payments.rail import (
+    DecodedDestination,
+    RailError,
+    RailLookup,
+    RailPayment,
+    RailResult,
+)
 
 #: lnd-Status, die eine EINDEUTIGE Aussage sind. Alles andere ist UNKNOWN.
 _TERMINAL_LND_STATUS = {"SUCCEEDED": RailOutcome.SETTLED, "FAILED": RailOutcome.FAILED}
@@ -142,6 +148,28 @@ def result_from_send(
     )
 
 
+def payments_from_rows(
+    rows: tuple[Any, ...], *, rail: str, moment: datetime
+) -> tuple[RailPayment, ...]:
+    """``ListPayments``-Zeilen als Rueckwaerts-Sicht (ADR §8).
+
+    Kein Zeitstempel: die Zeile traegt keinen, den der Client durchreicht. Der
+    Beobachtungszeitpunkt ist deshalb der des LAUFS, nicht der der Zahlung —
+    und genau deshalb sagt :class:`RailPaymentList` ``window_enforced=False``.
+    """
+    return tuple(
+        RailPayment(
+            rail=rail,
+            rail_dedup_key=row.payment_hash,
+            outcome=RailOutcome.SETTLED,
+            observed_at=moment,
+            amount_sent=sat(row.value_sat),
+            fee_actual=sat(row.fee_sat),
+        )
+        for row in rows
+    )
+
+
 def lookup_from_payment(payment: Any, *, rail: str, moment: datetime) -> RailLookup:
     """Ein ``ListPayments``-Eintrag wird zu einer Aussage — oder zu keiner."""
     status = str(payment.status).strip().upper()
@@ -169,6 +197,7 @@ __all__ = [
     "destination_from_payreq",
     "lookup_from_payment",
     "normalise_payment_hash",
+    "payments_from_rows",
     "result_from_send",
     "sat",
     "sha",

@@ -183,6 +183,52 @@ class RailLookup(BaseModel):
         return require_aware(value, "observed_at")
 
 
+class RailPayment(BaseModel):
+    """Eine Zahlung, die der RAIL kennt — Grundlage der Rueckwaerts-Richtung (ADR §8).
+
+    Bewusst schmaler als :class:`RailLookup`: hier wird nicht nach einem
+    bekannten Schluessel gefragt, sondern aufgezaehlt, was der Rail bewegt hat.
+    Was davon KAI nie beauftragt hat, ist ein Waisen-Settlement.
+    """
+
+    model_config = FROZEN
+
+    rail: str = Field(min_length=1, max_length=32)
+    rail_dedup_key: str = Field(min_length=1, max_length=HASH_LENGTH)
+    outcome: RailOutcome
+    observed_at: datetime
+    amount_sent: Money | None = None
+    fee_actual: Money | None = None
+
+    @field_validator("observed_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        return require_aware(value, "observed_at")
+
+
+class RailPaymentList(BaseModel):
+    """Was der Rail im Fenster aufzaehlen konnte — und wie ehrlich das ist.
+
+    ``window_enforced=False`` heisst: der Rail konnte ``since`` NICHT anwenden
+    (lnd liefert in ``ListPayments`` keinen Zeitstempel, den
+    ``app/lightning/client.py`` durchreicht). Der Reconciler muss dann damit
+    rechnen, dass auch Historie von VOR der Inbetriebnahme des Journals
+    auftaucht — er meldet jede Waise genau einmal, statt sie zu unterschlagen
+    oder bei jedem Lauf neu zu melden.
+
+    ``complete=False`` heisst: die Aufzaehlung wurde durch eine Seitengrenze
+    abgeschnitten. Ein "keine Waisen" auf einer abgeschnittenen Liste ist keine
+    Zusage, und der Report sagt das.
+    """
+
+    model_config = FROZEN
+
+    rail: str = Field(min_length=1, max_length=32)
+    payments: tuple[RailPayment, ...] = ()
+    window_enforced: bool = False
+    complete: bool = True
+
+
 class InvoiceRequest(BaseModel):
     """Eine Forderung, die KAI ausstellen will (Self-Use-Receivable, ADR §1)."""
 
@@ -235,6 +281,8 @@ class PaymentRail(Protocol):
 
     async def lookup(self, rail_dedup_key: str) -> RailLookup: ...
 
+    async def list_payments(self, since: datetime) -> RailPaymentList: ...
+
     async def create_invoice(self, request: InvoiceRequest) -> Invoice: ...
 
     async def invoice_status(self, ref_hash: str) -> InvoiceStatus: ...
@@ -261,5 +309,7 @@ __all__ = [
     "RailError",
     "RailHealth",
     "RailLookup",
+    "RailPayment",
+    "RailPaymentList",
     "RailResult",
 ]

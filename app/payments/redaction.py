@@ -68,6 +68,10 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "memo_hash",
         "route_hint_hash",
         "invoice_ref_hash",
+        # Die eigene Bestellreferenz des Self-Use-Receivable. Sie ist KAIs
+        # eigener Vorgang, kein Rail-Material — ohne sie waere ein Geldeingang
+        # zwar belegt, aber keiner Leistung zuzuordnen.
+        "order_ref",
         "proof_hash",
         "rail_dedup_key",
         "proof_kind",
@@ -76,6 +80,8 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "attempt_no",
         "estimate_source",
         "observed_status",
+        "window_enforced",
+        "clock_skew_s",
         "evidence_source",
         "failure_reason",
         "approval_counter",
