@@ -1,3 +1,21 @@
+## 2026-09-03 - KAI SOVEREIGN VALUE-OS v0.1: Payment Control Plane, Lightning als erster Rail
+
+Neue Domaene `app/payments/` (ADR 0018, D-CORE-002): providerunabhaengiges Domaenenmodell (vier Betraege
+getrennt, kein float, keine Rail-Felder), State Machine mit genau einer Vergabestelle und Beweislast
+(Unbekannt = RECONCILIATION_REQUIRED, nie FAILED), hash-verkettetes Write-ahead-Geldjournal mit
+Interprozess-Lock und Redaktion, Idempotenz im Journal (kein Evict), deterministische Policy-Kette
+(erste DENY gewinnt, Exception = DENY, harter Tages-Cap, Fee-Limit Pflicht, Destination-Allowlist,
+Agent-Limits, Node-Health), Rail-Interface mit `RailCapabilities` (Finalitaet, Reversal, Dedup,
+Inflight-Fenster), SimulationRail + LightningRail (Timeout = UNKNOWN, LIVE ist ein Tor),
+PaymentService (Write-ahead vor dem Send, kein zweiter Versuch, `recover()` beim Start),
+Reconciliation in beide Richtungen inkl. Receivables und Uhr-Sprung-Guard im bestehenden
+`kai-ln-reconcile.timer`, `/health/payment` (kein Gruen ohne Beweis), `/payments/*` (sieben
+Endpunkte, Idempotency-Key Pflicht, HOTP fuer execute), `ln_control.pay_invoice` delegiert an den
+Control Plane, drei Geld-Journale im Backup. Tests: Merchant-Self-Use-E2E, Agent-E2E, die 15 Faelle
+aus der Failure-Injection-Matrix (jeder mit `rail.pay` <= 1 und sauberem Journal). Fiat/SEPA/PSP nur
+als Architektur (`docs/PAYMENT_FIAT_BRIDGE_ARCHITECTURE.md`, DESIGNED). Realer Node-Test: noch nicht
+durchgefuehrt (Operator-Freigabe fuer 1.000 sat liegt vor, Fenster im Runbook beschrieben).
+
 ## 2026-09-02 - KAI CORE v1: ein Kern, ein AI-Gateway, -18.714 Zeilen
 
 Reformations-Sprint (D-CORE-001, `docs/KAI_CORE_V1.md`). Vier LLM-Pfade werden eine Aufruf-Schicht
