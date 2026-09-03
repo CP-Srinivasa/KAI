@@ -69,7 +69,25 @@ AGG_TOKENS = frozenset(
     }
 )
 DECO_TOKENS = frozenset(
-    {"decomposition", "assessment", "cells", "diagnostics", "concentration", "flags"}
+    {
+        "decomposition",
+        "assessment",
+        "cells",
+        "diagnostics",
+        "concentration",
+        "flags",
+        # STAB-2026-09-01 §29. Das Vokabular ist aelter als der Provenienz-
+        # Vertrag. Eine Kennzahl, die ihren ZAEHLER und ihren NENNER mitliefert,
+        # ist zerlegt — staerker als eine ``by_``-praefigierte Gruppentabelle,
+        # denn sie macht die Grundgesamtheit selbst pruefbar. Genau das verlangt
+        # die Direktive vom 2026-08-08.
+        #
+        # Das ist KEINE Aufweichung: ``test_bare_aggregate_is_still_caught``
+        # unten beweist, dass ein Aggregat ohne diese Felder weiterhin faellt.
+        "numerator",
+        "denominator",
+        "population",
+    }
 )
 DECO_PREFIXES = ("by_", "per_", "without_", "leave_one")
 
@@ -299,3 +317,28 @@ def from_dict(d):
     return {"mean_net_bps": d["mean_net_bps"]}
 """
     assert scan_source(src, "x.py") == set()
+
+
+def test_bare_aggregate_is_still_caught() -> None:
+    """POSITIVKONTROLLE fuer das erweiterte Vokabular.
+
+    Ohne diese Kontrolle waere nicht zu unterscheiden, ob der Ratchet gruen ist,
+    weil nichts fehlt — oder weil er nach der Erweiterung nichts mehr sieht.
+    """
+    source = "def emit():\n    return {'hit_rate_pct': 73.49, 'precision_pct': 72.41}\n"
+    assert scan_source(source, "app/fake.py") == {"app/fake.py::emit"}
+
+
+def test_numerator_and_denominator_count_as_decomposition() -> None:
+    """NEGATIVKONTROLLE: dieselbe Kennzahl MIT Zerlegung faellt nicht mehr."""
+    source = (
+        "def emit():\n    return {'hit_rate_pct': 73.49, 'numerator': 122, 'denominator': 166}\n"
+    )
+    assert scan_source(source, "app/fake.py") == set()
+
+
+def test_a_population_id_alone_also_satisfies_the_rule() -> None:
+    source = (
+        "def emit():\n    return {'precision_pct': 73.49, 'population_id': 'resolved_all_time'}\n"
+    )
+    assert scan_source(source, "app/fake.py") == set()

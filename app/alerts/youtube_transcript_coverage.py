@@ -226,17 +226,112 @@ def render_message(verdict: CoverageVerdict, *, window_hours: int = COVERAGE_WIN
 #: Er ist KEIN Grund — steht nur er da, ist gar keiner aufgezeichnet.
 NO_REASON_RECORDED = "(nicht aufgezeichnet)"
 
+#: STAB-2026-09-01 §16 — der ZWEITE Platzhalter, und der eigentliche Punkt.
+#:
+#: ``transcript_status`` existiert erst seit #814 (7ea4637e, auf dem Pi
+#: fast-forward um 2026-08-31T13:47:12Z). Jede Zeile davor traegt das Feld
+#: ueberhaupt nicht — nicht ``null``, sondern abwesend. Gemessen am 2026-09-01
+#: auf dem Pi ueber alle 2675 YouTube-Dokumente:
+#:
+#:     Feld vorhanden:  15   fetched_at 2026-08-31 14:07:20 .. 2026-09-01 10:15:55
+#:     Feld abwesend: 2660   fetched_at 2026-04-04 15:10:54 .. 2026-08-31 12:11:23
+#:     Feld vorhanden aber NULL: 0
+#:
+#: Die beiden Mengen beruehren sich nicht, und der Schnitt liegt exakt am Deploy.
+#: Ein Altbestand, der von selbst aus dem 24h-Fenster faellt, und ein neuer
+#: Schreibpfad ohne Grund sind voellig verschiedene Befunde — die Meldung sagte
+#: fuer beide dasselbe ("+4 Zeilen ohne Grund"), weshalb dieser Fall ueberhaupt
+#: forensisch aufgeklaert werden musste.
+#:
+#: Die Epoche ist eine KONSTANTE aus dem Deploy, nicht ``min(fetched_at)`` der
+#: Zeilen mit Feld: letzteres wuerde sich mitbewegen und genau den Fehler
+#: verstecken, den es fangen soll.
+TRANSCRIPT_STATUS_EPOCH_UTC = "2026-08-31T13:47:12+00:00"
+
+#: Zeilen VOR der Epoche: erklaerbarer, schrumpfender Altbestand.
+NO_REASON_PRE_INSTRUMENTATION = "(vor Instrumentierung)"
+
+#: Die vom Vertrag geforderte Taxonomie. Die Pipeline schreibt historisch
+#: gewachsene Strings; hier werden sie auf die Klassen abgebildet, ohne die
+#: Rohwerte umzuschreiben (der Rohwert bleibt in der Meldung sichtbar).
+TRANSCRIPT_REASON_TAXONOMY: dict[str, str] = {
+    "ok": "SUCCESS",
+    "found": "SUCCESS",
+    "error:IpBlocked": "IP_BLOCKED",
+    "transcripts_disabled": "TRANSCRIPTS_DISABLED",
+    "error:VideoUnplayable": "VIDEO_UNPLAYABLE",
+    "none_found": "NO_TRANSCRIPT_FOUND",
+    "error:Timeout": "TIMEOUT",
+    "error:ReadTimeout": "TIMEOUT",
+    "error:ConnectTimeout": "TIMEOUT",
+}
+
+
+def classify_transcript_reason(raw: str) -> str:
+    """Map a recorded ``transcript_status`` onto the contract taxonomy.
+
+    Fail-CLOSED in the honest direction: an unmapped value is never silently
+    dropped and never guessed at — it becomes ``API_ERROR`` when it names an
+    exception, ``PARSER_ERROR`` when it names a parse failure, and
+    ``UNKNOWN_ERROR`` otherwise. There is no blank outcome.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return "UNKNOWN_ERROR"
+    if value in (NO_REASON_RECORDED, NO_REASON_PRE_INSTRUMENTATION):
+        return "UNKNOWN_ERROR"
+    if value in TRANSCRIPT_REASON_TAXONOMY:
+        return TRANSCRIPT_REASON_TAXONOMY[value]
+    lowered = value.lower()
+    if "timeout" in lowered:
+        return "TIMEOUT"
+    if "parse" in lowered or "decode" in lowered or "json" in lowered:
+        return "PARSER_ERROR"
+    if value.startswith("error:"):
+        return "API_ERROR"
+    return "UNKNOWN_ERROR"
+
+
+_PLACEHOLDERS = (NO_REASON_RECORDED, NO_REASON_PRE_INSTRUMENTATION)
+
 
 def _render_reasons(verdict: CoverageVerdict) -> str:
-    """Der aufgezeichnete Grund — oder das ehrliche Eingestaendnis, dass keiner da ist."""
-    named_reasons = [kv for kv in verdict.by_status if kv[0] != NO_REASON_RECORDED]
-    if not named_reasons:
+    """Der aufgezeichnete Grund — und, getrennt davon, was noch keinen hat.
+
+    STAB-2026-09-01 §16: die beiden grundlosen Faelle werden nicht mehr in einen
+    Topf geworfen. Ein Altbestand von vor der Instrumentierung ist erklaert und
+    schrumpft von selbst; eine Zeile OHNE Grund NACH der Instrumentierung ist ein
+    echter Defekt im Schreibpfad und muss laut werden.
+    """
+    named_reasons = [kv for kv in verdict.by_status if kv[0] not in _PLACEHOLDERS]
+    pre = next((c for r, c in verdict.by_status if r == NO_REASON_PRE_INSTRUMENTATION), 0)
+    unrecorded = next((c for r, c in verdict.by_status if r == NO_REASON_RECORDED), 0)
+
+    if not named_reasons and not pre and not unrecorded:
         return (
             "kein Grund aufgezeichnet (youtube_meta.transcript_status leer) — "
             "Ursache aus den Ingest-Logs belegen, NICHT durch neue Abrufe messen "
             "(das hat am 2026-08-28 den IP-Block ausgeloest)"
         )
-    named = ", ".join(f"{reason} {count}x" for reason, count in named_reasons[:4])
-    missing = next((c for r, c in verdict.by_status if r == NO_REASON_RECORDED), 0)
-    tail = f" (+{missing} Zeilen ohne Grund)" if missing else ""
-    return f"aufgezeichneter Grund: {named}{tail}"
+
+    parts: list[str] = []
+    if named_reasons:
+        named = ", ".join(
+            f"{reason} {count}x [{classify_transcript_reason(reason)}]"
+            for reason, count in named_reasons[:4]
+        )
+        parts.append(f"aufgezeichneter Grund: {named}")
+    if pre:
+        parts.append(
+            f"{pre} Zeile(n) von vor der Instrumentierung "
+            f"({TRANSCRIPT_STATUS_EPOCH_UTC[:16]}Z, #814) — erklaerter Altbestand, "
+            f"faellt von selbst aus dem Fenster"
+        )
+    if unrecorded:
+        # This one is a DEFECT, not a remnant: the field existed when the row was
+        # written and the writer left it empty anyway.
+        parts.append(
+            f"DEFEKT: {unrecorded} Zeile(n) NACH der Instrumentierung ohne Grund — "
+            f"ein Schreibpfad setzt transcript_status nicht"
+        )
+    return "; ".join(parts)

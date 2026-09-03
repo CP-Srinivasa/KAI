@@ -407,6 +407,28 @@ def collect_truth_lint(report_path: Path | None = None) -> dict[str, Any] | None
     return rows[-1] if rows else None
 
 
+def _read_ledger_records(path: Path) -> list[dict[str, Any]]:
+    """All ledger rows, tolerant of a truncated tail. Read-only."""
+    import json
+
+    out: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    out.append(row)
+    except OSError:
+        return []
+    return out
+
+
 def collect_truth_anchor(
     ledger_path: Path | None = None, proofs_dir: Path | None = None
 ) -> dict[str, Any] | None:
@@ -427,12 +449,60 @@ def collect_truth_anchor(
         verify = verify_ledger(path)
         proofs = proofs_dir if proofs_dir is not None else Path(IntegritySettings().proofs_dir)
         proof = proofs / f"truthledger-{str(tip['record_hash'])[:16]}.ots"
+
+        # STAB-2026-09-01 §23 — FOUR DIFFERENT QUANTITIES, one line.
+        #
+        # The digest rendered "seq {tip_seq} ({records} Records)" and a boolean
+        # "Tip OTS-verankert". Three problems hid behind that:
+        #
+        # 1. tip_seq and records are the SAME number by construction — the
+        #    verifier rejects seq gaps, so records == tip_seq whenever chain_ok.
+        #    Printing both suggested two independent measurements.
+        # 2. The number the operator cares about is a third one nobody printed:
+        #    the last SUBSTANTIVE verdict. Live right now the tip is seq 115, a
+        #    canonical_edge_report appended by a daily timer, while the last
+        #    verdict is seq 114. Reading 115 as "the latest verdict" is wrong.
+        # 3. "Tip OTS-verankert" was a deterministic green. kai-truth-anchor
+        #    anchors the tip at 04:35 UTC; kai-canonical-edge-attest appends a
+        #    NEW record at 06:20 UTC and invalidates that anchor immediately. The
+        #    tip is unanchored for ~93% of every day, and the digest fires inside
+        #    the short anchored window — so the one consumer built to catch a
+        #    silently-failing anchor was scheduled where it could not see it.
+        #
+        # Reporting the LATEST ANCHORED seq instead of a bare boolean turns that
+        # into an honest, useful statement: "tip 115 not anchored, newest anchor
+        # at seq 114" is information; "⚠️ Tip NICHT verankert" alone is noise
+        # every day between 06:20 and 04:35.
+        records = _read_ledger_records(path)
+        last_verdict_seq = None
+        for rec in reversed(records):
+            if rec.get("kind") == "verdict":
+                last_verdict_seq = int(rec.get("seq") or 0)
+                break
+        latest_anchor_seq = None
+        latest_anchor_hash = None
+        for rec in reversed(records):
+            rec_hash = str(rec.get("record_hash") or "")
+            if not rec_hash:
+                continue
+            if (proofs / f"truthledger-{rec_hash[:16]}.ots").exists():
+                latest_anchor_seq = int(rec.get("seq") or 0)
+                latest_anchor_hash = rec_hash
+                break
+
+        tip_seq = int(tip["seq"])
         return {
             "available": True,
-            "tip_seq": int(tip["seq"]),
+            "tip_seq": tip_seq,
             "records": int(verify["records"]),
             "chain_ok": bool(verify["ok"]),
             "tip_anchored": proof.exists(),
+            "last_verdict_seq": last_verdict_seq,
+            "latest_ots_anchored_seq": latest_anchor_seq,
+            "latest_ots_anchored_hash": latest_anchor_hash,
+            "anchor_lag_records": (
+                None if latest_anchor_seq is None else max(0, tip_seq - latest_anchor_seq)
+            ),
         }
     except Exception:  # noqa: BLE001 — Digest darf nie am Collector sterben
         return None
@@ -874,14 +944,30 @@ def compose_digest_message(
     elif not truth_anchor.get("available"):
         lines.append("⚓ *Truth-Anchor:* kein Ledger gefunden")
     else:
-        ta_chain = "Kette ok" if truth_anchor.get("chain_ok") else "🛑 KETTE GEBROCHEN"
-        ta_anchor = (
-            "Tip OTS-verankert" if truth_anchor.get("tip_anchored") else "⚠️ Tip NICHT verankert"
-        )
-        lines.append(
-            f"⚓ *Truth-Anchor:* seq {truth_anchor.get('tip_seq')} "
-            f"({truth_anchor.get('records')} Records) · {ta_chain} · {ta_anchor}"
-        )
+        ta_chain = "gueltig" if truth_anchor.get("chain_ok") else "🛑 KETTE GEBROCHEN"
+        tip_seq = truth_anchor.get("tip_seq")
+        records = truth_anchor.get("records")
+        verdict_seq = truth_anchor.get("last_verdict_seq")
+        anchor_seq = truth_anchor.get("latest_ots_anchored_seq")
+        anchor_hash = truth_anchor.get("latest_ots_anchored_hash")
+        lag = truth_anchor.get("anchor_lag_records")
+
+        # §23: the tip, the record count, the last substantive verdict and the
+        # OTS anchor are four separate facts and are printed as four.
+        lines.append(f"⚓ *Truth-Kette:* {ta_chain} · tip seq {tip_seq} · {records} Records")
+        if verdict_seq is not None and verdict_seq != tip_seq:
+            lines.append(f"   Letztes inhaltliches Verdikt: seq {verdict_seq}")
+        elif verdict_seq is not None:
+            lines.append(f"   Letztes inhaltliches Verdikt: seq {verdict_seq} (= Tip)")
+        if anchor_seq is None:
+            lines.append("   OTS-Anker: keiner vorhanden")
+        elif truth_anchor.get("tip_anchored"):
+            lines.append(f"   OTS-Anker: seq {anchor_seq} / {str(anchor_hash)[:16]} (= Tip)")
+        else:
+            lines.append(
+                f"   OTS-Anker: seq {anchor_seq} / {str(anchor_hash)[:16]} — "
+                f"Tip liegt {lag} Record(s) davor"
+            )
 
     # Asset-Rotation (PR-5, Plan 08-08): Diagnose war wochenlang unsichtbar.
     if asset_rotation is not None:

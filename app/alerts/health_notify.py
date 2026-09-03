@@ -32,15 +32,20 @@ import asyncio
 import hashlib
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 __all__ = [
+    "HEALTH_NOTIFY_FINDING_STATE_FILE",
     "HEALTH_NOTIFY_STATE_FILE",
     "build_health_alert_text",
+    "build_recovery_text",
     "dispatch_health_notification",
+    "finding_id_for",
     "issues_fingerprint",
     "reassert_minutes_for",
+    "resolve_recoveries",
 ]
 
 HEALTH_NOTIFY_STATE_FILE = Path("artifacts") / ".health_check_last_notification"
@@ -73,6 +78,145 @@ _RECOVERY_TEXT = (
     "KAI Health Alert — behoben\nAlle vorher gemeldeten Befunde sind aufgelöst; "
     "der Health-Check läuft ohne Beanstandung."
 )
+
+# ---------------------------------------------------------------------------
+# STAB-2026-09-01 §7 — PER-FINDING RECOVERY
+# ---------------------------------------------------------------------------
+# There WAS a recovery message, but only when the finding set became entirely
+# empty. Any finding that cleared while another remained simply vanished from the
+# channel without a word.
+#
+# That is not hypothetical. On 2026-09-01 the CRITICAL finding
+# ``privilege_broker`` cleared at 10:21 when the #838 deploy installed the
+# matching binary. The set went from {privilege_broker, youtube_transcript_coverage}
+# to {youtube_transcript_coverage} — non-empty, so the code took the "set changed"
+# path and sent a fresh alert. The operator was never told that the CRITICAL had
+# been resolved; they had to infer it from its absence. An alarm that stops
+# without saying so trains people to ignore absence, which is the same fatigue
+# this module was built to prevent, arriving from the other side.
+#
+# The set-level fingerprint stays as the anti-spam gate. Recovery is now tracked
+# per finding, so a resolution is announced exactly once, when it happens.
+HEALTH_NOTIFY_FINDING_STATE_FILE = Path("artifacts") / ".health_check_finding_state.json"
+
+
+def finding_id_for(issue: Any) -> str:
+    """Stable identity of ONE finding: the COMPONENT.
+
+    Deliberately not the message text — it carries ages and counters that change
+    on every run, so a text-keyed identity would report a fresh finding and an
+    instant recovery every few minutes.
+
+    Deliberately not ``severity:component`` either, which is what the set
+    fingerprint uses. Severity belongs to the episode, not to the identity: a
+    warning that escalates to critical is the SAME problem getting worse, and
+    keying on severity would announce "✅ RECOVERED" for the warning in the very
+    moment the situation deteriorated. Severity is carried as ``last_severity``
+    so an escalation is still visible without being mistaken for a resolution.
+    """
+    return str(getattr(issue, "component", "") or "")
+
+
+def _read_finding_state(path: Path) -> dict[str, dict[str, Any]]:
+    """Per-finding state. Unreadable state must not invent or swallow messages."""
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def _write_finding_state(path: Path, state: dict[str, dict[str, Any]]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass  # Failing to persist must never block a send.
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
+
+
+def _duration_text(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes = seconds / 60.0
+    if minutes < 60:
+        return f"{int(minutes)}min"
+    hours = minutes / 60.0
+    if hours < 24:
+        return f"{hours:.1f}h"
+    return f"{hours / 24.0:.1f}d"
+
+
+def build_recovery_text(finding_id: str, entry: dict[str, Any], *, recovered_at: float) -> str:
+    """The single ✅ RECOVERED message for one finding."""
+    first_seen = entry.get("first_seen_utc") or "unbekannt"
+    first_ts = entry.get("first_seen_ts")
+    duration = (
+        _duration_text(recovered_at - float(first_ts))
+        if isinstance(first_ts, (int, float))
+        else "unbekannt"
+    )
+    return (
+        f"✅ RECOVERED {finding_id}\n"
+        f"first_seen={first_seen}\n"
+        f"recovered_at={_iso(recovered_at)}\n"
+        f"duration={duration}"
+    )
+
+
+def resolve_recoveries(
+    issues: Any,
+    prior: dict[str, dict[str, Any]],
+    *,
+    now_ts: float,
+) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """(findings that just went ACTIVE -> CLEAR, next state).
+
+    Pure: no I/O, no clock. The transition fires ONCE — the recovered entry is
+    dropped from the next state, so a second and third healthy run announce
+    nothing. A finding that returns later starts a fresh ACTIVE episode with a new
+    ``first_seen``, because it IS a new episode.
+    """
+    active_ids = {finding_id_for(i) for i in issues}
+    next_state: dict[str, dict[str, Any]] = {}
+    recovered: list[tuple[str, dict[str, Any]]] = []
+
+    severity_by_id = {finding_id_for(i): str(getattr(i, "severity", "")) for i in issues}
+    for fid in sorted(active_ids):
+        existing = prior.get(fid)
+        if existing and existing.get("last_state") == "ACTIVE":
+            entry = dict(existing)
+        else:
+            entry = {"first_seen_ts": now_ts, "first_seen_utc": _iso(now_ts)}
+        entry["last_state"] = "ACTIVE"
+        entry["last_seen_ts"] = now_ts
+        entry["last_seen_utc"] = _iso(now_ts)
+        # An escalation updates the severity of the SAME episode; first_seen and
+        # therefore the duration survive it.
+        entry["last_severity"] = severity_by_id.get(fid, "")
+        next_state[fid] = entry
+
+    for fid, entry in sorted(prior.items()):
+        if fid in active_ids:
+            continue
+        if entry.get("last_state") != "ACTIVE":
+            # Already recovered and announced. Silence.
+            continue
+        recovered.append((fid, entry))
+
+    return recovered, next_state
 
 
 class _Console(Protocol):
@@ -276,6 +420,7 @@ def dispatch_health_notification(
     notify_cooldown_minutes: float,
     console: _Console,
     state_file: Path | None = None,
+    finding_state_file: Path | None = None,
     reassert_minutes: float = _DEFAULT_REASSERT_MINUTES,
     now_ts: float | None = None,
     sender: Any = None,
@@ -289,16 +434,46 @@ def dispatch_health_notification(
     den Zeitbomben-Tests, die die CI vier Tage lahmgelegt haben.
     """
     path = state_file or HEALTH_NOTIFY_STATE_FILE
+    # The per-finding state lives NEXT TO the injected notification state, never at
+    # a module-level default. A path anchored to the working directory is exactly
+    # how a test run once filled a live measurement population
+    # (test_no_write_outside_the_injected_path guards that lesson); a second
+    # state file with its own default would re-open the same hole.
+    finding_path = finding_state_file or path.with_name(path.name + ".findings.json")
     now = time.time() if now_ts is None else now_ts
 
     fingerprint = issues_fingerprint(report.issues)
     last_ts, last_fingerprint = _read_state(path)
+
+    # STAB-2026-09-01 §7 — announce every ACTIVE -> CLEAR, not only an empty set.
+    #
+    # This runs BEFORE the fingerprint gate on purpose. A resolution is news in its
+    # own right: when privilege_broker cleared on 2026-09-01 while
+    # youtube_transcript_coverage remained, the set stayed non-empty and the
+    # CRITICAL simply disappeared from the channel unannounced. Recovery is not
+    # subject to the anti-spam window, because it fires exactly once per episode
+    # and then never again.
+    prior_findings = _read_finding_state(finding_path)
+    recovered, next_findings = resolve_recoveries(report.issues, prior_findings, now_ts=now)
+    announced_recovery = False
+    for fid, entry in recovered:
+        if _send(build_recovery_text(fid, entry, recovered_at=now), sender=sender):
+            announced_recovery = True
+            console.print(f"[green]Telegram recovery notice sent: {fid}[/green]")
+    _write_finding_state(finding_path, next_findings)
 
     if not fingerprint:
         # Gesundes System. Nur wenn zuvor etwas gemeldet WAR, gibt es Entwarnung —
         # sonst schweigt der Kanal, wie es sich gehört.
         if not last_fingerprint:
             return False
+        if announced_recovery:
+            # Every cleared finding was just named individually, with its own
+            # first_seen and duration. Appending the generic "alles aufgelöst"
+            # line would say the same thing a second time and less precisely —
+            # exactly the repetition this module exists to remove.
+            _write_state(path, now_ts=now, fingerprint="")
+            return True
         ok = _send(_RECOVERY_TEXT, sender=sender)
         if ok:
             _write_state(path, now_ts=now, fingerprint="")

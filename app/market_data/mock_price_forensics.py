@@ -143,6 +143,46 @@ def match_mock_price(
     return None
 
 
+#: Above this share of the representable two-decimal price space, a bit-exact hit
+#: stops being a fingerprint: roughly one price in ten inside the band lies on the
+#: curve, so coincidence is an ordinary event rather than a remarkable one. The
+#: boundary is declared, not tuned to an outcome, and the RAW coverage always
+#: travels with the verdict so a reader can judge it independently.
+#:
+#: Measured coverage of the live symbols:
+#:     BTC/USDT  0.0014   ETH/USDT  0.0277   (fingerprint)
+#:     SOL/USDT  0.4433   AAVE/USDT 0.4975   (indistinguishable)
+HIGH_COVERAGE_THRESHOLD: float = 0.10
+
+
+def mock_curve_coverage(symbol: str, *, amplitude_pct: float = _DEFAULT_AMPLITUDE_PCT) -> float:
+    """Share of representable prices in the band that the mock curve can emit.
+
+    Coverage ~1.0 means "the curve can produce almost any price in this range",
+    so bit-exact equality carries almost no information. Coverage near 0 means a
+    hit is a fingerprint. This is what makes the TL-002 verdict evidence-weighted
+    instead of a single global rule.
+    """
+    base: float = float(_BASE_PRICES.get(str(symbol).strip(), _DEFAULT_BASE_PRICE))
+    amplitude: float = base * (amplitude_pct / 100.0)
+    representable: float = 2.0 * amplitude * float(10 ** int(_PRICE_DECIMALS))
+    if representable <= 0:
+        return 1.0
+    distinct: int = len(_mock_candidates(str(symbol).strip(), amplitude_pct))
+    coverage: float = float(distinct) / representable
+    return coverage if coverage < 1.0 else 1.0
+
+
+def is_high_coverage_symbol(symbol: str, *, amplitude_pct: float = _DEFAULT_AMPLITUDE_PCT) -> bool:
+    """True when a bit-exact hit on this symbol proves little on its own."""
+    return mock_curve_coverage(symbol, amplitude_pct=amplitude_pct) >= HIGH_COVERAGE_THRESHOLD
+
+
+def uses_default_base_price(symbol: str) -> bool:
+    """True when the symbol has no own base price and rides the 100.0 default."""
+    return str(symbol).strip() not in _BASE_PRICES
+
+
 def is_mock_derived_price(
     symbol: str,
     price: object,
@@ -155,7 +195,11 @@ def is_mock_derived_price(
 
 __all__ = [
     "DEFAULT_PAPER_SLIPPAGE_FRACTION",
+    "HIGH_COVERAGE_THRESHOLD",
     "MockPriceMatch",
+    "is_high_coverage_symbol",
     "is_mock_derived_price",
     "match_mock_price",
+    "mock_curve_coverage",
+    "uses_default_base_price",
 ]

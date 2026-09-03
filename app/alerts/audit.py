@@ -82,6 +82,22 @@ class AlertAuditRecord:
     # phase has a beglaubigte Zuordnung instead of relying on analysis-time
     # DB joins in provenance_metrics._load_doc_metadata.
     provenance: SignalProvenance | None = None
+    # STAB-2026-09-01 §5 — the canonical trading pair, bound AT INGEST.
+    #
+    # tradingview_webhook persisted only a bare asset ("ETH") in affected_assets,
+    # so every one of its 2679 records re-evaluates to naked_asset_no_trading_pair
+    # and the single most mature source (~2570 hard outcomes) sits outside the
+    # pair-accuracy population. The pair was never unknown — tv_bridge splits the
+    # ticker into (base, quote) and then discards the quote.
+    #
+    # These fields make the binding explicit and durable. Historical rows stay
+    # ineligible (HISTORICAL_NAKED_ASSET_ROWS: no persisted pair means no
+    # unambiguous attribution, and inventing one afterwards would fabricate the
+    # provenance the outcome rests on). Only NEW, pair-bound outcomes may enter
+    # the pair-accuracy population.
+    canonical_asset: str | None = None
+    canonical_quote: str | None = None
+    canonical_pair: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -115,6 +131,14 @@ class AlertAuditRecord:
             d["directional_confidence"] = self.directional_confidence
         if self.provenance is not None:
             d["provenance"] = self.provenance.to_dict()
+        # §5: written only when actually bound, so a historical row stays visibly
+        # unbound rather than acquiring an empty pair field that looks like data.
+        if self.canonical_asset is not None:
+            d["canonical_asset"] = self.canonical_asset
+        if self.canonical_quote is not None:
+            d["canonical_quote"] = self.canonical_quote
+        if self.canonical_pair is not None:
+            d["canonical_pair"] = self.canonical_pair
         return d
 
 
@@ -360,6 +384,9 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 source_name=data.get("source_name"),
                 directional_confidence=data.get("directional_confidence"),
                 provenance=SignalProvenance.from_dict(data.get("provenance")),
+                canonical_asset=data.get("canonical_asset"),
+                canonical_quote=data.get("canonical_quote"),
+                canonical_pair=data.get("canonical_pair"),
             )
             records.append(record)
         except KeyError:

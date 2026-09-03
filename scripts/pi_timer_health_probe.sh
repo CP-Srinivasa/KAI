@@ -35,6 +35,9 @@ TELEGRAM_CHAT_ID=""
 DRY_RUN=""
 TIMERS=()
 NON_ACTIVE=()
+INSTALLED_COUNT=0
+MONITORED_COUNT=0
+SKIPPED_DISABLED=0
 FINDINGS_JSON=""
 DECISION_JSON=""
 SHOULD_ALERT=""
@@ -99,6 +102,13 @@ else
     fi
 fi
 
+# STAB-2026-09-01 (§13): the probe now REPORTS its own population. Previously it
+# wrote only ``findings``, so the reader had no idea how many units were examined
+# and fell back to a constant — which the dashboard then rendered as "10 Timer"
+# while 56 were installed. Installed vs monitored vs skipped are three different
+# numbers and are emitted as three different fields.
+INSTALLED_COUNT=${#TIMERS[@]}
+
 # 4. Statusprüfung
 NON_ACTIVE=()
 for t in "${TIMERS[@]}"; do
@@ -117,8 +127,10 @@ for t in "${TIMERS[@]}"; do
         enabled_state="$(systemctl is-enabled "$t" 2>/dev/null | head -n1)"
     fi
     if [[ "$enabled_state" == "disabled" || "$enabled_state" == "masked" ]]; then
+        SKIPPED_DISABLED=$((SKIPPED_DISABLED + 1))
         continue
     fi
+    MONITORED_COUNT=$((MONITORED_COUNT + 1))
 
     state=""
     if [[ -n "${KAI_TIMER_PROBE_TEST_STATES:-}" ]]; then
@@ -157,7 +169,7 @@ done
 # Wenn alle Timer gesund sind, schreiben wir ein OK-Audit und beenden
 if (( ${#NON_ACTIVE[@]} == 0 )); then
     ts=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)
-    echo "{\"timestamp_utc\":\"$ts\",\"event\":\"timer_health_probe.ok\",\"findings\":[]}" >> "$AUDIT_FILE"
+    echo "{\"timestamp_utc\":\"$ts\",\"event\":\"timer_health_probe.ok\",\"findings\":[],\"installed_timers\":$INSTALLED_COUNT,\"monitored_timers\":$MONITORED_COUNT,\"skipped_disabled\":$SKIPPED_DISABLED,\"total_timers\":$MONITORED_COUNT,\"active_timers\":$MONITORED_COUNT}" >> "$AUDIT_FILE"
     echo "KAI Timer-Health: OK (all timers active)"
     exit 0
 fi
@@ -232,7 +244,7 @@ else
     ALERT_TS=$(echo "$DECISION_JSON" | python3 -c 'import sys, json; print(json.load(sys.stdin)["last_alerted_utc_str"] or "")')
 fi
 
-echo "{\"timestamp_utc\":\"$ts\",\"event\":\"timer_health_probe.findings\",\"findings\":$FINDINGS_JSON,\"last_alerted_utc\":\"$ALERT_TS\",\"decision_reason\":\"$DECISION_REASON\"}" >> "$AUDIT_FILE"
+echo "{\"timestamp_utc\":\"$ts\",\"event\":\"timer_health_probe.findings\",\"findings\":$FINDINGS_JSON,\"last_alerted_utc\":\"$ALERT_TS\",\"decision_reason\":\"$DECISION_REASON\",\"installed_timers\":$INSTALLED_COUNT,\"monitored_timers\":$MONITORED_COUNT,\"skipped_disabled\":$SKIPPED_DISABLED,\"total_timers\":$MONITORED_COUNT,\"active_timers\":$((MONITORED_COUNT - ${#NON_ACTIVE[@]}))}" >> "$AUDIT_FILE"
 
 # 8. Alarmieren via Telegram falls erforderlich
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || echo pi)"

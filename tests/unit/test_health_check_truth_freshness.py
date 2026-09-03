@@ -17,9 +17,10 @@ Design-Entscheidungen, hier gepinnt:
 from __future__ import annotations
 
 import os
-import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from app.alerts.health_check import _check_data_freshness
 
@@ -34,7 +35,16 @@ def _base(adir: Path) -> None:
 
 
 def _age(path: Path, minutes: int) -> None:
-    ts = time.time() - minutes * 60
+    """Alter relativ zu ``NOW``, nicht zur Wanduhr.
+
+    ``NOW`` entsteht beim Modul-Import, die Pruefung laeuft aber gegen ``NOW``.
+    Wurde das Alter an ``time.time()` verankert, schrumpfte das GEMESSENE Alter
+    um jede Minute zwischen Collection und Ausfuehrung: ab etwa 16 Minuten fiel
+    ein auf 60 Minuten gealterter Report unter die 45-Minuten-Schwelle und der
+    Test wurde rot. Unter ``pytest -n auto`` blieb der Abstand klein und der
+    Fehler unsichtbar; im Einzelprozess-Preflight (24 min) war er reproduzierbar.
+    """
+    ts = NOW.timestamp() - minutes * 60
     os.utime(path, (ts, ts))
 
 
@@ -142,3 +152,19 @@ def test_stale_asset_rotation_artifacts_are_flagged(tmp_path: Path) -> None:
     issues, _ = _check_data_freshness(tmp_path, NOW)
     assert any(i.component == "asset_rotation_freshness" for i in issues)
     assert any(i.component == "asset_rotation_state_freshness" for i in issues)
+
+
+@pytest.mark.parametrize("minutes", [0, 16, 45, 120])
+def test_das_gealterte_alter_haengt_am_fixen_now_nicht_an_der_wanduhr(
+    tmp_path: Path, minutes: int
+) -> None:
+    """Positivkontrolle zum Flake-Fix.
+
+    Der Abstand zwischen Modul-Import und Testausfuehrung darf das gemessene
+    Alter nicht veraendern. Vorher schrumpfte es um genau diesen Abstand.
+    """
+    f = tmp_path / "x.jsonl"
+    f.write_text("{}\n", encoding="utf-8")
+    _age(f, minutes)
+    gemessen = (NOW.timestamp() - f.stat().st_mtime) / 60
+    assert abs(gemessen - minutes) < 0.05, f"gemessen {gemessen:.2f} min statt {minutes}"

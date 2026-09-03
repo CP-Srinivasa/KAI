@@ -1,8 +1,23 @@
 [Unit]
-Description=Trigger KAI L3 Truth-Ledger Anchor daily at 04:35 UTC (after the audit anchor)
+# STAB-2026-09-01 §4 — moved 04:35 UTC -> 06:35 UTC.
+#
+# The anchor ran BEFORE the last scheduled daily append to the truth ledger:
+# kai-canonical-edge-attest writes a canonical_edge_report at 06:20 UTC every
+# day (65 such records in the live ledger — it is the one regular daily writer;
+# LN and compliance appends are single events). Anchoring at 04:35 therefore
+# sealed a tip that was invalidated less than two hours later, every day, and
+# the tip spent the great majority of each day unanchored.
+#
+# That also made the operator digest's "Tip OTS-verankert" a deterministic
+# green: the digest fired inside the short anchored window, so the one consumer
+# built to catch a silently failing anchor could not observe the failure.
+#
+# New order, and the invariant test_truth_anchor_runs_after_the_last_daily_append
+# pins it:  canonical-edge-attest 06:20Z  ->  truth-anchor 06:35Z  ->  digest 07:30Z
+Description=Trigger KAI L3 Truth-Ledger Anchor daily at 06:35 UTC (after the last daily ledger append at 06:20 UTC)
 
 [Timer]
-OnCalendar=*-*-* 04:35:00 UTC
+OnCalendar=*-*-* 06:35:00 UTC
 AccuracySec=5min
 Persistent=true
 Unit=kai-truth-anchor.service

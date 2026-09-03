@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.routers.operator import require_operator_api_token
+from app.execution.paper_audit_stream import DEFAULT_AUDIT_PATH, iter_audit_events
 from app.messaging.message_models import (
     ExchangeResponse,
     MessageEnvelope,
@@ -48,6 +49,8 @@ from app.premium.state_machine import (
     PremiumSignalState,
     approval_state,
     bridge_stage_to_state,
+    close_reason_to_state,
+    lifecycle_bucket,
     normalized_source,
     origin_signal_id,
     state_label,
@@ -460,6 +463,11 @@ class EnvelopeRecord(BaseModel):
     premium_state: str | None = None
     premium_state_label: str | None = None
     premium_state_tone: str | None = None
+    #: STAB-2026-09-01 §5/§10 — the ONE lifecycle bucket this envelope belongs to,
+    #: computed by the backend's total partition. The frontend used to derive its
+    #: own buckets with six independent ``if`` statements, which is how 21 of 45
+    #: states ended up in no column at all while still counting in the header.
+    lifecycle_bucket: str | None = None
     bridge_stage: str | None = None
     bridge_reason: str | None = None
     # Dedupe (2026-06-08): raw (telegram_premium_channel) + approved
@@ -507,6 +515,90 @@ def _latest_bridge_by_envelope(path: Path) -> dict[str, dict[str, object]]:
     return by_key
 
 
+# §5: the path comes from the port, not from a literal here — naming the
+# stream in this module would make it look like a reader of it.
+_PAPER_AUDIT_PATH = DEFAULT_AUDIT_PATH
+
+#: Terminal-ish states that a later close event may still overturn.
+_OVERTURNABLE_BY_CLOSE = frozenset(
+    {
+        PremiumSignalState.POSITION_OPEN,
+        PremiumSignalState.PARTIALLY_CLOSED,
+        PremiumSignalState.FASTLANE_POSITION_OPEN,
+        PremiumSignalState.FASTLANE_PARTIALLY_CLOSED,
+    }
+)
+
+
+def _load_close_index(
+    path: str | Path = _PAPER_AUDIT_PATH,
+) -> dict[str, tuple[str | None, float | None]]:
+    """envelope/correlation id -> (close reason, realized pnl) for closed positions.
+
+    STAB-2026-09-01 §5 — WHY THIS EXISTS.
+
+    ``_derive_premium_state`` reads only the envelope audit and
+    ``bridge_pending_orders.jsonl``. Bridge stage ``filled`` maps to
+    ``POSITION_OPEN`` and nothing downstream ever revised it, so an envelope whose
+    paper position had long since been stopped out or taken profit kept rendering
+    as "Paper Position eröffnet" forever. Measured on the live log: 67 envelopes
+    sat in the green Open cell while a ``position_closed`` event existed for them
+    (matrix Open = 73 against 3 genuinely open in the canonical trail).
+
+    Two read models disagreed about the same envelopes, and the panel's own legend
+    pointed the operator at the wrong one. This makes the close events part of the
+    same read, so there is ONE answer. It makes the panel MORE red, which is the
+    correct direction.
+
+    Partial closes are deliberately NOT treated as terminal: a ``tp_tier`` partial
+    leaves the position open; only a full ``position_closed`` overturns Open.
+
+    The stream is read through ``app/execution/paper_audit_stream`` — the declared
+    port. A private ``open()``/``json.loads`` here would be exactly the
+    thirty-fifth hand-rolled reader that ``test_no_new_own_reader_of_the_audit_stream``
+    exists to prevent, and it would be free to disagree with everyone else about
+    blank lines and broken records.
+    """
+    index: dict[str, tuple[str | None, float | None]] = {}
+    try:
+        events = iter_audit_events(path)
+    except OSError as exc:  # pragma: no cover - defensive
+        logger.warning("[signals.recent] close index read failed: %s", exc)
+        return index
+    for row in events:
+        if row.get("event_type") != "position_closed":
+            continue
+        corr = _as_str(row.get("correlation_id"))
+        if not corr:
+            continue
+        pnl = row.get("trade_pnl_usd", row.get("realized_pnl_usd"))
+        try:
+            pnl_value = float(pnl) if pnl is not None else None
+        except (TypeError, ValueError):
+            pnl_value = None
+        # Latest close wins: the stream is append-only and chronological.
+        index[corr] = (_as_str(row.get("reason")), pnl_value)
+    return index
+
+
+def _resolve_close(
+    state: PremiumSignalState,
+    raw: dict[str, object],
+    close_index: dict[str, tuple[str | None, float | None]],
+) -> PremiumSignalState:
+    """Overturn an Open state when the canonical audit says the position closed."""
+    if state not in _OVERTURNABLE_BY_CLOSE:
+        return state
+    for key in (
+        _as_str(raw.get("envelope_id")),
+        _as_str(raw.get("origin_envelope_id")),
+    ):
+        if key and key in close_index:
+            reason, pnl = close_index[key]
+            return close_reason_to_state(reason, realized_pnl_usd=pnl)
+    return state
+
+
 def _derive_premium_state(
     raw: dict[str, object],
     bridge: dict[str, object] | None,
@@ -531,6 +623,7 @@ def _project_record(
     raw: dict[str, object],
     *,
     bridge_by_envelope: dict[str, dict[str, object]] | None = None,
+    close_index: dict[str, tuple[str | None, float | None]] | None = None,
 ) -> EnvelopeRecord:
     errors = raw.get("errors")
     errors_list = [str(e) for e in errors] if isinstance(errors, list) else []
@@ -554,6 +647,9 @@ def _project_record(
     if bridge is None and origin_id_raw:
         bridge = bridge_by_envelope.get(origin_id_raw)
     p_state = _derive_premium_state(raw, bridge)
+    # §5: one truth. A bridge that says "filled" is not evidence that the position
+    # is still open — the canonical audit decides.
+    p_state = _resolve_close(p_state, raw, close_index or {})
     raw_source = _as_str(raw.get("source"))
     return EnvelopeRecord(
         timestamp_utc=_as_str(raw.get("timestamp_utc")),
@@ -575,6 +671,7 @@ def _project_record(
         premium_state=p_state.value,
         premium_state_label=state_label(p_state),
         premium_state_tone=state_tone(p_state),
+        lifecycle_bucket=lifecycle_bucket(p_state.value),
         bridge_stage=_as_str(bridge.get("stage")) if bridge is not None else None,
         bridge_reason=(
             _as_str(bridge.get("reason")) or _as_str(bridge.get("audit_reason"))
@@ -703,13 +800,18 @@ async def recent_envelopes(
         else:
             grp.setdefault("other", raw)
 
+    # §5: read the close events ONCE per request, then let them decide.
+    close_index = _load_close_index()
+
     records: list[EnvelopeRecord] = []
     for key in order:
         if len(records) >= limit:
             break
         grp = groups[key]
         canonical = grp["approved"] or grp["raw"] or grp["first"]
-        rec = _project_record(canonical, bridge_by_envelope=bridge_by_envelope)
+        rec = _project_record(
+            canonical, bridge_by_envelope=bridge_by_envelope, close_index=close_index
+        )
         has_raw = grp["raw"] is not None
         has_approved = grp["approved"] is not None
         rec.dedup_key = key

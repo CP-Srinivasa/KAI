@@ -1,0 +1,120 @@
+{
+  "schema": "kai_prereg_invalidation/v1",
+  "prereg_id": "ebbf451f432cbc80",
+  "prereg_name": "operator_back_edge_v2",
+  "window_start_utc": "2026-09-01T14:00:00Z",
+  "window_end_utc": "2026-09-15T14:00:00Z",
+  "registered_at_utc": "2026-09-01T13:00:14Z",
+  "invalidation_decided_at_utc": "2026-09-01T20:38:51Z",
+  "decision_state": "INVALIDATED_PENDING_SUCCESSOR",
+  "substantive_verdict": "NONE",
+  "reason": "MEASUREMENT_INSTRUMENT_DEFECT_DISCOVERED_POST_T0",
+  "reason_statement": "The instrument that produces the measured population is itself defective, and the defect was proven while the window was open. G8 measures whether a DELIVERED health finding provokes a matching operator action. The health-check emitted an age-blind annotation-backlog warning into that population 15 times after T0, and at every one of those emissions the genuinely-overdue count was ZERO. The population is therefore not a sample of health findings the operator ought to have acted on; it is padded with alarms the instrument should never have raised. This is NOT an argument about an unmerged branch hash — a waiting branch changes nothing in production. It is that the running instrument was measured and found wrong.",
+  "evidence": {
+    "stab_final_pr": 848,
+    "stab_final_head": "9cd54fc637ae10ebba4cc189c31125cfc3df3eb6",
+    "current_mainline": "9293c4239b80ebbfec42a39cda289ba4f60a1610",
+    "pi_checkout_sha": "9293c4239b80ebbfec42a39cda289ba4f60a1610",
+    "pi_runtime_commit": "dc276bc32700bf1293de3eabe73a3b3b6675d9d8",
+    "current_pinned_health_notify_sha256": "2f2ad4b4172c03c9e09ee8162232ff768ccf3c2ec042554da877b531e3fa3330",
+    "stab_final_health_notify_sha256": "90baab9f1377d58dbb74ba989007f14ba4ecf87a88470bde3df2c2fc1582c0de",
+    "age_blind_annotation_warning_proof": {
+      "statement": "The annotation-backlog warning had no age filter at all. The auto-annotator may not touch an alert for its first 4h (_DEFAULT_MIN_AGE_HOURS) and runs every 6h, so freshly dispatched alerts were counted as backlog on arrival.",
+      "post_t0_emissions_observed": 15,
+      "post_t0_replay": [
+        {
+          "emission_utc": "2026-09-01T14:00:26Z",
+          "total": 44,
+          "not_due": 44,
+          "in_grace": 0,
+          "due_unannotated": 0
+        },
+        {
+          "emission_utc": "2026-09-01T14:15:28Z",
+          "total": 44,
+          "not_due": 42,
+          "in_grace": 2,
+          "due_unannotated": 0
+        },
+        {
+          "emission_utc": "2026-09-01T15:30:42Z",
+          "total": 38,
+          "not_due": 29,
+          "in_grace": 9,
+          "due_unannotated": 0
+        },
+        {
+          "emission_utc": "2026-09-01T16:30:00Z",
+          "total": 29,
+          "not_due": 29,
+          "in_grace": 0,
+          "due_unannotated": 0
+        },
+        {
+          "emission_utc": "2026-09-01T17:30:18Z",
+          "total": 28,
+          "not_due": 1,
+          "in_grace": 27,
+          "due_unannotated": 0
+        }
+      ],
+      "due_unannotated_at_every_post_t0_emission": 0,
+      "sixty_day_replay": {
+        "hourly_samples": 1441,
+        "warning_hours_fired": 199,
+        "max_genuinely_overdue": 5,
+        "gate": 20,
+        "all_false_alarms": true
+      }
+    },
+    "population_affecting_changes_in_stab_final": [
+      "app/alerts/health_check.py — annotation-backlog block becomes age-aware; changes HOW MANY health findings are emitted, i.e. the emitted population itself",
+      "app/alerts/health_check.py — YouTube reason SQL splits pre-instrumentation rows from live defects; changes the wording and severity framing of an emitted finding",
+      "app/alerts/health_notify.py — per-finding ACTIVE->CLEAR recovery; adds a class of delivered message that did not exist during the window"
+    ],
+    "other_truth_defects_proven_during_the_window": [
+      "timer card reported '10 OK' from a snapshot that was structurally stale 22h of 24 (flat 2h budget against a once-daily producer); installed timers are 56, not 10",
+      "67 envelopes rendered as position_open although a position_closed event existed",
+      "priority label 'HIGH-CONVICTION' granted while the measured tier lift is -7.4pp",
+      "five dashboard percentages published with no stated population or denominator"
+    ]
+  },
+  "not_done": {
+    "outcome_inspected": false,
+    "evaluator_executed": false,
+    "emitted_count_inspected": true,
+    "acted_count_inspected": false,
+    "interim_result_taken": false,
+    "note": "Kein Evaluator gelaufen, kein acted-Count gelesen, kein Zwischenergebnis genommen. Der emitted-Strom wurde ausschließlich insoweit eingesehen, wie der Nachweis des Instrumentendefekts es verlangte (15 Emissionen der altersblinden Warnung); dieses Ergebnis dient allein dem Verwerfen des Fensters, nie seiner Deutung.",
+    "substantive_outcome_evaluated": false,
+    "emitted_inspection_scope": "instrument_defect_proof_only"
+  },
+  "successor": {
+    "replacement_pending": true,
+    "replaced_by": null,
+    "watcher_id": null,
+    "cadence": null,
+    "next_review_utc": null,
+    "maturity_spec": "none",
+    "rule": "No placeholder id. The successor prereg_id is derived from the DEPLOYED code (mainline SHA + evaluator sha256 + health_notify sha256 + effective config sha256) and cannot be known before the deploy. #843 already established why a pre-computed id is dangerous.",
+    "allowed_transition": "INVALIDATED_PENDING_SUCCESSOR -> INVALIDATED_BEFORE_MEASUREMENT, and only then replaced_by = <id computed on deployed code>. invalidated_at_utc stays 2026-09-01T20:38:51Z and is NOT moved to deploy time."
+  },
+  "predecessor": {
+    "prereg_id": "f0803d911744e0c2",
+    "decision_state": "INVALIDATED",
+    "reason": "POST_T0_INSTRUMENTATION_CONTAMINATION",
+    "substantive_verdict": "NONE"
+  },
+  "binding_from": "From 2026-09-01T20:38:51Z this act is not an evaluable attempt, independent of any later register state.",
+  "correction": {
+    "corrected_at_utc": "2026-09-02T07:20:00Z",
+    "previous_artifact_sha256": "a6974b985746272e8ec7ac08d65fe5bd158f4fa4ee6ffd075c02ba5537fcb727",
+    "reason": "Der Beleg widersprach sich selbst: not_done.emitted_count_inspected=false und \"No count of any kind was read.\" standen neben post_t0_emissions_observed=15, auf die sich das reason_statement stuetzt. Ein Instrumentendefekt laesst sich nur nachweisen, indem man ansieht, was das Instrument ausgesendet hat - das ist legitim, die Formulierung war es nicht. Korrigiert wird die BEHAUPTUNG, nicht die Entscheidung: invalidation_decided_at_utc, reason, substantive_verdict und die Replay-Zahlen bleiben unveraendert.",
+    "unchanged": [
+      "invalidation_decided_at_utc",
+      "reason",
+      "substantive_verdict",
+      "evidence.age_blind_annotation_warning_proof"
+    ]
+  }
+}

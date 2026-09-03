@@ -1600,10 +1600,10 @@ def trading_paper_portfolio_snapshot(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1643,10 +1643,10 @@ def trading_paper_positions_summary(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1714,10 +1714,10 @@ def trading_positions_risk_snapshot(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -1952,10 +1952,10 @@ def trading_paper_exposure_summary(
         "--audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    provider: str = typer.Option(
-        "coingecko",
+    provider: str | None = typer.Option(
+        None,
         "--provider",
-        help="Read-only market data provider for mark-to-market",
+        help="Mark-to-market provider; default = system provider (STAB-2026-09-01 §24)",
     ),
     freshness_threshold_seconds: float = typer.Option(
         120.0,
@@ -2089,7 +2089,7 @@ def trading_scan_candidates(
 
     resolved_provider = provider if provider is not None else None
     snapshot = asyncio.run(
-        build_portfolio_snapshot(audit_path=audit_path, provider=resolved_provider or "coingecko")
+        build_portfolio_snapshot(audit_path=audit_path, provider=resolved_provider)
     )
     rankings = select_short_term_candidates(
         positions=exposures_from_snapshot(snapshot), limit=limit

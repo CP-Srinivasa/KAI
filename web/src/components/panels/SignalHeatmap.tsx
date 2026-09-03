@@ -18,10 +18,14 @@ type SymbolRow = {
   symbol: string;
   long: number;
   short: number;
-  parsed: number;
-  approved: number;
+  // STAB-2026-09-01 §10 — one counter per backend lifecycle bucket. These SUM to
+  // totalSignals by construction, because the backend mapping is a total
+  // function and this panel no longer invents its own buckets.
+  recognised: number;
+  eligible: number;
   rejected: number;
-  pending: number;
+  review: number;
+  submitted: number;
   open: number;
   closed: number;
   latestTs: string;
@@ -75,7 +79,10 @@ export function SignalHeatmapPanel() {
         right={
           <LiveDot
             state={state.state}
-            generatedAt={state.state === "ready" ? new Date(state.fetchedAt).toISOString() : null}
+            // STAB-2026-09-01 §30: this endpoint ships no data timestamp, so the
+          // badge must say so rather than report the fetch time as freshness.
+          generatedAt={null}
+          dataTimestampKnown={false}
             staleAfterMs={POLL_MS * 1.5}
             downAfterMs={POLL_MS * 4}
           />
@@ -87,8 +94,11 @@ export function SignalHeatmapPanel() {
       <div className="mb-2 -mt-1 text-2xs text-fg-subtle">
         Envelope-Parsing <span className="text-fg-muted font-semibold">≠</span> Execution
         {" — "}
-        <span className="text-fg-muted">Parsed/Appr</span> sind erkannt, nicht gehandelt;
-        echte Position erst ab <span className="text-pos">Open</span>/<span className="text-pos">Closed</span>.
+        <span className="text-fg-muted">Erk./Zul.</span> sind erkannt, nicht gehandelt;
+        echte Position erst ab <span className="text-pos">Offen</span>/<span className="text-pos">Zu</span>.
+        {" "}
+        <span className="text-warn">Prüf.</span> = abgelaufen/ungültig, keine Ablehnung.
+        {" "}Die Spalten summieren sich zur Gesamtzahl.
       </div>
       {state.state === "loading" && (
         <div className="py-6 text-center text-xs text-fg-subtle">Lade Signale …</div>
@@ -128,10 +138,11 @@ function aggregate(envs: EnvelopeRecord[]): SymbolRow[] {
       symbol: s.symbol,
       long: 0,
       short: 0,
-      parsed: 0,
-      approved: 0,
+      recognised: 0,
+      eligible: 0,
       rejected: 0,
-      pending: 0,
+      review: 0,
+      submitted: 0,
       open: 0,
       closed: 0,
       latestTs: ts,
@@ -153,44 +164,45 @@ function aggregate(envs: EnvelopeRecord[]): SymbolRow[] {
   return [...by.values()].sort((a, b) => b.latestTs.localeCompare(a.latestTs));
 }
 
+/**
+ * STAB-2026-09-01 §10 — delegate, do not re-derive.
+ *
+ * This function used to bucket with six independent `if` statements over the raw
+ * state string. A state matching none of them landed in NO column while
+ * `totalSignals` incremented anyway, so the columns did not sum to the header:
+ * 21 of 45 PremiumSignalState values had no home, which over the live log meant
+ * 207 of 3890 rows (5.3%) were counted and never rendered — 205 of them
+ * `requires_review` (TTL expired: the setup was fine, the entry never printed)
+ * and 5 `invalid`. Precisely the actionable class was the invisible one.
+ *
+ * The backend now owns the partition. An envelope without a bucket falls to
+ * `review` rather than silently to nothing.
+ */
 function applyStateBucket(row: SymbolRow, env: EnvelopeRecord) {
-  const state = (env.premium_state ?? env.stage ?? env.status ?? "").toLowerCase();
-  if (
-    state === "parsed" ||
-    state === "envelope_accepted" ||
-    state === "accepted" ||
-    state === "new"
-  ) {
-    row.parsed += 1;
-  }
-  if (state === "approved" || state === "awaiting_approval") {
-    row.approved += 1;
-  }
-  if (
-    state.includes("rejected") ||
-    state === "entry_disabled" ||
-    state === "source_skipped" ||
-    state === "risk_rejected" ||
-    state === "market_data_failed" ||
-    state === "paper_execution_failed" ||
-    state === "requires_scale_review"
-  ) {
-    row.rejected += 1;
-  }
-  if (state === "pending_entry" || state === "bridge_pending" || state === "pending") {
-    row.pending += 1;
-  }
-  if (state === "position_open" || state === "partially_closed") {
-    row.open += 1;
-  }
-  if (
-    state === "closed_tp" ||
-    state === "closed_sl" ||
-    state === "closed_manual" ||
-    state === "closed_unknown" ||
-    state === "reconciled_completion"
-  ) {
-    row.closed += 1;
+  const bucket = env.lifecycle_bucket ?? "review";
+  switch (bucket) {
+    case "recognised":
+      row.recognised += 1;
+      break;
+    case "eligible":
+      row.eligible += 1;
+      break;
+    case "rejected":
+      row.rejected += 1;
+      break;
+    case "submitted_paper":
+      row.submitted += 1;
+      break;
+    case "opened_paper":
+      row.open += 1;
+      break;
+    case "closed_paper":
+      row.closed += 1;
+      break;
+    case "review":
+    default:
+      row.review += 1;
+      break;
   }
 }
 
@@ -223,28 +235,34 @@ function HeatmapTable({
 }) {
   return (
     <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_44px_44px_44px_44px_44px_44px_minmax(92px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
+      <div className="grid grid-cols-[1fr_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
         <span>Symbol</span>
-        <span className="text-center">Parsed</span>
-        <span className="text-center">Appr</span>
-        <span className="text-center">Reject</span>
-        <span className="text-center">Pend</span>
-        <span className="text-center">Open</span>
-        <span className="text-center">Closed</span>
+        <span className="text-center">Erk.</span>
+        <span className="text-center">Zul.</span>
+        <span className="text-center">Abgel.</span>
+        {/* §10: expired/invalid signals have a visible home. They are NOT
+            rejections — nothing refused them, the window closed. */}
+        <span className="text-center" title="Abgelaufen oder ungültig — braucht einen Blick, ist keine Ablehnung">
+          Prüf.
+        </span>
+        <span className="text-center">Eingr.</span>
+        <span className="text-center">Offen</span>
+        <span className="text-center">Zu</span>
         <span className="text-right">State</span>
       </div>
       {rows.map((r) => (
         <button
           key={r.symbol}
           onClick={onSelect}
-          className="w-full grid grid-cols-[1fr_44px_44px_44px_44px_44px_44px_minmax(92px,auto)] items-center gap-1.5 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
+          className="w-full grid grid-cols-[1fr_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
           title={`${r.totalSignals} Signal${r.totalSignals === 1 ? "" : "e"} · Long ${r.long} · Short ${r.short} · letztes ${formatAbsolute(r.latestTs)}`}
         >
           <span className="font-mono font-semibold truncate">{r.symbol}</span>
-          <CountCell count={r.parsed} tone="muted" />
-          <CountCell count={r.approved} tone="warn" />
+          <CountCell count={r.recognised} tone="muted" />
+          <CountCell count={r.eligible} tone="warn" />
           <CountCell count={r.rejected} tone="neg" />
-          <CountCell count={r.pending} tone="warn" />
+          <CountCell count={r.review} tone="warn" />
+          <CountCell count={r.submitted} tone="warn" />
           <CountCell count={r.open} tone="pos" />
           <CountCell count={r.closed} tone={r.closed > 0 ? "pos" : "muted"} />
           <span className="font-mono text-2xs text-fg-muted text-right inline-flex items-center gap-1.5 justify-end">

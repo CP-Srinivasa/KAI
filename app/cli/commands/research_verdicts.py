@@ -9,6 +9,7 @@ capital movement, no gate is weakened.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,7 +92,6 @@ def trading_prereg_check(
     Exit 0 = judged (PASS or FAIL), 2 = not judgeable (unknown id / no gate /
     malformed input).
     """
-    from datetime import UTC, datetime
 
     from app.research.prereg_gate import check_gate
     from app.research.prereg_ledger import PreRegistrationLedger
@@ -553,3 +553,114 @@ def trading_verdict_anchor(
     )
     if result.state == "error":
         raise typer.Exit(1)
+
+
+@trading_app.command("runtime-marker-write")
+def trading_runtime_marker_write(
+    unit: str = typer.Option(
+        ..., "--unit", help="Vollstaendiger Unit-Name, z. B. kai-server.service"
+    ),
+    repo: str = typer.Option(".", "--repo", help="Checkout-Wurzel"),
+    json_out: bool = typer.Option(False, "--json", help="Marker als JSON ausgeben"),
+) -> None:
+    """Der Dienst bezeugt beim Start, welchen Code er geladen hat.
+
+    Gedacht fuer ``ExecStartPost=`` — **nicht** ``ExecStartPre``: dort existiert
+    die MainPID des Dienstes noch nicht, und ein Marker mit der PID des
+    Vorbereitungsprozesses waere schlimmer als keiner, weil er wie ein Beweis
+    aussaehe.
+
+    Commit und Lock-SHA kommen aus :func:`app.core.runtime_identity.capture_runtime_identity`
+    — derselben Quelle, die ``/health`` und den Drift-Report bedient. Ein eigenes
+    ``git rev-parse`` hier waere eine zweite Wahrheit ueber denselben Wert, und
+    zwei Wahrheiten driften (#723/#748/#755).
+
+    Exit 0 = geschrieben · Exit 1 = MainPID oder Revision nicht ermittelbar
+    (dann bleibt der Zustand UNKNOWN, und das ist die richtige Folge).
+    """
+    import json as _json
+    import subprocess
+
+    from app.core.runtime_identity import capture_runtime_identity
+    from app.observability.process_runtime_marker import (
+        marker_from_identity,
+        write_process_marker,
+    )
+
+    root = Path(repo).resolve()
+    raw_pid = subprocess.run(  # noqa: S603
+        ["systemctl", "show", unit, "-p", "MainPID", "--value"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    try:
+        pid = int(raw_pid or 0)
+    except ValueError:
+        pid = 0
+
+    identity = capture_runtime_identity(root, pid=pid or None)
+    if pid <= 0 or not identity.runtime_commit:
+        console.print(
+            f"[red]kein Marker fuer {unit}[/red]: MainPID={raw_pid!r} "
+            f"runtime_commit={identity.runtime_commit!r} — der Zustand bleibt UNKNOWN, "
+            "und das ist die richtige Folge."
+        )
+        raise typer.Exit(code=1)
+
+    marker = marker_from_identity(identity, unit=unit, pid=pid, repo_root=root)
+    path = write_process_marker(marker, root=root)
+    if json_out:
+        console.print(_json.dumps(marker, indent=2, sort_keys=True))
+    else:
+        commit = str(identity.runtime_commit)
+        console.print(f"[green]{unit}[/green] bezeugt {commit[:8]} (pid {pid}) -> {path}")
+
+
+@trading_app.command(
+    "runtime-exec",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def trading_runtime_exec(
+    ctx: typer.Context,
+    unit: str = typer.Option(..., "--unit", help="Vollstaendiger Unit-Name"),
+    repo: str = typer.Option(".", "--repo", help="Checkout-Wurzel"),
+) -> None:
+    """Sich selbst bezeugen und dann zum Dienst werden.
+
+    Aufruf als ``ExecStart``:
+
+    ``… trading runtime-exec --unit %n --repo <root> -- <venv>/bin/python -m app.api…``
+
+    Dieser Prozess ermittelt die Runtime-Identitaet fuer SICH, schreibt den
+    Marker unter der eigenen PID und ersetzt sich dann per ``os.execv`` durch den
+    eigentlichen Dienst. ``execv`` behaelt PID und Kernel-Startzeit — Marker und
+    laufender Dienst sind damit dieselbe Kernel-Identitaet.
+
+    ``ExecStartPost`` kann das nicht: es ist ein zweiter Prozess, der den
+    Checkout liest und die Revision einer per ``systemctl show MainPID``
+    abgefragten fremden PID zuschreibt. Bewegt sich der Checkout dazwischen,
+    behauptet der Marker den neuen Commit fuer einen Prozess, der den alten
+    geladen hat.
+    """
+    from app.core.runtime_identity import capture_runtime_identity
+    from app.observability.process_runtime_marker import self_attest_and_exec
+
+    argv = list(ctx.args)
+    if not argv:
+        console.print("[red]runtime-exec ohne Kommando[/red] — nach `--` gehoert der Dienst.")
+        raise typer.Exit(code=2)
+
+    # BEWUSST NICHT hier aufloesen: ``self_attest_and_exec`` bekommt den Pfad so,
+    # wie die Unit ihn nennt (``/home/kai/current``), und loest ihn genau einmal
+    # kanonisch auf. Nur so kann es auch ``argv`` und das Arbeitsverzeichnis vom
+    # Symlink auf dasselbe Release umschreiben — sonst zeigte der Marker auf das
+    # alte Release, waehrend Executable und Importpfad ueber den beweglichen
+    # Symlink liefen und erst spaeter aufgeloest wuerden.
+    root = Path(repo)
+    self_attest_and_exec(
+        capture_runtime_identity(root.resolve()),
+        unit=unit,
+        repo_root=root,
+        argv=argv,
+    )

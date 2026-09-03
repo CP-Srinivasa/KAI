@@ -33,6 +33,8 @@ from app.audit.stream_validation import (
 )
 from app.execution.close_pnl import close_pnl
 from app.learning.bayes_quarantine import is_corrupt_close
+from app.observability import dashboard_precision_metrics as _precision_metrics
+from app.observability import metric_provenance as _metric_provenance
 from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
@@ -247,45 +249,19 @@ def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
     }
 
 
-def _metric_contract(
-    *,
-    value: object,
-    unit: str,
-    semantic_type: str,
-    scope: str,
-    source_artifact: Path,
-    generated_at: str,
-    window_hours: int | None = None,
-    since: str | None = None,
-    until: str | None = None,
-    sample_size: int | None = None,
-    is_decision_relevant: bool = False,
-    is_read_only: bool = True,
-    quality_status: str = "ok",
-    warning: str | None = None,
-    explanation: str | None = None,
-    confidence_interval: dict[str, float | None] | None = None,
-) -> dict[str, Any]:
-    return {
-        "value": value,
-        "unit": unit,
-        "semantic_type": semantic_type,
-        "scope": scope,
-        "window_hours": window_hours,
-        "since": since,
-        "until": until,
-        "generated_at": generated_at,
-        "source_artifact": str(source_artifact),
-        "source_artifact_updated_at": _artifact_updated_at(source_artifact),
-        "stale_status": _artifact_stale_status(source_artifact),
-        "sample_size": sample_size,
-        "confidence_interval": confidence_interval,
-        "is_decision_relevant": is_decision_relevant,
-        "is_read_only": is_read_only,
-        "quality_status": quality_status,
-        "warning": warning,
-        "explanation": explanation,
-    }
+def _metric_contract(**kwargs: Any) -> dict[str, Any]:
+    """Thin adapter: the provenance layer lives in app/observability/metric_provenance.
+
+    Extracted under the god-file ratchet (STAB-2026-09-01 §29). The artifact
+    freshness helpers stay here because they are dashboard-local; they are passed
+    in rather than imported the other way round, so the provenance module has no
+    dependency back on the router.
+    """
+    return _metric_provenance.metric_contract(
+        artifact_updated_at=_artifact_updated_at,
+        artifact_stale_status=_artifact_stale_status,
+        **kwargs,
+    )
 
 
 def _pct_fraction(value: object) -> float | None:
@@ -959,6 +935,14 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
             quality_status=str(source_reliability.get("quality_status", "unverified")),
             warning=source_reliability.get("health_warning"),
             explanation="Wilson-based source tiers consumed by eligibility priority modifiers.",
+        ),
+        # §29: the precision family, each with an explicit population — see
+        # app/observability/dashboard_precision_metrics.py for why they differ.
+        **_precision_metrics.precision_metric_contracts(
+            quality=quality,
+            generated_at=generated_at,
+            outcomes_artifact=_ALERT_OUTCOMES,
+            contract=_metric_contract,
         ),
     }
 

@@ -217,7 +217,7 @@ def persist_tv_events_as_alert_audits(
             log.info("tv_bridge.skip_unsupported_quote", ticker=ticker, event_id=event_id)
             counts["skipped_unsupported"] += 1
             continue
-        base, _quote = split
+        base, quote = split
         if base not in _BASE_ASSET_TO_COINGECKO:
             log.info("tv_bridge.skip_unsupported_base", base=base, event_id=event_id)
             counts["skipped_unsupported"] += 1
@@ -259,6 +259,12 @@ def persist_tv_events_as_alert_audits(
             actionable=True,
             directional_eligible=True,
             source_name=_TV_SOURCE,
+            # STAB-2026-09-01 §5: the pair is known right here — it was split out
+            # of the ticker a few lines above and then thrown away. Persisting it
+            # is what makes future outcomes pair-attributable instead of naked.
+            canonical_asset=base,
+            canonical_quote=quote,
+            canonical_pair=f"{base}/{quote}",
             normalized_title=note if isinstance(note, str) else None,
             provenance=provenance,
         )

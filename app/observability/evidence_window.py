@@ -42,7 +42,7 @@ import json
 import logging
 import statistics
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -171,7 +171,74 @@ class WindowCounts:
 # Exit-2-Tripwire keyed auf ``live_orders_unexplained``, sonst feuert er permanent
 # und alarmiert damit nichts. Ein ECHTER Live-Fill trägt einen realen Venue-Namen
 # und zählt weiter als unexplained.
+# STAB-2026-09-01 §1 — the forensic classification of the two known non-paper
+# fills, and the reason this is no longer a bare venue-string allowlist.
+#
+# WHAT THE TWO ROWS ACTUALLY ARE (measured, not narrated):
+#   fill_1b252b697674 / ord_24aa77e967be  ETH/USDT    sell  2026-05-04T02:41:56Z
+#   fill_82cdc5b05c4e / ord_4048a7fb20f8  GIGGLE/USDT buy   2026-05-04T22:48:55Z
+# Both carry fee_venue="legacy" and fee_table_version="constructor". Neither
+# carries an exchange_order_id, an execution_mode, or any external venue.
+#
+# CLASSIFICATION = B (paper fill with a mislabelled provenance marker), with C
+# (epoch-foreign) true as a secondary property. The mechanism is a deploy
+# fingerprint, not an execution event: commit 6ddb83cd (2026-05-03 12:38) gave
+# PaperOrder.venue the default "legacy"; commit 5614ecae (2026-05-05 10:11)
+# changed it to "paper". Exactly two fills fall inside that 46-hour window and
+# they are exactly these two. The venue-label timeline over the whole audit is a
+# clean deploy fingerprint: "" until 2026-05-02, "legacy" on 2026-05-04 only,
+# "paper" from 2026-05-06 onward, nothing else ever.
+#
+# WHY THE ALLOWLIST CHANGED SHAPE: matching on the STRING "legacy" excused a
+# property that is still reachable today -- ``Fill.fee_venue`` defaults to
+# "legacy" (app/execution/models.py:125). Any future row constructed without an
+# explicit fee_venue would therefore have been auto-narrated as a
+# "documented-benign epoch-foreign May close" forever. The exemption is now
+# pinned to the two identified fills AND additionally requires the row to
+# predate the current portfolio epoch. Both conditions must hold; anything else
+# marked non-paper counts as UNEXPLAINED and trips the tripwire.
 _DOCUMENTED_BENIGN_NON_PAPER_VENUES = frozenset({"legacy"})
+
+#: The exact fills the forensic classification above covers.
+_DOCUMENTED_BENIGN_NON_PAPER_FILL_IDS = frozenset({"fill_1b252b697674", "fill_82cdc5b05c4e"})
+_DOCUMENTED_BENIGN_NON_PAPER_ORDER_IDS = frozenset({"ord_24aa77e967be", "ord_4048a7fb20f8"})
+
+#: Start of the current paper epoch (``portfolio_epoch_reset``). A benign legacy
+#: row must predate this; a legacy-marked row at or after it is a NEW event and
+#: must never inherit a historical exemption.
+_PAPER_EPOCH_START_UTC = "2026-07-12T22:22:09.568711+00:00"
+
+
+def _fill_identity(ev: Mapping[str, Any]) -> tuple[str, str]:
+    return str(ev.get("fill_id") or ""), str(ev.get("order_id") or "")
+
+
+def is_documented_benign_non_paper(ev: Mapping[str, Any]) -> bool:
+    """True only for the two forensically classified pre-epoch legacy fills.
+
+    Fail-CLOSED in three directions: an unknown fill/order id is never benign, a
+    row at or after the epoch start is never benign however it is labelled, and
+    an unparseable timestamp is never benign.
+    """
+    venue = str(ev.get("fee_venue", "") or ev.get("venue", ""))
+    if venue not in _DOCUMENTED_BENIGN_NON_PAPER_VENUES:
+        return False
+    fill_id, order_id = _fill_identity(ev)
+    if fill_id not in _DOCUMENTED_BENIGN_NON_PAPER_FILL_IDS:
+        return False
+    if order_id not in _DOCUMENTED_BENIGN_NON_PAPER_ORDER_IDS:
+        return False
+    stamp = str(ev.get("timestamp_utc") or ev.get("filled_at") or "")
+    if not stamp:
+        return False
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        epoch = datetime.fromisoformat(_PAPER_EPOCH_START_UTC)
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when < epoch
 
 
 @dataclass(frozen=True)
@@ -192,6 +259,10 @@ class WindowSafety:
     entry_mode_blocked: int
     auto_promotions: int
     non_paper_venues_seen: list[str]
+    # STAB-2026-09-01 §1: the actual rows behind the counts, so the operator note
+    # below can be DERIVED from them instead of asserting a fixed sentence.
+    non_paper_benign_rows: list[dict[str, Any]] = field(default_factory=list)
+    non_paper_unexplained_rows: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -626,6 +697,8 @@ def _build_safety(
     live_attempts = 0
     unexplained = 0
     non_paper: set[str] = set()
+    benign_rows: list[dict[str, Any]] = []
+    unexplained_rows: list[dict[str, Any]] = []
     for ev in exec_list:
         if ev.get("event_type") != "order_filled":
             continue
@@ -633,16 +706,21 @@ def _build_safety(
         if not _is_paper_venue(venue):
             live_attempts += 1
             non_paper.add(venue or "<unknown>")
-            if venue not in _DOCUMENTED_BENIGN_NON_PAPER_VENUES:
+            if is_documented_benign_non_paper(ev):
+                benign_rows.append(dict(ev))
+            else:
                 unexplained += 1
+                unexplained_rows.append(dict(ev))
     derivation = (
         "count of order_filled events whose fee_venue/venue is not a paper venue "
         "(paper|sim|empty). 0 confirms every fill in the window was simulated; the "
         "paper engine also hard-blocks live_enabled=True at construction "
         "(PaperExecutionEngine), so this is a defence-in-depth count, not the only "
-        "guard. live_orders_unexplained excludes the documented-benign 'legacy' "
-        "marker (epoch-foreign May closes) and is the tripwire figure that MUST "
-        "be 0."
+        "guard. live_orders_unexplained excludes ONLY the two forensically "
+        "classified pre-epoch fills (see is_documented_benign_non_paper: pinned "
+        "fill_id AND order_id AND timestamp < paper epoch start) and is the "
+        "tripwire figure that MUST be 0. A 'legacy' label alone no longer excuses "
+        "anything."
     )
     return WindowSafety(
         live_orders_attempted=live_attempts,
@@ -652,6 +730,8 @@ def _build_safety(
         # structurally 0: neither this report nor the edge gate flips entry_mode.
         auto_promotions=0,
         non_paper_venues_seen=sorted(non_paper),
+        non_paper_benign_rows=benign_rows,
+        non_paper_unexplained_rows=unexplained_rows,
     )
 
 
@@ -772,11 +852,12 @@ def _build_notes(
             "The window is supposed to be paper-only."
         )
     elif safety.live_orders_attempted > 0:
-        notes.append(
-            f"{safety.live_orders_attempted} non-paper fill(s), alle dokumentiert-benign "
-            f"({', '.join(safety.non_paper_venues_seen)}: epoch-fremde Mai-Closes) — "
-            "kein Live-Leak."
-        )
+        # STAB-2026-09-01 §1: this sentence used to be a fixed f-string asserting
+        # "epoch-fremde Mai-Closes" no matter what the rows contained -- feeding
+        # the module a synthetic September BUY produced the same words. It is now
+        # DERIVED from the rows, so it can be wrong out loud instead of being
+        # unfalsifiable. (It also called both fills "Closes"; one is a buy entry.)
+        notes.append(_describe_benign_non_paper(safety))
     if (
         edge.trade_count > 0
         and edge.result_without_best_trade.mean_net_bps < 0 <= edge.mean_net_bps
@@ -786,6 +867,30 @@ def _build_notes(
             "edge NEGATIVE. The apparent edge is carried by one trade, not a process."
         )
     return notes
+
+
+def _describe_benign_non_paper(safety: WindowSafety) -> str:
+    """Operator note for exempted non-paper fills, computed from the rows."""
+    rows = safety.non_paper_benign_rows
+    n = safety.live_orders_attempted
+    venues = ", ".join(safety.non_paper_venues_seen) or "<unknown>"
+    if not rows:
+        return (
+            f"{n} non-paper fill(s) ({venues}) — exempt by classification, but the "
+            "underlying rows were not retained for this window; treat as UNVERIFIED."
+        )
+    stamps = sorted(str(r.get("timestamp_utc") or r.get("filled_at") or "") for r in rows if r)
+    sides = sorted({str(r.get("side", "?")).lower() for r in rows})
+    symbols = sorted({str(r.get("symbol", "?")) for r in rows})
+    first, last = stamps[0][:10], stamps[-1][:10]
+    span = first if first == last else f"{first}..{last}"
+    return (
+        f"{len(rows)} of {n} non-paper fill(s) exempt: pinned pre-epoch rows "
+        f"({venues}) dated {span}, {'/'.join(sides)} on {', '.join(symbols)}. "
+        f"Classified B (paper fill, mislabelled provenance marker from the "
+        f"2026-05-03..05-05 venue-default window); epoch-foreign is a secondary "
+        f"property. No exchange_order_id on either row — no live leak."
+    )
 
 
 # === audit-stream IO (thin edge) ===============================================

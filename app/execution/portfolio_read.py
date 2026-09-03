@@ -570,7 +570,7 @@ async def _gather_market_snapshots(
 async def build_portfolio_snapshot(
     *,
     audit_path: str | Path = "artifacts/paper_execution_audit.jsonl",
-    provider: str = "coingecko",
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -583,8 +583,28 @@ async def build_portfolio_snapshot(
     The DB path reconstructs full position state from the most recent PortfolioStateRecord
     written by TradingLoop._write_db() after fill_simulated cycles. Market prices are not
     available from the DB snapshot (no live price fetching on read).
+
+    STAB-2026-09-01 §24 — ``provider`` defaulted to the literal ``"coingecko"``.
+    The operator endpoint was patched under F-05 to resolve
+    ``get_settings().market_data_provider`` (``fallback``) explicitly, but the
+    daily briefing, the diversification router and the chat engine all called
+    this function bare and therefore silently read a DIFFERENT, narrower price
+    source. Measured back-to-back on the Pi against the same audit file:
+
+        provider=coingecko -> available=False  market_value=0.00    (0 of 6 priced)
+        provider=fallback  -> available=True   market_value=5299.56 (6 of 6 priced)
+
+    That is how "Paper Portfolio: nicht verfuegbar" appeared in the brief while
+    the dashboard showed a healthy portfolio from the same replay. ``None`` now
+    means "the system provider", so a bare call can never again mean something
+    narrower than canonical; an explicit provider still overrides for tests and
+    for the CLI's deliberate single-source probes.
     """
     generated_at = datetime.now(UTC).isoformat()
+    if provider is None:
+        from app.core.settings import get_settings
+
+        provider = get_settings().market_data_provider
 
     resolved_path = Path(audit_path).resolve()
     # Epoche v2: Epochengrenze VOR dem DB-primary-Pfad bestimmen — ein

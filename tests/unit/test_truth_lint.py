@@ -116,8 +116,8 @@ def test_tl002_warns_on_fill_in_mock_band(tmp_path: Path) -> None:
         [
             {
                 "event_type": "order_filled",
-                "symbol": "ABC/USDT",
-                "fill_price": 100.76,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # mock(ETH/USDT, phase 101) sell fill
                 "timestamp_utc": "2026-07-12T09:00:00+00:00",
             },
             {  # außerhalb des Bands — sauber
@@ -132,7 +132,8 @@ def test_tl002_warns_on_fill_in_mock_band(tmp_path: Path) -> None:
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
     assert len(v) == 1
     assert v[0]["severity"] == "WARNING"
-    assert v[0]["evidence"]["per_symbol"] == {"ABC/USDT": 1}
+    assert [r["symbol"] for r in v[0]["evidence"]["rows"]] == ["ETH/USDT"]
+    assert v[0]["evidence"]["classification"] == "MOCK_SYNTHETIC"
 
 
 def test_tl002_excludes_band_fill_with_real_source(tmp_path: Path) -> None:
@@ -145,22 +146,22 @@ def test_tl002_excludes_band_fill_with_real_source(tmp_path: Path) -> None:
             {  # reale Quelle -> ausgenommen, nur Evidence-Zaehler
                 "event_type": "order_filled",
                 "order_id": "ord_real",
-                "symbol": "AAVE/USDT",
-                "fill_price": 98.77,
+                "symbol": "ETH/USDT",
+                "fill_price": 3212.51294,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-12T09:00:00+00:00",
             },
             {  # mock-Quelle -> Verletzung
                 "event_type": "order_filled",
                 "order_id": "ord_mock",
-                "symbol": "XYZ/USDT",
-                "fill_price": 100.10,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # mock(ETH/USDT, phase 101) sell fill
                 "timestamp_utc": "2026-07-12T09:00:00+00:00",
             },
             {  # kein Join -> Verletzung (fail-closed)
                 "event_type": "order_filled",
                 "order_id": "ord_unknown",
-                "symbol": "QQQ/USDT",
-                "fill_price": 99.50,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-12T09:00:00+00:00",
             },
         ],
@@ -176,8 +177,7 @@ def test_tl002_excludes_band_fill_with_real_source(tmp_path: Path) -> None:
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
     assert len(v) == 1
     assert v[0]["evidence"]["count"] == 2
-    assert v[0]["evidence"]["band_real_source_excluded"] == 1
-    assert "AAVE/USDT" not in v[0]["evidence"]["per_symbol"]
+    assert v[0]["evidence"]["detection"]["cleared_by_real_price_source"] == 1
 
 
 def test_tl002_excludes_screener_fill_via_document_id_join(tmp_path: Path) -> None:
@@ -196,18 +196,18 @@ def test_tl002_excludes_screener_fill_via_document_id_join(tmp_path: Path) -> No
             {  # Screener-Fill mit Binance-Beleg -> ausgenommen
                 "event_type": "order_filled",
                 "order_id": "ord_tech",
-                "symbol": "AAVE/USDT",
-                "fill_price": 98.43,
+                "symbol": "ETH/USDT",
+                "fill_price": 3237.56041,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-27T15:26:00+00:00",
-                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+                "document_id": "technical_paper_ETHUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
             },
             {  # Screener-Fill, aber nur Fallback-Basis -> bleibt Verletzung
                 "event_type": "order_filled",
                 "order_id": "ord_fallback",
-                "symbol": "XYZ/USDT",
-                "fill_price": 99.10,
+                "symbol": "ETH/USDT",
+                "fill_price": 3247.585395,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-27T15:26:00+00:00",
-                "document_id": "technical_paper_XYZUSDT_tech-XYZUSDT-2026-07-27T15:20:00+00:00",
+                "document_id": "technical_paper_ETHUSDT_tech-XYZUSDT-2026-07-27T15:20:00+00:00",
             },
         ],
     )
@@ -228,8 +228,8 @@ def test_tl002_excludes_screener_fill_via_document_id_join(tmp_path: Path) -> No
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
     assert len(v) == 1
     assert v[0]["evidence"]["count"] == 1
-    assert v[0]["evidence"]["per_symbol"] == {"XYZ/USDT": 1}
-    assert v[0]["evidence"]["band_real_source_excluded"] == 1
+    assert [r["symbol"] for r in v[0]["evidence"]["rows"]] == ["ETH/USDT"]
+    assert v[0]["evidence"]["detection"]["cleared_by_real_price_source"] == 1
 
 
 def test_tl002_document_id_without_matching_candidate_stays_violation(tmp_path: Path) -> None:
@@ -241,10 +241,10 @@ def test_tl002_document_id_without_matching_candidate_stays_violation(tmp_path: 
             {
                 "event_type": "order_filled",
                 "order_id": "ord_orphan",
-                "symbol": "AAVE/USDT",
-                "fill_price": 98.43,
+                "symbol": "ETH/USDT",
+                "fill_price": 3255.2715500000004,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-27T15:26:00+00:00",
-                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+                "document_id": "technical_paper_ETHUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
             }
         ],
     )
@@ -274,10 +274,10 @@ def test_tl002_explicit_mock_source_wins_over_screener_basis(tmp_path: Path) -> 
             {
                 "event_type": "order_filled",
                 "order_id": "ord_conflict",
-                "symbol": "AAVE/USDT",
-                "fill_price": 98.43,
+                "symbol": "ETH/USDT",
+                "fill_price": 3212.51294,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-27T15:26:00+00:00",
-                "document_id": "technical_paper_AAVEUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
+                "document_id": "technical_paper_ETHUSDT_tech-AAVEUSDT-2026-07-27T15:20:00+00:00",
             }
         ],
     )
@@ -297,7 +297,7 @@ def test_tl002_explicit_mock_source_wins_over_screener_basis(tmp_path: Path) -> 
     result = run_lint(art)
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
     assert len(v) == 1
-    assert v[0]["evidence"]["per_symbol"] == {"AAVE/USDT": 1}
+    assert [r["symbol"] for r in v[0]["evidence"]["rows"]] == ["ETH/USDT"]
 
 
 def test_tl002_silent_when_all_band_fills_have_real_source(tmp_path: Path) -> None:
@@ -308,8 +308,8 @@ def test_tl002_silent_when_all_band_fills_have_real_source(tmp_path: Path) -> No
             {
                 "event_type": "order_filled",
                 "order_id": "ord_real",
-                "symbol": "AAVE/USDT",
-                "fill_price": 98.77,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-07-12T09:00:00+00:00",
             }
         ],
@@ -578,8 +578,8 @@ def test_tl002_excludes_band_fill_whose_own_row_names_a_real_source(tmp_path: Pa
             {  # Beleg auf der Zeile -> ausgenommen
                 "event_type": "order_filled",
                 "order_id": "ord_own_source",
-                "symbol": "SOL/USDT",
-                "fill_price": 98.859405,
+                "symbol": "ETH/USDT",
+                "fill_price": 3237.56041,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-08-26T22:13:34+00:00",
                 "price_source": "bybit",
                 "observed_market_price": 98.81,
@@ -588,8 +588,8 @@ def test_tl002_excludes_band_fill_whose_own_row_names_a_real_source(tmp_path: Pa
             {  # kein price_source -> bleibt Verletzung (fail-closed)
                 "event_type": "order_filled",
                 "order_id": "ord_no_source",
-                "symbol": "SOL/USDT",
-                "fill_price": 98.81057,
+                "symbol": "ETH/USDT",
+                "fill_price": 3247.585395,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-08-24T23:59:18+00:00",
             },
         ],
@@ -598,7 +598,7 @@ def test_tl002_excludes_band_fill_whose_own_row_names_a_real_source(tmp_path: Pa
     v = [x for x in result["violations"] if x["invariant_id"] == "TL-002"]
     assert len(v) == 1
     assert v[0]["evidence"]["count"] == 1
-    assert v[0]["evidence"]["band_real_source_excluded"] == 1
+    assert v[0]["evidence"]["detection"]["cleared_by_real_price_source"] == 1
 
 
 def test_tl002_an_empty_price_source_is_no_proof(tmp_path: Path) -> None:
@@ -610,8 +610,8 @@ def test_tl002_an_empty_price_source_is_no_proof(tmp_path: Path) -> None:
             {
                 "event_type": "order_filled",
                 "order_id": "ord_empty",
-                "symbol": "SOL/USDT",
-                "fill_price": 99.0,
+                "symbol": "ETH/USDT",
+                "fill_price": 3255.2715500000004,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-08-26T22:13:34+00:00",
                 "price_source": "",
             }
@@ -631,8 +631,8 @@ def test_tl002_a_mock_price_source_on_the_row_is_a_violation(tmp_path: Path) -> 
             {
                 "event_type": "order_filled",
                 "order_id": "ord_row_mock",
-                "symbol": "SOL/USDT",
-                "fill_price": 100.5,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # mock(ETH/USDT, phase 101) sell fill
                 "timestamp_utc": "2026-08-26T22:13:34+00:00",
                 "price_source": "mock",
             }
@@ -653,8 +653,8 @@ def test_tl002_a_stale_price_is_no_proof_either(tmp_path: Path) -> None:
             {
                 "event_type": "order_filled",
                 "order_id": "ord_stale",
-                "symbol": "SOL/USDT",
-                "fill_price": 99.9,
+                "symbol": "ETH/USDT",
+                "fill_price": 3212.51294,  # ETH/USDT mock-curve sell fill
                 "timestamp_utc": "2026-08-26T22:13:34+00:00",
                 "price_source": "bybit",
                 "market_data_is_stale": True,
@@ -676,8 +676,8 @@ def test_tl002_explicit_mock_in_the_loop_audit_beats_the_row(tmp_path: Path) -> 
             {
                 "event_type": "order_filled",
                 "order_id": "ord_conflict",
-                "symbol": "SOL/USDT",
-                "fill_price": 100.0,
+                "symbol": "ETH/USDT",
+                "fill_price": 3225.6863500000004,  # mock(ETH/USDT, phase 101) sell fill
                 "timestamp_utc": "2026-08-26T22:13:34+00:00",
                 "price_source": "bybit",
                 "market_data_is_stale": False,

@@ -121,16 +121,42 @@ export type TimerHealthInactiveEntry = {
   last_trigger: string | null;
 };
 
+/** The budget the snapshot is judged against, derived from the producer unit. */
+export type TimerHealthFreshness = {
+  producer_unit: string;
+  expected_cadence_seconds: number | null;
+  accuracy_seconds: number;
+  runtime_margin_seconds: number;
+  grace_seconds: number;
+  stale_after_seconds: number | null;
+};
+
 export type TimerHealthResponse = {
   state: "ok" | "has_inactive" | "stale" | "no_data" | "corrupt" | "critical";
   // FS-2: overall severity + taxonomy counts (expected_inactive vs failed).
   severity?: string;
   checked_at: string | null;
   stale_minutes: number | null;
-  total: number;
-  active: number;
+  age_seconds?: number | null;
+  /**
+   * STAB-2026-09-01 §11: false when the snapshot no longer describes the present.
+   * `total`/`active` are then null and MUST render as UNKNOWN; the observed
+   * numbers live on in `last_known_*` and may only be shown labelled as such.
+   */
+  counts_are_current?: boolean;
+  total: number | null;
+  active: number | null;
+  last_known_total?: number | null;
+  last_known_active?: number | null;
+  /** §13: the installed fleet, which is NOT the monitored subset. */
+  installed_timer_count?: number;
+  installed_timers?: string[];
+  monitored_timer_count?: number | null;
   critical_count?: number;
   expected_inactive_count?: number;
+  unknown_count?: number;
+  freshness?: TimerHealthFreshness | null;
+  status_reason?: string;
   inactive: TimerHealthInactiveEntry[];
 };
 
@@ -2317,6 +2343,16 @@ export type SignalSummary = {
   signal_timestamp: string | null;
 };
 
+/** The backend's canonical lifecycle stages — see app/premium/state_machine.py. */
+export type LifecycleBucket =
+  | "recognised"
+  | "eligible"
+  | "rejected"
+  | "review"
+  | "submitted_paper"
+  | "opened_paper"
+  | "closed_paper";
+
 export type EnvelopeRecord = {
   timestamp_utc: string | null;
   event: string | null;
@@ -2329,6 +2365,13 @@ export type EnvelopeRecord = {
   premium_state?: string | null;
   premium_state_label?: string | null;
   premium_state_tone?: "pos" | "warn" | "neg" | "neutral" | string | null;
+  /**
+   * STAB-2026-09-01 §10 — the ONE lifecycle bucket, computed by the backend's
+   * total partition. The panel used to derive its own buckets with six
+   * independent `if` statements, so 21 of 45 states landed in no column while
+   * still counting in the header total (207 of 3890 live rows, 5.3%).
+   */
+  lifecycle_bucket?: LifecycleBucket | string | null;
   bridge_stage?: string | null;
   bridge_reason?: string | null;
   stage: string | null;
