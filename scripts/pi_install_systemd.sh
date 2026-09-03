@@ -259,6 +259,52 @@ _paper_freeze_skip() {
 # Enable-Schleife als eigene Funktion (source-bar für Tests). Guard identisch
 # zum Reactivate-Pfad: invalider Marker = HOLD (return 3, keine Mutation),
 # frozen = geschützte Writer überspringen. Rückgabe 0 = ok, 3 = HOLD.
+# Release-gebundene Units zeigen mit WorkingDirectory, .venv, --repo und dem
+# Kommando nach `--` auf `/home/kai/current`. Legt niemand dieses Ziel an, starten
+# sie in einen nicht existierenden Pfad und scheitern sofort — das ist kein
+# Provenance-Befund, sondern ein toter Dienst, und zwar bevor irgendeine Sonde
+# etwas zu bewerten haette.
+#
+# Die Unit-Menge kommt aus derselben selbstpflegenden Quelle wie
+# `expected_attesting_units`: wer `runtime-exec` im ExecStart fuehrt, ist
+# release-gebunden. Eine handgefuehrte Liste waere die naechste Wachliste, die
+# von ihrer Quelle abweicht.
+#
+# Verbindliche Reihenfolge beim Deploy:
+#   pi_make_release.sh -> pi_activate_release.sh -> DIESER Installer
+#   -> daemon-reload -> Restart -> Runtime-Provenance
+release_bound_units() {
+    grep -l "runtime-exec" "$UNIT_SRC"/*.service 2>/dev/null | xargs -r -n1 basename
+}
+
+release_target_of() {
+    # Der `--repo`-Wert der Unit, also das Ziel, das existieren MUSS.
+    awk '{for(i=1;i<=NF;i++) if($i=="--repo") {print $(i+1); exit}}' "$UNIT_SRC/$1"
+}
+
+assert_release_ready() {
+    local unit target problems=0
+    for unit in $(release_bound_units); do
+        target="$(release_target_of "$unit")"
+        [ -n "$target" ] || continue
+        if [ ! -d "$target" ]; then
+            echo "  FEHLT  $unit -> $target existiert nicht" >&2
+            problems=$((problems + 1))
+        elif [ ! -f "$target/release.json" ]; then
+            echo "  FEHLT  $unit -> $target ohne release.json" >&2
+            problems=$((problems + 1))
+        fi
+    done
+    if [ "$problems" -gt 0 ]; then
+        echo "" >&2
+        echo "ABBRUCH: $problems release-gebundene Unit(s) ohne gueltiges Release." >&2
+        echo "Erst  bash scripts/pi_make_release.sh  und  bash scripts/pi_activate_release.sh," >&2
+        echo "dann diesen Installer. Ein Start in einen leeren Pfad erzeugt tote Dienste." >&2
+        return 1
+    fi
+    return 0
+}
+
 enable_on_install_units() {
     echo ""
     echo "Enabling units so they start at boot…"
@@ -481,6 +527,15 @@ install() {
         echo ""
         echo "Done (install-only)."
         return
+    fi
+
+    # Vorbedingung des Release-Modells VOR jedem Enable — und bewusst hier im
+    # Ablauf, nicht in `enable_on_install_units`: diese Funktion hat einen
+    # eigenen, getesteten Vertrag (Freeze-Marker), und eine zweite Bedingung
+    # darin liesse ihre Tests an einer Umgebung scheitern, ueber die sie gar
+    # nichts aussagen. Die Reihenfolge bleibt dieselbe: pruefen, dann starten.
+    if ! assert_release_ready; then
+        exit 4
     fi
 
     if ! enable_on_install_units; then

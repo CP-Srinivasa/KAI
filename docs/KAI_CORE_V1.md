@@ -123,7 +123,24 @@ Grenze: `journalctl -p err` ist für App-Fehler blind (strukturiertes stdout ohn
 | **MERGE (DEFER)** | `integrations/*/adapter` → `ingestion`; `truth` + `integrity` + `compliance` → `audit`; `services/timer_health` → `observability`; `decisions/` → `orchestrator` |
 | **DELETE (erledigt)** | Docker/Postgres-Welt + CI-Postgres; 6 Deps; 5 Shim-Module; 37 tote app-Module (fan-in 0, nur test-getragen); 25 Waisen-Skripte — **−18.714 Zeilen** |
 | **QUARANTINE** | `app/intelligence/`, `app/research/` (+ Prereg-Timer `forecaster-*`, `prereg-maturity`, `edge-ic-*`, `min-turnover-calibration`, `exploration-coverage`), `app/lightning/` + `app/chain/` (+ `ln-reconcile*`, `ln-scb-monitor`, `oracle-earnings-booking`), `app/premium/` + Fastlane (+ `premium-healthcheck`, `premium-latency-audit`), Live-Exchange-Teilbaum, `decision_journal(+chain)`, `kai-tv-auto-promote.timer` (79 Tage grün bei 100 % Rejects — der Shadow-Feed ersetzt ihn), Branch `codex/llm-router-migration-20260901`, `test/regtest-ln/`, 12 nur-in-Docs-referenzierte Skripte |
-| **DEFER** | Modell-Routing/Kosten-USD (nach 2 Wochen v2-Telemetrie), Hash-Chain am Execution-Stream, `observability`-Split, `core/settings.py`-Entkopplung, `cli/commands/trading.py`-Zerlegung, Schatten-Env-Reads → Settings, immutable Release-Pfad `/home/kai/releases/<SHA>/`, `app/capital/`, `kai-llm-shadow` |
+| **DEFER** | Modell-Routing/Kosten-USD (nach 2 Wochen v2-Telemetrie), Hash-Chain am Execution-Stream, `observability`-Split, `core/settings.py`-Entkopplung, `cli/commands/trading.py`-Zerlegung, Schatten-Env-Reads → Settings, `app/capital/`, `kai-llm-shadow` |
+
+> **Nachtrag 2026-09-03 (#848):** Der immutable Release-Pfad `/home/kai/releases/<SHA>/` stand hier als DEFER und ist es nicht mehr — er ist seit #848 die **verbindliche Laufzeitgrundlage** der fünf langlebigen Dienste.
+>
+> Der Grund war nicht Aufräumen, sondern ein Beweisproblem: aus einem beweglichen
+> Checkout kann ein Prozess nicht belegen, welche Bytes er geladen hat. Python bindet
+> Module erst zur Laufzeit, der Baum darf sich zwischen Attestierung und Import
+> weiterbewegen. Ein Baum, der sich nicht bewegt, löst das; mehr Logik um den
+> beweglichen herum nicht.
+>
+> Verbindliche Deploy-Reihenfolge: `pi_make_release.sh` → `pi_activate_release.sh` →
+> `pi_install_systemd.sh` → `daemon-reload` → Restart → Runtime-Provenance. Der
+> Installer bricht ab, wenn eine release-gebundene Unit auf einen Pfad ohne
+> `release.json` zeigt — sonst starteten fünf Dienste in ein leeres Verzeichnis.
+>
+> Die übrigen Units bleiben bewusst am bisherigen Pfad; kurzlebige Oneshots haben
+> den Capture-zu-Load-Race praktisch nicht, sind damit aber auch nicht
+> release-gebunden.
 
 Quarantäne bedeutet: Code bleibt im Repo, Units bleiben wie sie sind (Disable ist eine Operator-Entscheidung — Befehle in § 12), aber **nichts davon ist Bestandteil von KAI CORE v1** und nichts davon wird ohne eigene Freigabe erweitert.
 
