@@ -146,6 +146,45 @@ def test_minimal_env_real_boot_health_ok_and_schedulers_stop(minimal_env: Path) 
     assert _repo_identity_fingerprint() == repo_identity_before
 
 
+def test_minimal_env_payment_health_is_ok_at_genesis(minimal_env: Path) -> None:
+    """Ein realer Boot in SIMULATION liefert einen gedeckten Geld-Zustand.
+
+    Der Punkt ist nicht "der Endpunkt antwortet", sondern dass er ``ok`` sagt
+    OHNE einen Node und mit einem Journal, das noch keinen einzigen Record hat:
+    Kette ``ok``, ``seq`` 0, Rail ``simulated``. Ein ``ok`` mit einem
+    ``reachable=true`` waere hier die gefaehrlichste Antwort — die Anlage hat
+    keinen Node, den sie erreicht haben koennte.
+
+    ``/health/payment`` haengt am Lifespan: ohne den gebauten Control Plane
+    antwortet er ``degraded``. Genau deshalb steht der Test hier und nicht
+    unter ``tests/unit`` — er beweist die VERDRAHTUNG.
+    """
+    app = api_main.create_app()
+    with TestClient(app) as client:
+        response = client.get("/health/payment")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["mode"] == "simulation"
+        assert body["journal"]["chain"] == "ok"
+        assert body["journal"]["seq"] == 0
+        assert body["rail"]["state"] == "simulated"
+        assert body["rail"]["reachable"] is False
+        assert body["in_flight"] == 0
+        assert body["settlement_latency_p50_ms"] is None
+        assert body["live_gate"]["app_env_production"] is False
+        assert body["live_gate"]["pay_enabled"] is False
+
+        # Der Control Plane haengt am App-State und hat das Journal geoeffnet.
+        service = app.state.payment_service
+        assert service.settings.mode == "simulation"
+        assert service.journal.tip_hash == "0" * 64
+
+        # Und die Konfiguration ist nachweisbar — sie haengt nicht in AppSettings.
+        config = client.get("/health/config").json()
+        assert config["sections"]["payments"]["mode"] == "simulation"
+
+
 def test_production_boot_without_secrets_fails_closed(
     minimal_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
