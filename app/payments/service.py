@@ -81,6 +81,25 @@ class PaymentService:
         self._actor_limits = dict(actor_limits or {})
         self._tracked: dict[str, Tracked] = {}
 
+    # -- Lesbare Innereien --------------------------------------------------- #
+    #
+    # Der Health-Pfad braucht Journal, Rail und Settings, ohne sie ein zweites
+    # Mal zu bauen — zwei Journal-Objekte auf derselben Datei waeren zwei
+    # Indizes mit eigener Meinung.
+
+    @property
+    def journal(self) -> PaymentJournal:
+        return self._journal
+
+    @property
+    def settings(self) -> PaymentSettings:
+        return self._settings
+
+    @property
+    def rail(self) -> PaymentRail:
+        """Der Rail des aktuellen Modus (ADR §1)."""
+        return self._active_rail()
+
     # -- Start -------------------------------------------------------------- #
 
     def recover(self) -> list[str]:

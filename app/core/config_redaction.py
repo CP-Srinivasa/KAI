@@ -71,16 +71,28 @@ def _walk(
         ]
 
 
-def redacted_config_snapshot(settings: AppSettings) -> dict[str, Any]:
+def redacted_config_snapshot(
+    settings: AppSettings,
+    *,
+    extra_sections: dict[str, BaseSettings] | None = None,
+) -> dict[str, Any]:
     """Effective configuration, secrets replaced by fingerprints.
 
     Returns ``{"sections": {...}, "explicit": {...}}`` where ``explicit`` lists,
     per section, the fields that came from the environment rather than a
     default. A critical field missing from ``explicit`` is the operator's cue.
+
+    ``extra_sections`` haengt Settings-Baeume an, die BEWUSST nicht in
+    ``AppSettings`` haengen (ADR 0017 §2: keine Zeile in ``settings.py``).
+    Ohne diesen Parameter waere der Geldpfad die einzige Konfiguration, die
+    der Operator nicht nachweisen kann — und ein God-File-Ratchet, der zu
+    einem blinden Fleck fuehrt, hat sein Ziel verfehlt.
     """
     sections: dict[str, Any] = {}
     explicit: dict[str, list[str]] = {}
     _walk(settings, "", sections, explicit)
+    for name, extra in (extra_sections or {}).items():
+        _walk(extra, name, sections, explicit)
     return {"sections": sections, "explicit": {k: v for k, v in explicit.items() if v}}
 
 
