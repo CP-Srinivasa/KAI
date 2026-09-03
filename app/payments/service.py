@@ -27,17 +27,16 @@ from app.core.payment_settings import PaymentSettings
 from app.payments.approval import grant
 from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
-from app.payments.idempotency import consume, hash_destination
+from app.payments.idempotency import consume
 from app.payments.journal import PaymentJournal
 from app.payments.models import Invoice, PaymentAttempt, PaymentAuditEvent, Quote
 from app.payments.policy import ActorLimits, PolicyContext, evaluate
+from app.payments.preview import decode_or_none, dedup_key_for, health_or_none
 from app.payments.rail import (
-    DecodedDestination,
     InvoiceRequest,
     InvoiceStatus,
     PaymentRail,
     RailError,
-    RailHealth,
 )
 from app.payments.receivables import record_invoice
 from app.payments.service_types import (
@@ -120,8 +119,8 @@ class PaymentService:
         )
 
         # Vorschau: Node-Aufrufe gehoeren NICHT unter den Lock.
-        decoded = await self._decode(rail, request.destination)
-        health = await self._health(rail)
+        decoded = await decode_or_none(rail, request.destination)
+        health = await health_or_none(rail)
 
         with self._journal.transaction() as tx:
             outcome = consume(self._journal, idempotency_key, intent)
@@ -232,7 +231,7 @@ class PaymentService:
         attempt = PaymentAttempt(
             attempt_no=tracked.attempts + 1,
             intent_id=intent_id,
-            rail_dedup_key=self._dedup_key(tracked),
+            rail_dedup_key=dedup_key_for(tracked),
             submitted_at=moment,
             amount_sent=tracked.intent.amount_requested,
         )
@@ -295,35 +294,6 @@ class PaymentService:
                 f"(expected {name!r}, have {sorted(self._rails)})"
             )
         return rail
-
-    async def _decode(self, rail: PaymentRail, destination: str) -> DecodedDestination | None:
-        """``None`` heisst: der Rail konnte das Ziel nicht binden.
-
-        Das ist kein Absturz, sondern ein Eingabewert fuer die Policy — und die
-        lehnt einen fehlenden Decode ab (``destination_allowlist``).
-        """
-        try:
-            return await rail.decode(destination)
-        except RailError:
-            return None
-
-    async def _health(self, rail: PaymentRail) -> RailHealth | None:
-        try:
-            return await rail.health()
-        except RailError:
-            return None
-
-    def _dedup_key(self, tracked: Tracked) -> str:
-        """Der Schluessel, unter dem der RAIL dedupliziert (ADR §5).
-
-        Vorzugsweise der aus dem Decode (Lightning: ``payment_hash``). Ohne
-        Decode ein deterministischer Ersatz aus der Destination —
-        deterministisch, damit ein Retry denselben Schluessel traegt und nicht
-        als neue Zahlung durchgeht.
-        """
-        if tracked.decoded is not None:
-            return tracked.decoded.rail_dedup_key
-        return hash_destination(tracked.intent.destination)
 
     def _replayed_view(self, intent_id: str, status: str | None) -> IntentView:
         known = PaymentStatus(status) if status else PaymentStatus.REQUESTED
