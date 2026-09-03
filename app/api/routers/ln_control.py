@@ -19,8 +19,16 @@ that cannot be journalled ahead of time must not happen. Whether an action is
 "capital" is not decided here: ``policy.ACTION_RISK_CLASSES`` is the single taxonomy
 (M-8) and this module derives from it via ``is_capital_action``.
 
-Auth: served under ``/dashboard/*`` → the app-level email-allowlist middleware
-applies (no service-token). The S-001 local-bypass hardening is a separate PR.
+Auth: served under ``/dashboard/*``. The S-001 local-bypass hardening IS in place
+(``app/security/auth.py::_requires_strong_auth``): every ``/dashboard/api/ln/*``
+path needs real auth (CF-Access OR Bearer) even from 127.0.0.1 unless it is one
+of five allowlisted read-only endpoints — ``/value-action`` is not among them.
+The earlier note ("a separate PR") was stale and read as if this control surface
+were still locally reachable (SENTR).
+
+ADR 0017 §12: ``pay_invoice`` is delegated to the Payment Control Plane
+(``ln_control_delegate``) — exactly ONE send path. The confirm ceremony below
+(plan_hash binding, fresh idempotency key, HOTP) is unchanged.
 """
 
 from __future__ import annotations
@@ -33,7 +41,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.core.settings import get_settings
+from app.api.routers import ln_control_delegate as delegate
+from app.api.routers.ln_control_gates import (
+    _available_balance_sat,
+    _build_hotp_verifier,
+    _fresh_capital_balance_sat,
+    _money_journal_blocker,
+)
 from app.lightning import value_layer as vl
 from app.lightning.control_gate import (
     plan_hash,
@@ -82,7 +96,8 @@ class _ActionSpec:
 # denied by the policy, an action classified there but unreachable here is dead spec.
 _ACTIONS: dict[str, _ActionSpec] = {
     "create_invoice": _ActionSpec(vl.create_invoice, None, None),
-    "pay_invoice": _ActionSpec(vl.pay_invoice, None, None),
+    # ADR §12: Eintrag haelt die Taxonomie-Invariante, Funktion wird nie gerufen.
+    "pay_invoice": _ActionSpec(delegate.legacy_pay_invoice_moved, None, None),
     "keysend": _ActionSpec(vl.keysend, "amt_sat", "dest_pubkey_hex"),
     "send_coins": _ActionSpec(vl.send_coins, "amount_sat", "addr"),
     "open_channel": _ActionSpec(vl.open_channel, "local_funding_sat", "node_pubkey_hex"),
@@ -107,53 +122,6 @@ class ActionBody(BaseModel):
     confirm: ConfirmBody | None = None
 
 
-async def _available_balance_sat() -> int:
-    """Best-effort on-chain+channel balance for NON-capital actions (0 if
-    unavailable → policy errs conservative: a spend with unknown balance is denied
-    if a reserve floor is set). Capital actions use the freshness-gated variant."""
-    try:
-        from app.lightning.cache import get_cached_node_status
-
-        status, _ = await get_cached_node_status()
-        return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
-            getattr(status, "channel_local_sat", 0) or 0
-        )
-    except Exception:  # noqa: BLE001 — balance is best-effort, never block the endpoint
-        return 0
-
-
-async def _fresh_capital_balance_sat() -> int | None:
-    """W0-P1: on-chain+channel balance from a FRESH node snapshot, or ``None``.
-
-    ``None`` means no balance-bearing snapshot within ``CAPITAL_MAX_AGE_SECONDS``
-    could be obtained (node degraded/unreachable/stale) — the caller must fail
-    CLOSED and deny the capital action, never fall back to a cached value.
-    """
-    try:
-        from app.lightning.cache import get_capital_grade_status
-
-        status, _age = await get_capital_grade_status()
-    except Exception:  # noqa: BLE001 — any failure counts as "no fresh state"
-        return None
-    if status is None:
-        return None
-    return int(getattr(status, "wallet_total_sat", 0) or 0) + int(
-        getattr(status, "channel_local_sat", 0) or 0
-    )
-
-
-def _money_journal_blocker() -> str:
-    """``""`` when the money journal may be extended, else the deny reason.
-
-    Thin wrapper over the value layer's own precondition so the cockpit denies
-    EARLY — before an idempotency key is burned and a HOTP code is consumed — with
-    the same verdict the value layer would reach later. Receive actions never
-    consult it (see the value-layer asymmetry).
-    """
-    ok, reason = vl.money_journal_status()
-    return "" if ok else reason
-
-
 def _effective_amount_sat(
     action: str, params: dict[str, Any], spec: _ActionSpec
 ) -> tuple[int, bool]:
@@ -172,15 +140,6 @@ def _effective_amount_sat(
     if spec.amount_key:
         return int(params.get(spec.amount_key, 0) or 0), True
     return 0, True  # non-spend actions (create_invoice / close_channel)
-
-
-def _build_hotp_verifier() -> Any:
-    from pathlib import Path
-
-    from app.security.hotp_auth import HotpVerifier
-
-    ln = get_settings().lightning
-    return HotpVerifier(seed_path=Path(ln.hotp_seed_path), journal_path=Path(ln.hotp_journal_path))
 
 
 @router.post("/value-action")
@@ -256,6 +215,19 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
             return await spec.fn(**body.params, **extra)
         except TypeError as exc:  # bad/typo'd params for this action
             raise HTTPException(status_code=422, detail=f"invalid params: {exc}") from exc
+
+    # ── ADR 0017 §12: pay_invoice gehoert dem Control Plane ──────────────────
+    if body.action == "pay_invoice":
+        amount_sat, _ = _effective_amount_sat("pay_invoice", body.params, spec)
+        return await delegate.handle_pay_invoice(
+            request,
+            body.params,
+            amount_sat=amount_sat,
+            plan_hash_value=ph,
+            policy={"decision": decision.decision, "reason": decision.reason},
+            cockpit_key=body.confirm.idempotency_key if body.confirm else None,
+            hotp_code=body.confirm.hotp if body.confirm else "",
+        )
 
     # ── plan mode: preview only, no execution ────────────────────────────────
     if body.confirm is None:
