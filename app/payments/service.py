@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.payment_settings import PaymentSettings
+from app.payments.approval import grant
 from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
 from app.payments.idempotency import consume, hash_destination
@@ -38,6 +39,7 @@ from app.payments.rail import (
     RailError,
     RailHealth,
 )
+from app.payments.receivables import record_invoice
 from app.payments.service_types import (
     IntentView,
     PaymentRequest,
@@ -171,40 +173,14 @@ class PaymentService:
     # -- Freigeben ---------------------------------------------------------- #
 
     def authorize(self, intent_id: str, approval_code: str) -> IntentView:
-        """HOTP-Freigabe (ADR §4). Ohne Verifier gibt es keine Freigabe."""
+        """HOTP-Freigabe (ADR §4). Die Zeremonie steht in ``approval``."""
         tracked = self._require(intent_id)
-        if self._hotp is None:
-            raise PaymentServiceError(
-                "no HOTP verifier configured — without a seed nobody can approve, "
-                "and nobody gets waved through either"
-            )
-        try:
-            result = self._hotp.verify(approval_code)
-        except Exception as exc:  # noqa: BLE001 - jede HOTP-Ablehnung ist dieselbe Antwort
-            self._journal.append(
-                intent_id,
-                "approval_denied",
-                {"status": tracked.status.value, "failure_reason": type(exc).__name__},
-                ts=self._clock(),
-            )
-            raise PaymentServiceError(f"approval refused: {type(exc).__name__}") from exc
-
-        moment = self._clock()
-        tracked.status = transition(
-            tracked.status,
-            PaymentStatus.AUTHORIZED,
-            evidence=TransitionEvidence(
-                actor="operator", reason="hotp approval", occurred_at=moment
-            ),
-        )
-        self._journal.append(
-            intent_id,
-            "approval_granted",
-            {
-                "status": tracked.status.value,
-                "approval_counter": int(getattr(result, "counter_used", 0)),
-            },
-            ts=moment,
+        grant(
+            self._journal,
+            tracked,
+            hotp_verifier=self._hotp,
+            approval_code=approval_code,
+            moment=self._clock(),
         )
         return IntentView(intent_id=intent_id, status=tracked.status, decision=tracked.decision)
 
@@ -253,8 +229,22 @@ class PaymentService:
 
     # -- Empfangen ---------------------------------------------------------- #
 
-    async def create_invoice(self, request: InvoiceRequest) -> Invoice:
-        return await self._active_rail().create_invoice(request)
+    async def create_invoice(self, request: InvoiceRequest, *, order_ref: str = "") -> Invoice:
+        """Eine eigene Forderung ausstellen UND sie journallieren (ADR §1/§8).
+
+        Ohne den Record haette der Reconciler nichts, wogegen er den Node
+        halten koennte: eine Invoice lebt am Node, und ein Settlement daran ist
+        eine Zustandsaenderung, die niemand beobachtet.
+        """
+        invoice = await self._active_rail().create_invoice(request)
+        record_invoice(
+            self._journal,
+            invoice,
+            purpose=request.purpose,
+            order_ref=order_ref,
+            moment=self._clock(),
+        )
+        return invoice
 
     async def invoice_status(self, ref_hash: str) -> InvoiceStatus:
         return await self._active_rail().invoice_status(ref_hash)

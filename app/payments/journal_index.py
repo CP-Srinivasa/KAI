@@ -170,6 +170,16 @@ class JournalIndex:
         terminal = {state.value for state in TERMINAL_STATES}
         return {intent for intent, status in self._status.items() if status not in terminal}
 
+    def all_intents(self) -> frozenset[str]:
+        """Jeder Vorgang, den das Journal je gesehen hat — auch die terminalen.
+
+        Die Rueckwaerts-Richtung fragt "gehoert dieser Send zu UNS?"; ein
+        erledigter Intent gehoert genauso dazu wie ein offener. Nur
+        ``open_intents`` einzusetzen wuerde jede abgeschlossene Zahlung beim
+        naechsten Lauf zur Waise erklaeren.
+        """
+        return frozenset(self._status)
+
     def dedup_key(self, intent_id: str) -> str | None:
         """Unter welchem Schluessel der Rail diesen Intent kennt — oder ``None``."""
         return self._dedup.get(intent_id)
