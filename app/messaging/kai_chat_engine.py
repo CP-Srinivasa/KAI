@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from app.ai.audit import llm_call_scope
+from app.ai.runtime import LiteLLMRequest, invoke
 from app.core.settings import get_settings
 from app.execution.portfolio_read import build_portfolio_snapshot
 from app.messaging.kai_persona import KaiPersonaConfigError, load_kai_persona
@@ -27,7 +28,7 @@ from app.messaging.kai_persona import KaiPersonaConfigError, load_kai_persona
 logger = logging.getLogger(__name__)
 
 ChatIntent = Literal["trading", "smalltalk"]
-ChatSource = Literal["system", "gpt4o", "fallback"]
+ChatSource = Literal["system", "gpt4o", "litellm", "fallback"]
 
 
 @dataclass(frozen=True)
@@ -226,17 +227,29 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     from openai import AsyncOpenAI
 
     system_prompt = _build_persona_system_prompt(language)
-    client = AsyncOpenAI(api_key=api_key, timeout=20.0)
-    try:
-        # NEO-F-005: this call used to leave no trace at all. Transport is
-        # unchanged (same client, same timeout) — only the audit scope is new.
+    messages: list[Any] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    def parse_litellm(body: dict[str, object]) -> str:
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise ValueError("empty_completion")
+        choice = choices[0]
+        payload = choice.get("message")
+        content = payload.get("content") if isinstance(payload, dict) else None
+        text = content.strip() if isinstance(content, str) else ""
+        if not text:
+            raise ValueError("empty_completion")
+        return text
+
+    async def direct_call() -> str:
+        client = AsyncOpenAI(api_key=api_key, timeout=20.0)
         async with llm_call_scope(purpose="chat", provider="openai", model=model) as scope:
             response = await client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message},
-                ],
+                messages=messages,
                 max_tokens=150,
                 temperature=0.7,
             )
@@ -249,7 +262,22 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
             text = (response.choices[0].message.content or "").strip()
             if not text:
                 raise ValueError("empty_completion")
-        return ChatReply(reply=text, intent="smalltalk", source="gpt4o")
+            return text
+
+    try:
+        routed = await invoke(
+            purpose="chat",
+            direct_call=direct_call,
+            direct_provider="openai",
+            direct_model=model,
+            litellm=LiteLLMRequest(
+                parser=parse_litellm,
+                payload={"messages": messages, "max_tokens": 150, "temperature": 0.7},
+            ),
+            settings=settings,
+        )
+        source: ChatSource = "litellm" if routed.transport == "litellm" else "gpt4o"
+        return ChatReply(reply=routed.value, intent="smalltalk", source=source)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-chat] gpt-4o call failed: %s", exc)
         if language == "de":
@@ -386,14 +414,40 @@ async def transcribe_audio_via_whisper(
     from openai import AsyncOpenAI
 
     try:
-        client = AsyncOpenAI(api_key=api_key, timeout=90.0)
-        async with llm_call_scope(purpose="stt", provider="openai", model="whisper-1"):
-            transcription = await client.audio.transcriptions.create(
-                model="whisper-1",
-                language=lang,
-                file=(f"voice.{ext}", audio_data, mime),
-            )
-        text = (transcription.text or "").strip()
+
+        async def direct_call() -> str:
+            client = AsyncOpenAI(api_key=api_key, timeout=90.0)
+            async with llm_call_scope(purpose="stt", provider="openai", model="whisper-1"):
+                transcription = await client.audio.transcriptions.create(
+                    model="whisper-1",
+                    language=lang,
+                    file=(f"voice.{ext}", audio_data, mime),
+                )
+            text = (transcription.text or "").strip()
+            if not text:
+                raise ValueError("empty_transcription")
+            return text
+
+        def parse_litellm(body: dict[str, object]) -> str:
+            text = body.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("empty_transcription")
+            return text.strip()
+
+        routed = await invoke(
+            purpose="stt",
+            direct_call=direct_call,
+            direct_provider="openai",
+            direct_model="whisper-1",
+            litellm=LiteLLMRequest(
+                parser=parse_litellm,
+                endpoint="/v1/audio/transcriptions",
+                files={"file": (f"voice.{ext}", audio_data, mime)},
+                data={"language": lang},
+            ),
+            settings=settings,
+        )
+        text = routed.value
         if text and _is_whisper_hallucination(text):
             logger.warning(
                 "[kai-voice] whisper hallucination filtered: %r (size=%d)",
