@@ -76,6 +76,19 @@ class _List:
         return self._generated
 
 
+@pytest.fixture(autouse=True)
+def _kein_echter_sperrzustand(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Der IpBlocked-Pfad setzt seit 2026-09-04 eine persistente Sperrpause.
+
+    Ohne diese Isolation schriebe der Block-Test eine echte Datei unter
+    ``artifacts/`` — und der naechste Test im selben Lauf bekaeme kein
+    Transkript mehr, weil der Adapter dann korrekt gar nicht erst fragt.
+    """
+    monkeypatch.setattr(
+        adapter, "_block_state_path", lambda: tmp_path / "artifacts" / "ip_block.json"
+    )
+
+
 def _patch_api(monkeypatch: pytest.MonkeyPatch, behaviour: Any) -> None:
     class _Api:
         def list(self, video_id: str) -> Any:
