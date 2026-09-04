@@ -18,7 +18,7 @@ die Grenze:
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -257,6 +257,65 @@ def test_eine_forderung_wird_ausgestellt_und_ist_abrufbar(client: TestClient) ->
     status = client.get(f"/payments/invoices/{ref}")
     assert status.status_code == 200
     assert status.json()["settled"] is False
+
+
+def test_die_antwort_traegt_die_zahlungsaufforderung(client: TestClient) -> None:
+    """Ohne ``payment_request`` kann niemand bezahlen — die Forderung waere leer.
+
+    Die BOLT11 ist kein Geheimnis, sondern die Aufforderung selbst: sie nennt
+    Betrag, Empfaenger und Ablauf und wird genau dafuer weitergegeben. Ein
+    ``ref_hash`` allein ist eine Quittungsnummer ohne Rechnung.
+    """
+    created = client.post(
+        "/payments/invoices",
+        json={"amount_sat": 1000, "purpose": "self_test", "order_ref": "order-10"},
+    )
+    assert created.status_code == 200, created.text
+    payment_request = created.json()["payment_request"]
+    assert isinstance(payment_request, str)
+    assert payment_request != ""
+
+
+def test_die_zahlungsaufforderung_steht_nicht_im_journal(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Antwort ja, Journal nein — die Redaktionsgrenze bleibt, wo sie war.
+
+    Das Journal traegt Hashes, weil es dauerhaft und exportierbar ist. Eine
+    Zahlungsaufforderung darf durch die HTTP-Antwort gehen, ohne dass sie
+    danach in jeder Journal-Zeile liegt.
+    """
+    created = client.post(
+        "/payments/invoices",
+        json={"amount_sat": 1000, "purpose": "self_test", "order_ref": "order-11"},
+    )
+    assert created.status_code == 200, created.text
+    payment_request = created.json()["payment_request"]
+
+    journal_text = (tmp_path / "payments" / "payment_journal.jsonl").read_text(encoding="utf-8")
+    assert "order-11" in journal_text, "der Record muss ueberhaupt geschrieben worden sein"
+    assert payment_request not in journal_text
+    assert "payment_request" not in journal_text
+
+
+def test_eine_forderung_laeuft_erst_nach_einer_stunde_ab(client: TestClient) -> None:
+    """300 s reichen einem Menschen nicht: Wallet oeffnen, scannen, bezahlen."""
+    created = client.post(
+        "/payments/invoices",
+        json={"amount_sat": 1000, "purpose": "self_test"},
+    )
+    assert created.status_code == 200, created.text
+    expires_at = datetime.fromisoformat(created.json()["expires_at"])
+    assert expires_at - NOW == timedelta(hours=1)
+
+
+def test_eine_forderung_darf_nicht_laenger_als_einen_tag_leben(client: TestClient) -> None:
+    """Eine unbezahlte Invoice belegt eine Zeile am Node; unbegrenzt ist keine Zahl."""
+    created = client.post(
+        "/payments/invoices",
+        json={"amount_sat": 1000, "purpose": "self_test", "expiry_seconds": 86_401},
+    )
+    assert created.status_code == 422
 
 
 # --------------------------------------------------------------------------- #
