@@ -27,6 +27,10 @@ class HealthResponse(BaseModel):
     started_at_utc: str | None = None
     uptime_s: float | None = None
     lock_changed: bool | None = None
+    # Release-Modus (Cutover 2026-09-04): woher der Commit stammt und wogegen
+    # gemessen wird — "release" (release.json / current) oder "checkout" (.git).
+    runtime_source: str | None = None
+    reference_source: str | None = None
 
 
 # FS-2 (#198): "critical" added so a genuinely-stuck recurring timer is distinct
@@ -131,6 +135,8 @@ _RUNTIME_FIELDS = (
     "started_at_utc",
     "uptime_s",
     "lock_changed",
+    "runtime_source",
+    "reference_source",
 )
 
 

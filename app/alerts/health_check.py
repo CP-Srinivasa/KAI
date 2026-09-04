@@ -43,10 +43,10 @@ from app.alerts.youtube_transcript_coverage import (
 )
 from app.audit.stream_validation import AuditStreamName, load_audit_stream
 from app.core.runtime_identity import (
-    checkout_stable_for_s,
     drift_report,
     evaluate_runtime_drift,
     read_runtime_identity_artifact,
+    reference_stable_for_s,
 )
 from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
@@ -703,7 +703,7 @@ def _check_privilege_broker(*, runs_on_pi: bool) -> list[HealthIssue]:
 
 
 def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> list[HealthIssue]:
-    """Laeuft der Server auf dem Code, der im Checkout liegt? (STAB-02)
+    """Laeuft der Server auf dem aktiven Release (sonst: dem Checkout)? (STAB-02)
 
     25.08.2026: kai-server lief seit 7 Tagen 23 Commits hinter seinem eigenen
     Checkout — vier Fast-Forwards ohne Restart. Kein Waechter sah es, weil
@@ -735,7 +735,7 @@ def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> l
         ]
     repo_dir = adir.resolve().parent
     report = drift_report(artifact, repo_dir, now=now)
-    stable = checkout_stable_for_s(repo_dir, now=now)
+    stable = reference_stable_for_s(repo_dir, now=now)
     return [
         HealthIssue(severity=f.severity, component="runtime_identity", message=f.message)
         for f in evaluate_runtime_drift(report, checkout_stable_for_s=stable)

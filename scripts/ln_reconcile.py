@@ -59,8 +59,14 @@ async def reconcile_payments(
     rail: PaymentRail | None = None,
     settings: PaymentSettings | None = None,
     state_path: Path | None = None,
+    clock: payment_reconcile.Clock | None = None,
 ) -> dict[str, Any]:
-    """Der Payment-Teil des Laufs. Alle Argumente sind Test-Nahtstellen."""
+    """Der Payment-Teil des Laufs. Alle Argumente sind Test-Nahtstellen.
+
+    ``clock`` gehoert dazu: das Rueckwaerts-Fenster (``max_inflight_window_s``)
+    haengt an der Uhr — ein Test mit fester Rail-Zeit und echter Wanduhr wurde
+    am 2026-09-04 12:00 UTC still gruen-auf-ok (Zahlung aus dem Fenster gefallen).
+    """
     cfg = settings or get_payment_settings()
     money_journal = journal or PaymentJournal(cfg.resolved_journal_path())
     if journal is None:
@@ -70,6 +76,7 @@ async def reconcile_payments(
         rail or _build_payment_rail(cfg),
         settings=cfg,
         state_path=state_path,
+        clock=clock,
     )
     return report.to_dict()
 
