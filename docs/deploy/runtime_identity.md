@@ -9,8 +9,15 @@
 > **Sie ist aber nicht tot.** `app/alerts/process_runtime_probe.checkout_axis_active()`
 > liefert `not release_governs(state_root)`: solange auf einem Host kein
 > `release.json` regiert, gilt weiterhin genau das, was hier steht. Auf der Pi
-> ist das am 2026-09-03 der Fall — `/home/ubuntu/releases` und
-> `/home/ubuntu/current` existieren dort noch nicht.
+> regiert seit dem Cutover am 2026-09-04 13:40 ein Release (`/home/ubuntu/current`).
+>
+> **Release-Modus in `/health` (seit 2026-09-04):** Ein Release-Baum hat kein `.git`;
+> `runtime_commit` kommt dort aus `release.json` (`runtime_source: "release"`), und die
+> Referenz für `drift_commits` ist das Release, auf das `current` *jetzt* zeigt
+> (`reference_source: "release"`) — nicht der Checkout, der die Daemons nach dem Cutover
+> nicht mehr speist. Ohne `current` bleibt der Checkout die Referenz (`"checkout"`).
+> Befund vor dem Fix: `runtime_commit=null`, `checkout_commit=null`, `drift_commits=null`
+> bei laufendem Server aus dem Release — `DEPLOY_HOLD` ohne echten Grund.
 >
 > Was der Release-Baum ersetzt: `drift_commits` beantwortet nur, ob der Prozess
 > mit demselben Commit gestartet ist, auf dem der Checkout *jetzt* steht. Es
@@ -38,8 +45,10 @@ zwischen Prozess und Checkout ist selbst der Befund.
 curl -s http://127.0.0.1:8000/health
 # {"status":"ok","version":"0.1.0",
 #  "runtime_commit":"<40 hex>",   # Commit, mit dem der Prozess gestartet wurde
-#  "checkout_commit":"<40 hex>",  # Commit, der jetzt im Checkout liegt
-#  "drift_commits":0,             # Commits, die der Checkout voraus ist (None = nicht messbar)
+#  "runtime_source":"release",    # woher: release.json ("release") oder .git ("checkout")
+#  "checkout_commit":"<40 hex>",  # Referenz: aktives Release (current), sonst Checkout-HEAD
+#  "reference_source":"release",  # wogegen gemessen wird
+#  "drift_commits":0,             # Commits, die die Referenz voraus ist (None = nicht messbar)
 #  "started_at_utc":"…",
 #  "uptime_s":…,
 #  "lock_changed":false}          # requirements.lock seit Prozessstart geändert?
@@ -87,9 +96,13 @@ Prozess-Uptime als Untergrenze.
 
 ## Betriebsfolge
 
-- Die Felder erscheinen auf der Pi **erst nach dem nächsten Restart** (Deploy-Fenster STAB-07,
-  `kai_deploy.sh --restart kai-server`, mit Freeze-Guard, Beweis und Rückweg). Bis dahin liefert
-  der laufende Server das alte `/health` — und der Deploy meldet korrekt `RUNTIME_IDENTITY_UNKNOWN`.
+- Die Felder erscheinen auf der Pi **erst nach dem nächsten Restart**. Seit dem Cutover ist
+  `kai_deploy.sh` für die fünf release-gebundenen Daemons wirkungslos (Code kommt aus dem
+  Release) — Deploy heißt: Release bauen, `current` aktivieren, Restart über den Broker
+  ([`immutable_release_cutover.md`](immutable_release_cutover.md)).
+- Ein aktiviertes Release ohne Restart ist sichtbar: `checkout_commit` (die Referenz) wandert,
+  `drift_commits` wird `None` (im Release-Baum ohne git nicht zählbar) — der Health-Check
+  meldet die belegte Abweichung nach 60 min trotzdem als Befund.
 - Ein `git pull` ohne Restart ist ab jetzt sichtbar: nach 60 min als Health-Befund, sofort in
   `/health`.
 - `lock_changed` erinnert an `pip install -e .` (Lock-Änderung ⇒ Abhängigkeiten im Prozess
