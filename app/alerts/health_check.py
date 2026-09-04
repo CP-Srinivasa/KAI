@@ -497,7 +497,8 @@ def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
 
 
 def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
-    return _hcp.check_payment_journal_chain(adir)  # Waechter-Def hier: Stream-Vertrag G4
+    """Geld-Journal UND sein Vault-Sidecar — Waechter-Def hier: Stream-Vertrag G4."""
+    return _hcp.check_payment_journal_chain(adir) + _hcp.check_payment_intent_vault(adir)
 
 
 def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:

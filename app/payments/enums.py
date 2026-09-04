@@ -85,6 +85,10 @@ CounterpartyKind = Literal["ln_node", "ln_invoice", "btc_address", "iban", "inte
 #: haette ein Geldeingang keinen Record, nur eine geaenderte Node-Antwort) und
 #: ``clock_anomaly`` (ein Uhr-Sprung, der Ablauf-Uebergaenge in diesem Lauf
 #: aussetzt — ein unterdrueckter Uebergang ohne Spur waere ein stiller Eingriff).
+#:
+#: ``dual_journal_conflict`` kommt aus der Uebergangsphase (ADR §12): eine
+#: Zahlung, die BEIDE Geldjournale fuehren und die der Altpfad nicht bewiesen
+#: abgeschlossen hat. Der Record verschwindet mit dem Rueckbau des Altpfads.
 AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "intent_created",
@@ -102,6 +106,7 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         "reconciled",
         "orphan_settlement",
         "receivable_settled",
+        "dual_journal_conflict",
         "clock_anomaly",
         "expired",
         "cancelled",

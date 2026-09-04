@@ -134,6 +134,7 @@ DEFAULT_SOURCES=(
     # rekonstruierbar, aus der DB auch nicht — und ohne den HOTP-Counter ist
     # der Geldpfad nach einem Restore fail-closed dicht.
     "artifacts/payments/payment_journal.jsonl"
+    "artifacts/payments/intent_vault.jsonl"
     "artifacts/ln_ops_ledger_v2.jsonl"
     "artifacts/ln_hotp_journal.jsonl"
     "DECISION_LOG.md"
@@ -162,6 +163,10 @@ REQUIRED_SOURCES=(
 # fest, was WIRKLICH eingepackt wurde.
 MONEY_SOURCES=(
     "artifacts/payments/payment_journal.jsonl"
+    # Der verschluesselte Sidecar (ADR 0018 §5). Ohne ihn ueberlebt nach einem
+    # Restore kein freigegebener Intent den Neustart; der Schluessel dazu liegt
+    # in der .env und gehoert NICHT in dieses Archiv.
+    "artifacts/payments/intent_vault.jsonl"
     "artifacts/ln_ops_ledger_v2.jsonl"
     "artifacts/ln_hotp_journal.jsonl"
 )

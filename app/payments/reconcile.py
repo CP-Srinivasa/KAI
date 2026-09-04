@@ -13,6 +13,10 @@ Node-Evidenz und ueber nichts sonst.
    ein Alarm, der sich alle fuenf Minuten wiederholt, wird stummgeschaltet.
 3. **Forderungen** — eine ausgestellte Invoice, die der Node als beglichen
    meldet, wird zu ``receivable_settled`` mit der eigenen Bestellreferenz.
+4. **Journal gegen Journal** — solange der Altpfad mitlaeuft (ADR §12), wird
+   jede Zahlung gemeldet, die BEIDE Buecher fuehren und die das alte nicht
+   bewiesen abgeschlossen hat (:mod:`app.payments.reconcile_dual`). Diese
+   Richtung fragt keinen Node; sie fragt die andere Buchfuehrung.
 
 **Dieser Prozess sendet nie.** Er ruft ``lookup``, ``list_payments`` und
 ``invoice_status`` — Lesepfade. ``pay`` steht in genau einer Datei
@@ -40,6 +44,7 @@ from pathlib import Path
 from app.core.payment_settings import PaymentSettings
 from app.payments.journal import PaymentJournal
 from app.payments.rail import PaymentRail
+from app.payments.reconcile_dual import dual_journal_pass
 from app.payments.reconcile_passes import backward, expire, forward, receivables, unresolved
 from app.payments.reconcile_types import (
     DEFAULT_CLOCK_SKEW_TOLERANCE_S,
@@ -64,6 +69,7 @@ async def run(
     monotonic: Monotonic | None = None,
     boot_ref: str | None = None,
     state_path: Path | None = None,
+    legacy_path: Path | None = None,
     clock_skew_tolerance_s: float = DEFAULT_CLOCK_SKEW_TOLERANCE_S,
 ) -> ReconcileReport:
     """Ein Reconcile-Lauf. Liest den Node, schreibt hoechstens Outcomes."""
@@ -97,9 +103,12 @@ async def run(
         expire(journal, counts=counts, now=now)
     listing, orphans = await backward(journal, rail, counts=counts, now=now, settings=settings)
     checked_receivables = await receivables(journal, rail, counts=counts, now=now)
+    # Vierte Richtung, nur waehrend des Dual-Read (ADR §12): nicht Node gegen
+    # Journal, sondern Journal gegen Journal. Rein lesend auf der Altseite.
+    dual = dual_journal_pass(journal, counts=counts, now=now, legacy_path=legacy_path)
 
     unresolved_count = unresolved(journal)
-    status = "attention" if (orphans or anomaly or unresolved_count) else "ok"
+    status = "attention" if (orphans or dual or anomaly or unresolved_count) else "ok"
     report = ReconcileReport(
         status=status,
         counts=counts,
@@ -109,6 +118,7 @@ async def run(
         checked_intents=checked,
         unresolved=unresolved_count,
         checked_receivables=checked_receivables,
+        dual_conflicts=dual,
         window_enforced=listing.window_enforced,
         complete=listing.complete,
         ran_at=now.isoformat(),

@@ -251,7 +251,7 @@ class SimulationRail:
             amount=request.amount,
             payee_hash=_sha("payee:self"),
             expires_at=moment + timedelta(seconds=request.expiry_seconds),
-            memo_hash=request.memo_hash,
+            memo_hash=_sha(request.memo) if request.memo else "",
             # Eine Destination dieses Rails, kein Platzhalter: die simulierte
             # Aufforderung laesst sich hier tatsaechlich bezahlen, sonst wuerde
             # der Rueckweg erst am echten Node auffallen.
