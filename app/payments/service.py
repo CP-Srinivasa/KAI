@@ -28,7 +28,8 @@ from app.payments.approval import grant
 from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
 from app.payments.idempotency import consume
-from app.payments.intent_state import synced, view_of
+from app.payments.intent_state import REHYDRATABLE, rehydrate, synced, view_of
+from app.payments.intent_vault import IntentVault
 from app.payments.journal import PaymentJournal
 from app.payments.models import Invoice, PaymentAttempt, PaymentAuditEvent, Quote
 from app.payments.policy import ActorLimits, PolicyContext, evaluate
@@ -71,6 +72,7 @@ class PaymentService:
         app_env: str = "development",
         hotp_verifier: Any = None,
         actor_limits: Mapping[str, ActorLimits] | None = None,
+        vault: IntentVault | None = None,
     ) -> None:
         self._journal = journal
         self._rails = dict(rails)
@@ -79,6 +81,11 @@ class PaymentService:
         self._app_env = app_env
         self._hotp = hotp_verifier
         self._actor_limits = dict(actor_limits or {})
+        #: Der verschluesselte Sidecar. ``None`` heisst: dieser Dienst ueberlebt
+        #: keinen Neustart — zulaessig fuer Tests und Werkzeuge, aber nie fuer
+        #: SHADOW oder LIVE (``validate_payment_boot`` verlangt dort den
+        #: Schluessel, ``wiring`` baut den Vault dann immer).
+        self._vault = vault
         self._tracked: dict[str, Tracked] = {}
 
     # -- Lesbare Innereien --------------------------------------------------- #
@@ -103,8 +110,18 @@ class PaymentService:
     # -- Start -------------------------------------------------------------- #
 
     def recover(self) -> list[str]:
-        """Klaere offene Sends nach einem Neustart. Siehe ``execution``."""
-        return recover_open_intents(self._journal, clock=self._clock)
+        """Erst klaeren (``execution``), dann zurueckholen (``intent_state``).
+
+        Die Reihenfolge ist die Aussage: ein ``submitted`` ohne Antwort geht in
+        die Klaerung, BEVOR der Vault etwas wieder ausfuehrbar macht.
+
+        Returns:
+            Nur die in die Klaerung gehobenen Vorgaenge — eine gelungene
+            Wiederherstellung ist kein Alarm.
+        """
+        recovered = recover_open_intents(self._journal, clock=self._clock)
+        rehydrate(self._journal, self._vault, self._tracked)
+        return recovered
 
     # -- Erzeugen ----------------------------------------------------------- #
 
@@ -165,6 +182,11 @@ class PaymentService:
         self._tracked[intent.intent_id] = Tracked(
             intent=intent, status=status, decision=decision, decoded=decoded
         )
+        # Erst NACH dem Verdikt versiegeln, und nur was noch gesendet werden
+        # kann. Ein abgelehnter Vorgang wird nie ausgefuehrt — sein Ziel hat
+        # auch verschluesselt nichts auf der Platte zu suchen.
+        if self._vault is not None and status in REHYDRATABLE:
+            self._vault.seal(intent, decoded=decoded, moment=moment)
         return IntentView(intent_id=intent.intent_id, status=status, decision=decision)
 
     async def simulate(self, intent_id: str) -> SimulationView:
@@ -305,8 +327,9 @@ class PaymentService:
         tracked = self._tracked.get(intent_id)
         if tracked is None:
             raise PaymentServiceError(
-                f"unknown intent: {intent_id} — an intent does not survive a restart "
-                "(the journal keeps only its hash); the way back is reconciliation"
+                f"unknown intent: {intent_id} — no open pre-send intent under that id. "
+                "Either it never existed, or it was already submitted; a submitted "
+                "intent never returns through the vault, its way back is reconciliation"
             )
         return synced(self._journal, tracked)
 

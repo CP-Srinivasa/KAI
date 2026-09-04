@@ -22,6 +22,9 @@ was dieser Prozess gerade vorhat.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
@@ -36,6 +39,18 @@ PaymentMode = Literal["simulation", "shadow", "live"]
 
 #: Repo-Wurzel — ``app/core/payment_settings.py`` liegt zwei Ebenen darunter.
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Der Schluessel, mit dem SIMULATION den Intent-Vault versiegelt. Er ist
+#: ABGELEITET und nicht eingetippt: ein Literal in dieser Datei saehe aus wie
+#: ein Geheimnis, das versehentlich eingecheckt wurde, und jeder
+#: Secret-Scanner haette recht damit.
+#:
+#: Er schuetzt nichts, und das ist der Punkt. SIMULATION bewegt kein Geld; was
+#: er leistet, ist, dass Entwicklungsrechner und Tests DENSELBEN Codepfad
+#: nehmen wie der Pi. Ein Vault, den nur die Produktion hat, ist ein Vault, den
+#: niemand testet. :func:`validate_payment_boot` verweigert ihn in jedem Modus,
+#: der einen Node beruehrt.
+SIMULATION_VAULT_KEY = hashlib.sha256(b"kai:payment-intent-vault:simulation-only").digest()
 
 
 def _csv(raw: str) -> tuple[str, ...]:
@@ -73,6 +88,15 @@ class PaymentSettings(BaseSettings):
     agent_limits_path: str = "config/payment_agent_limits.json"
     #: Ab diesem Betrag verlangt die Policy eine HOTP-Freigabe.
     approval_threshold_sat: int = Field(default=1_000, ge=0)
+    #: Der verschluesselte Sidecar (ADR §5): die Rohfelder eines noch nicht
+    #: gesendeten Vorgangs. Neben dem Journal, nicht darin — das Journal traegt
+    #: nur Hashes, und das bleibt so.
+    vault_path: str = "artifacts/payments/intent_vault.jsonl"
+    #: Base64 von 32 Byte (AES-256). Leer ist nur in SIMULATION zulaessig.
+    #: Der Wert steht bewusst NICHT in einer Datei wie die Macaroons: er wird
+    #: bei jedem Start gebraucht, aber nie weitergereicht, und ein Pfad mehr
+    #: waere ein Artefakt mehr, das ein Backup vergessen kann.
+    vault_key: str = ""
     #: Wie lange ein Intent als "kann noch unterwegs sein" gilt (ADR §5).
     #: 86400s statt der 3600s des Bestands: ein steckengebliebener HTLC haengt
     #: bis zum CLTV-Delta, nicht bis zum Invoice-Ablauf.
@@ -97,6 +121,32 @@ class PaymentSettings(BaseSettings):
         path = Path(self.journal_path)
         return path if path.is_absolute() else (REPO_ROOT / path).resolve()
 
+    def resolved_vault_path(self) -> Path:
+        """Absoluter Vault-Pfad — relativ IMMER zur Repo-Wurzel, wie das Journal."""
+        path = Path(self.vault_path)
+        return path if path.is_absolute() else (REPO_ROOT / path).resolve()
+
+    def resolved_vault_key(self) -> bytes:
+        """Das Schluesselmaterial fuer den Intent-Vault.
+
+        Ohne konfigurierten Wert der abgeleitete SIMULATION-Schluessel. Das ist
+        kein stiller Default fuer den Ernstfall: :func:`validate_payment_boot`
+        laesst SHADOW und LIVE ohne echten Schluessel gar nicht erst starten.
+
+        Raises:
+            ValueError: der konfigurierte Wert ist kein Base64 von 32 Byte.
+        """
+        raw = self.vault_key.strip()
+        if not raw:
+            return SIMULATION_VAULT_KEY
+        try:
+            key = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"not valid base64: {type(exc).__name__}") from exc
+        if len(key) != 32:
+            raise ValueError(f"decodes to {len(key)} bytes, expected 32 (AES-256)")
+        return key
+
     def resolved_agent_limits_path(self) -> Path:
         path = Path(self.agent_limits_path)
         return path if path.is_absolute() else (REPO_ROOT / path).resolve()
@@ -110,6 +160,40 @@ class PaymentSettings(BaseSettings):
                 "limit would be unreachable, which hides the real cap"
             )
         return self
+
+
+def _check_vault_key(settings: PaymentSettings) -> None:
+    """Der Intent-Vault braucht in jedem Node-Modus einen echten Schluessel.
+
+    Warum SHADOW und nicht erst LIVE: SHADOW legt bereits Intents an, und ein
+    Intent, der zwischen Anlage und Freigabe einen Neustart nicht ueberlebt,
+    ist genau der Befund aus dem LIVE-Fenster 2026-09-04. Der Schluessel muss
+    da sein, BEVOR der erste Vorgang entsteht — nicht erst, wenn Geld fliesst.
+
+    Raises:
+        ConfigurationError: Schluessel fehlt, ist unbrauchbar, oder es ist der
+            abgeleitete SIMULATION-Schluessel.
+    """
+    if settings.mode == "simulation":
+        return
+    raw = settings.vault_key.strip()
+    if not raw:
+        raise ConfigurationError(
+            f"payment mode {settings.mode!r} requires APP_PAYMENT_VAULT_KEY "
+            "(base64 of 32 random bytes, e.g. `openssl rand -base64 32`) — without it "
+            "an authorized intent does not survive a restart and has to be re-created "
+            "by hand in the middle of a live window"
+        )
+    try:
+        key = settings.resolved_vault_key()
+    except ValueError as exc:
+        raise ConfigurationError(f"APP_PAYMENT_VAULT_KEY is unusable: {exc}") from exc
+    if key == SIMULATION_VAULT_KEY:
+        raise ConfigurationError(
+            f"payment mode {settings.mode!r} refuses the derived simulation vault key — "
+            "it is computed from a constant in app/core/payment_settings.py and protects "
+            "nothing. Generate a real one: `openssl rand -base64 32`"
+        )
 
 
 def _file_is_present(raw: str) -> bool:
@@ -144,8 +228,20 @@ def validate_payment_boot(
             "Refusing to boot in any payment mode."
         )
 
-    if settings.mode != "live":
-        return
+    if settings.mode == "live":
+        _check_live_preconditions(settings, app_env=app_env, lightning=lightning)
+    _check_vault_key(settings)
+
+
+def _check_live_preconditions(
+    settings: PaymentSettings, *, app_env: str, lightning: LightningSettings
+) -> None:
+    """Die vier Vorbedingungen, ohne die LIVE nicht startet (ADR §11).
+
+    Sie stehen vor der Vault-Pruefung, weil sie die schwereren sind: ein
+    scharfer Geldpfad ohne Operator-Umgebung ist ein anderes Problem als ein
+    Vorgang, der einen Neustart nicht ueberlebt.
+    """
 
     if app_env != "production":
         raise ConfigurationError(
@@ -191,6 +287,7 @@ def get_payment_settings() -> PaymentSettings:
 
 
 __all__ = [
+    "SIMULATION_VAULT_KEY",
     "PaymentMode",
     "PaymentSettings",
     "get_payment_settings",
