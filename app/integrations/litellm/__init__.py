@@ -15,14 +15,18 @@ Baum.
 from app.integrations.litellm.health import GatewayHealth, probe_gateway
 from app.integrations.litellm.provider import (
     LiteLLMConfig,
+    LiteLLMResponse,
     call_litellm,
+    call_litellm_async,
     trace_from_response,
 )
 
 __all__ = [
     "GatewayHealth",
     "LiteLLMConfig",
+    "LiteLLMResponse",
     "call_litellm",
+    "call_litellm_async",
     "probe_gateway",
     "trace_from_response",
 ]

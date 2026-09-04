@@ -44,6 +44,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.ai.audit import llm_call_scope
+from app.ai.runtime import LiteLLMRequest, invoke
 from app.market_data.models import MarketDataPoint
 from app.signals.models import SignalCandidate
 
@@ -261,7 +262,53 @@ class SignalConsensusValidator:
         # index keeps them apart in the telemetry stream. base_url decides the
         # provider label — the Gemini validator talks OpenAI-compatible.
         provider_label = "gemini" if cfg.base_url == GEMINI_OPENAI_BASE_URL else "openai"
-        try:
+
+        messages: list[Any] = [
+            {"role": "system", "content": _CONSENSUS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ]
+
+        def verdict_result(raw: str) -> SingleValidatorResult:
+            try:
+                data = json.loads(raw)
+                verdict = _ConsensusVerdict.model_validate(data)
+            except (json.JSONDecodeError, ValidationError, TypeError):
+                log.warning(
+                    "consensus.parse_error",
+                    model=cfg.model,
+                    label=cfg.display_label,
+                    raw=raw[:200],
+                )
+                return SingleValidatorResult(
+                    label=cfg.display_label,
+                    model=cfg.model,
+                    agreed=False,
+                    confidence=0.0,
+                    reasoning="invalid_json_response",
+                    error="invalid_json_response",
+                )
+            return SingleValidatorResult(
+                label=cfg.display_label,
+                model=cfg.model,
+                agreed=verdict.agree,
+                confidence=verdict.confidence,
+                reasoning=verdict.reasoning,
+            )
+
+        def parse_litellm(body: dict[str, Any]) -> SingleValidatorResult:
+            choices = body.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise ValueError("consensus response has no choices")
+            message = choices[0].get("message")
+            raw = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(raw, str):
+                raise ValueError("consensus response has no content")
+            result = verdict_result(raw.strip())
+            if result.error:
+                raise ValueError(result.error)
+            return result
+
+        async def direct_call() -> SingleValidatorResult:
             client = AsyncOpenAI(**client_kwargs)
             async with llm_call_scope(
                 purpose="consensus",
@@ -272,10 +319,7 @@ class SignalConsensusValidator:
             ) as scope:
                 response = await client.chat.completions.create(
                     model=cfg.model,
-                    messages=[
-                        {"role": "system", "content": _CONSENSUS_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_msg},
-                    ],
+                    messages=messages,
                     max_tokens=cfg.max_tokens,
                     temperature=0.2,
                 )
@@ -285,6 +329,25 @@ class SignalConsensusValidator:
                         getattr(usage, "prompt_tokens", 0),
                         getattr(usage, "completion_tokens", 0),
                     )
+            raw = (response.choices[0].message.content or "").strip()
+            return verdict_result(raw)
+
+        try:
+            routed = await invoke(
+                purpose="consensus",
+                direct_call=direct_call,
+                direct_provider=provider_label,
+                direct_model=cfg.model,
+                litellm=LiteLLMRequest(
+                    parser=parse_litellm,
+                    payload={
+                        "messages": messages,
+                        "max_tokens": cfg.max_tokens,
+                        "temperature": 0.2,
+                    },
+                ),
+            )
+            return routed.value
         except Exception as exc:
             log.error(
                 "consensus.llm_error",
@@ -300,35 +363,3 @@ class SignalConsensusValidator:
                 reasoning=f"validation_error: {exc}",
                 error=str(exc),
             )
-
-        raw = (response.choices[0].message.content or "").strip()
-
-        # Audit F-3 (2026-07-11): Schema-Zwang statt freiem json.loads — ein
-        # nicht-konformes LLM-Payload (Liste, confidence="high", agree fehlt)
-        # ist jetzt derselbe fail-closed Pfad wie kaputtes JSON.
-        try:
-            data = json.loads(raw)
-            verdict = _ConsensusVerdict.model_validate(data)
-        except (json.JSONDecodeError, ValidationError, TypeError):
-            log.warning(
-                "consensus.parse_error",
-                model=cfg.model,
-                label=cfg.display_label,
-                raw=raw[:200],
-            )
-            return SingleValidatorResult(
-                label=cfg.display_label,
-                model=cfg.model,
-                agreed=False,
-                confidence=0.0,
-                reasoning="invalid_json_response",
-                error="invalid_json_response",
-            )
-
-        return SingleValidatorResult(
-            label=cfg.display_label,
-            model=cfg.model,
-            agreed=verdict.agree,
-            confidence=verdict.confidence,
-            reasoning=verdict.reasoning,
-        )
