@@ -236,7 +236,10 @@ class InvoiceRequest(BaseModel):
 
     amount: Money
     memo_hash: str = Field(default="", max_length=HASH_LENGTH)
-    expiry_seconds: int = Field(default=300, gt=0)
+    #: Eine Stunde — dieselbe Frist wie an der HTTP-Grenze. Zwei Defaults fuer
+    #: dieselbe Frist waeren eine Falle: der interne Aufrufer bekaeme still
+    #: eine andere Invoice als der Operator ueber die API.
+    expiry_seconds: int = Field(default=3600, gt=0, le=86_400)
     purpose: str = Field(min_length=1, max_length=64)
 
 

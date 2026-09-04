@@ -51,10 +51,19 @@ Der zweite `execute`-Aufruf antwortet `replayed: true` und sendet **nicht**.
 
 ```bash
 curl -sS -X POST -H "$KAI" -H 'Content-Type: application/json' \
-     -d '{"amount_sat":1000,"purpose":"self_test","order_ref":"smoke-1"}' \
-     "$BASE/payments/invoices" | jq '{ref_hash, order_ref}'
+     -d '{"amount_sat":1000,"purpose":"self_test","order_ref":"smoke-1","expiry_seconds":3600}' \
+     "$BASE/payments/invoices" | jq '{ref_hash, order_ref, expires_at, payment_request}'
 curl -sS -H "$KAI" "$BASE/payments/invoices/<ref_hash>" | jq '{settled, amount_paid_minor_units}'
 ```
+
+`payment_request` ist die BOLT11 — **sie** bekommt der Zahler, nicht der
+`ref_hash`. Sie steht bewusst nur in dieser Antwort: zu einer Forderung trägt
+das Journal ausschließlich `invoice_ref_hash` (Allowlist in
+`app/payments/redaction.py`).
+
+`expiry_seconds` ist per Default **3600**, Obergrenze **86400**. 300 s reichen
+einem Menschen nicht — Wallet öffnen, scannen, bestätigen dauert länger, als
+der QR-Code lebte (Rückweg-Test 2026-09-04).
 
 ---
 
