@@ -16,6 +16,7 @@ from app.ai.gateway import (
     execute,
 )
 from app.ai.models import AttemptTrace
+from app.ai.retry import RetryPolicy
 
 POLICY = CircuitPolicy(failure_threshold=2, cooldown_s=30.0)
 
@@ -121,7 +122,8 @@ def test_primary_faellt_kontrolliert_auf_direct_zurueck() -> None:
         per_route={"standard": "primary"},
         ceiling="primary",
     )
-    assert gesehen == ["litellm", "direct"]
+    assert gesehen == ["litellm", "litellm", "litellm", "direct"]
+    assert outcome.litellm is not None and len(outcome.litellm.attempts) == 3
     assert outcome.fell_back
     assert outcome.authoritative is outcome.direct
     assert outcome.direct is not None and outcome.direct.fell_back_to_direct
@@ -196,6 +198,7 @@ def test_der_kreis_bucht_auf_dem_tatsaechlichen_upstream() -> None:
         per_route={"standard": "shadow"},
         ceiling="shadow",
         circuit_policy=POLICY,
+        retry_policy=RetryPolicy(max_attempts=1),
     )
     fein = CircuitKey("standard", "fast", "gemini/m1")
     assert outcome.circuit.record_for(fein).consecutive_failures == 1
