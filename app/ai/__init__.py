@@ -37,6 +37,7 @@ from app.ai.circuit import (
     CircuitState,
     circuit_key,
 )
+from app.ai.gateway import GatewayOutcome, TransportCall, execute
 from app.ai.models import (
     AttemptTrace,
     InferenceResult,
@@ -68,6 +69,8 @@ __all__ = [
     "CircuitKey",
     "CircuitPolicy",
     "CircuitState",
+    "GatewayOutcome",
+    "TransportCall",
     "CallScope",
     "InferenceResult",
     "Mode",
@@ -82,6 +85,7 @@ __all__ = [
     "circuit_key",
     "cost_known_rate",
     "decide",
+    "execute",
     "headroom_usd",
     "graduated_routes",
     "has_execution_authority",
