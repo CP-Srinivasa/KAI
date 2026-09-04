@@ -34,6 +34,9 @@ from scripts.litellm_shadow_eval.reporting import canonical_json, comparable_jso
 from tests.unit.litellm_shadow_eval.helpers import proven_flags, row, write_jsonl
 
 NOW = datetime(2026, 9, 4, tzinfo=UTC)
+#: Backslash als Konstante: ein literaler Windows-Pfad im Quelltext ist eine
+#: Einladung fuer Escape-Fehler, und dieser Test lebt von exakten Zeichen.
+BS = chr(92)
 
 
 def _evaluate(path: Path, *, minimum: int = 1, **policy: Any):
@@ -175,7 +178,12 @@ def test_der_bericht_verraet_keinen_windows_pfad(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "pfad",
-    ["/home/sascha/kai/evidence.jsonl", "C:\\Users\\sascha\\kai\\evidence.jsonl"],
+    [
+        "/home/sascha/kai/evidence.jsonl",
+        "C:" + BS + "Users" + BS + "sascha" + BS + "kai" + BS + "evidence.jsonl",
+        BS * 2 + "fileserver" + BS + "sascha" + BS + "evidence.jsonl",
+        "C:" + BS + "evidence.jsonl",
+    ],
 )
 def test_auch_eine_unlesbare_eingabe_nennt_nur_den_dateinamen(pfad: str) -> None:
     loaded = load_evidence([Path(pfad)])
@@ -183,8 +191,32 @@ def test_auch_eine_unlesbare_eingabe_nennt_nur_den_dateinamen(pfad: str) -> None
     (issue,) = loaded.issues
     assert issue.code == "INPUT_UNREADABLE"
     assert "sascha" not in issue.record_ref
+    assert "fileserver" not in issue.record_ref
     assert issue.record_ref.endswith("evidence.jsonl")
     assert all("sascha" not in key for key in loaded.input_files)
+
+
+@pytest.mark.parametrize(
+    ("roh", "erwartet"),
+    [
+        ("/home/sascha/kai/evidence.jsonl", "1:evidence.jsonl"),
+        ("C:" + BS + "Users" + BS + "sascha" + BS + "e.jsonl", "1:e.jsonl"),
+        (BS * 2 + "server" + BS + "share" + BS + "e.jsonl", "1:e.jsonl"),
+        ("C:" + BS + "e.jsonl", "1:e.jsonl"),
+        ("evidence.jsonl", "1:evidence.jsonl"),
+    ],
+)
+def test_das_etikett_haengt_nicht_am_betriebssystem(roh: str, erwartet: str) -> None:
+    """``Path.name`` kennt auf POSIX keinen Backslash — der Pfad bliebe ganz.
+
+    Genau so ist der Leak entstanden: auf der Windows-Workstation war der Test
+    gruen, in der Linux-CI fiel der Benutzername in den Bericht. Deshalb prueft
+    diese Zeile die Trennung SELBST, statt sie dem laufenden System zu
+    ueberlassen — sie faellt auf jeder Plattform gleich aus.
+    """
+    from scripts.litellm_shadow_eval.loader import input_label
+
+    assert input_label(Path(roh), 1) == erwartet
 
 
 # ---------------------------------------------------------------------------

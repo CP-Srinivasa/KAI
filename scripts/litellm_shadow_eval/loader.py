@@ -94,6 +94,30 @@ def _fallback(raw: dict[str, Any]) -> bool | None:
     return None
 
 
+def input_label(path: Path, index: int) -> str:
+    """Ein stabiles Etikett fuer eine Eingabedatei -- ohne den Pfad des Operators.
+
+    ``Path.name`` reicht dafuer NICHT. Es fragt das Betriebssystem, was ein
+    Trennzeichen ist, und auf POSIX ist der Backslash keines: ein
+    Windows-Pfad der Form Laufwerk-Doppelpunkt-Backslash-Users-Backslash-Name
+    kommt dort ungeteilt zurueck, samt Benutzernamen. Genau diese Zeichenkette
+    landet dann als ``record_ref`` im Bericht -- einem Bericht, der
+    weitergereicht wird, gerade weil er ausdruecklich keine personenbezogenen
+    Daten enthaelt.
+
+    Der Fall ist nicht theoretisch: er wurde in der CI auf Linux gefunden,
+    waehrend derselbe Test auf der Windows-Workstation gruen war.
+
+    Deshalb wird hier auf BEIDEN Trennzeichen getrennt und ein vorangestellter
+    Laufwerksbuchstabe entfernt, unabhaengig davon, auf welchem System der Lauf
+    stattfindet.
+    """
+    letzte = str(path).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if len(letzte) > 2 and letzte[1] == ":" and letzte[0].isalpha():
+        letzte = letzte[2:]
+    return f"{index}:{letzte or path.name}"
+
+
 def _canonical_line(raw_line: str, parsed: object | None) -> bytes:
     if parsed is None:
         return raw_line.strip().encode("utf-8")
@@ -292,7 +316,7 @@ def load_evidence(paths: list[Path]) -> LoadedEvidence:
         semantic_line_hashes: list[bytes] = []
         # Absolute workstation paths can contain operator/user identity. The
         # report needs a stable input label and hash, not that personal path.
-        display_path = f"{input_index}:{path.name}"
+        display_path = input_label(path, input_index)
         try:
             handle = path.open(encoding="utf-8")
         except OSError as exc:
@@ -367,6 +391,7 @@ __all__ = [
     "LoadedEvidence",
     "SUPPORTED_SCHEMA_VERSIONS",
     "contains_secret_field",
+    "input_label",
     "load_evidence",
     "normalize_record",
 ]
