@@ -66,6 +66,11 @@ class EvidenceRecord:
     timestamp: str
     execution_authority: bool | None
     record_ref: str
+    #: Fehlerklassen ALLER physischen Versuche dieser einen logischen Seite, in
+    #: Versuchsreihenfolge. Ein Retry ist kein Detail, das man wegmittelt: wenn
+    #: drei Versuche als `timeout, timeout, ok` enden, ist `ok` das Ergebnis,
+    #: aber die zwei Timeouts sind die Beobachtung. Leer heisst: ein Versuch.
+    attempt_error_classes: tuple[str, ...] = ()
 
     @property
     def pair_key(self) -> str | None:
@@ -134,6 +139,7 @@ class RouteMetrics:
     provider_substitution_rate: float | None
     error_distribution_direct: dict[str, int]
     error_distribution_shadow: dict[str, int]
+    attempt_error_distribution_shadow: dict[str, int]
     outcome_distribution: dict[str, int]
     retry_distribution: dict[str, int]
     fallback_distribution: dict[str, int]
@@ -144,16 +150,20 @@ class RouteMetrics:
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
+        # Ohne Messung sind die Zahlen `null`, nicht 0. Eine 0 waere eine
+        # Aussage ueber die Qualitaet; `null` ist die Aussage, dass keine
+        # vorliegt. Wer das verwechselt, liest spaeter einen Gleichstand.
         value.update(
             {
+                "quality_status": self.quality.status,
                 "quality_sample_count": self.quality.sample_count,
                 "quality_direct_mean": self.quality.direct_mean,
                 "quality_shadow_mean": self.quality.shadow_mean,
                 "quality_delta_mean": self.quality.delta_mean,
                 "quality_delta_median": self.quality.delta_median,
-                "quality_shadow_better_count": self.quality.shadow_better_count,
-                "quality_direct_better_count": self.quality.direct_better_count,
-                "quality_equal_count": self.quality.equal_count,
+                "shadow_better_count": self.quality.shadow_better_count,
+                "direct_better_count": self.quality.direct_better_count,
+                "equal_count": self.quality.equal_count,
             }
         )
         return value
@@ -187,6 +197,11 @@ class GraduationPolicy:
     require_execution_gate_unchanged: bool = True
     require_trading_gate_unchanged: bool = True
     require_identity_observability: bool = True
+    #: Fehlende Qualitaetsbelege duerfen nicht automatisch zu READY fuehren.
+    #: Wer Qualitaet bewusst als beratend behandeln will, muss das HIER
+    #: hinschreiben -- dann steht es im Policy-Hash und ist nachweisbar eine
+    #: Entscheidung gewesen, kein Versehen.
+    require_quality_evidence: bool = True
     route_overrides: dict[str, dict[str, int | float | bool]] = field(default_factory=dict)
 
 
@@ -196,7 +211,19 @@ class GraduationDecision:
     status: GraduationStatus
     reasons: tuple[str, ...]
     shadow_validated: bool
-    consensus_primary_allowed: bool = False
+    consensus_route: bool = False
+
+    @property
+    def primary_ready(self) -> bool:
+        """Darf diese Route ueberhaupt fuer PRIMARY vorgeschlagen werden?
+
+        Getrennt von :attr:`status`, weil ``READY`` eine Aussage ueber die
+        BELEGLAGE ist und ``primary_ready`` eine ueber die Erlaubnis. Fuer die
+        Consensus-Route fallen die beiden auseinander: sie kann vollstaendig
+        belegt sein und trotzdem nie PRIMARY werden. Wer nur ``status`` liest,
+        wuerde genau diesen Unterschied uebersehen.
+        """
+        return self.status is GraduationStatus.READY and not self.consensus_route
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +231,10 @@ class GraduationDecision:
             "status": self.status.value,
             "reasons": list(self.reasons),
             "shadow_validated": self.shadow_validated,
+            "consensus_route": self.consensus_route,
+            "primary_ready": self.primary_ready,
+            # Invariante, keine Konfiguration: es gibt keinen Wert, keine
+            # Stichprobengroesse und keine Erfolgsquote, die das auf true dreht.
             "consensus_primary_allowed": False,
         }
 
@@ -236,6 +267,12 @@ class EvaluationReport:
             "validation_issues": [item.to_dict() for item in self.validation_issues],
             "metrics": {key: value.to_dict() for key, value in sorted(self.metrics.items())},
             "decisions": {key: value.to_dict() for key, value in sorted(self.decisions.items())},
+            # Die maschinenlesbare Wahrheit ueber Reife. Der Exit-Code des CLI
+            # sagt, ob der Auswerter durchgelaufen ist -- nicht, ob PRIMARY
+            # erlaubt waere. Diese Liste sagt es.
+            "primary_ready_routes": sorted(
+                key for key, value in self.decisions.items() if value.primary_ready
+            ),
         }
 
 

@@ -8,6 +8,7 @@
   "require_gateway_down_fallback_proven": true,
   "require_identity_observability": true,
   "require_off_mode_proven": true,
+  "require_quality_evidence": true,
   "require_rollback_proven": true,
   "require_trading_gate_unchanged": true,
   "route_overrides": {}

@@ -49,8 +49,14 @@ def _evaluate(
     )
 
 
+def _with_quality(number: int, direct: dict[str, Any], shadow: dict[str, Any]) -> None:
+    """Ein vollstaendiger Beleg enthaelt Qualitaet -- sonst ist er nicht vollstaendig."""
+    direct["quality_score"] = 0.80
+    shadow["quality_score"] = 0.80
+
+
 def test_100_perfect_pairs_are_ready_with_complete_metrics(tmp_path: Path) -> None:
-    report = _evaluate(_dataset(tmp_path, 100), minimum=100)
+    report = _evaluate(_dataset(tmp_path, 100, _with_quality), minimum=100)
     metrics = report.metrics["standard"]
     assert metrics.sample_count == metrics.complete_pair_count == 100
     assert metrics.incomplete_pair_count == metrics.invalid_record_count == 0
@@ -142,15 +148,19 @@ def test_shadow_execution_authority_is_invalid(tmp_path: Path) -> None:
 
 def test_consensus_can_only_be_shadow_validated(tmp_path: Path) -> None:
     rows = [
-        row("DIRECT", logical_route="reasoning", purpose="consensus"),
-        row("SHADOW", logical_route="reasoning", purpose="consensus"),
+        row("DIRECT", logical_route="reasoning", purpose="consensus", quality_score=0.9),
+        row("SHADOW", logical_route="reasoning", purpose="consensus", quality_score=0.9),
     ]
     report = _evaluate(write_jsonl(tmp_path / "consensus.jsonl", rows))
     decision = report.decisions["reasoning"]
     assert decision.status is GraduationStatus.READY
     assert decision.shadow_validated is True
-    assert decision.consensus_primary_allowed is False
+    assert decision.primary_ready is False, "belegt ist nicht dasselbe wie erlaubt"
     assert "CONSENSUS_SHADOW_ONLY" in decision.reasons
+    payload = report.to_dict()
+    assert payload["decisions"]["reasoning"]["consensus_primary_allowed"] is False
+    assert payload["decisions"]["reasoning"]["primary_ready"] is False
+    assert payload["primary_ready_routes"] == []
 
 
 def test_shuffled_input_has_identical_semantics_and_hash(tmp_path: Path) -> None:

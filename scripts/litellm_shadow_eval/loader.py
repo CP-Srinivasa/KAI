@@ -22,6 +22,11 @@ class LoadedEvidence:
     input_files: dict[str, str]
     input_sha256: str
     record_count: int
+    #: Routen, auf denen IRGENDEINE Zeile `purpose=consensus` trug -- auch
+    #: solche, die die Validierung verworfen hat. Die Consensus-Decke darf
+    #: nicht davon abhaengen, ob ein Datensatz sauber war: sonst hebt
+    #: ausgerechnet kaputte Evidenz die schaerfste Beschraenkung auf.
+    consensus_routes: frozenset[str] = frozenset()
 
 
 def _text(value: object) -> str | None:
@@ -278,6 +283,7 @@ def load_evidence(paths: list[Path]) -> LoadedEvidence:
     records: list[EvidenceRecord] = []
     issues: list[ValidationIssue] = []
     file_hashes: dict[str, str] = {}
+    consensus_routes: set[str] = set()
     record_count = 0
 
     for input_index, path in enumerate(sorted(paths, key=lambda item: str(item)), start=1):
@@ -320,6 +326,14 @@ def load_evidence(paths: list[Path]) -> LoadedEvidence:
                             )
                         )
                     continue
+                raw_route = parsed.get("logical_route") or parsed.get("route")
+                raw_purpose = parsed.get("purpose")
+                if (
+                    isinstance(raw_route, str)
+                    and isinstance(raw_purpose, str)
+                    and raw_purpose.strip().lower() == "consensus"
+                ):
+                    consensus_routes.add(raw_route.strip())
                 record, row_issues = normalize_record(parsed, record_ref=record_ref)
                 issues.extend(row_issues)
                 if record is not None:
@@ -340,6 +354,7 @@ def load_evidence(paths: list[Path]) -> LoadedEvidence:
         input_files=file_hashes,
         input_sha256=aggregate.hexdigest(),
         record_count=record_count,
+        consensus_routes=frozenset(consensus_routes),
     )
 
 

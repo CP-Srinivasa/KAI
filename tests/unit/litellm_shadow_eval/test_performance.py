@@ -40,7 +40,10 @@ def test_100k_records_streaming_smoke(tmp_path: Path) -> None:
                 handle.write(json.dumps(_compact(side, number), separators=(",", ":")) + "\n")
     report = evaluate(
         [path],
-        GraduationPolicy(minimum_sample_count=50_000),
+        # Der Durchsatz-Smoke misst Durchsatz. Dass Qualitaet hier ausdruecklich
+        # beratend ist, steht deshalb IM Policy-Objekt und damit im Hash -- es
+        # ist eine sichtbare Entscheidung, kein stiller Sonderfall.
+        GraduationPolicy(minimum_sample_count=50_000, require_quality_evidence=False),
         proven_flags(),
     )
     metrics = report.metrics["standard"]

@@ -21,6 +21,20 @@ def canonical_json(report: EvaluationReport) -> str:
     )
 
 
+def comparable_json(report: EvaluationReport) -> str:
+    """Kanonisches JSON OHNE ``generated_at`` -- fuer Determinismus-Vergleiche.
+
+    Zwei Laeufe ueber dieselbe Evidenz muessen dasselbe Ergebnis liefern. Der
+    Erzeugungszeitpunkt ist der einzige Teil des Berichts, der sich zwischen
+    zwei solchen Laeufen legitim unterscheidet; ihn beim Vergleich mitzuzaehlen
+    wuerde Determinismus unpruefbar machen. Er bleibt im echten Bericht stehen
+    -- ein Bericht ohne Zeitpunkt waere nicht nachvollziehbar.
+    """
+    value = report.to_dict()
+    value.pop("generated_at", None)
+    return json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+
+
 def markdown_summary(report: EvaluationReport) -> str:
     lines = [
         "# LiteLLM Shadow Evidence Evaluation",
@@ -43,7 +57,7 @@ def markdown_summary(report: EvaluationReport) -> str:
             + " | ".join(
                 [
                     route,
-                    decision.status.value,
+                    decision.status.value + ("" if decision.primary_ready else " (kein PRIMARY)"),
                     str(metrics.complete_pair_count),
                     str(metrics.incomplete_pair_count),
                     _display(metrics.shadow_success_rate),
@@ -70,4 +84,4 @@ def _display(value: float | None) -> str:
     return "UNKNOWN" if value is None else f"{value:.6f}".rstrip("0").rstrip(".")
 
 
-__all__ = ["canonical_json", "markdown_summary"]
+__all__ = ["canonical_json", "comparable_json", "markdown_summary"]

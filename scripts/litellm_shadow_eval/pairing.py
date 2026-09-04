@@ -54,10 +54,14 @@ def _collapse_attempts(records: list[EvidenceRecord]) -> EvidenceRecord | None:
         else None
     )
     final = ordered[-1]
+    # Der letzte Versuch traegt das Ergebnis, aber nicht die Beobachtung: nach
+    # `timeout, timeout, ok` ist `ok` richtig und `keine Fehler` falsch.
+    attempt_errors = tuple(item.error_class for item in ordered if item.error_class is not None)
     return replace(
         final,
         retry_count=len(ordered) - 1,
         attempt_count=len(ordered),
+        attempt_error_classes=attempt_errors,
         latency_ms=latency,
         cost_usd=cost,
         cost_known=cost_known,

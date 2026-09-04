@@ -207,6 +207,13 @@ def route_metrics(
         ),
         error_distribution_direct=_distribution([record.error_class for record in direct]),
         error_distribution_shadow=_distribution([record.error_class for record in shadow]),
+        # Getrennt von `error_distribution_shadow`: dort steht, womit die
+        # logische Seite ENDETE, hier, was auf dem Weg dorthin passierte. Ein
+        # Upstream, der bei jedem zweiten Aufruf einen Timeout wirft und beim
+        # zweiten Versuch antwortet, ist in der ersten Verteilung unsichtbar.
+        attempt_error_distribution_shadow=_distribution(
+            [error for record in shadow for error in record.attempt_error_classes]
+        ),
         outcome_distribution=_distribution(
             [f"DIRECT:{record.outcome or 'UNKNOWN'}" for record in direct]
             + [f"SHADOW:{record.outcome or 'UNKNOWN'}" for record in shadow]
