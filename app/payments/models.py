@@ -97,7 +97,20 @@ class Quote(BaseModel):
 
 
 class Invoice(BaseModel):
-    """Eine Forderung, die KAI ausgestellt hat (Self-Use-Receivable, ADR §1)."""
+    """Eine Forderung, die KAI ausgestellt hat (Self-Use-Receivable, ADR §1).
+
+    ``payment_request`` ist die kodierte Aufforderung des Rails (BOLT11). Sie
+    ist als einzige Groesse hier kein Hash — und das ist kein Bruch der Regel,
+    sondern ihr Zweck: eine Forderung, die man nicht weitergeben kann, ist
+    keine Forderung. Sie nennt Betrag, Empfaenger und Ablauf, also genau das,
+    was der Zahler wissen MUSS; ein Geheimnis waere das Preimage, und das
+    kommt hier nie vor.
+
+    Was daraus folgt, gilt trotzdem: ``repr=False``, damit sie nicht durch ein
+    beilaeufiges Log laeuft, und **nie** im Journal — dort steht der
+    ``ref_hash``. Die Allowlist in :mod:`app.payments.redaction` erzwingt das
+    mechanisch, unabhaengig davon, was ein Aufrufer mitgibt.
+    """
 
     model_config = FROZEN
 
@@ -107,6 +120,7 @@ class Invoice(BaseModel):
     payee_hash: str
     expires_at: datetime
     memo_hash: str = Field(default="", max_length=HASH_LENGTH)
+    payment_request: str = Field(default="", max_length=2048, repr=False)
 
     @field_validator("ref_hash", "payee_hash")
     @classmethod

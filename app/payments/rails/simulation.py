@@ -252,6 +252,10 @@ class SimulationRail:
             payee_hash=_sha("payee:self"),
             expires_at=moment + timedelta(seconds=request.expiry_seconds),
             memo_hash=request.memo_hash,
+            # Eine Destination dieses Rails, kein Platzhalter: die simulierte
+            # Aufforderung laesst sich hier tatsaechlich bezahlen, sonst wuerde
+            # der Rueckweg erst am echten Node auffallen.
+            payment_request=f"{_PREFIX_SETTLE}invoice:{ref_hash[:16]}",
         )
         self._invoices[ref_hash] = invoice
         return invoice

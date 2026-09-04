@@ -39,6 +39,7 @@ from app.payments.models import (
     SettlementFinality,
     Verdict,
 )
+from app.payments.redaction import redact_payload
 
 SATS = Asset(symbol="BTC", currency="SAT", scale=0, network="lightning")
 
@@ -310,7 +311,14 @@ def test_quote_roundtrips_and_forbids_extras() -> None:
         )
 
 
-def test_invoice_carries_hashes_not_the_encoded_request() -> None:
+def test_invoice_carries_hashes_and_an_optional_payment_request() -> None:
+    """Die Forderung traegt Hashes — und die Aufforderung, die man weitergibt.
+
+    Die kodierte ``payment_request`` ist kein Geheimnis: sie nennt Betrag,
+    Empfaenger und Ablauf und existiert, um genau so weitergereicht zu werden.
+    Sie steht trotzdem nicht im ``repr`` und nie im Journal — dort gilt weiter
+    die Allowlist aus :mod:`app.payments.redaction`.
+    """
     invoice = Invoice(
         rail="lightning",
         ref_hash="1" * 64,
@@ -319,8 +327,12 @@ def test_invoice_carries_hashes_not_the_encoded_request() -> None:
         expires_at=datetime(2026, 9, 3, 13, 0, tzinfo=UTC),
         memo_hash="3" * 64,
     )
-    assert "payment_request" not in Invoice.model_fields
+    assert invoice.payment_request == "", "ohne Rail-Antwort gibt es keine Aufforderung"
     assert Invoice.model_validate_json(invoice.model_dump_json()) == invoice
+
+    encoded = invoice.model_copy(update={"payment_request": "lnbc10u1pexample"})
+    assert "lnbc10u1pexample" not in repr(encoded), "kein Rohwert in einem Log-Repr"
+    assert redact_payload({"payment_request": encoded.payment_request}) == {}
 
 
 def test_policy_decision_requires_a_rule_id_for_a_deny() -> None:
