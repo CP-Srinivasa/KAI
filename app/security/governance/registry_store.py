@@ -1,10 +1,12 @@
-"""Governance registry persistence — model/prompt registries + decision audit.
+"""Governance registry persistence — model + prompt registries.
 
-Issue #165: the gate primitives from PR #164 are pure/standalone. To wire them
-into the productive decision path they need a *persisted* registry to resolve a
+Issue #165: the gate primitives from PR #164 are pure/standalone. To resolve a
 decision's model/prompt identity into a full :class:`ModelRegistryEntry` /
-:class:`PromptRegistryEntry`, plus a place to persist the resulting
-:class:`DecisionRegistryReference`.
+:class:`PromptRegistryEntry` they need a *persisted* registry — this module.
+
+The governance audit sidecar (``decision_governance_audit.jsonl``) was removed on
+2026-09-04 together with ``app/orchestrator/governed_decision.py``: it had no
+production writer and no reachable reader.
 
 Storage: append-only JSONL under ``artifacts/governance/``.
 
@@ -28,18 +30,13 @@ from pathlib import Path
 from typing import Any
 
 from app.core.file_lock import append_lock
-from app.security.governance.models import (
-    DecisionRegistryReference,
-    ModelRegistryEntry,
-    PromptRegistryEntry,
-)
+from app.security.governance.models import ModelRegistryEntry, PromptRegistryEntry
 
 logger = logging.getLogger(__name__)
 
 GOVERNANCE_DIR = Path("artifacts/governance")
 MODEL_REGISTRY_PATH = GOVERNANCE_DIR / "model_registry.jsonl"
 PROMPT_REGISTRY_PATH = GOVERNANCE_DIR / "prompt_registry.jsonl"
-DECISION_GOVERNANCE_AUDIT_PATH = GOVERNANCE_DIR / "decision_governance_audit.jsonl"
 
 
 # --------------------------------------------------------------------------- #
@@ -194,52 +191,10 @@ def save_prompt_registry_entry(
     return resolved
 
 
-# --------------------------------------------------------------------------- #
-# decision governance audit sidecar
-# --------------------------------------------------------------------------- #
-
-
-def append_decision_governance_audit(
-    *,
-    decision_id: str,
-    reference: DecisionRegistryReference,
-    authorized: bool,
-    blocker_codes: list[str],
-    timestamp_utc: str,
-    path: Path | str = DECISION_GOVERNANCE_AUDIT_PATH,
-) -> Path:
-    """Persist the registry reference for a governed decision alongside the
-    journal (keyed by ``decision_id``). Additive — does not mutate the canonical
-    decision record schema."""
-    resolved = Path(path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    record = {
-        "decision_id": decision_id,
-        "authorized": authorized,
-        "blocker_codes": sorted(blocker_codes),
-        "registry_reference": reference.to_dict(),
-        "timestamp_utc": timestamp_utc,
-    }
-    with append_lock(resolved):
-        with resolved.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
-    return resolved
-
-
-def load_decision_governance_audit(
-    path: Path | str = DECISION_GOVERNANCE_AUDIT_PATH,
-) -> list[dict[str, Any]]:
-    """Load the governance audit sidecar (fail-closed on malformed rows)."""
-    return _read_jsonl(Path(path))
-
-
 __all__ = [
-    "DECISION_GOVERNANCE_AUDIT_PATH",
     "GOVERNANCE_DIR",
     "MODEL_REGISTRY_PATH",
     "PROMPT_REGISTRY_PATH",
-    "append_decision_governance_audit",
-    "load_decision_governance_audit",
     "load_model_registry",
     "load_prompt_registry",
     "lookup_model",

@@ -133,7 +133,7 @@ Reifegrad-Legende: **LIVE** = im Betrieb · **VORBEREITET** = Schnittstelle/Date
 
 | Feld | Inhalt |
 |---|---|
-| **Owner** | SENTR · Code: `app/audit/` (`structured_reasoning.py`, `sanitization.py`, `decision_chain.py` Hash-Chain) |
+| **Owner** | SENTR · Code: `app/audit/` (`structured_reasoning.py`, `sanitization.py`) + `app/truth/ledger.py` (Hash-Chain; `decision_chain.py` am 2026-09-04 entfernt — kein Produktionsschreiber) |
 | **Input** | Entscheidungs-Kontext, Reasoning-Steps, PII/Secret-haltige Rohdaten |
 | **Output** | append-only AuditStream-Eintrag (JSONL, `correlation_id`-Kette), redigiert, tamper-evident |
 | **Failure mode** | Rohe Chain-of-Thought / PII / Secrets im Log; nicht-verkettbarer Eintrag; AuditStream nicht schreibbar |

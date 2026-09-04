@@ -16,7 +16,8 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 ### Entry / Modi / Gates
 - `app/core/enums.py` → `EntryMode` (disabled/paper/paper_premium_limited/paper_learning/probe/live_limited/live_normal); `.allows_autonomous_loop_entry` = True NUR für paper/probe/live_*
 - `app/execution/entry_policy.py` → `EntryRoute`, `detect_contradictions`, Route-Verdicts (autonomous_loop/premium_paper/real_analysis_paper/fastlane/technical)
-- `app/risk/engine.py` → `RiskEngine` (Sizing/Drawdown/Veto) · `app/risk/promotion_gate.py` → Bleed-Breaker · `app/security/governance/gates.py` → `authorize_productive_decision`
+- `app/risk/engine.py` → `RiskEngine` (Sizing/Drawdown/Veto) · `app/risk/promotion_gate.py` → Bleed-Breaker
+- `app/security/governance/gates.py` → `authorize_productive_decision` — **kein Kettenglied**: `trading_loop.py` importiert `app.security.governance` nicht, der einzige Produktionsaufrufer (`app/orchestrator/governed_decision.py`) wurde am 2026-09-04 entfernt. Geprüftes Primitiv ohne Aufrufer.
 
 ### Deploy / systemd
 - `deploy/bin/kai-service-control` → Service-Broker (einziger passwortfreier Root-Pfad für `ubuntu`-Units: start/stop/restart/reload/status, Invariante: User=ubuntu)

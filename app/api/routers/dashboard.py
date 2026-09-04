@@ -2523,15 +2523,18 @@ async def dashboard_integrity_api() -> JSONResponse:
 
 @router.get("/dashboard/api/audit-chain", tags=["dashboard"])
 async def dashboard_audit_chain_api() -> JSONResponse:
-    """Decision-Journal Tamper-Evidence (#314): Integrität der Hash-Chain.
+    """Attestation-Ledger Tamper-Evidence (#314): Integrität der Hash-Kette.
 
     Dritte Truth-Layer-KPI neben Replay-Status (Portfolio-Rekonstruierbarkeit) und
-    OTS-Integrity (On-Chain-Anchoring). Verifiziert ``decision_journal_chain.jsonl``
-    (Genesis, lückenlose Verkettung, Chain-/Record-Hash-Konsistenz) gegen die
-    Journal-Payloads. State: ``ok`` (tamper-frei) / ``empty`` (noch nichts verkettet)
-    / ``broken`` (Manipulation erkannt) / ``unavailable`` (Datei unlesbar). Eine
-    Journal-Rotation ist ``journal_gaps`` (informativ), KEIN Tamper. Reiner Datei-
-    Read via ``to_thread`` (off the event loop, blockiert nie); fail-soft, nie 500.
+    OTS-Integrity (On-Chain-Anchoring). Rechnet ``truth/attestation_ledger.jsonl``
+    nach (Seq-Folge, Verkettung, Payload-/Record-Hash je Record). State: ``ok``
+    (tamper-frei) / ``empty`` (noch nichts attestiert) / ``broken`` (Manipulation
+    erkannt) / ``unavailable`` (Datei unlesbar). Reiner Datei-Read via ``to_thread``
+    (off the event loop, blockiert nie); fail-soft, nie 500.
+
+    Quelle bis 2026-09-04 war ``decision_journal_chain.jsonl`` — ein Strom ohne
+    Produktionsschreiber, das KPI konnte also nur ``empty`` liefern. Ein
+    Integritätsindikator, der nicht fehlschlagen kann, ist schlimmer als keiner.
     """
     import asyncio
 
@@ -2543,8 +2546,6 @@ async def dashboard_audit_chain_api() -> JSONResponse:
         "entries": 0,
         "errors": 0,
         "first_error": None,
-        "journal_gaps": 0,
-        "cross_checked": False,
         "reason": "",
     }
     try:

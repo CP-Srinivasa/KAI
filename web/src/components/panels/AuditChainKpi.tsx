@@ -1,12 +1,15 @@
 // @data-source: /dashboard/api/audit-chain
 //
-// Audit-Chain Tamper-Evidence KPI (#314, Truth-Layer). Verifiziert die Decision-
-// Journal Hash-Chain (decision_journal_chain.jsonl) gegen die Journal-Payloads:
-// ok (tamper-frei) / leer (noch nichts verkettet) / broken (Manipulation erkannt)
-// / unavailable (Datei unlesbar). Eine Journal-Rotation (journal_gaps) ist KEIN
-// Tamper. Dritte Truth-Layer-KPI neben Replay-Status (Portfolio-Rekonstruier-
+// Audit-Chain Tamper-Evidence KPI (#314, Truth-Layer). Rechnet den Attestation-
+// Ledger (artifacts/truth/attestation_ledger.jsonl) nach: ok (tamper-frei) / leer
+// (noch nichts attestiert) / broken (Manipulation erkannt) / unavailable (Datei
+// unlesbar). Dritte Truth-Layer-KPI neben Replay-Status (Portfolio-Rekonstruier-
 // barkeit) und OTS-Integrity (On-Chain-Anchoring). Kein Fake, ehrlich gegen das
 // /dashboard/api/audit-chain-Endpoint.
+//
+// Quelle bis 2026-09-04 war die Decision-Journal-Hash-Kette. Die hatte keinen
+// Schreiber: das Panel versprach Tamper-Evidence über eine Kette, die nie befüllt
+// wurde, und konnte nur "leer" zeigen. Jetzt zeigt es die Kette, die läuft.
 import { Card, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useApi } from "@/lib/useApi";
@@ -34,14 +37,16 @@ export function AuditChainKpi() {
 
   return (
     <Card padded>
-      <div className="text-2xs uppercase tracking-wider text-fg-muted">Audit-Chain (Tamper)</div>
+      <div className="text-2xs uppercase tracking-wider text-fg-muted">
+        Truth-Ledger (Tamper)
+      </div>
       <div className="mt-1.5 flex items-center gap-2">
         {q.state === "error" ? (
           <StatusPill kind="critical" label="Endpoint-Fehler" />
         ) : d == null ? (
           <StatusPill kind="pending" label="lädt" />
         ) : d.state === "empty" ? (
-          <Badge tone="muted" dot title="Noch keine Decisions in die Hash-Chain geschrieben.">
+          <Badge tone="muted" dot title="Noch keine Attestierung im Truth-Ledger.">
             leer
           </Badge>
         ) : (
@@ -54,17 +59,14 @@ export function AuditChainKpi() {
       <div className="mt-1 text-2xs text-fg-subtle">
         {d?.state === "ok" ? (
           <span className="font-mono break-all">
-            {d.entries} Entr{d.entries === 1 ? "y" : "ies"} verkettet
-            {d.journal_gaps > 0
-              ? ` · ${d.journal_gaps} Journal-Lücke${d.journal_gaps === 1 ? "" : "n"} (Rotation)`
-              : ""}
+            {d.entries} Attestierung{d.entries === 1 ? "" : "en"} verkettet
           </span>
         ) : d?.state === "broken" ? (
           <span className="break-words">
             {d.errors} Tamper-Fehler{d.first_error ? ` · ${d.first_error}` : ""}
           </span>
         ) : d?.state === "empty" ? (
-          <span>noch keine verkettete Decision</span>
+          <span>noch keine Attestierung</span>
         ) : d?.reason ? (
           <span className="break-words">{d.reason}</span>
         ) : null}
