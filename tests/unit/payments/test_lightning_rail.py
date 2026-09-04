@@ -124,7 +124,7 @@ class FakeClient:
         response = self.behaviour.get("add_invoice")
         if isinstance(response, Exception):
             raise response
-        return dict(response or {"r_hash": PAYMENT_HASH})
+        return dict(response or {"r_hash": PAYMENT_HASH, "payment_request": BOLT11})
 
     async def list_invoices(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append(("list_invoices", kwargs))
@@ -459,6 +459,22 @@ async def test_create_invoice_uses_the_invoice_scope() -> None:
     invoice = await rail.create_invoice(InvoiceRequest(amount=sat(1000), purpose="self_test"))
     assert scopes == ["invoice"], "Empfangen braucht nie ein Sende-Credential"
     assert invoice.ref_hash == PAYMENT_HASH
+
+
+async def test_create_invoice_passes_the_payment_request_through() -> None:
+    """Der Node kodiert die Forderung — ohne Durchreichung kann niemand zahlen."""
+    invoice = await a_rail(FakeClient()).create_invoice(
+        InvoiceRequest(amount=sat(1000), purpose="self_test")
+    )
+    assert invoice.payment_request == BOLT11
+
+
+async def test_create_invoice_without_a_payment_request_is_refused() -> None:
+    """Eine Forderung ohne Aufforderung ist unbezahlbar — das ist kein Erfolg."""
+    with pytest.raises(RailError, match="payment_request"):
+        await a_rail(FakeClient(add_invoice={"r_hash": PAYMENT_HASH})).create_invoice(
+            InvoiceRequest(amount=sat(1000), purpose="self_test")
+        )
 
 
 async def test_create_invoice_without_a_usable_hash_is_refused() -> None:

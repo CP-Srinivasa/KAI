@@ -158,3 +158,16 @@ async def test_two_invoices_get_two_references() -> None:
     first = await rail.create_invoice(InvoiceRequest(amount=sat(100), purpose="self_test"))
     second = await rail.create_invoice(InvoiceRequest(amount=sat(100), purpose="self_test"))
     assert first.ref_hash != second.ref_hash
+
+
+async def test_a_simulated_invoice_is_payable_on_this_rail() -> None:
+    """Auch simuliert muss die Aufforderung etwas sein, womit man zahlen KANN.
+
+    Ein leerer Platzhalter wuerde den Rueckweg im Simulationsmodus gruen
+    aussehen lassen und erst am echten Node auffallen.
+    """
+    rail = SimulationRail(now=NOW)
+    invoice = await rail.create_invoice(InvoiceRequest(amount=sat(100), purpose="self_test"))
+    assert invoice.payment_request != ""
+    decoded = await rail.decode(invoice.payment_request)
+    assert decoded.rail == rail.name

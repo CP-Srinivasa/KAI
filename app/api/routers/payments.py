@@ -91,7 +91,13 @@ class ExecuteRequest(BaseModel):
 class InvoiceCreateRequest(BaseModel):
     amount_sat: int = Field(gt=0)
     purpose: str = Field(min_length=1, max_length=64)
-    expiry_seconds: int = Field(default=300, gt=0)
+    #: Eine Stunde, weil ein MENSCH zahlt: Wallet oeffnen, scannen, bestaetigen.
+    #: Die frueheren 300 s waren aus der L402-Mint-Logik uebernommen, wo ein
+    #: Client sofort und automatisch zahlt — dort ist kurz richtig, hier war es
+    #: ein abgelaufener QR-Code (Rueckweg-Test 2026-09-04). Obergrenze 24 h:
+    #: eine unbezahlte Invoice belegt eine Zeile am Node, "unbegrenzt" ist
+    #: keine Frist.
+    expiry_seconds: int = Field(default=3600, gt=0, le=86_400)
     #: KAIs eigene Bestellreferenz (Self-Use, ADR 0016). Der Rail sieht sie nie.
     order_ref: str = Field(default="", max_length=64)
     memo_hash: str = Field(default="", max_length=64)
@@ -270,6 +276,11 @@ async def create_invoice(request: Request, body: InvoiceCreateRequest) -> dict[s
         "amount_minor_units": invoice.amount.minor_units,
         "expires_at": invoice.expires_at.isoformat(),
         "order_ref": body.order_ref,
+        # Die Aufforderung selbst. Sie gehoert in die Antwort und nirgendwo
+        # sonst hin: das Journal traegt nur ``invoice_ref_hash`` (Allowlist in
+        # app/payments/redaction.py). Kein Geheimnis — ohne sie kann der
+        # Zahler schlicht nicht zahlen.
+        "payment_request": invoice.payment_request,
     }
 
 

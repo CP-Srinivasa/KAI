@@ -293,6 +293,13 @@ class LightningRail:
         ref_hash = normalise_payment_hash(response.get("r_hash"))
         if not ref_hash:
             raise RailError("add_invoice returned no usable r_hash")
+        # Ohne die kodierte Aufforderung kann der Zahler nichts tun; ein
+        # ``ref_hash`` allein ist eine Quittungsnummer ohne Rechnung. Der Node
+        # liefert sie immer mit — tut er es nicht, ist die Antwort kaputt und
+        # nicht "eine Invoice ohne Text".
+        payment_request = str(response.get("payment_request") or "")
+        if not payment_request:
+            raise RailError("add_invoice returned no payment_request")
         return Invoice(
             rail=self.name,
             ref_hash=ref_hash,
@@ -300,6 +307,7 @@ class LightningRail:
             payee_hash=sha(f"self:{self.name}"),
             expires_at=datetime.now(UTC) + timedelta(seconds=request.expiry_seconds),
             memo_hash=request.memo_hash,
+            payment_request=payment_request,
         )
 
     async def invoice_status(self, ref_hash: str) -> InvoiceStatus:
