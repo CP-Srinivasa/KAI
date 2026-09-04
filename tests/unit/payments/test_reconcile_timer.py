@@ -61,6 +61,7 @@ async def test_der_timer_prozess_sendet_nie(tmp_path: Path, monkeypatch: Any) ->
         rail=rail,
         settings=settings,
         state_path=tmp_path / STATE_FILENAME,
+        clock=lambda: NOW,
     )
 
     assert rail.pay_calls == 0
@@ -87,6 +88,7 @@ async def test_der_timer_meldet_seinen_befund_weiter(tmp_path: Path) -> None:
         rail=rail,
         settings=PaymentSettings(mode="simulation", journal_path=str(journal_path)),
         state_path=state_path,
+        clock=lambda: NOW,
     )
 
     assert report["status"] == "attention"
