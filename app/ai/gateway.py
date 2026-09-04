@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic, sleep
@@ -167,6 +168,28 @@ def _run(
     return tuple(attempts), book, None
 
 
+def _refuse_inside_event_loop() -> None:
+    """Der synchrone Weg wartet mit ``time.sleep`` -- im Event-Loop waere das fatal.
+
+    Der Backoff dieser Schicht ist echte Wartezeit. In einer Coroutine wuerde
+    ``time.sleep`` nicht diesen einen Aufruf verzoegern, sondern den gesamten
+    Loop anhalten: jeder Telegram-Handler, jeder laufende HTTP-Request, jeder
+    Timer. Das ist genau der Fehler, gegen den Luecke B antritt, und er waere
+    still -- man saehe nur, dass „alles manchmal haengt".
+
+    Deshalb wird er hier laut. Wer aus async-Code kommt, nimmt
+    :func:`execute_async`; die Politik ist dieselbe, nur die Wartemechanik ist
+    die des jeweiligen Ausfuehrungsmodells.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        "app.ai.gateway.execute() blockiert den Event-Loop -- execute_async() benutzen"
+    )
+
+
 def execute(
     *,
     purpose: Purpose,
@@ -193,6 +216,8 @@ def execute(
     abgelehntes Budget darf keinen Aufruf kosten, und ein offener Kreis keinen
     Versuch — beides waere Geld bzw. Last fuer eine Antwort, die man schon hat.
     """
+    _refuse_inside_event_loop()
+
     route = route_for(purpose)
     mode = resolve_mode(route, per_route=per_route, ceiling=ceiling)
     cpolicy = circuit_policy or CircuitPolicy()
@@ -324,98 +349,103 @@ async def execute_async[T](
         estimated_request_cost_usd=estimated_request_cost_usd,
     )
     skipped: list[SkipReason] = []
-    if verdict == "reject":
-        gateway = GatewayOutcome(
-            route=route,
-            purpose=purpose,
-            mode=mode,
-            budget=verdict,
-            circuit=book,
-            skipped=(SKIP_BUDGET_REJECT,),
-            detail=detail,
-        )
-        return AsyncGatewayOutcome(gateway=gateway)
-
     litellm_attempts: list[AttemptResult[T]] = []
     direct_task: asyncio.Task[AttemptResult[T]] | None = None
     if mode == "shadow" and direct_call is not None:
         direct_task = asyncio.ensure_future(direct_call())
 
-    if mode == "off":
-        skipped.append(SKIP_MODE_OFF)
-    elif litellm_call is None:
-        skipped.append(SKIP_NO_TRANSPORT)
-    else:
-        coarse = CircuitKey(route, alias)
-        now_s = clock()
-        if not book.allows(coarse, now_s=now_s, policy=cpolicy):
-            skipped.append(SKIP_CIRCUIT_OPEN)
+    # Das Budget regiert die LiteLLM-AUSGABE, nicht den Altpfad. Ein erschoepftes
+    # Tagesbudget schaltet den Transport ab und laesst Analysis, Chat, Intent,
+    # STT und Consensus unveraendert direkt weiterlaufen. Waere das hier ein
+    # frueher `return`, haette die Kostenbremse mehr Macht ueber den Betrieb als
+    # der Modus-Schalter -- und ein Budgetende saehe aus wie ein Ausfall.
+    try:
+        if verdict == "reject":
+            skipped.append(SKIP_BUDGET_REJECT)
+        elif mode == "off":
+            skipped.append(SKIP_MODE_OFF)
+        elif litellm_call is None:
+            skipped.append(SKIP_NO_TRANSPORT)
         else:
-            policy = retry_policy or RetryPolicy()
-            for attempt_number in range(1, policy.max_attempts + 1):
-                now_s = clock()
-                book = book.on_attempt(coarse, now_s=now_s, policy=cpolicy)
-                result = await litellm_call()
-                litellm_attempts.append(result)
-                precise = circuit_key(route, alias, result.trace)
-                if not book.allows(precise, now_s=now_s, policy=cpolicy):
-                    skipped.append(SKIP_CIRCUIT_OPEN)
-                    break
-                book = (
-                    book.on_success(precise)
-                    if result.trace.ok
-                    else book.on_failure(precise, now_s=now_s, policy=cpolicy)
-                )
-                if coarse != precise and result.trace.ok:
-                    book = book.on_success(coarse)
+            coarse = CircuitKey(route, alias)
+            now_s = clock()
+            if not book.allows(coarse, now_s=now_s, policy=cpolicy):
+                skipped.append(SKIP_CIRCUIT_OPEN)
+            else:
+                policy = retry_policy or RetryPolicy()
+                for attempt_number in range(1, policy.max_attempts + 1):
+                    now_s = clock()
+                    book = book.on_attempt(coarse, now_s=now_s, policy=cpolicy)
+                    result = await litellm_call()
+                    litellm_attempts.append(result)
+                    precise = circuit_key(route, alias, result.trace)
+                    if not book.allows(precise, now_s=now_s, policy=cpolicy):
+                        skipped.append(SKIP_CIRCUIT_OPEN)
+                        break
+                    book = (
+                        book.on_success(precise)
+                        if result.trace.ok
+                        else book.on_failure(precise, now_s=now_s, policy=cpolicy)
+                    )
+                    if coarse != precise and result.trace.ok:
+                        book = book.on_success(coarse)
 
-                state = book.state(precise, now_s=now_s, policy=cpolicy)
-                will_retry = (
-                    not result.trace.ok
-                    and state != "open"
-                    and should_retry(result.trace)
-                    and attempt_number < policy.max_attempts
-                )
-                record_attempt_trace(
-                    result.trace,
-                    correlation_id=correlation_id,
-                    purpose=purpose,
-                    logical_route=route,
-                    mode=mode,
-                    role="shadow" if mode == "shadow" else "primary",
-                    attempt_number=attempt_number,
-                    budget_decision=verdict,
-                    circuit_state=state,
-                    execution_authority=mode == "primary",
-                    schema_status=(
-                        "valid"
-                        if result.trace.ok
-                        else "invalid"
-                        if result.trace.error_class == "schema"
-                        else None
-                    ),
-                    outcome=(
-                        "fallthrough"
-                        if will_retry
-                        else "success"
-                        if result.trace.ok
-                        else "exhausted"
-                    ),
-                    fallback_from=(
-                        "litellm"
-                        if mode == "primary" and not result.trace.ok and not will_retry
-                        else None
-                    ),
-                    fallback_to=(
-                        "direct"
-                        if mode == "primary" and not result.trace.ok and not will_retry
-                        else None
-                    ),
-                    path=telemetry_path,
-                )
-                if not will_retry:
-                    break
-                await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
+                    state = book.state(precise, now_s=now_s, policy=cpolicy)
+                    will_retry = (
+                        not result.trace.ok
+                        and state != "open"
+                        and should_retry(result.trace)
+                        and attempt_number < policy.max_attempts
+                    )
+                    record_attempt_trace(
+                        result.trace,
+                        correlation_id=correlation_id,
+                        purpose=purpose,
+                        logical_route=route,
+                        mode=mode,
+                        role="shadow" if mode == "shadow" else "primary",
+                        attempt_number=attempt_number,
+                        budget_decision=verdict,
+                        circuit_state=state,
+                        execution_authority=mode == "primary",
+                        schema_status=(
+                            "valid"
+                            if result.trace.ok
+                            else "invalid"
+                            if result.trace.error_class == "schema"
+                            else None
+                        ),
+                        outcome=(
+                            "fallthrough"
+                            if will_retry
+                            else "success"
+                            if result.trace.ok
+                            else "exhausted"
+                        ),
+                        fallback_from=(
+                            "litellm"
+                            if mode == "primary" and not result.trace.ok and not will_retry
+                            else None
+                        ),
+                        fallback_to=(
+                            "direct"
+                            if mode == "primary" and not result.trace.ok and not will_retry
+                            else None
+                        ),
+                        path=telemetry_path,
+                    )
+                    if not will_retry:
+                        break
+                    await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
+    except BaseException:
+        # Der Schattenlauf des Direktpfads darf nicht als unbeachtete Task
+        # zurueckbleiben: der Aufrufer saehe nur den Fehler von hier, waehrend
+        # asyncio spaeter eine zweite, herrenlose Ausnahme meldet.
+        if direct_task is not None:
+            direct_task.cancel()
+            with suppress(BaseException):
+                await direct_task
+        raise
 
     litellm_result = (
         InferenceResult(

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.ai.retry import DEFAULT_MAX_ATTEMPTS, MAX_ATTEMPTS_CEILING
+
 
 def _strip_secret(value: object) -> object:
     return value.strip() if isinstance(value, str) else value
@@ -34,7 +36,8 @@ class InferenceSettings(BaseSettings):
     litellm_base_url: str = Field(default="http://127.0.0.1:4000")
     litellm_api_key: str = Field(default="", repr=False)
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
-    max_attempts: int = Field(default=3, ge=1, le=3)
+    # Die Obergrenze wird nicht zweitgeschrieben: sie gehoert der Retry-Politik.
+    max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1, le=MAX_ATTEMPTS_CEILING)
     backoff_base_seconds: float = Field(default=0.25, ge=0.0, le=10.0)
     backoff_max_seconds: float = Field(default=2.0, ge=0.0, le=30.0)
     jitter_max_seconds: float = Field(default=0.1, ge=0.0, le=5.0)

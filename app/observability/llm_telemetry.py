@@ -94,8 +94,18 @@ def record_llm_call(
         "retry_count": int(retry_count),
         "fallback_from": fallback_from,
         "fallback_to": fallback_to,
-        "input_tokens": input_tokens if input_tokens is not None else int(prompt_tokens),
-        "output_tokens": output_tokens if output_tokens is not None else int(completion_tokens),
+        # UNKNOWN != 0, auch bei Token. Die v1-Felder ``prompt_tokens`` /
+        # ``completion_tokens`` sind ``int`` und tragen 0 sowohl fuer "null
+        # Token" als auch fuer "nicht mitgeteilt" -- fuer den v1-Leser bleibt
+        # das so. Die v2-Felder duerfen diese Vermengung nicht erben: ein
+        # fehlgeschlagener Versuch ohne Usage-Block haette sonst 0 Token
+        # gezaehlt und die Auswertung haette den Verbrauch zu niedrig gesehen.
+        # 0 gibt es bei einem echten Aufruf nicht, deshalb ist die Umdeutung
+        # nach ``None`` hier verlustfrei.
+        "input_tokens": input_tokens if input_tokens is not None else (int(prompt_tokens) or None),
+        "output_tokens": (
+            output_tokens if output_tokens is not None else (int(completion_tokens) or None)
+        ),
         # None is the canonical representation of UNKNOWN cost.
         "cost_usd": cost_usd,
         "cost_known": cost_usd is not None,

@@ -65,9 +65,23 @@ from app.ai.modes import (
     resolve_mode,
     unknown_route_keys,
 )
-from app.ai.retry import RetryPolicy, retry_delay_s, should_retry
+from app.ai.retry import (
+    DEFAULT_MAX_ATTEMPTS,
+    MAX_ATTEMPTS_CEILING,
+    RetryPolicy,
+    retry_delay_s,
+    should_retry,
+    worst_case_backoff_s,
+)
 from app.ai.routes import ROUTES, Route, route_for
-from app.ai.runtime import LiteLLMCallError, LiteLLMRequest, RoutedValue, invoke
+from app.ai.runtime import (
+    LiteLLMCallError,
+    LiteLLMRequest,
+    RoutedValue,
+    environment_settings,
+    invoke,
+    reset_environment_settings,
+)
 
 __all__ = [
     "DEFAULT_MODE",
@@ -116,10 +130,15 @@ __all__ = [
     "total_cost_usd",
     "unknown_route_keys",
     "RetryPolicy",
+    "DEFAULT_MAX_ATTEMPTS",
+    "MAX_ATTEMPTS_CEILING",
+    "worst_case_backoff_s",
     "LiteLLMCallError",
     "LiteLLMRequest",
     "RoutedValue",
     "invoke",
+    "environment_settings",
+    "reset_environment_settings",
     "retry_delay_s",
     "should_retry",
 ]

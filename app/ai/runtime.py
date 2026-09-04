@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Final
 
 import httpx
 
@@ -50,6 +51,46 @@ class RoutedValue[T]:
     outcome: AsyncGatewayOutcome[T] | None = None
 
 
+#: Hart abgeschaltete Rueckfallebene. Wird benutzt, wenn die Umgebung eine
+#: unbrauchbare ``KAI_INFERENCE_*``-Variable enthaelt: ein Tippfehler in einer
+#: Env-Variable darf den Direktpfad von Chat, Intent, STT und Consensus nicht
+#: mitreissen. OFF ist der Rollback, nicht ein Fehlerzustand.
+_HARD_OFF: Final = InferenceSettings.model_construct(
+    enabled=False,
+    mode_ceiling="off",
+    route_modes={},
+    route_aliases={},
+    litellm_base_url="http://127.0.0.1:4000",
+    litellm_api_key="",
+    timeout_seconds=30.0,
+    max_attempts=1,
+    backoff_base_seconds=0.0,
+    backoff_max_seconds=0.0,
+    jitter_max_seconds=0.0,
+)
+
+
+@lru_cache(maxsize=1)
+def environment_settings() -> InferenceSettings:
+    """Die Umgebungsfassung — EINMAL gelesen, nicht pro Aufruf.
+
+    ``BaseSettings()`` liest ``.env`` von der Platte. Das pro Chat-, Intent- und
+    STT-Aufruf zu tun, waere blockierendes Datei-I/O im Event-Loop — genau die
+    Klasse Fehler, gegen die Luecke B antritt. Zwischenspeicher statt Neubau;
+    :func:`reset_environment_settings` macht ihn fuer Tests wieder auf.
+    """
+    try:
+        return InferenceSettings()
+    except Exception as exc:  # noqa: BLE001 - eine kaputte Env darf nicht werfen
+        logger.error("ai_gateway_settings_invalid_falling_back_to_off", error=str(exc))
+        return _HARD_OFF
+
+
+def reset_environment_settings() -> None:
+    """Zwischenspeicher leeren (Tests, Neustart nach Env-Wechsel)."""
+    environment_settings.cache_clear()
+
+
 def inference_settings(source: Any | None = None) -> InferenceSettings:
     """Resolve settings without making legacy caller test doubles grow fields."""
     if isinstance(source, InferenceSettings):
@@ -57,7 +98,7 @@ def inference_settings(source: Any | None = None) -> InferenceSettings:
     candidate = getattr(source, "ai_gateway", None) if source is not None else None
     if isinstance(candidate, InferenceSettings):
         return candidate
-    return InferenceSettings()
+    return environment_settings()
 
 
 def _direct_trace(
@@ -237,6 +278,8 @@ __all__ = [
     "LiteLLMCallError",
     "LiteLLMRequest",
     "RoutedValue",
+    "environment_settings",
     "inference_settings",
     "invoke",
+    "reset_environment_settings",
 ]
