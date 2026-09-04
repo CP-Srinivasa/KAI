@@ -478,3 +478,71 @@ def test_das_paket_haengt_nicht_an_der_produktion() -> None:
             elif isinstance(knoten, ast.Import):
                 module = knoten.names[0].name
             assert module is None or not module.startswith("app."), (datei.name, module)
+
+
+# ---------------------------------------------------------------------------
+# Vertragsprobe gegen den ECHTEN Schreiber -- ohne die Produktion zu aendern.
+# ---------------------------------------------------------------------------
+
+
+def test_der_leser_verdaut_was_kai_tatsaechlich_schreibt(tmp_path: Path) -> None:
+    """Ein Auswerter, der seine eigene Evidenz nicht lesen kann, ist Zierde.
+
+    Diese Probe ruft den ECHTEN Telemetrie-Schreiber auf, statt eine
+    handgeschriebene Zeile zu erfinden, die zufaellig zum Leser passt. Die
+    S5-Felder (`logical_route`, `transport`, `identity_proven`, ...) kommen aus
+    #874 und werden hier ueberlagert; sobald #874 in der Mainline ist, faellt
+    die Ueberlagerung weg und der Aufruf traegt sie selbst.
+
+    Umgekehrt gilt die Richtung ausdruecklich NICHT: passt etwas nicht, wird
+    der LESER angepasst, nie der Schreiber. S6 ist eine Brille, kein Eingriff.
+    """
+    from scripts.litellm_shadow_eval.loader import SUPPORTED_SCHEMA_VERSIONS, normalize_record
+
+    from app.observability.llm_telemetry import record_llm_call
+
+    pfad = tmp_path / "llm_telemetry.jsonl"
+    record_llm_call(
+        provider="openai",
+        model="gpt-4o-mini",
+        ok=True,
+        latency_ms=12.0,
+        role="shadow",
+        correlation_id="corr-1",
+        call_id="llmc_abc",
+        purpose="analysis",
+        attempt=1,
+        outcome="success",
+        path=pfad,
+    )
+    geschrieben = json.loads(pfad.read_text(encoding="utf-8").strip())
+    assert geschrieben["schema_version"] in SUPPORTED_SCHEMA_VERSIONS, geschrieben["schema_version"]
+
+    aus_s5 = {
+        "logical_route": "standard",
+        "mode": "shadow",
+        "transport": "litellm",
+        "requested_model_alias": "kai-standard",
+        "actual_provider": "openai",
+        "actual_model": "gpt-4o-mini",
+        "identity_proven": True,
+        "retry_count": 0,
+        "input_tokens": 11,
+        "output_tokens": 5,
+        "cost_usd": 0.001,
+        "cost_known": True,
+        "schema_status": "valid",
+        "execution_authority": False,
+    }
+    record, issues = normalize_record({**geschrieben, **aus_s5}, record_ref="1:t.jsonl:1")
+
+    assert not issues, [issue.code for issue in issues]
+    assert record is not None
+    assert record.side.value == "SHADOW", "role=shadow ist die Schattenseite"
+    assert record.logical_route == "standard"
+    assert record.success is True, "der Schreiber sagt `ok`, der Leser versteht es"
+    assert record.timestamp, "der Schreiber sagt `ts`, der Leser versteht es"
+    assert record.cost_known is True and record.cost_usd == 0.001
+    assert record.identity_proven is True
+    assert record.schema_valid is True
+    assert record.execution_authority is False
