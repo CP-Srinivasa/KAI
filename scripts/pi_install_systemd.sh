@@ -38,6 +38,10 @@ source "${REPO_ROOT}/scripts/lib/paper_writer_freeze.sh"
 # Trennt Provisionierung (frischer Host) von Live-Aenderung (Drift im Ziel).
 # shellcheck source=scripts/lib/pi_install_guard.sh
 source "${REPO_ROOT}/scripts/lib/pi_install_guard.sh"
+# Release-Bindung + "ist das Release aktiv?" — EIN Kriterium fuer diesen
+# Installer und den Unit-Sync (Vorfall 2026-09-04, siehe Kopf der Bibliothek).
+# shellcheck source=scripts/lib/pi_release_guard.sh
+source "${REPO_ROOT}/scripts/lib/pi_release_guard.sh"
 PAPER_WRITER_FREEZE_STATE=0  # 0/10/20, je Lauf via _paper_freeze_preflight gesetzt
 UNIT_DST="/etc/systemd/system"
 TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
@@ -274,32 +278,29 @@ _paper_freeze_skip() {
 #   pi_make_release.sh -> pi_activate_release.sh -> DIESER Installer
 #   -> daemon-reload -> Restart -> Runtime-Provenance
 release_bound_units() {
-    grep -l "runtime-exec" "$UNIT_SRC"/*.service 2>/dev/null | xargs -r -n1 basename
+    pi_release_bound_units "$UNIT_SRC"
 }
 
 release_target_of() {
-    # Der `--repo`-Wert der Unit, also das Ziel, das existieren MUSS.
-    awk '{for(i=1;i<=NF;i++) if($i=="--repo") {print $(i+1); exit}}' "$UNIT_SRC/$1"
+    # Der `--repo`-Wert der Unit (bzw. ihr WorkingDirectory auf `current`), also
+    # das Ziel, das existieren MUSS. Kriterium: lib/pi_release_guard.sh.
+    pi_release_unit_target "$UNIT_SRC/$1"
 }
 
 assert_release_ready() {
-    local unit target problems=0
+    local unit target reason problems=0
     for unit in $(release_bound_units); do
         target="$(release_target_of "$unit")"
         [ -n "$target" ] || continue
-        if [ ! -d "$target" ]; then
-            echo "  FEHLT  $unit -> $target existiert nicht" >&2
-            problems=$((problems + 1))
-        elif [ ! -f "$target/release.json" ]; then
-            echo "  FEHLT  $unit -> $target ohne release.json" >&2
+        if ! reason="$(pi_release_active_reason "$target")"; then
+            echo "  FEHLT  $unit -> $reason" >&2
             problems=$((problems + 1))
         fi
     done
     if [ "$problems" -gt 0 ]; then
         echo "" >&2
         echo "ABBRUCH: $problems release-gebundene Unit(s) ohne gueltiges Release." >&2
-        echo "Erst  bash scripts/pi_make_release.sh  und  bash scripts/pi_activate_release.sh," >&2
-        echo "dann diesen Installer. Ein Start in einen leeren Pfad erzeugt tote Dienste." >&2
+        pi_release_hint >&2
         return 1
     fi
     return 0

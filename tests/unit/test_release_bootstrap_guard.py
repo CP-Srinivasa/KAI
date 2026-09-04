@@ -27,6 +27,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "scripts" / "pi_install_systemd.sh"
+# Das Kriterium lebt seit dem Vorfall vom 2026-09-04 in einer Bibliothek, die
+# Installer UND Unit-Sync teilen: zwei Implementierungen desselben Guards waeren
+# zwei Wahrheiten.
+RELEASE_GUARD = REPO_ROOT / "scripts" / "lib" / "pi_release_guard.sh"
+UNIT_SYNC = REPO_ROOT / "scripts" / "lib" / "pi_unit_sync.sh"
 UNIT_DIR = REPO_ROOT / "deploy" / "systemd"
 
 _BASH = shutil.which("bash")
@@ -46,7 +51,11 @@ def _helpers(units_dir: Path, *, unit: str = "") -> str:
             block.append(line)
         if keep and line == "}":
             keep = False
-    return f'UNIT_SRC="{units_dir.as_posix()}"\n' + "\n".join(block) + f"\n{unit}\n"
+    return (
+        f'. "{RELEASE_GUARD.as_posix()}"\nUNIT_SRC="{units_dir.as_posix()}"\n'
+        + "\n".join(block)
+        + f"\n{unit}\n"
+    )
 
 
 def _run(script: str) -> subprocess.CompletedProcess[str]:
@@ -109,11 +118,28 @@ def test_ohne_release_json_bricht_der_installer_ab(tmp_path: Path) -> None:
     assert "ohne release.json" in r.stderr
 
 
-def test_mit_gueltigem_release_laeuft_der_installer_durch(tmp_path: Path) -> None:
-    """Positivkontrolle — sonst wuerde der Guard einfach immer abbrechen."""
+def _gueltiges_release(ziel: Path) -> None:
+    """Was `pi_make_release.sh` hinterlaesst: release.json UND den eigenen venv."""
+    (ziel / ".venv" / "bin").mkdir(parents=True)
+    (ziel / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    (ziel / "release.json").write_text(json.dumps({"schema": "kai_release/v1"}), encoding="utf-8")
+
+
+def test_ohne_venv_python_bricht_der_installer_ab(tmp_path: Path) -> None:
+    """release.json ohne venv: ExecStart zeigt auf ein Binary, das es nicht gibt (203/EXEC)."""
     ziel = tmp_path / "releases" / "abc"
     ziel.mkdir(parents=True)
     (ziel / "release.json").write_text(json.dumps({"schema": "kai_release/v1"}), encoding="utf-8")
+    units = _unit_mit_ziel(tmp_path, ziel)
+    r = _run(_helpers(units, unit="assert_release_ready"))
+    assert r.returncode != 0
+    assert "ohne .venv/bin/python" in r.stderr
+
+
+def test_mit_gueltigem_release_laeuft_der_installer_durch(tmp_path: Path) -> None:
+    """Positivkontrolle — sonst wuerde der Guard einfach immer abbrechen."""
+    ziel = tmp_path / "releases" / "abc"
+    _gueltiges_release(ziel)
     units = _unit_mit_ziel(tmp_path, ziel)
     r = _run(_helpers(units, unit="assert_release_ready"))
     assert r.returncode == 0, r.stderr
@@ -151,3 +177,71 @@ def test_der_installer_ruft_den_guard_vor_dem_enable() -> None:
     body_start = src.index("enable_on_install_units() {")
     body_end = src.index("reactivate_critical() {")
     assert "assert_release_ready" not in src[body_start:body_end]
+
+
+# ── Die gemeinsame Bibliothek (Vorfall 2026-09-04) ──────────────────────────
+#
+# `pi_apply_systemd_units.sh` hat die fuenf Units nach /etc kopiert, obwohl es
+# `/home/kai/current` nicht gab; der naechste Restart scheiterte mit 200/CHDIR.
+# Der Guard hier deckte nur `enable --now` ab. Seitdem teilen Installer und
+# Unit-Sync EIN Kriterium in `scripts/lib/pi_release_guard.sh`.
+
+
+def _lib(script: str) -> subprocess.CompletedProcess[str]:
+    return _run(f'. "{RELEASE_GUARD.as_posix()}"\n{script}\n')
+
+
+def test_installer_und_unit_sync_teilen_den_guard() -> None:
+    assert RELEASE_GUARD.exists()
+    assert "lib/pi_release_guard.sh" in INSTALLER.read_text(encoding="utf-8")
+    assert "pi_release_guard.sh" in UNIT_SYNC.read_text(encoding="utf-8")
+    # Sourcen darf nichts tun.
+    r = _lib("echo SOURCED_OK")
+    assert r.stdout.strip() == "SOURCED_OK" and r.returncode == 0, r.stderr
+
+
+def test_das_ziel_kommt_aus_repo(tmp_path: Path) -> None:
+    units = _unit_mit_ziel(tmp_path, tmp_path / "current")
+    r = _lib(f'pi_release_unit_target "{(units / "kai-test.service").as_posix()}"')
+    assert r.stdout.strip() == str(tmp_path / "current")
+
+
+def test_working_directory_auf_current_zaehlt_auch_ohne_runtime_exec(tmp_path: Path) -> None:
+    """Der Vorfall war ein CHDIR — WorkingDirectory allein reicht fuer die Bindung.
+
+    Eine kuenftige Release-Unit ohne `runtime-exec` (etwa ein Oneshot, der ins
+    Release umzieht) faellt sonst durch dasselbe Loch wie am 04.09.
+    """
+    f = tmp_path / "kai-oneshot.service"
+    f.write_text(
+        f"[Service]\nWorkingDirectory={(tmp_path / 'current').as_posix()}\n"
+        "ExecStart=/x/python -m app.cli.main pipeline run\n",
+        encoding="utf-8",
+    )
+    r = _lib(f'pi_release_unit_target "{f.as_posix()}"')
+    assert r.stdout.strip() == (tmp_path / "current").as_posix()
+
+
+def test_checkout_unit_hat_kein_release_ziel(tmp_path: Path) -> None:
+    f = tmp_path / "kai-alt.service"
+    f.write_text(
+        "[Service]\nWorkingDirectory=/home/kai/ai_analyst_trading_bot\n"
+        "ExecStart=/x/python -m app.cli.main pipeline run\n",
+        encoding="utf-8",
+    )
+    r = _lib(f'pi_release_unit_target "{f.as_posix()}"; echo "RC=$?"')
+    assert r.stdout.strip() == "RC=0", "leer, aber kein Fehler — die Unit ist nur nicht gebunden"
+
+
+def test_der_grund_wird_benannt(tmp_path: Path) -> None:
+    """Ein Guard, der nur `1` sagt, schickt den Operator raten."""
+    fehlt = tmp_path / "gibtsnicht"
+    r = _lib(f'pi_release_active_reason "{fehlt.as_posix()}"; echo "RC=$?"')
+    assert "existiert nicht" in r.stdout and "RC=1" in r.stdout
+    ziel = tmp_path / "current"
+    ziel.mkdir()
+    r = _lib(f'pi_release_active_reason "{ziel.as_posix()}"; echo "RC=$?"')
+    assert "ohne release.json" in r.stdout and "RC=1" in r.stdout
+    _gueltiges_release(ziel)
+    r = _lib(f'pi_release_active_reason "{ziel.as_posix()}"; echo "RC=$?"')
+    assert r.stdout.strip() == "RC=0", r.stdout

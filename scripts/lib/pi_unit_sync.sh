@@ -28,6 +28,17 @@
 #   * Units, die es nur im Repo gibt, werden kopiert, aber NICHT enabled/gestartet
 #     — das ist Sache von `pi_install_systemd.sh`.
 #   * Units, die es nur in /etc gibt, werden NUR GEMELDET, nie gelöscht.
+#   * Eine release-gebundene `.service` (`--repo`/WorkingDirectory auf
+#     `…/current`) wird NUR kopiert, wenn dieses Release auf DIESEM Host aktiv
+#     ist (Verzeichnis + release.json + .venv/bin/python). Sonst wird sie LAUT
+#     als SKIPPED_RELEASE_NOT_ACTIVE uebersprungen — rc=10, nicht 1, und die
+#     uebrigen Units laufen weiter. VORFALL 2026-09-04: fuenf Units nach /etc
+#     kopiert, `current` gab es nicht, der naechste Restart endete 200/CHDIR.
+
+# Release-Bindung + "ist das Release aktiv?" — EIN Kriterium fuer Installer
+# (#855) und diesen Sync, aus einer Quelle.
+# shellcheck source=scripts/lib/pi_release_guard.sh
+. "$(dirname "${BASH_SOURCE[0]}")/pi_release_guard.sh"
 
 _PI_UNIT_SYNC_SRC_DEFAULT="deploy/systemd"
 _PI_UNIT_SYNC_DST_DEFAULT="/etc/systemd/system"
@@ -75,8 +86,10 @@ pi_unit_sync_diff() {
 
 # Abgleich anwenden. Gibt eine Zeile je Aktion aus. Rückgabe:
 #     0  alles angewendet (oder nichts zu tun)
-#     10 mindestens eine Unit wurde wegen Writer-Freeze zurückgestellt
-#     1  ein Kopier-/Reload-Schritt ist fehlgeschlagen
+#     10 mindestens eine Unit wurde wegen Writer-Freeze zurückgestellt ODER als
+#        release-gebundene Unit ohne aktives Release uebersprungen (HOLD)
+#     1  ein Kopier-/Reload-Schritt ist fehlgeschlagen (schlaegt 10: strengster
+#        Grund gewinnt, wie im Deploy-Verdict)
 #
 # `PI_UNIT_SYNC_DRY_RUN=1` meldet nur, ohne zu schreiben.
 # `PI_UNIT_SYNC_SUDO` überschreibt den Privilegien-Präfix (Tests setzen "").
@@ -87,7 +100,8 @@ pi_unit_sync_apply() {
     local dry="${PI_UNIT_SYNC_DRY_RUN:-0}"
     local systemctl_cmd="${PI_UNIT_SYNC_SYSTEMCTL:-systemctl}"
 
-    local changed=() timers=() deferred=() line kind base rc=0
+    local changed=() timers=() deferred=() release_skipped=() line kind base rc=0
+    local target reason
     while read -r kind base; do
         [[ -n "$base" ]] || continue
         case "$kind" in
@@ -114,8 +128,20 @@ pi_unit_sync_apply() {
         timers+=("$base")
     done
 
+    # Release-gebundene Units nur in ein aktives Release. Die Datei in /etc wird
+    # beim naechsten Restart gelesen, egal wer ihn ausloest — kopieren ist hier
+    # nicht folgenlos (Vorfall 2026-09-04, 200/CHDIR).
     for base in "${changed[@]}"; do
-        for line in "${deferred[@]}"; do
+        target="$(pi_release_unit_target "$src/$base")"
+        [[ -n "$target" ]] || continue
+        if ! reason="$(pi_release_active_reason "$target")"; then
+            release_skipped+=("$base")
+            echo "unit-sync: SKIPPED_RELEASE_NOT_ACTIVE $base ($reason)" >&2
+        fi
+    done
+
+    for base in "${changed[@]}"; do
+        for line in "${deferred[@]}" "${release_skipped[@]}"; do
             [[ "$line" == "$base" ]] && continue 2
         done
         if [[ "$dry" == "1" ]]; then
@@ -133,6 +159,10 @@ pi_unit_sync_apply() {
     for base in "${deferred[@]}"; do
         echo "unit-sync: ZURUECKGESTELLT (Writer-Freeze aktiv, Datei NICHT kopiert): $base" >&2
     done
+    if (( ${#release_skipped[@]} > 0 )); then
+        echo "unit-sync: ${#release_skipped[@]} release-gebundene Unit(s) NICHT kopiert (kein aktives Release auf diesem Host): ${release_skipped[*]}" >&2
+        pi_release_hint >&2
+    fi
 
     if [[ "$dry" != "1" ]]; then
         $sudo_cmd "$systemctl_cmd" daemon-reload || { echo "unit-sync: daemon-reload FEHLGESCHLAGEN" >&2; rc=1; }
@@ -150,9 +180,14 @@ pi_unit_sync_apply() {
     # .service-Dateien bewusst ohne Restart — siehe Kopfkommentar.
     for base in "${changed[@]}"; do
         [[ "$base" == *.service ]] || continue
+        for line in "${release_skipped[@]}"; do
+            [[ "$line" == "$base" ]] && continue 2
+        done
         echo "unit-sync: $base aktualisiert, KEIN Restart (naechster Start liest die neue Datei)"
     done
 
-    (( ${#deferred[@]} > 0 )) && return 10
-    return "$rc"
+    # Strengster Grund gewinnt: ein Kopierfehler ist FAILED, nicht HOLD.
+    (( rc != 0 )) && return "$rc"
+    (( ${#deferred[@]} > 0 || ${#release_skipped[@]} > 0 )) && return 10
+    return 0
 }
