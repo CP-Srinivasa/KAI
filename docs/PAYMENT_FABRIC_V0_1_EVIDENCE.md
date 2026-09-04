@@ -50,7 +50,7 @@ Failure-Injection (Mission §20, `tests/integration/test_payment_failure_injecti
 - Node-Erreichbarkeit read-only vom Pi: `/v1/getinfo` 200, mainnet, synced chain+graph, lnd 0.19.3-beta, 1 aktiver Kanal (**VERIFIED**, SENTR 2026-09-03).
 - `LightningRail` gegen gefakten Client: Timeout → UNKNOWN, Fee-Limit erzwungen, unsynced → unhealthy, Contract-Suite (**TESTED**).
 - Reconcile-Timer auf dem Pi liest den Node über den readonly-Scope: erster Lauf 2026-09-03 22:01:55 UTC `Result=success`, `reconcile_state.json {status ok, orphans 0, clock_anomaly false}` (**VERIFIED**).
-- SHADOW-Preview und LIVE-Send am Gerät: **BLOCKED** bis Operator-Invoice + Freigabe der Flags (Bedingungen § 15); Runbook-Ablauf steht.
+- SHADOW am Gerät (2026-09-04, nach Operator-OK): `APP_ENV=production` + `APP_PAYMENT_MODE=shadow` gesetzt, Boot mit hartem `validate_secrets` erfolgreich, `/health/payment` → `mode shadow`, Rail `lightning` `reachable=true`, `synced_to_chain=true`, `synced_to_graph=true`, `wallet_locked=false`, `live_gate {app_env_production: true, pay_enabled: false, hotp_seed_present: true, fee_limit_ok: true}` (**VERIFIED**). SHADOW-Preview mit echter Invoice und LIVE-Send: **BLOCKED** bis der Operator einen fremden Empfänger benennt — LND bezahlt keine eigene Invoice, und mit einem Kanal existiert keine Kreisroute; Runbook-Ablauf steht.
 
 ## 9. Merchant Use Case (Self-Use-Receivable) — TESTED
 
@@ -74,9 +74,9 @@ BUILD: Lock-Install unverändert (keine neue Dependency). CONFIG VALIDATION: `va
 
 ## 14. Remaining Blockers
 
-- **LIVE-Fenster (BLOCKED, Operator):** 1.000-sat-BOLT11 aus eigener zweiter Wallet (≥ 2 h gültig) + Freigabe für `APP_ENV=production`, `APP_PAYMENT_MODE=shadow→live`, `APP_LN_PAY_ENABLED=true` im Fenster, danach Rücknahme.
+- **LIVE-Fenster (BLOCKED, Operator):** Flag-Freigabe liegt vor; es fehlt ein fremder Empfänger (BOLT11, 1.000 sat, ≥ 2 h gültig) — der Node kann sich nicht selbst bezahlen.
 - **Unit-Drift 41 (BLOCKED, Operator):** `sudo bash scripts/pi_apply_systemd_units.sh` (EnvironmentFile-Härtung aus CORE v1 + Value-OS).
-- **`APP_ENV` nicht `production`:** `validate_secrets` warn-only; LIVE-Gate zeigt es ehrlich.
+- **`APP_ENV=production`** seit 2026-09-04 gesetzt (**VERIFIED**, Boot mit hartem `validate_secrets`).
 - **Altpfad-Rückbau (DEFERRED, 7 Tage Dual-Read):** ~2,7k LOC; Reconciler-Abgleich beider Journale; `PaymentService.get()` journal-first; `/health/payment` über Index statt Voll-Read.
 
 ## 15. Merge / Commit / Release State
