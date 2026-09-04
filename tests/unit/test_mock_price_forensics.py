@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from app.learning.bayes_quarantine import corruption_reason, quarantine_reason
+from app.market_data import mock_adapter
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter, _mock_price
 from app.market_data.mock_price_forensics import (
@@ -109,11 +110,9 @@ def test_symbol_outside_base_prices_uses_the_100_default() -> None:
 def test_short_close_buy_side_slippage_is_matched() -> None:
     """A short close fills at price*(1+s); the detector must cover that sign.
 
-    Der Rohwert wird NICHT ueber ``_mock_price`` geholt: dessen Phase haengt an
-    ``hash(symbol)`` und ist pro Prozess zufaellig. Faellt sie auf eine
-    degenerierte Phase (Basispreis, Amplituden-Extremum), die der Detektor
-    bewusst ausschliesst, war der Test zufaellig rot — ~0,8 % je Lauf. Statt
-    dessen ein bekannt nicht-degenerierter Wert.
+    Der Rohwert wird NICHT ueber ``_mock_price`` geholt, sondern ist der
+    forensisch belegte Wert der Phase 101 — unabhaengig davon, welche Phase
+    der Adapter dem Symbol heute zuordnet.
     """
     raw = 3227.3  # mock(ETH/USDT, phase 101), forensisch belegt
     assert match_mock_price("ETH/USDT", raw * 1.0005) is not None
@@ -165,19 +164,61 @@ def test_mock_close_is_quarantined_with_its_own_label() -> None:
     assert corruption_reason(row) == "mock_synthetic_exit_price"
 
 
-def test_small_mock_close_under_the_phantom_cap_is_still_caught() -> None:
-    """The +2.8% BTC close from the same tick - no magnitude cap can see it."""
-    raw = _mock_price("BTC/USDT")
-    exit_price = raw * 0.9995
+def _btc_long_close_row(raw_mock_price: float) -> dict[str, object]:
+    """Long-Close-Row mit Sell-Fill-Slippage und ~+2.8 % — unter jedem Cap."""
+    exit_price = raw_mock_price * 0.9995
     entry = exit_price / 1.028  # ~ +2.8%, far below any implausibility threshold
-    row = {
+    return {
         "event_type": "position_closed",
         "symbol": "BTC/USDT",
         "entry_price": entry,
         "exit_price": exit_price,
         "position_side": "long",
     }
-    assert corruption_reason(row) == "mock_synthetic_exit_price"
+
+
+@pytest.mark.parametrize("phase", range(1, 360))
+def test_small_mock_close_under_the_phantom_cap_is_still_caught(
+    phase: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The +2.8% BTC close from the same tick - no magnitude cap can see it.
+
+    Deckt ALLE nicht-degenerierten Phasen ab statt einer zufaelligen: die Phase
+    wird ueber den Seed-Seam des Adapters erzwungen. Vorher zog der Test
+    ``_mock_price`` mit ``hash(symbol)``-Phase — bei Phase 0 (P=1/360 je
+    Prozess) lag der Rohwert exakt auf dem Basispreis, den der Detektor bewusst
+    ausschliesst, und der Test war rot (CI PR #870).
+    """
+    monkeypatch.setattr(mock_adapter, "_symbol_seed", lambda _symbol: phase)
+    raw = _mock_price("BTC/USDT")
+    assert raw != 65000.0, "phase != 0 must leave the base price"
+    assert corruption_reason(_btc_long_close_row(raw)) == "mock_synthetic_exit_price"
+
+
+def test_phase_zero_lands_on_the_base_price_and_is_deliberately_not_flagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 0 ist KEIN Detektor-Loch, sondern der dokumentierte Verzicht.
+
+    sin(0)=0 → der Rohwert ist der runde Basispreis (65000.00). Bit-Gleichheit
+    beweist dort keine synthetische Herkunft — ``_mock_candidates`` laesst den
+    Wert aus (unbeweisbare Row wird nie quarantaeniert). Das hier festnageln,
+    damit die Luecke bewusst bleibt statt still.
+    """
+    monkeypatch.setattr(mock_adapter, "_symbol_seed", lambda _symbol: 0)
+    raw = _mock_price("BTC/USDT")
+    assert raw == 65000.0
+    assert corruption_reason(_btc_long_close_row(raw)) is None
+
+
+def test_mock_price_is_stable_across_processes() -> None:
+    """Der Adapter verspricht Determinismus — auch ueber Prozessgrenzen.
+
+    Literal aus ``zlib.crc32(b"BTC/USDT") % 360 == 55``; CI laeuft mit
+    zufaelligem PYTHONHASHSEED, ein ``hash()``-Rueckfall wuerde hier brechen.
+    """
+    assert mock_adapter._symbol_seed("BTC/USDT") % 360 == 55
+    assert _mock_price("BTC/USDT") == 65308.99
 
 
 def test_clean_close_stays_clean() -> None:
