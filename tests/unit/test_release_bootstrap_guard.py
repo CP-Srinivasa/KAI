@@ -67,6 +67,7 @@ def test_die_release_gebundenen_units_werden_aus_der_quelle_gelesen(tmp_path: Pa
         "kai-agent-worker.service",
         "kai-entry-watch.service",
         "kai-liquidation-stream.service",
+        "kai-litellm.service",
         "kai-server.service",
         "kai-tg-listener.service",
     ], r.stdout
