@@ -44,12 +44,16 @@ def _run(tmp_path: Path, evidence: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_cli_writes_canonical_json_and_markdown_without_network(tmp_path: Path) -> None:
-    evidence = write_jsonl(tmp_path / "replay.jsonl", [row("DIRECT"), row("SHADOW")])
+    evidence = write_jsonl(
+        tmp_path / "replay.jsonl",
+        [row("DIRECT", quality_score=0.8), row("SHADOW", quality_score=0.8)],
+    )
     result = _run(tmp_path, evidence)
     assert result.returncode == 0, result.stderr
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert report["decisions"]["standard"]["status"] == "READY"
+    assert report["primary_ready_routes"] == ["standard"]
     assert report["schema_version"] == "litellm-shadow-eval-report/v1"
     assert "advisory evidence only" in markdown
     assert "ACTIVATE_PRIMARY" not in markdown

@@ -61,10 +61,18 @@ def evaluate_graduation(
             reasons.append("TRADING_GATE_CHANGED")
         if active.require_execution_gate_unchanged and flags.execution_gate_changed:
             reasons.append("EXECUTION_GATE_CHANGED")
+        # Fehlende Qualitaetsbelege sind ein Grund INNERHALB der Bewertung,
+        # nicht eine Fussnote danach. Sonst traegt eine READY-Route den Hinweis
+        # `QUALITY_NOT_MEASURED` und ist trotzdem READY -- und niemand, der
+        # spaeter nur den Status liest, erfaehrt, dass nie jemand hingesehen hat.
+        if metrics.quality.status == "NOT_MEASURED" and active.require_quality_evidence:
+            reasons.append("QUALITY_NOT_MEASURED")
         status = GraduationStatus.NOT_READY if reasons else GraduationStatus.READY
 
-    if metrics.quality.status == "NOT_MEASURED":
-        reasons.append("QUALITY_NOT_MEASURED")
+    if metrics.quality.status == "NOT_MEASURED" and "QUALITY_NOT_MEASURED" not in reasons:
+        # Politik erklaert Qualitaet ausdruecklich fuer beratend: der Befund
+        # bleibt sichtbar, aendert den Status aber nicht.
+        reasons.append("QUALITY_NOT_MEASURED_ADVISORY")
     shadow_validated = status is GraduationStatus.READY
     if consensus and shadow_validated:
         reasons.append("CONSENSUS_SHADOW_ONLY")
@@ -73,7 +81,7 @@ def evaluate_graduation(
         status=status,
         reasons=tuple(reasons),
         shadow_validated=shadow_validated,
-        consensus_primary_allowed=False,
+        consensus_route=consensus,
     )
 
 

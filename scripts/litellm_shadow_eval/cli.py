@@ -1,11 +1,24 @@
 """CLI for the offline LiteLLM shadow evidence harness.
 
 Exit codes:
-0 evaluation completed and every evaluated route is READY/SHADOW_VALIDATED
-2 invalid CLI, policy, runtime flags, or output operation
-3 invalid evidence
-4 insufficient evidence (also empty input)
-5 valid but NOT_READY evidence
+
+0   Der Auswerter ist durchgelaufen, hat ein maschinenlesbares Ergebnis
+    geschrieben, und die Evidenz ist weder ungueltig noch unzureichend noch
+    NOT_READY.
+2   CLI, Policy, Runtime-Flags oder die Ausgabe sind ungueltig.
+3   Ungueltige Evidenz.
+4   Unzureichende Evidenz (auch: leere Eingabe).
+5   Gueltige, aber NOT_READY-Evidenz.
+
+**Exit 0 heisst NICHT "PRIMARY darf aktiviert werden."** Der Exit-Code sagt
+etwas ueber den LAUF; die Reife steht im JSON. Die Consensus-Route zeigt genau
+diesen Unterschied: sie kann vollstaendig belegt und READY sein und trotzdem
+niemals PRIMARY werden. Wer die Erlaubnis wissen will, liest
+``primary_ready_routes`` beziehungsweise ``decisions[route].primary_ready`` --
+nicht ``$?``.
+
+Dieses Werkzeug aktiviert nichts. Es fuehrt keinen Netzaufruf aus, spricht
+weder LiteLLM noch einen Anbieter an und aendert keinen Modus.
 """
 
 from __future__ import annotations

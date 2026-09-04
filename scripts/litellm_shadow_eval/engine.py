@@ -47,9 +47,11 @@ def evaluate(
         )
     )
     metrics = {route: route_metrics(route, paired.pairs, issues) for route in routes}
+    # Vereinigung aus gueltigen Datensaetzen UND rohen Zeilen: eine verworfene
+    # Consensus-Zeile darf die Decke nicht mitnehmen.
     consensus_routes = {
         record.logical_route for record in loaded.records if record.purpose.lower() == "consensus"
-    }
+    } | set(loaded.consensus_routes)
     global_invalid = any(issue.logical_route is None for issue in issues)
     decisions = {
         route: evaluate_graduation(
