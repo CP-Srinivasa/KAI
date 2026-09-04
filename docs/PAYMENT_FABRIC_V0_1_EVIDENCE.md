@@ -1,6 +1,6 @@
 # KAI SOVEREIGN VALUE-OS v0.1 — Abschlussbericht und Evidenz (Payment Fabric)
 
-**Stand:** 2026-09-04 · **Release:** PR [#861](https://github.com/CP-Srinivasa/KAI/pull/861) → Mainline `be092fab` (Squash-Merge 2026-09-03 21:52 UTC, CI 9/9) · **Spezifikation:** ADR 0018 · **Entscheidung:** D-CORE-002 · **Runbook:** `docs/runbooks/payment_fabric.md` · **Zielsystem:** Pi 5 (`kai-pi5`), Modus SIMULATION.
+**Stand:** 2026-09-04 · **Release:** PR [#861](https://github.com/CP-Srinivasa/KAI/pull/861) → Mainline `be092fab` (Squash-Merge 2026-09-03 21:52 UTC, CI 9/9) · **Spezifikation:** ADR 0018 · **Entscheidung:** D-CORE-002 · **Runbook:** `docs/runbooks/payment_fabric.md` · **Zielsystem:** Pi 5 (`kai-pi5`), Modus SHADOW (seit 2026-09-04; vorher SIMULATION).
 
 Jede Aussage trägt eine Klassifikation: **IMPLEMENTED** (Code im Baum) · **TESTED** (reproduzierbarer Test) · **VERIFIED** (am Gerät belegt) · **DESIGNED** (nur Architektur) · **DEFERRED** (bewusst vertagt) · **BLOCKED** (extern/Operator).
 
@@ -37,7 +37,7 @@ Jede Aussage trägt eine Klassifikation: **IMPLEMENTED** (Code im Baum) · **TES
 - Secrets: Journal-Redaktions-Allowlist (BOLT11/Pubkey/Preimage überleben den Append nicht, **TESTED**), keine Secret-Strings in 15 Failure-Injection-Fällen (**TESTED**), `/health/config` Fingerprints (**VERIFIED**).
 - API-Auth: `/payments/*` in keiner Local-Bypass-Liste, 401 auch von 127.0.0.1, falscher Bearer 403 (**TESTED**); Idempotency-Key Pflicht (**TESTED**); HOTP für `execute` (**TESTED**, Fake-Verifier; realer HOTP im LIVE-Fenster).
 - Amount/Destination/Fee: `amount_requested > 0`, Destination aus Decode gebunden und gegen Allowlist geprüft, `fee_limit ≤ 0` = DENY (**TESTED**).
-- Fail-closed: erste DENY gewinnt, Regel-Exception = DENY, unsynced/locked/offline = DENY (**TESTED**); Production-Konfiguration: LIVE nur mit `APP_ENV=production`, `APP_LN_PAY_ENABLED`, Payment-Macaroon, HOTP-Seed, Fee-Limit (**TESTED**; am Gerät zeigt `live_gate` heute `app_env_production=false, pay_enabled=false, hotp_seed_present=true, fee_limit_ok=true` — **VERIFIED**).
+- Fail-closed: erste DENY gewinnt, Regel-Exception = DENY, unsynced/locked/offline = DENY (**TESTED**); Production-Konfiguration: LIVE nur mit `APP_ENV=production`, `APP_LN_PAY_ENABLED`, Payment-Macaroon, HOTP-Seed, Fee-Limit (**TESTED**; am Gerät zeigt `live_gate` seit 2026-09-04 `app_env_production=true, pay_enabled=false, hotp_seed_present=true, fee_limit_ok=true` — **VERIFIED**).
 - Offen: Journal-/HOTP-Dateien des Altpfads `664` (Operator-chmod), `KYT_ADDR_SALT`-Default, unkeyed Hash-Kette ohne Truth-Anker (**DEFERRED**).
 
 ## 7. Test Evidence — TESTED
