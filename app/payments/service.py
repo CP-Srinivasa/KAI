@@ -28,6 +28,7 @@ from app.payments.approval import grant
 from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
 from app.payments.idempotency import consume
+from app.payments.intent_state import synced, view_of
 from app.payments.journal import PaymentJournal
 from app.payments.models import Invoice, PaymentAttempt, PaymentAuditEvent, Quote
 from app.payments.policy import ActorLimits, PolicyContext, evaluate
@@ -270,15 +271,8 @@ class PaymentService:
     # -- Lesen -------------------------------------------------------------- #
 
     def get(self, intent_id: str) -> IntentView:
-        """Zustand aus dem Speicher — oder, nach einem Neustart, aus dem Journal."""
-        tracked = self._tracked.get(intent_id)
-        if tracked is not None:
-            return IntentView(intent_id=intent_id, status=tracked.status, decision=tracked.decision)
-        self._journal.refresh_tail()
-        raw = self._journal.index.intent_status(intent_id)
-        if raw is None:
-            raise PaymentServiceError(f"unknown intent: {intent_id}")
-        return IntentView(intent_id=intent_id, status=PaymentStatus(raw))
+        """Zustand JOURNAL-FIRST (siehe :mod:`app.payments.intent_state`)."""
+        return view_of(self._journal, self._tracked.get(intent_id), intent_id)
 
     def audit(self, intent_id: str) -> list[PaymentAuditEvent]:
         return self._journal.events(intent_id)
@@ -307,13 +301,14 @@ class PaymentService:
         )
 
     def _require(self, intent_id: str) -> Tracked:
+        """Der Vorgang aus dem Speicher — mit dem Journal abgeglichen."""
         tracked = self._tracked.get(intent_id)
         if tracked is None:
             raise PaymentServiceError(
                 f"unknown intent: {intent_id} — an intent does not survive a restart "
                 "(the journal keeps only its hash); the way back is reconciliation"
             )
-        return tracked
+        return synced(self._journal, tracked)
 
 
 __all__ = [

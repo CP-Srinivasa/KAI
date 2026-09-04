@@ -467,3 +467,60 @@ def test_neue_ereignisse_sind_im_vokabular(event_type: str) -> None:
     from app.payments.enums import AUDIT_EVENT_TYPES
 
     assert event_type in AUDIT_EVENT_TYPES
+
+
+# --------------------------------------------------------------------------- #
+# Zwei Prozesse, ein Journal
+# --------------------------------------------------------------------------- #
+
+
+async def test_get_sees_what_another_process_reconciled_without_a_restart(
+    tmp_path: Path,
+) -> None:
+    """Der Server muss sehen, was der Timer geschrieben hat — sofort.
+
+    Befund aus dem LIVE-Fenster 2026-09-04: ``PaymentService.get()`` bevorzugte
+    den Prozessspeicher. Der Reconcile-Timer laeuft als EIGENER Prozess; seine
+    Aussage ueber Geld — ``SETTLED``, ``FAILED_FINAL`` — erschien im Server also
+    erst nach einem Neustart. Bis dahin behauptete ``/payments/intents/{id}``
+    einen Zustand, den das Journal laengst widerlegt hatte.
+    """
+    journal, rail, service, intent_id = await open_intent(tmp_path)
+    assert service.get(intent_id).status is PaymentStatus.IN_FLIGHT
+
+    # Der Timer: ein ZWEITER Journal-Griff auf dieselbe Datei, wie in der Unit.
+    timer_journal = PaymentJournal(tmp_path / "payment_journal.jsonl")
+    timer_journal.open()
+    key = timer_journal.index.dedup_key(intent_id)
+    assert key is not None
+    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000, fee=2)
+    report = await run(timer_journal, rail, tmp_path)
+    assert report.counts.get("SETTLED") == 1
+
+    assert service.get(intent_id).status is PaymentStatus.SETTLED, (
+        "der sendende Prozess haelt am Speicher fest und widerspricht dem Journal"
+    )
+
+
+async def test_a_settled_intent_is_never_sent_again_after_the_timer_settled_it(
+    tmp_path: Path,
+) -> None:
+    """Die gefaehrliche Haelfte desselben Befunds.
+
+    Ein Zustand, den nur ``get()`` korrigiert, waehrend ``execute()`` weiter aus
+    dem Speicher liest, waere schlimmer als der Fehler selbst: der Operator
+    sieht ``SETTLED`` und der Sendepfad haelt den Intent fuer offen.
+    """
+    journal, rail, service, intent_id = await open_intent(tmp_path)
+    timer_journal = PaymentJournal(tmp_path / "payment_journal.jsonl")
+    timer_journal.open()
+    key = timer_journal.index.dedup_key(intent_id)
+    assert key is not None
+    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000, fee=2)
+    await run(timer_journal, rail, tmp_path)
+
+    sends_before = rail.pay_calls
+    view = await service.execute(intent_id)
+    assert view.replayed is True
+    assert view.status is PaymentStatus.SETTLED
+    assert rail.pay_calls == sends_before, "kein zweiter Send auf einem erledigten Intent"
