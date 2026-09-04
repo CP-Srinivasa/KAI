@@ -229,3 +229,125 @@ def test_backup_files_in_etc_are_not_reported_as_orphans(tmp_path: Path) -> None
 
     assert "kai-echt-verwaist.timer" in out.stdout, "echter Waise muss gemeldet werden"
     assert ".bak" not in out.stdout, "Sicherungskopien duerfen kein ORPHAN erzeugen"
+
+
+# ── Release-gebundene Units (Vorfall 2026-09-04) ────────────────────────────
+#
+# `pi_unit_sync_apply` hat die fuenf Units mit `WorkingDirectory=/home/kai/current`
+# nach /etc kopiert, obwohl es `current` auf der Pi nicht gab. Der naechste
+# Restart scheiterte mit status=200/CHDIR. Kopieren ist bei diesen Units nicht
+# folgenlos — die Datei in /etc wird beim naechsten Restart gelesen, egal wer ihn
+# ausloest. Das Kriterium ist dasselbe wie im Installer-Guard aus #855 und liegt
+# in `scripts/lib/pi_release_guard.sh`.
+
+RELEASE_GUARD = REPO / "scripts" / "lib" / "pi_release_guard.sh"
+
+
+def _release_unit(target: Path) -> str:
+    return (
+        "[Service]\n"
+        f"WorkingDirectory={target.as_posix()}\n"
+        f"ExecStart={target.as_posix()}/.venv/bin/python -m app.cli.main trading runtime-exec "
+        f"--unit %n --repo {target.as_posix()} -- {target.as_posix()}/.venv/bin/python -m app\n"
+    )
+
+
+def _make_active_release(target: Path) -> None:
+    (target / ".venv" / "bin").mkdir(parents=True)
+    (target / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    (target / "release.json").write_text('{"schema": "kai_release/v1"}', encoding="utf-8")
+
+
+def test_release_guard_is_sourced_by_the_sync_helper() -> None:
+    """Eine Quelle fuer das Kriterium — der Sync bringt sie selbst mit."""
+    assert RELEASE_GUARD.exists()
+    out = _bash(
+        f'. "{HELPER.as_posix()}" && declare -F pi_release_active_reason && echo SOURCED_OK'
+    )
+    assert "SOURCED_OK" in out.stdout, out.stdout + out.stderr
+
+
+def test_release_bound_service_is_not_copied_without_active_release(tmp_path: Path) -> None:
+    """Der Vorfall: Datei nach /etc, Ziel existiert nicht, naechster Restart CHDIR."""
+    current = tmp_path / "current"  # gibt es nicht
+    src, dst = _units(
+        tmp_path,
+        {"kai-server.service": _release_unit(current), "kai-x.timer": "neu\n"},
+        {"kai-server.service": "ExecStart=/alt\n", "kai-x.timer": "alt\n"},
+    )
+    out, _, calls = _run_apply(tmp_path, src, dst)
+
+    assert (dst / "kai-server.service").read_text(encoding="utf-8") == "ExecStart=/alt\n", (
+        "release-gebundene Unit wurde ohne aktives Release kopiert"
+    )
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in out
+    assert "existiert nicht" in out
+    assert (dst / "kai-x.timer").read_text(encoding="utf-8") == "neu\n", (
+        "die uebrigen Units duerfen nicht blockiert werden"
+    )
+    assert "daemon-reload" in calls
+    assert "RC=10" in out
+    assert "kai-server.service aktualisiert" not in out, "nicht kopiert heisst nicht aktualisiert"
+
+
+def test_release_bound_service_is_copied_with_active_release(tmp_path: Path) -> None:
+    """Positivkontrolle — mit Release verhaelt sich die Unit wie jede andere `.service`."""
+    current = tmp_path / "current"
+    _make_active_release(current)
+    src, dst = _units(
+        tmp_path,
+        {"kai-server.service": _release_unit(current)},
+        {"kai-server.service": "ExecStart=/alt\n"},
+    )
+    out, _, calls = _run_apply(tmp_path, src, dst)
+
+    assert (dst / "kai-server.service").read_text(encoding="utf-8") == _release_unit(current)
+    assert "SKIPPED_RELEASE_NOT_ACTIVE" not in out
+    assert "restart" not in calls, "`.service` wird auch mit Release NIE neu gestartet"
+    assert "KEIN Restart" in out
+    assert "RC=0" in out
+
+
+def test_release_dir_without_marker_is_skipped(tmp_path: Path) -> None:
+    """Ein Verzeichnis allein ist kein Release (Kriterium wie #855)."""
+    current = tmp_path / "current"
+    current.mkdir()
+    src, dst = _units(
+        tmp_path,
+        {"kai-server.service": _release_unit(current)},
+        {"kai-server.service": "ExecStart=/alt\n"},
+    )
+    out, _, _ = _run_apply(tmp_path, src, dst)
+
+    assert (dst / "kai-server.service").read_text(encoding="utf-8") == "ExecStart=/alt\n"
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in out
+    assert "ohne release.json" in out
+    assert "RC=10" in out
+
+
+def test_dry_run_reports_release_skip_without_writing(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    src, dst = _units(
+        tmp_path,
+        {"kai-server.service": _release_unit(current)},
+        {"kai-server.service": "ExecStart=/alt\n"},
+    )
+    out, _, calls = _run_apply(tmp_path, src, dst, extra="PI_UNIT_SYNC_DRY_RUN=1")
+
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in out
+    assert "WUERDE kopieren: kai-server.service" not in out
+    assert calls == ""
+    assert "RC=10" in out
+
+
+def test_copy_failure_outranks_release_hold(tmp_path: Path) -> None:
+    """Strengster Grund gewinnt (wie im Deploy-Verdict): FAILED schlaegt HOLD."""
+    current = tmp_path / "current"
+    src, dst = _units(
+        tmp_path,
+        {"kai-server.service": _release_unit(current), "kai-x.timer": "neu\n"},
+        {"kai-server.service": "ExecStart=/alt\n", "kai-x.timer": "alt\n"},
+    )
+    out, _, _ = _run_apply(tmp_path, src, dst, extra="cp() { return 1; }; export -f cp;")
+
+    assert "RC=1" in out, out
