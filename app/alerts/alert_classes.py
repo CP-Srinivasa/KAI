@@ -111,6 +111,13 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # unterscheiden — eine Ablehnung ohne lesbaren Grund ist ein stilles
     # Versagen der Beweisfuehrung.
     "input_contract_rejection_stream": AlertClass.P1,
+    # Der verschluesselte Intent-Vault (ADR 0018 §5). Faellt er aus, bewegt
+    # sich kein Geld falsch — das Journal bleibt die Wahrheit, und der
+    # Sendepfad bleibt fail-closed. Verloren geht die Ausfuehrbarkeit ueber
+    # einen Neustart hinweg, und zwar lautlos: bis zum naechsten
+    # systemctl restart sieht alles normal aus. Genau das ist ein stilles
+    # Versagen, kein Kapitalereignis — deshalb P1 und nicht P0.
+    "payment_intent_vault": AlertClass.P1,
     "alerts": AlertClass.P1,
     "alerts_actionable": AlertClass.P1,
     "trading_loop": AlertClass.P1,
