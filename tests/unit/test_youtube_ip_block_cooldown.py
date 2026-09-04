@@ -91,7 +91,9 @@ def test_bei_aktivem_block_wird_youtube_nicht_gefragt(
 def test_ein_ip_block_aus_dem_abruf_setzt_die_pause(
     _isolierter_zustand: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class IpBlocked(Exception):
+    # Der Name ist der Vertrag: youtube-transcript-api heisst diese Ausnahme
+    # genau so, und der Adapter erkennt sie ueber ihren Typnamen.
+    class IpBlocked(Exception):  # noqa: N818
         pass
 
     class _Api:
