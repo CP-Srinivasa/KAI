@@ -26,6 +26,7 @@ from typing import Any
 from app.core.lightning_settings import LightningSettings
 from app.core.payment_settings import PaymentSettings
 from app.payments.agent_limits import load_actor_limits
+from app.payments.intent_vault import IntentVault
 from app.payments.journal import PaymentJournal
 from app.payments.rail import PaymentRail
 from app.payments.service import PaymentService
@@ -59,6 +60,17 @@ def build_hotp_verifier(lightning: LightningSettings) -> Any:
     return HotpVerifier(seed_path=Path(seed), journal_path=Path(lightning.hotp_journal_path))
 
 
+def build_intent_vault(settings: PaymentSettings) -> IntentVault:
+    """Der verschluesselte Sidecar (ADR §5).
+
+    Er wird IMMER gebaut, auch in SIMULATION — dort mit dem abgeleiteten
+    Simulationsschluessel. Ein Vault, den nur die Produktion hat, ist ein Vault,
+    den niemand testet; und der Startguard sorgt dafuer, dass dieser Schluessel
+    keinen Modus erreicht, der einen Node beruehrt.
+    """
+    return IntentVault(settings.resolved_vault_path(), key=settings.resolved_vault_key())
+
+
 def build_payment_service(
     settings: PaymentSettings,
     lightning: LightningSettings,
@@ -75,6 +87,7 @@ def build_payment_service(
         app_env=app_env,
         hotp_verifier=build_hotp_verifier(lightning),
         actor_limits=load_actor_limits(settings.resolved_agent_limits_path()),
+        vault=build_intent_vault(settings),
     )
 
 
@@ -89,4 +102,10 @@ def recover_on_start(service: PaymentService) -> list[str]:
     return recovered
 
 
-__all__ = ["build_hotp_verifier", "build_payment_service", "build_rails", "recover_on_start"]
+__all__ = [
+    "build_hotp_verifier",
+    "build_intent_vault",
+    "build_payment_service",
+    "build_rails",
+    "recover_on_start",
+]

@@ -22,6 +22,7 @@ import pytest
 
 from app.core.payment_settings import PaymentSettings
 from app.payments.enums import PaymentStatus, Verdict
+from app.payments.intent_vault import INTENT_VAULT_FILENAME, IntentVault, IntentVaultError
 from app.payments.journal import PaymentJournal
 from app.payments.models import Money
 from app.payments.policy import ActorLimits
@@ -89,12 +90,20 @@ def a_request(destination: str = "sim:settle:alice", **overrides: object) -> Pay
     return PaymentRequest(**base)  # type: ignore[arg-type]
 
 
+VAULT_KEY = b"v" * 32
+
+
+def a_vault(tmp_path: Path, key: bytes = VAULT_KEY) -> IntentVault:
+    return IntentVault(tmp_path / INTENT_VAULT_FILENAME, key=key)
+
+
 def a_service(
     tmp_path: Path,
     *,
     destination: str = "sim:settle:alice",
     rail: object | None = None,
     hotp: object | None = None,
+    vault_key: bytes = VAULT_KEY,
     **setting_overrides: object,
 ) -> PaymentService:
     journal = PaymentJournal(tmp_path / "payment_journal.jsonl")
@@ -106,6 +115,7 @@ def a_service(
         clock=lambda: NOW,
         app_env="development",
         hotp_verifier=hotp,
+        vault=a_vault(tmp_path, vault_key),
     )
 
 
@@ -451,6 +461,28 @@ async def test_create_invoice_and_settlement(tmp_path: Path) -> None:
     assert (await service.invoice_status(invoice.ref_hash)).settled is True
 
 
+async def test_the_receivable_record_carries_the_hash_of_the_sent_memo(tmp_path: Path) -> None:
+    """Der ``memo_hash`` im Journal muss ein Urbild haben, das der Node sah.
+
+    Vorher stand dort der Hash, den der Aufrufer mitgab (meist keiner), waehrend
+    der Node ueberhaupt kein Memo bekam — zwei Aussagen ueber dieselbe Invoice,
+    die nichts miteinander zu tun hatten.
+    """
+    import hashlib
+
+    service = a_service(tmp_path)
+    invoice = await service.create_invoice(
+        InvoiceRequest(amount=sat(2500), purpose="self_test"), order_ref="order-memo"
+    )
+    expected = hashlib.sha256(b"kai-pay: self_test").hexdigest()
+    assert invoice.memo_hash == expected
+
+    raw = (tmp_path / "payment_journal.jsonl").read_text(encoding="utf-8")
+    record = next(json.loads(line) for line in raw.splitlines() if expected in line)
+    assert record["payload"]["memo_hash"] == expected
+    assert "kai-pay" not in raw, "das Journal traegt den Hash, nicht den Text"
+
+
 async def test_a_rail_error_while_creating_an_invoice_surfaces(tmp_path: Path) -> None:
     class BrokenRail(SimulationRail):
         async def create_invoice(self, request):  # type: ignore[no-untyped-def]
@@ -480,3 +512,130 @@ async def test_the_chain_stays_valid_across_the_whole_flow(tmp_path: Path) -> No
     await service.simulate(view.intent_id)
     await service.execute(view.intent_id)
     assert PaymentJournal(tmp_path / "payment_journal.jsonl").verify_chain().ok
+
+
+# --------------------------------------------------------------------------- #
+# Neustart (Befund LIVE-Fenster 2026-09-04)
+# --------------------------------------------------------------------------- #
+
+
+async def test_an_awaiting_intent_is_still_executable_after_a_restart(tmp_path: Path) -> None:
+    """Der eigentliche Befund: ein freigabebereiter Intent ueberlebt keinen Neustart.
+
+    Vorher hielt nur der Prozessspeicher die Ziel-BOLT11; das Journal traegt sie
+    aus gutem Grund nur als Hash. Nach jedem Neustart von kai-server antwortete
+    ``execute`` mit "unknown intent", und der Operator legte den Vorgang mitten
+    im scharfen Fenster neu an.
+    """
+    first = a_service(tmp_path, hotp=FakeHotp(), approval_threshold_sat=1)
+    view = await first.create_intent(a_request(), "idem-restart-000001")
+    assert view.status is PaymentStatus.AWAITING_APPROVAL
+
+    # Der Neustart: ein NEUER Dienst auf demselben Journal und demselben Vault.
+    second = a_service(tmp_path, hotp=FakeHotp(), approval_threshold_sat=1)
+    assert second.recover() == []
+    assert second.get(view.intent_id).status is PaymentStatus.AWAITING_APPROVAL
+
+    second.authorize(view.intent_id, "123456")
+    result = await second.execute(view.intent_id)
+    assert result.status is PaymentStatus.SETTLED
+    assert "settled" in event_types(second, view.intent_id)
+
+
+async def test_an_authorized_intent_is_still_executable_after_a_restart(tmp_path: Path) -> None:
+    first = a_service(tmp_path, approval_threshold_sat=5000)
+    view = await first.create_intent(a_request(), "idem-restart-000002")
+    assert view.status is PaymentStatus.AUTHORIZED
+
+    second = a_service(tmp_path, approval_threshold_sat=5000)
+    second.recover()
+    assert (await second.execute(view.intent_id)).status is PaymentStatus.SETTLED
+
+
+async def test_the_rail_dedup_key_is_unchanged_by_a_restart(tmp_path: Path) -> None:
+    """Ohne die gebundene Destination waere ein Vorgang nach dem Neustart unter
+    einem ZWEITEN Rail-Schluessel unterwegs — und genau daran haengt die
+    Rail-Dedup, die einen zweiten Send verhindert."""
+    rail = SimulationRail(now=NOW)
+    first = a_service(tmp_path, rail=rail, approval_threshold_sat=5000)
+    view = await first.create_intent(a_request(), "idem-restart-000003")
+
+    second = a_service(tmp_path, rail=rail, approval_threshold_sat=5000)
+    second.recover()
+    await second.execute(view.intent_id)
+
+    submitted = next(
+        event for event in second.audit(view.intent_id) if event.event_type == "submitted"
+    )
+    expected = (await rail.decode("sim:settle:alice")).rail_dedup_key
+    assert submitted.payload["rail_dedup_key"] == expected
+
+
+async def test_the_vault_on_disk_never_shows_the_destination(tmp_path: Path) -> None:
+    service = a_service(tmp_path, destination="sim:settle:secret-payee")
+    await service.create_intent(
+        a_request(destination="sim:settle:secret-payee"), "idem-restart-000004"
+    )
+    raw = (tmp_path / INTENT_VAULT_FILENAME).read_bytes()
+    assert b"secret-payee" not in raw
+    assert b"idem-restart" not in raw
+
+
+async def test_a_denied_intent_leaves_nothing_in_the_vault(tmp_path: Path) -> None:
+    """Datensparsamkeit: ein abgelehnter Vorgang wird nie gesendet, also braucht
+    niemand sein Ziel — auch nicht verschluesselt."""
+    service = a_service(tmp_path, destination="sim:settle:alice")
+    view = await service.create_intent(
+        a_request(destination="sim:settle:mallory"), "idem-restart-000005"
+    )
+    assert view.status is PaymentStatus.DENIED
+    assert not (tmp_path / INTENT_VAULT_FILENAME).exists()
+
+
+async def test_a_wrong_vault_key_after_a_restart_is_fail_closed(tmp_path: Path) -> None:
+    """Ein leeres Ergebnis saehe aus wie "keine offenen Vorgaenge" — und der
+    Operator wuerde die Intents neu anlegen, statt den Schluessel zu suchen."""
+    first = a_service(tmp_path, approval_threshold_sat=5000)
+    await first.create_intent(a_request(), "idem-restart-000006")
+
+    second = a_service(tmp_path, approval_threshold_sat=5000, vault_key=b"w" * 32)
+    with pytest.raises(IntentVaultError, match="cannot be opened"):
+        second.recover()
+
+
+async def test_a_submitted_intent_never_comes_back_through_the_vault(tmp_path: Path) -> None:
+    """Die Grenze des Vaults: er traegt Material fuer Vorgaenge VOR dem Send.
+
+    Ein Vorgang, dessen ``submitted`` ohne Antwort blieb, geht den Weg ueber die
+    Reconciliation und keinen anderen. Ihn aus dem Vault zurueckzuholen hiesse,
+    einen zweiten Send auf einer Speicherannahme zu erlauben — der 25k-Spend vom
+    07-02.
+    """
+    first = a_service(tmp_path, destination="sim:unknown:alice", approval_threshold_sat=5000)
+    view = await first.create_intent(
+        a_request(destination="sim:unknown:alice"), "idem-restart-000007"
+    )
+    await first.execute(view.intent_id)
+
+    second = a_service(tmp_path, destination="sim:unknown:alice", approval_threshold_sat=5000)
+    # Nichts zu klaeren: der erste Dienst hat die ausbleibende Aussage schon
+    # journalliert. Der Vorgang steht in der Klaerung, und dort bleibt er.
+    assert second.recover() == []
+    assert second.get(view.intent_id).status is PaymentStatus.RECONCILIATION_REQUIRED
+    with pytest.raises(PaymentServiceError, match="unknown intent"):
+        await second.execute(view.intent_id)
+
+
+async def test_a_service_without_a_vault_keeps_the_old_behaviour(tmp_path: Path) -> None:
+    """Ohne Vault bleibt alles wie vorher — kein stiller Zwang, kein Absturz."""
+    journal = PaymentJournal(tmp_path / "payment_journal.jsonl")
+    journal.open()
+    service = PaymentService(
+        journal=journal,
+        rails={"simulation": SimulationRail(now=NOW)},
+        settings=settings("sim:settle:alice", approval_threshold_sat=5000),
+        clock=lambda: NOW,
+    )
+    view = await service.create_intent(a_request(), "idem-restart-000008")
+    assert view.status is PaymentStatus.AUTHORIZED
+    assert not (tmp_path / INTENT_VAULT_FILENAME).exists()

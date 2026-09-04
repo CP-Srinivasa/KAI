@@ -14,6 +14,7 @@ sichtbar im Code, sondern nur in zwei Env-Zeilen.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -49,6 +50,11 @@ def ln_settings(paths: dict[str, Path], **overrides: object) -> LightningSetting
     }
     base.update(overrides)
     return LightningSettings(**base)  # type: ignore[arg-type]
+
+
+#: Ein Schluessel, der die Form hat, die AES-256 verlangt. Kein Geheimnis:
+#: er existiert nur in diesem Testmodul und oeffnet nichts ausserhalb.
+VAULT_KEY = base64.b64encode(b"k" * 32).decode("ascii")
 
 
 def payment_settings(**overrides: object) -> PaymentSettings:
@@ -209,7 +215,7 @@ def test_live_requires_a_positive_default_fee_limit(provisioned: dict[str, Path]
 
 def test_live_boots_when_every_precondition_holds(provisioned: dict[str, Path]) -> None:
     validate_payment_boot(
-        payment_settings(mode="live"),
+        payment_settings(mode="live", vault_key=VAULT_KEY),
         app_env="production",
         lightning=ln_settings(provisioned),
     )
@@ -224,7 +230,11 @@ def test_scope_collision_aborts_in_every_mode(provisioned: dict[str, Path], mode
     """
     collided = ln_settings(provisioned, invoice_macaroon_path=str(provisioned["read"]))
     with pytest.raises(ConfigurationError, match="scope collision"):
-        validate_payment_boot(payment_settings(mode=mode), app_env="production", lightning=collided)
+        validate_payment_boot(
+            payment_settings(mode=mode, vault_key=VAULT_KEY),
+            app_env="production",
+            lightning=collided,
+        )
 
 
 def test_scope_collision_is_ignored_when_both_paths_are_empty() -> None:
@@ -239,7 +249,7 @@ def test_scope_collision_is_ignored_when_both_paths_are_empty() -> None:
 def test_shadow_needs_no_payment_macaroon(provisioned: dict[str, Path], tmp_path: Path) -> None:
     """SHADOW liest nur — es darf ohne Sende-Credential booten."""
     validate_payment_boot(
-        payment_settings(mode="shadow"),
+        payment_settings(mode="shadow", vault_key=VAULT_KEY),
         app_env="development",
         lightning=ln_settings(
             provisioned, payment_macaroon_path="", pay_enabled=False, hotp_seed_path=""
@@ -281,3 +291,85 @@ def test_lifespan_calls_the_payment_guard_after_the_lightning_guard() -> None:
     ln_call = source.index("validate_lightning_boot(settings.lightning)")
     pay_call = source.index("validate_payment_boot(")
     assert ln_call < pay_call
+
+
+# --------------------------------------------------------------------------- #
+# Vault-Schluessel (ADR 0018 §11, Befund LIVE-Fenster 2026-09-04)
+# --------------------------------------------------------------------------- #
+
+
+def test_simulation_gets_a_deterministic_vault_key_without_configuration() -> None:
+    """Ohne Env laeuft SIMULATION — mit einem Schluessel, der nichts schuetzt.
+
+    Der Sinn ist nicht Vertraulichkeit (in SIMULATION bewegt nichts Geld),
+    sondern dass Tests und Entwicklungsrechner denselben Codepfad nehmen wie
+    der Pi. Ein Vault, den nur die Produktion hat, ist ein Vault, den niemand
+    testet.
+    """
+    key = payment_settings(mode="simulation").resolved_vault_key()
+    assert len(key) == 32
+    assert key == payment_settings(mode="simulation").resolved_vault_key()
+
+
+@pytest.mark.parametrize("mode", ["shadow", "live"])
+def test_a_node_touching_mode_refuses_to_boot_without_a_vault_key(
+    provisioned: dict[str, Path], mode: str
+) -> None:
+    with pytest.raises(ConfigurationError, match="APP_PAYMENT_VAULT_KEY"):
+        validate_payment_boot(
+            payment_settings(mode=mode),
+            app_env="production",
+            lightning=ln_settings(provisioned),
+        )
+
+
+@pytest.mark.parametrize("mode", ["shadow", "live"])
+def test_the_simulation_key_is_refused_outside_simulation(
+    provisioned: dict[str, Path], mode: str
+) -> None:
+    """Der bequeme Fehler: den Testschluessel in die .env kopieren.
+
+    Er steht im Quelltext. Wer ihn produktiv einsetzt, hat den Vault
+    abgeschaltet, ohne eine Zeile Code zu aendern — deshalb erkennt der
+    Startguard genau diesen Wert und verweigert.
+    """
+    from app.core.payment_settings import SIMULATION_VAULT_KEY
+
+    simulation_key = base64.b64encode(SIMULATION_VAULT_KEY).decode("ascii")
+    with pytest.raises(ConfigurationError, match="simulation"):
+        validate_payment_boot(
+            payment_settings(mode=mode, vault_key=simulation_key),
+            app_env="production",
+            lightning=ln_settings(provisioned),
+        )
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        "not-base64!!",
+        base64.b64encode(b"short").decode("ascii"),
+        base64.b64encode(b"x" * 64).decode("ascii"),
+    ],
+)
+def test_a_malformed_vault_key_is_refused_at_boot(
+    provisioned: dict[str, Path], bad_key: str
+) -> None:
+    with pytest.raises(ConfigurationError, match="APP_PAYMENT_VAULT_KEY"):
+        validate_payment_boot(
+            payment_settings(mode="live", vault_key=bad_key),
+            app_env="production",
+            lightning=ln_settings(provisioned),
+        )
+
+
+def test_the_vault_path_resolves_against_the_repo_root(tmp_path: Path) -> None:
+    """Derselbe Grund wie beim Journal: Server, Timer und CLI starten aus
+    verschiedenen Arbeitsverzeichnissen, und zwei Vaults waeren schlimmer als
+    keiner."""
+    settings = payment_settings(vault_path="artifacts/payments/intent_vault.jsonl")
+    resolved = settings.resolved_vault_path()
+    assert resolved.is_absolute()
+    assert resolved.name == "intent_vault.jsonl"
+    assert resolved.parent.name == "payments"
+    assert resolved.parent.parent.name == "artifacts"

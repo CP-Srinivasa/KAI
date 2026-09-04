@@ -103,6 +103,18 @@ _RAW_PATTERNS = (
 )
 
 
+def contains_raw_rail_material(text: str) -> bool:
+    """True, wenn ``text`` aussieht wie Rail-Rohmaterial (BOLT11, langes Hex).
+
+    Dieselben Muster, die einen Freitextwert aus dem Journal werfen — hier als
+    Vorpruefung an der EINGABE. Der Unterschied ist wichtig: die Redaktion
+    verwirft still (ein Aufrufer soll seinen Append nicht verlieren), eine
+    Eingabepruefung darf laut ablehnen, weil der Aufrufer den Wert noch
+    korrigieren kann.
+    """
+    return any(pattern.search(text) for pattern in _RAW_PATTERNS)
+
+
 def _is_hash_key(key: str) -> bool:
     return key.endswith("_hash") or key in HASH_KEYS
 
@@ -152,4 +164,9 @@ def redact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-__all__ = ["ALLOWED_KEYS", "MAX_TEXT_LENGTH", "redact_payload"]
+__all__ = [
+    "ALLOWED_KEYS",
+    "MAX_TEXT_LENGTH",
+    "contains_raw_rail_material",
+    "redact_payload",
+]
