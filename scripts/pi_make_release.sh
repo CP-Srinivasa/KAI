@@ -61,12 +61,26 @@ fi
 echo "== 1/6 Code in die Staging-Flaeche ==" >&2
 rm -rf "$STAGE"
 mkdir -p "$STAGE" || { echo "kann $STAGE nicht anlegen" >&2; exit 1; }
-for d in app config deploy scripts; do
+for d in app config deploy monitor scripts; do
     [ -d "$REPO/$d" ] && cp -a "$REPO/$d" "$STAGE/$d"
 done
-for f in requirements.lock pyproject.toml; do
+# Wurzel-Artefakte, die der laufende Code ueber ``parents[2]`` liest. Fehlt
+# CONFIG_SCHEMA.json, wirft bereits ``get_settings()`` -- das Release liesse
+# sich versiegeln und koennte trotzdem nicht starten (gemessen 2026-09-04).
+for f in requirements.lock pyproject.toml CONFIG_SCHEMA.json DECISION_SCHEMA.json alembic.ini; do
     [ -f "$REPO/$f" ] && cp -a "$REPO/$f" "$STAGE/$f"
 done
+# Die gebaute SPA ist Code, kein Zustand: `app/api/main.py` mountet sie ueber
+# das CWD-relative `web/dist`, und das CWD ist nach dem Cutover die
+# Release-Wurzel. Fehlt sie dort, verschwindet /dashboard STILL -- der Mount
+# steht hinter `if _spa_dir.is_dir()`, es gibt also weder Fehler noch Log.
+if [ -d "$REPO/web/dist" ]; then
+    mkdir -p "$STAGE/web"
+    cp -a "$REPO/web/dist" "$STAGE/web/dist"
+else
+    echo "WARNUNG: $REPO/web/dist fehlt — dieses Release liefert KEIN Dashboard." >&2
+fi
+
 # Caches gehoeren nicht in eine Identitaet.
 find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
 
@@ -130,8 +144,10 @@ echo "== 6/6 versiegeln ==" >&2
 mv "$STAGE" "$TARGET" || { echo "Umbenennen gescheitert" >&2; rm -rf "$STAGE"; exit 1; }
 # Dass der Code-Baum nicht beschreibbar ist, ist Teil des Beweises. Die
 # Zustands-Symlinks zeigen nach draussen und bleiben schreibbar.
-chmod -R a-w "$TARGET/app" "$TARGET/config" "$TARGET/deploy" "$TARGET/scripts" 2>/dev/null
-chmod a-w "$TARGET/requirements.lock" "$TARGET/pyproject.toml" "$TARGET/release.json" 2>/dev/null
+# Versiegelt wird, was SEALED_DIRS/SEALED_FILES als Identitaet fuehren --
+# sonst waere ein Teil des Baum-Hashes schreibbar.
+chmod -R a-w "$TARGET/app" "$TARGET/config" "$TARGET/deploy" "$TARGET/monitor" \n             "$TARGET/scripts" "$TARGET/web" 2>/dev/null
+chmod a-w "$TARGET/requirements.lock" "$TARGET/pyproject.toml" "$TARGET/release.json" \n          "$TARGET/CONFIG_SCHEMA.json" "$TARGET/DECISION_SCHEMA.json" \n          "$TARGET/alembic.ini" 2>/dev/null
 
 # Selbstkontrolle: der versiegelte Baum muss seinen eigenen Anspruch tragen.
 if ! "$TARGET/.venv/bin/python3" -c "
@@ -145,6 +161,23 @@ sys.exit(0 if not p else 1)
     echo "Release traegt seinen eigenen Anspruch NICHT — nicht aktivieren" >&2
     exit 1
 fi
+
+# Startfaehigkeit ist Teil der Identitaet, nicht Sache des Glueckens beim
+# Restart. Ein Baum, der sich versiegeln laesst und beim ersten Start wirft,
+# ist die gefaehrlichste Variante: `verify_release` sagt OK, die fuenf
+# Daemons fallen trotzdem in die Restart-Schleife. Gemessen 2026-09-04 --
+# CONFIG_SCHEMA.json war nicht gestaged, `verify_release` gruen,
+# `get_settings()` warf beim ersten Start. Deshalb importiert der Builder
+# hier, was der Dienst importiert: aus dem VERSIEGELTEN Baum, mit dessen
+# EIGENEM venv.
+SMOKE_LOG="$(mktemp)"
+if ! (cd "$TARGET" && "$TARGET/.venv/bin/python3" -c "import app.api.main" >"$SMOKE_LOG" 2>&1); then
+    echo "SMOKE_IMPORT_FAILED -- das Release startet nicht und wird nicht ausgeliefert:" >&2
+    tail -20 "$SMOKE_LOG" >&2
+    rm -f "$SMOKE_LOG"
+    exit 1
+fi
+rm -f "$SMOKE_LOG"
 
 echo "RELEASE_READY=$TARGET" >&2
 echo "$TARGET"

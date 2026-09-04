@@ -43,8 +43,19 @@ RELEASE_MANIFEST_NAME: Final = "release.json"
 
 #: Was die Identitaet eines Releases ausmacht. Ausschliesslich Unveraenderliches:
 #: Anwendungscode, Konfiguration, Deploy-Dateien und das gepinnte Lockfile.
-SEALED_DIRS: Final = ("app", "config", "deploy", "scripts")
-SEALED_FILES: Final = ("requirements.lock", "pyproject.toml")
+#: Alles, was der laufende Dienst aus der Release-Wurzel laedt, gehoert in die
+#: Identitaet -- sonst behauptet ein Release Unveraenderlichkeit fuer Bytes,
+#: die sich unbemerkt aendern duerfen. ``monitor/`` und die beiden Schemata
+#: liest ``app/`` ueber ``parents[2]``; ``web/`` traegt im Release nur die
+#: gebaute SPA, die ``app/api/main.py`` unter ``/dashboard`` ausliefert.
+SEALED_DIRS: Final = ("app", "config", "deploy", "monitor", "scripts", "web")
+SEALED_FILES: Final = (
+    "requirements.lock",
+    "pyproject.toml",
+    "CONFIG_SCHEMA.json",
+    "DECISION_SCHEMA.json",
+    "alembic.ini",
+)
 
 #: Niemals in die Identitaet: Zustand, Caches und der venv. Der venv wird ueber
 #: das Lockfile plus ``pip check`` beim Bau belegt, nicht byteweise gehasht —
