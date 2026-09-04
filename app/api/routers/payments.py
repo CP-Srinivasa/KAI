@@ -35,7 +35,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.payments.models import Money
-from app.payments.rail import InvoiceRequest, RailError
+from app.payments.rail import MAX_MEMO_LENGTH, InvoiceRequest, RailError
 from app.payments.service import PaymentRequest, PaymentService, PaymentServiceError
 from app.payments.service_types import IntentView
 from app.security.rate_limit import FailureTracker, client_ip
@@ -100,7 +100,11 @@ class InvoiceCreateRequest(BaseModel):
     expiry_seconds: int = Field(default=3600, gt=0, le=86_400)
     #: KAIs eigene Bestellreferenz (Self-Use, ADR 0016). Der Rail sieht sie nie.
     order_ref: str = Field(default="", max_length=64)
-    memo_hash: str = Field(default="", max_length=64)
+    #: Der Text auf der Forderung. Leer heisst ``kai-pay: <purpose>`` — nicht
+    #: "kein Memo": eine Invoice ohne Praefix bucht die Einnahmenerkennung nie.
+    #: Frueher stand hier ein ``memo_hash``; ein Hash, den der Aufrufer selbst
+    #: waehlt, belegt nichts und erreicht den Node nicht.
+    memo: str = Field(default="", max_length=MAX_MEMO_LENGTH)
 
 
 def _sat(amount: int) -> Money:
@@ -264,7 +268,7 @@ async def create_invoice(request: Request, body: InvoiceCreateRequest) -> dict[s
                 amount=_sat(body.amount_sat),
                 purpose=body.purpose,
                 expiry_seconds=body.expiry_seconds,
-                memo_hash=body.memo_hash,
+                memo=body.memo,
             ),
             order_ref=body.order_ref,
         )

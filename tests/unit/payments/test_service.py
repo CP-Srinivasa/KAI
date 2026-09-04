@@ -451,6 +451,28 @@ async def test_create_invoice_and_settlement(tmp_path: Path) -> None:
     assert (await service.invoice_status(invoice.ref_hash)).settled is True
 
 
+async def test_the_receivable_record_carries_the_hash_of_the_sent_memo(tmp_path: Path) -> None:
+    """Der ``memo_hash`` im Journal muss ein Urbild haben, das der Node sah.
+
+    Vorher stand dort der Hash, den der Aufrufer mitgab (meist keiner), waehrend
+    der Node ueberhaupt kein Memo bekam — zwei Aussagen ueber dieselbe Invoice,
+    die nichts miteinander zu tun hatten.
+    """
+    import hashlib
+
+    service = a_service(tmp_path)
+    invoice = await service.create_invoice(
+        InvoiceRequest(amount=sat(2500), purpose="self_test"), order_ref="order-memo"
+    )
+    expected = hashlib.sha256(b"kai-pay: self_test").hexdigest()
+    assert invoice.memo_hash == expected
+
+    raw = (tmp_path / "payment_journal.jsonl").read_text(encoding="utf-8")
+    record = next(json.loads(line) for line in raw.splitlines() if expected in line)
+    assert record["payload"]["memo_hash"] == expected
+    assert "kai-pay" not in raw, "das Journal traegt den Hash, nicht den Text"
+
+
 async def test_a_rail_error_while_creating_an_invoice_surfaces(tmp_path: Path) -> None:
     class BrokenRail(SimulationRail):
         async def create_invoice(self, request):  # type: ignore[no-untyped-def]
