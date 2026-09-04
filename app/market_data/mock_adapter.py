@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import zlib
 from datetime import UTC, datetime, timedelta
 
 from app.market_data.base import BaseMarketDataAdapter
@@ -26,6 +27,7 @@ _DEFAULT_BASE_PRICE: float = 100.0
 _DEFAULT_AMPLITUDE_PCT: float = 2.0
 _SINE_PERIOD_MINUTES: float = 1440.0
 _PRICE_DECIMALS: int = 2
+_PHASES: int = 360
 
 _TIMEFRAME_MINUTES: dict[str, int] = {
     "1m": 1,
@@ -37,6 +39,21 @@ _TIMEFRAME_MINUTES: dict[str, int] = {
 }
 
 
+def _symbol_seed(symbol: str) -> int:
+    """Stable per-symbol seed — identical in every process, on every platform.
+
+    Deliberately NOT ``hash()``: str hashing is per-process randomized
+    (PYTHONHASHSEED), so the phase — and with it the whole curve — was constant
+    WITHIN a process and changed on restart. That is why two closes 26h apart
+    carried a byte-identical price while an older incident on the same code path
+    carried a different one (DS-20260818-MOCK-EXIT), and why a test that read the
+    curve at the process's random phase was red once in 360 runs (CI PR #870).
+    ``app.market_data.mock_price_forensics`` still enumerates all ``_PHASES``
+    because historical incidents sit on phases produced by the old ``hash()``.
+    """
+    return zlib.crc32(symbol.encode("utf-8"))
+
+
 def _mock_price(
     symbol: str,
     offset_minutes: float = 0.0,
@@ -44,12 +61,8 @@ def _mock_price(
 ) -> float:
     """Generate deterministic sinusoidal price for testing."""
     base = _BASE_PRICES.get(symbol, _DEFAULT_BASE_PRICE)
-    # Period: 24h = 1440 minutes; phase based on symbol hash. NOTE: str hashing is
-    # per-process randomized (PYTHONHASHSEED), so the phase — and with it the whole
-    # curve — is constant WITHIN a process and changes on restart. That is why two
-    # closes 26h apart carried a byte-identical price while an older incident on the
-    # same code path carried a different one (DS-20260818-MOCK-EXIT).
-    phase = hash(symbol) % 360
+    # Period: 24h = 1440 minutes; phase from the stable symbol seed.
+    phase = _symbol_seed(symbol) % _PHASES
     t = (offset_minutes + phase) / _SINE_PERIOD_MINUTES * 2 * math.pi
     variation = base * (amplitude_pct / 100) * math.sin(t)
     return round(base + variation, _PRICE_DECIMALS)
@@ -95,7 +108,7 @@ class MockMarketDataAdapter(BaseMarketDataAdapter):
             bid=round(last - spread / 2, 4),
             ask=round(last + spread / 2, 4),
             last=last,
-            volume_24h=self._volume_base * (1 + 0.1 * math.sin(hash(symbol) % 100)),
+            volume_24h=self._volume_base * (1 + 0.1 * math.sin(_symbol_seed(symbol) % 100)),
             change_pct_24h=round(change_pct, 4),
         )
 

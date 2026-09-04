@@ -10,8 +10,9 @@ The mock curve is fully deterministic given the symbol's phase:
 
     round(base + base * (amplitude_pct/100) * sin(phase / 1440 * 2*pi), 2)
 
-``phase = hash(symbol) % 360`` is per-process randomized, so the phase of a past
-incident is unknown — but the *candidate set* is only 360 values wide per symbol
+The phase was ``hash(symbol) % 360`` — per-process randomized — until the
+adapter moved to a stable crc32 seed, so the phase of a past incident is
+unknown — but the *candidate set* is only 360 values wide per symbol
 and every value carries exactly two decimals. That makes recognition exact
 rather than heuristic: we accept a price only on bit-identical equality with a
 reconstructed candidate (optionally after undoing the paper fill slippage).
@@ -36,6 +37,7 @@ from app.market_data.mock_adapter import (
     _BASE_PRICES,
     _DEFAULT_AMPLITUDE_PCT,
     _DEFAULT_BASE_PRICE,
+    _PHASES,
     _PRICE_DECIMALS,
     _SINE_PERIOD_MINUTES,
 )
@@ -45,8 +47,6 @@ from app.market_data.mock_adapter import (
 # from get_settings() here so the detector stays usable in hot read paths
 # (memory feedback_get_settings_uncached_hot_loop).
 DEFAULT_PAPER_SLIPPAGE_FRACTION: float = 0.0005
-
-_PHASES = 360
 
 
 @dataclass(frozen=True)
