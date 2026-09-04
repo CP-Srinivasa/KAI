@@ -64,7 +64,7 @@ Every productive decision's audit event must carry a complete
 `prompt_version`, `approval_status`, `registry_hash`. A missing or incomplete
 reference is rejected. `registry_hash` is a SHA-256 over the canonical
 (model, prompt) registry pair (`compute_registry_hash`) — tamper-evident, same
-algorithm as `app/audit/decision_chain.py`.
+algorithm as `app/truth/attestation.py` (SHA-256 über kanonisches JSON).
 
 ### Combined — `authorize_productive_decision(model, prompt, requested_tools=...)`
 Runs model gate + prompt gate + per-tool checks and, **only** when all pass,

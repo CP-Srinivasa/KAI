@@ -1,8 +1,14 @@
-"""Tests for the audit-chain integrity Truth-Layer KPI (#314).
+"""Tests für die Audit-Chain-Integritäts-KPI (#314, Truth-Layer).
 
-Behaviour, not implementation: a green KPI must mean the decision audit-chain is
-genuinely tamper-free, a red KPI must mean real tampering, and a legitimate
-journal rotation must NOT raise a false tamper alarm.
+Quelle ist seit 2026-09-04 der **Attestation-Ledger**
+(``artifacts/truth/attestation_ledger.jsonl``) — die einzige Hash-Kette, die in
+Produktion tatsächlich befüllt wird. Die vorherige Quelle
+(``decision_journal_chain.jsonl``) hatte keinen Schreiber; das KPI konnte
+strukturell nur ``empty`` liefern und war damit ein Integritätsindikator, der
+nie fehlschlagen kann.
+
+Verhalten, nicht Implementierung: grün heißt nachgerechnet tamper-frei, rot
+heißt echte Manipulation, unlesbar heißt ``unavailable`` — nie ein 500er.
 """
 
 from __future__ import annotations
@@ -10,143 +16,116 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.audit.decision_chain import append_chain_entry
 from app.observability.audit_chain_status import (
     AuditChainStatus,
     derive_audit_chain_status,
     load_audit_chain_status,
 )
+from app.truth.ledger import append_attestation
+
+NL = "\n"
 
 
-def _journal(path: Path, records: list[dict]) -> None:
-    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
-
-
-def _build_valid_chain(chain_path: Path, journal_path: Path, n: int = 3) -> list[dict]:
-    """Append ``n`` chained decisions and mirror their payloads into the journal."""
-    records = []
+def _build_ledger(path: Path, n: int = 3) -> None:
+    """``n`` echte, verkettete Attestierungen (ohne Audit-Spiegelung)."""
     for i in range(n):
-        payload = {"decision_id": f"dec-{i}", "action": "hold", "score": i}
-        append_chain_entry(
-            chain_path=chain_path, decision_id=payload["decision_id"], record_payload=payload
+        append_attestation(
+            "test_claim",
+            f"subject-{i}",
+            {"i": i, "claim": "hold"},
+            path=path,
+            mirror_audit=False,
         )
-        records.append(payload)
-    _journal(journal_path, records)
-    return records
 
 
-# ── load_audit_chain_status (IO wrapper, end-to-end over real files) ──────────
+# ── load_audit_chain_status (IO-Wrapper, end-to-end über echte Dateien) ───────
 
 
-def test_empty_when_no_chain_file(tmp_path: Path) -> None:
-    status = load_audit_chain_status(
-        chain_path=tmp_path / "chain.jsonl", journal_path=tmp_path / "journal.jsonl"
-    )
+def test_empty_when_no_ledger_file(tmp_path: Path) -> None:
+    status = load_audit_chain_status(ledger_path=tmp_path / "attestation_ledger.jsonl")
     assert status.state == "empty"
     assert status.available is True
     assert status.entries == 0
     assert status.errors == 0
 
 
-def test_ok_for_valid_chain_with_journal_crosscheck(tmp_path: Path) -> None:
-    chain = tmp_path / "chain.jsonl"
-    journal = tmp_path / "journal.jsonl"
-    _build_valid_chain(chain, journal, n=3)
+def test_ok_for_valid_ledger(tmp_path: Path) -> None:
+    ledger = tmp_path / "attestation_ledger.jsonl"
+    _build_ledger(ledger, n=3)
 
-    status = load_audit_chain_status(chain_path=chain, journal_path=journal)
+    status = load_audit_chain_status(ledger_path=ledger)
     assert status.state == "ok"
     assert status.available is True
     assert status.entries == 3
     assert status.errors == 0
     assert status.first_error is None
-    assert status.cross_checked is True
-    assert status.journal_gaps == 0
 
 
-def test_broken_when_journal_record_tampered(tmp_path: Path) -> None:
-    chain = tmp_path / "chain.jsonl"
-    journal = tmp_path / "journal.jsonl"
-    records = _build_valid_chain(chain, journal, n=3)
+def test_broken_when_payload_tampered(tmp_path: Path) -> None:
+    ledger = tmp_path / "attestation_ledger.jsonl"
+    _build_ledger(ledger, n=3)
 
-    # Tamper a journal record AFTER it was chained → record_hash no longer matches.
-    records[1]["score"] = 999
-    _journal(journal, records)
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[1])
+    row["payload"]["claim"] = "sell"
+    lines[1] = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    ledger.write_text(NL.join(lines) + NL, encoding="utf-8")
 
-    status = load_audit_chain_status(chain_path=chain, journal_path=journal)
+    status = load_audit_chain_status(ledger_path=ledger)
     assert status.state == "broken"
     assert status.errors >= 1
     assert status.first_error is not None
-    assert "record_hash_mismatch" in status.first_error
+    assert "payload" in status.first_error
 
 
-def test_broken_when_chain_line_tampered(tmp_path: Path) -> None:
-    chain = tmp_path / "chain.jsonl"
-    journal = tmp_path / "journal.jsonl"
-    _build_valid_chain(chain, journal, n=3)
+def test_broken_when_record_removed(tmp_path: Path) -> None:
+    """Eine entfernte Zeile bricht die Verkettung — genau das soll rot werden."""
+    ledger = tmp_path / "attestation_ledger.jsonl"
+    _build_ledger(ledger, n=3)
 
-    # Flip a chained record_hash directly in the chain file → chain_hash mismatch.
-    lines = chain.read_text(encoding="utf-8").splitlines()
-    row = json.loads(lines[1])
-    row["record_hash"] = "f" * 64
-    lines[1] = json.dumps(row)
-    chain.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    del lines[1]
+    ledger.write_text(NL.join(lines) + NL, encoding="utf-8")
 
-    status = load_audit_chain_status(chain_path=chain, journal_path=journal)
+    status = load_audit_chain_status(ledger_path=ledger)
     assert status.state == "broken"
     assert status.errors >= 1
 
 
-def test_journal_rotation_is_gap_not_tamper(tmp_path: Path) -> None:
-    """A truncated journal (rotation) leaves chain entries without payloads — that
-    is a ``journal_gaps`` count, NOT a tamper ``broken`` state."""
-    chain = tmp_path / "chain.jsonl"
-    journal = tmp_path / "journal.jsonl"
-    records = _build_valid_chain(chain, journal, n=3)
-
-    # Simulate rotation: journal keeps only the newest record.
-    _journal(journal, records[-1:])
-
-    status = load_audit_chain_status(chain_path=chain, journal_path=journal)
-    assert status.state == "ok"
-    assert status.journal_gaps == 2
-    assert status.errors == 0
-
-
 def test_unavailable_on_read_error(tmp_path: Path) -> None:
-    # A directory where a file is expected → read raises → fail-soft unavailable.
+    # Verzeichnis statt Datei → Read scheitert → fail-soft ``unavailable``.
     bad = tmp_path / "is_a_dir"
     bad.mkdir()
-    status = load_audit_chain_status(chain_path=bad, journal_path=tmp_path / "journal.jsonl")
+    status = load_audit_chain_status(ledger_path=bad)
     assert status.state == "unavailable"
     assert status.available is False
-    assert "Chain-Read-Fehler" in status.reason
+    assert status.reason
 
 
-# ── derive_audit_chain_status (pure classification) ──────────────────────────
+# ── derive_audit_chain_status (reine Klassifikation) ──────────────────────────
 
 
 def test_derive_empty() -> None:
-    s = derive_audit_chain_status(entries=0, errors=[], cross_checked=False)
-    assert s.state == "empty" and s.entries == 0
+    s = derive_audit_chain_status(entries=0, errors=[])
+    assert s.state == "empty"
+    assert s.entries == 0
+    assert isinstance(s, AuditChainStatus)
 
 
-def test_derive_ok_ignores_missing_journal_record() -> None:
-    s = derive_audit_chain_status(
-        entries=5,
-        errors=["missing_journal_record idx=2 decision_id=dec-2"],
-        cross_checked=True,
-    )
+def test_derive_ok() -> None:
+    s = derive_audit_chain_status(entries=118, errors=[])
     assert s.state == "ok"
+    assert s.entries == 118
     assert s.errors == 0
-    assert s.journal_gaps == 1
+    assert s.first_error is None
 
 
-def test_derive_broken_on_tamper_prefix() -> None:
+def test_derive_broken_keeps_first_error() -> None:
     s = derive_audit_chain_status(
         entries=5,
-        errors=["chain_break idx=1 decision_id=dec-1 expected_prev=… got=…"],
-        cross_checked=False,
+        errors=["seq 2: chain broken (prev_hash mismatch)", "seq 3: record_hash mismatch"],
     )
     assert s.state == "broken"
-    assert s.errors == 1
-    assert isinstance(s, AuditChainStatus)
+    assert s.errors == 2
+    assert s.first_error == "seq 2: chain broken (prev_hash mismatch)"
+    assert s.reason

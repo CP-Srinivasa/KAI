@@ -486,18 +486,18 @@ export function fetchReplayStatus(signal?: AbortSignal): Promise<ReplayStatus> {
   return apiGet<ReplayStatus>("/dashboard/api/replay-status", { signal });
 }
 
-// Audit-Chain Tamper-Evidence (#314): Integrität der Decision-Journal Hash-Chain.
-// state: ok (tamper-frei) | empty (noch nichts verkettet) | broken (Manipulation)
-// | unavailable (Datei unlesbar). journal_gaps = fehlende Journal-Payloads aus
-// Rotation (informativ, KEIN Tamper).
+// Audit-Chain Tamper-Evidence (#314): Integrität des Attestation-Ledgers
+// (artifacts/truth/attestation_ledger.jsonl). state: ok (nachgerechnet tamper-frei)
+// | empty (noch nichts attestiert) | broken (Manipulation) | unavailable (Datei
+// unlesbar). Quelle bis 2026-09-04 war die Decision-Journal-Hash-Kette — ein Strom
+// ohne Schreiber, der nie "broken" werden konnte; deshalb entfielen journal_gaps
+// und cross_checked mit ihr.
 export type AuditChainStatus = {
   state: "ok" | "empty" | "broken" | "unavailable";
   available: boolean;
   entries: number;
   errors: number;
   first_error: string | null;
-  journal_gaps: number;
-  cross_checked: boolean;
   reason: string;
   generated_at: string;
 };

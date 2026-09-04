@@ -5,7 +5,7 @@
 // verankert) / ok (Anchor gefunden; proof_available = OTS-Proof on-chain). Kein
 // Fake, kein neuer Backend-Pfad. Eine von drei Truth-Layer-KPIs (#314): hier
 // OTS-Anchoring; daneben ReplayStatusKpi (Portfolio-Rekonstruierbarkeit) und
-// AuditChainKpi (Decision-Journal Tamper-Evidence).
+// AuditChainKpi (Attestation-Ledger Tamper-Evidence).
 import { Card, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useApi } from "@/lib/useApi";
