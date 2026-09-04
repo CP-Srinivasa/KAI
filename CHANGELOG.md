@@ -1,3 +1,13 @@
+## 2026-09-04 - Runtime-Identitaet im Release-Modus (/health nach dem Immutable-Release-Cutover)
+
+Befund am Geraet nach dem Cutover (13:40 UTC+2): kai-server lief aus `releases/<SHA>/`, `/health`
+meldete `runtime_commit=null`, `checkout_commit=null`, `drift_commits=null` — der Release-Baum hat
+kein `.git`. Jetzt liest `app/core/runtime_identity.py` den Commit aus `release.json`
+(`runtime_source="release"`), misst Drift gegen das aktive Release hinter `current`
+(`reference_source`; ohne Release weiter gegen den Checkout) und wertet eine belegte Abweichung
+ohne zaehlbaren Abstand wie Drift > 0. Stabilitaet der Referenz = mtime des `current`-Links.
+`/health` traegt beide Quellen als neue, optionale Felder; Artefakt-Schema bleibt `runtime_identity/v1`.
+
 ## 2026-09-03 - KAI SOVEREIGN VALUE-OS v0.1: Payment Control Plane, Lightning als erster Rail
 
 Neue Domaene `app/payments/` (ADR 0018, D-CORE-002): providerunabhaengiges Domaenenmodell (vier Betraege

@@ -23,6 +23,12 @@ Was dieses Modul hält:
 Alles ist fail-soft: fehlt `git` oder ist das Verzeichnis kein Repo, gibt es
 `None` — nie einen Absturz im Health-Pfad. Aber `None` heißt „nicht messbar",
 nicht „aktuell": die Bewertung meldet das ausdrücklich.
+
+Release-Modus (Cutover 2026-09-04): Die Daemons laufen aus
+``releases/<SHA>/`` — ohne ``.git``. Dort ist ``release.json`` die Wahrheit
+(``runtime_source="release"``), und die Referenz für Drift ist das Release, auf
+das ``current`` JETZT zeigt — nicht der wandernde Checkout, der die Daemons nach
+dem Cutover nicht mehr speist. Ohne ``current`` bleibt der Checkout die Referenz.
 """
 
 from __future__ import annotations
@@ -65,6 +71,8 @@ class RuntimeIdentity:
     started_at_utc: str
     lock_sha256_at_start: str | None
     pid: int
+    #: "release" (release.json eines versiegelten Baums) | "checkout" (.git) | None.
+    runtime_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -168,6 +176,87 @@ def read_checkout_commit(repo_dir: Path | str, run: Runner = subprocess.run) -> 
     return commit or git_head_commit(path, run)
 
 
+# ── Release-Modus ─────────────────────────────────────────────────────────────
+
+RUNTIME_SOURCE_RELEASE = "release"
+RUNTIME_SOURCE_CHECKOUT = "checkout"
+
+
+def read_release_commit(repo_dir: Path | str) -> str | None:
+    """Commit aus ``release.json`` eines unveraenderlichen Release-Baums.
+
+    Nach dem Cutover laeuft kai-server aus ``releases/<SHA>/`` — dort gibt es kein
+    ``.git``; die Wahrheit steht im versiegelten Manifest. Fremdes/kaputtes
+    Manifest → ``None`` (nicht messbar), nie ein geratener Wert.
+    """
+    from app.observability.release_identity import read_release_manifest
+
+    manifest = read_release_manifest(Path(repo_dir))
+    if manifest is None:
+        return None
+    sha = manifest.repo_sha.strip().lower()
+    return sha if _SHA_RE.match(sha) else None
+
+
+def read_runtime_commit(
+    repo_dir: Path | str, run: Runner = subprocess.run
+) -> tuple[str | None, str | None]:
+    """(Commit, Quelle). Manifest vor Git: der versiegelte Baum ist die staerkere Aussage."""
+    release = read_release_commit(repo_dir)
+    if release:
+        return release, RUNTIME_SOURCE_RELEASE
+    checkout = read_checkout_commit(repo_dir, run)
+    if checkout:
+        return checkout, RUNTIME_SOURCE_CHECKOUT
+    return None, None
+
+
+def find_current_link(repo_dir: Path | str) -> Path | None:
+    """``current`` neben dem Checkout (``…/current``) oder neben ``releases/``.
+
+    Layout auf der Pi: ``…/ai_analyst_trading_bot`` (Checkout),
+    ``…/releases/<SHA>`` (Release), ``…/current`` (Link auf ein Release).
+    Nur ein Ziel mit gueltigem Manifest zaehlt — ein fremdes ``current`` nicht.
+    Bewusst leichter als ``process_runtime_probe.release_governs``: hier geht es
+    nur um die Referenz fuer Drift, nicht um den Beweis der ganzen Kette.
+    """
+    from app.observability.release_identity import read_release_manifest, resolve_current
+
+    try:
+        path = Path(repo_dir).resolve()
+    except OSError:
+        return None
+    for candidate in (path.parent / "current", path.parent.parent / "current"):
+        target = resolve_current(candidate)
+        if target is not None and read_release_manifest(target) is not None:
+            return candidate
+    return None
+
+
+def active_release_commit(repo_dir: Path | str) -> str | None:
+    """Commit des Releases, auf das ``current`` JETZT zeigt — die Referenz fuer Drift."""
+    from app.observability.release_identity import resolve_current
+
+    link = find_current_link(repo_dir)
+    if link is None:
+        return None
+    target = resolve_current(link)
+    return read_release_commit(target) if target is not None else None
+
+
+def reference_stable_for_s(repo_dir: Path | str, *, now: datetime | None = None) -> float | None:
+    """Seit wann steht die Referenz — ``current`` (lstat-mtime des Links), sonst der Checkout."""
+    link = find_current_link(repo_dir)
+    if link is None:
+        return checkout_stable_for_s(repo_dir, now=now)
+    try:
+        mtime = os.lstat(link).st_mtime
+    except OSError:
+        return None
+    current = (now or datetime.now(UTC)).timestamp()
+    return max(0.0, current - mtime)
+
+
 def checkout_stable_for_s(repo_dir: Path | str, *, now: datetime | None = None) -> float | None:
     """Seit wie vielen Sekunden steht der Checkout auf seinem aktuellen Commit?
 
@@ -238,12 +327,14 @@ def capture_runtime_identity(
     pid: int | None = None,
 ) -> RuntimeIdentity:
     path = Path(repo_dir)
+    commit, source = read_runtime_commit(path, run)
     return RuntimeIdentity(
         schema=SCHEMA,
-        runtime_commit=read_checkout_commit(path, run),
+        runtime_commit=commit,
         started_at_utc=(now or datetime.now(UTC)).isoformat(),
         lock_sha256_at_start=lock_sha256(path),
         pid=os.getpid() if pid is None else pid,
+        runtime_source=source,
     )
 
 
@@ -281,13 +372,26 @@ def drift_report(
     now: datetime | None = None,
     run: Runner = subprocess.run,
 ) -> dict[str, Any]:
-    """Runtime vs. Checkout, als flaches Dict (für /health und den Health-Check)."""
+    """Runtime vs. Referenz, als flaches Dict (für /health und den Health-Check).
+
+    Referenz ist das aktive Release (``current``), sonst der Checkout. Nach dem
+    Cutover wandert der Checkout unabhaengig vom Daemon — als Referenz waere er
+    falsch (``checkout_commit`` bleibt als Feldname, traegt aber die Referenz).
+    """
     path = Path(repo_dir)
     current = now or datetime.now(UTC)
-    checkout = read_checkout_commit(path, run)
+    reference = active_release_commit(path)
+    reference_source: str | None = RUNTIME_SOURCE_RELEASE if reference else None
+    if reference is None:
+        reference = read_checkout_commit(path, run)
+        reference_source = RUNTIME_SOURCE_CHECKOUT if reference else None
+    checkout = reference
     drift: int | None = None
     if identity.runtime_commit and checkout:
-        drift = count_commits_between(identity.runtime_commit, checkout, path, run)
+        if identity.runtime_commit == checkout:
+            drift = 0
+        else:
+            drift = count_commits_between(identity.runtime_commit, checkout, path, run)
     lock_now = lock_sha256(path)
     lock_changed: bool | None
     if identity.lock_sha256_at_start is None or lock_now is None:
@@ -301,7 +405,9 @@ def drift_report(
         uptime = None
     return {
         "runtime_commit": identity.runtime_commit,
+        "runtime_source": identity.runtime_source,
         "checkout_commit": checkout,
+        "reference_source": reference_source,
         "drift_commits": drift,
         "started_at_utc": identity.started_at_utc,
         "uptime_s": uptime,
@@ -325,6 +431,8 @@ def evaluate_runtime_drift(
     * Drift 0 → nichts.
     * Drift > 0, Checkout jünger als ``grace_s`` → nichts (Deploy unterwegs).
     * Drift > 0, älter → warning; älter als ``critical_after_s`` → critical.
+    * Abweichung belegt, Abstand nicht zählbar (Release-Baum ohne git) → wie
+      Drift > 0, nur ohne Zahl.
     * Nicht messbar (kein Commit) → warning: „aktuell" ist unbelegt.
     * Lock geändert → eigene warning (``pip install -e .`` + Restart nötig).
 
@@ -338,7 +446,23 @@ def evaluate_runtime_drift(
     checkout = report.get("checkout_commit")
     uptime = report.get("uptime_s")
 
-    if drift is None:
+    if drift is None and runtime and checkout and runtime != checkout:
+        stable = checkout_stable_for_s
+        if stable is None and isinstance(uptime, int | float):
+            stable = float(uptime)
+        if stable is not None and stable >= grace_s:
+            severity = "critical" if stable >= critical_after_s else "warning"
+            findings.append(
+                DriftFinding(
+                    severity=severity,
+                    message=(
+                        f"kai-server laeuft auf {_short(runtime)}, aktiv ist "
+                        f"{_short(checkout)} seit {stable / 3600.0:.1f} h — Abstand nicht "
+                        "zaehlbar; der Prozess laedt neuen Code erst nach einem Restart."
+                    ),
+                )
+            )
+    elif drift is None:
         findings.append(
             DriftFinding(
                 severity="warning",
@@ -360,10 +484,10 @@ def evaluate_runtime_drift(
                 DriftFinding(
                     severity=severity,
                     message=(
-                        f"kai-server laeuft auf {_short(runtime)}, der Checkout steht auf "
-                        f"{_short(checkout)} — {drift} Commits voraus seit {hours:.1f} h. "
-                        "Der Prozess laedt neuen Code erst nach einem Restart "
-                        "(Deploy-Fenster, kai_deploy.sh --restart kai-server)."
+                        f"kai-server laeuft auf {_short(runtime)}, die Referenz (aktives "
+                        f"Release, sonst Checkout) steht auf {_short(checkout)} — {drift} "
+                        f"Commits voraus seit {hours:.1f} h. Der Prozess laedt neuen Code "
+                        "erst nach einem Restart (Deploy-Fenster)."
                     ),
                 )
             )
@@ -407,6 +531,9 @@ def read_runtime_identity_artifact(path: Path) -> RuntimeIdentity | None:
             started_at_utc=str(raw["started_at_utc"]),
             lock_sha256_at_start=raw.get("lock_sha256_at_start"),
             pid=int(raw.get("pid", 0)),
+            runtime_source=(
+                raw["runtime_source"] if isinstance(raw.get("runtime_source"), str) else None
+            ),
         )
     except (KeyError, TypeError, ValueError):
         return None

@@ -67,7 +67,7 @@ def test_drift_older_than_grace_is_reported(tmp_path: Path, monkeypatch) -> None
             "lock_changed": False,
         },
     )
-    monkeypatch.setattr(hc, "checkout_stable_for_s", lambda repo_dir, *, now: 3 * 86400.0)
+    monkeypatch.setattr(hc, "reference_stable_for_s", lambda repo_dir, *, now: 3 * 86400.0)
     issues = hc._check_runtime_identity(tmp_path, NOW, runs_on_pi=True)
     assert [i.severity for i in issues] == ["critical"]
     assert "23 Commits" in issues[0].message
@@ -87,7 +87,7 @@ def test_no_drift_is_no_finding(tmp_path: Path, monkeypatch) -> None:
             "lock_changed": False,
         },
     )
-    monkeypatch.setattr(hc, "checkout_stable_for_s", lambda repo_dir, *, now: 100.0)
+    monkeypatch.setattr(hc, "reference_stable_for_s", lambda repo_dir, *, now: 100.0)
     assert hc._check_runtime_identity(tmp_path, NOW, runs_on_pi=True) == []
 
 

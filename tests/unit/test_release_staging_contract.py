@@ -47,13 +47,13 @@ def skript() -> str:
 
 def _staging_dateiliste(text: str) -> list[str]:
     """Die Namen aus der ``for f in … ; do``-Zeile der Staging-Stufe."""
-    treffer = re.search(r"^for f in (.+?); do$", text, re.MULTILINE)
+    treffer = re.search(r"^\s*for f in (.+?); do$", text, re.MULTILINE)
     assert treffer, "Staging-Dateiliste im Builder nicht gefunden"
     return treffer.group(1).split()
 
 
 def _staging_verzeichnisliste(text: str) -> list[str]:
-    treffer = re.search(r"^for d in (.+?); do$", text, re.MULTILINE)
+    treffer = re.search(r"^\s*for d in (.+?); do$", text, re.MULTILINE)
     assert treffer, "Staging-Verzeichnisliste im Builder nicht gefunden"
     return treffer.group(1).split()
 
@@ -166,3 +166,66 @@ def test_der_builder_versiegelt_was_er_hasht(skript: str) -> None:
         assert f"$TARGET/{name}" in chmod, f"{name}/ geht in den Hash ein, bleibt aber schreibbar"
     for name in SEALED_FILES:
         assert f"$TARGET/{name}" in chmod, f"{name} geht in den Hash ein, bleibt aber schreibbar"
+
+
+# ---------------------------------------------------------------------------
+# Dritte Haelfte, und sie kam erst durch den Betrieb ans Licht: derselbe
+# `repo_sha` garantiert NICHT denselben Baum.
+#
+# `web/dist` ist gitignored. Seit die SPA zur Identitaet gehoert, koennen zwei
+# verschiedene Baeume unter einem Commit stehen. Der Builder stieg bei
+# existierendem Zielpfad idempotent aus und gab den ALTEN zurueck -- gemessen am
+# 2026-09-04 an Release b78872b0, das eine vor #848 gebaute SPA trug, waehrend
+# sein eigener Code von danach stammte. `verify_release` blieb dabei gruen: der
+# Baum passte zu seinem Manifest, nur nicht zum Commit.
+# ---------------------------------------------------------------------------
+
+
+def test_der_builder_vergleicht_den_baum_nicht_nur_den_pfad(skript: str) -> None:
+    assert "RELEASE_TREE_MISMATCH" in skript, (
+        "der Builder erkennt einen abweichenden Baum unter gleichem repo_sha nicht"
+    )
+    assert "release_tree_sha256" in skript, "kein Baum-Hash in der Idempotenz-Pruefung"
+
+
+def test_der_idempotente_ausstieg_haengt_am_hash_vergleich(skript: str) -> None:
+    """Ein `exit 0` VOR dem Vergleich waere derselbe Defekt mit mehr Text.
+
+    Nicht die Textreihenfolge in der Datei zaehlt (``RELEASE_TREE_MISMATCH``
+    steht auch im Kopfkommentar), sondern dass der Ausstieg im Gleichheitszweig
+    liegt.
+    """
+    vergleich = skript.index('if [ "$NEW_TREE" = "$OLD_TREE" ]')
+    frueh = skript.index("Release existiert bereits und ist baum-identisch")
+    assert vergleich < frueh, "der idempotente Ausstieg haengt nicht am Baum-Vergleich"
+
+    # Zwischen `if [ -d "$TARGET" ]` und dem Vergleich darf kein Erfolg stehen.
+    block_start = skript.index('if [ -d "$TARGET" ]; then')
+    assert "exit 0" not in skript[block_start:vergleich], (
+        "es gibt einen Erfolgsausgang, bevor der Baum ueberhaupt verglichen wurde"
+    )
+
+
+def test_ohne_rebuild_bricht_der_builder_ab(skript: str) -> None:
+    """Stilles Wiederverwenden ist die Luege, gegen die das hier steht."""
+    block = skript[skript.index("RELEASE_TREE_MISMATCH") :]
+    vor_rebuild = block[: block.index("REBUILD")]
+    assert "exit 0" not in vor_rebuild, "Mismatch darf nicht in einem Erfolg enden"
+    assert "exit 1" in block, "Mismatch ohne --rebuild muss fehlschlagen"
+
+
+def test_rebuild_baut_daneben_statt_zu_ersetzen(skript: str) -> None:
+    """Das aktive Release darf ein Rebuild nicht unter den Fuessen wegziehen."""
+    assert "$RELEASES/$REPO_SHA-${NEW_TREE:0:8}" in skript, (
+        "--rebuild schreibt nicht in einen inhalts-unterscheidbaren Pfad"
+    )
+
+
+def test_die_staging_liste_existiert_nur_einmal(skript: str) -> None:
+    """Probe und echter Bau muessen denselben Baum herstellen.
+
+    Zwei Kopien der Liste waeren zwei Wahrheiten darueber, was ein Release
+    ausmacht -- und der Vergleich verglibe dann Aepfel mit Birnen.
+    """
+    assert skript.count("for d in app config deploy monitor scripts; do") == 1
+    assert "stage_code" in skript

@@ -239,3 +239,181 @@ def test_evaluate_unmeasurable_drift_is_not_zero() -> None:
     )
     assert [f.severity for f in findings] == ["warning"]
     assert "nicht messbar" in findings[0].message
+
+
+# ── Release-Modus (Immutable-Release-Cutover 2026-09-04) ─────────────────────
+#
+# Befund: nach dem Cutover lief kai-server aus /home/ubuntu/releases/<SHA>/ —
+# kein .git dort, /health meldete runtime_commit=null, checkout_commit=null,
+# drift_commits=null. Der Waechter im Checkout haette zudem den WANDERNDEN
+# Checkout als Referenz genommen, obwohl der Daemon an das aktive Release
+# gebunden ist. Referenz ist ab jetzt das aktive Release (``current``), der
+# Checkout nur noch ohne Release.
+
+SHA_A = "a" * 40
+SHA_B = "b" * 40
+
+
+def _release_tree(root: Path, sha: str, *, manifest_sha: str | None = None) -> Path:
+    """Ein Release-Baum, wie ``pi_make_release.sh`` ihn legt: kein .git, aber release.json."""
+    rel = root / "releases" / sha
+    rel.mkdir(parents=True)
+    (rel / "requirements.lock").write_text("a==1\n", encoding="utf-8")
+    (rel / "release.json").write_text(
+        json.dumps(
+            {
+                "schema": "kai_release/v1",
+                "repo_sha": sha if manifest_sha is None else manifest_sha,
+                "release_path": str(rel),
+                "release_tree_sha256": "0" * 64,
+                "requirements_lock_sha256": "0" * 64,
+                "python_version": "3.12.0",
+                "created_at_utc": NOW.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return rel
+
+
+def _activate(root: Path, rel: Path) -> Path:
+    """``current`` auf ``rel`` legen — Symlink; ohne Symlink-Recht eine Kopie des Manifests."""
+    link = root / "current"
+    if link.is_symlink() or link.is_file():
+        link.unlink()
+    elif link.is_dir():
+        shutil.rmtree(link)
+    try:
+        link.symlink_to(rel, target_is_directory=True)
+    except OSError:
+        link.mkdir()
+        shutil.copy(rel / "release.json", link / "release.json")
+    return link
+
+
+def test_capture_in_release_tree_reads_manifest_commit(tmp_path: Path) -> None:
+    rel = _release_tree(tmp_path, SHA_A)
+    identity = ri.capture_runtime_identity(rel, now=NOW, pid=1)
+    assert identity.runtime_commit == SHA_A
+    assert identity.runtime_source == "release"
+    assert identity.lock_sha256_at_start is not None
+
+
+@requires_git
+def test_capture_in_checkout_reports_source_checkout(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    identity = ri.capture_runtime_identity(repo, now=NOW, pid=1)
+    assert identity.runtime_commit == _git(repo, "rev-parse", "HEAD")
+    assert identity.runtime_source == "checkout"
+
+
+def test_manifest_with_invalid_sha_is_ignored(tmp_path: Path) -> None:
+    rel = _release_tree(tmp_path, SHA_A, manifest_sha="not-a-sha")
+    identity = ri.capture_runtime_identity(rel, now=NOW, pid=1)
+    assert identity.runtime_commit is None
+    assert identity.runtime_source is None
+
+
+def test_capture_outside_any_tree_has_no_source(tmp_path: Path) -> None:
+    identity = ri.capture_runtime_identity(tmp_path, now=NOW, pid=1)
+    assert identity.runtime_commit is None
+    assert identity.runtime_source is None
+
+
+def test_drift_report_in_release_uses_active_release_as_reference(tmp_path: Path) -> None:
+    rel_a = _release_tree(tmp_path, SHA_A)
+    rel_b = _release_tree(tmp_path, SHA_B)
+    _activate(tmp_path, rel_a)
+    identity = ri.capture_runtime_identity(rel_a, now=NOW, pid=1)
+
+    report = ri.drift_report(identity, rel_a, now=NOW)
+    assert report["runtime_commit"] == SHA_A
+    assert report["checkout_commit"] == SHA_A
+    assert report["reference_source"] == "release"
+    assert report["runtime_source"] == "release"
+    assert report["drift_commits"] == 0
+
+    # Neues Release aktiviert, Prozess nicht neu gestartet: Referenz wandert,
+    # die Anzahl ist ohne git nicht zaehlbar — aber die Abweichung ist belegt.
+    _activate(tmp_path, rel_b)
+    report = ri.drift_report(identity, rel_a, now=NOW)
+    assert report["runtime_commit"] == SHA_A
+    assert report["checkout_commit"] == SHA_B
+    assert report["drift_commits"] is None
+
+
+@requires_git
+def test_drift_report_from_checkout_prefers_active_release(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, commits=2)
+    c2 = _git(repo, "rev-parse", "HEAD")
+    c1 = _git(repo, "rev-parse", "HEAD~1")
+    rel_1 = _release_tree(tmp_path, c1)
+    _activate(tmp_path, rel_1)
+    identity = ri.capture_runtime_identity(rel_1, now=NOW, pid=1)
+    assert identity.runtime_commit == c1
+
+    # Der Waechter laeuft im Checkout (HEAD=c2), der Daemon auf Release c1 —
+    # das ist KEIN Drift, solange c1 das aktive Release ist.
+    report = ri.drift_report(identity, repo, now=NOW)
+    assert report["checkout_commit"] == c1
+    assert report["reference_source"] == "release"
+    assert report["drift_commits"] == 0
+
+    # Release c2 aktiviert, Daemon weiter auf c1: Drift 1, gezaehlt ueber git im Checkout.
+    _activate(tmp_path, _release_tree(tmp_path, c2))
+    report = ri.drift_report(identity, repo, now=NOW)
+    assert report["checkout_commit"] == c2
+    assert report["drift_commits"] == 1
+
+
+@requires_git
+def test_drift_report_without_release_falls_back_to_checkout(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    identity = ri.capture_runtime_identity(repo, now=NOW, pid=1)
+    report = ri.drift_report(identity, repo, now=NOW)
+    assert report["reference_source"] == "checkout"
+    assert report["checkout_commit"] == identity.runtime_commit
+    assert report["drift_commits"] == 0
+
+
+def test_reference_stable_for_s_reads_current_link_age(tmp_path: Path) -> None:
+    rel = _release_tree(tmp_path, SHA_A)
+    link = _activate(tmp_path, rel)
+    stable = ri.reference_stable_for_s(rel, now=datetime.now(UTC) + timedelta(hours=3))
+    assert stable is not None
+    assert stable == pytest.approx(3 * 3600.0, abs=120.0)
+    assert link.exists()
+
+
+def test_reference_stable_for_s_without_release_is_checkout_stability(tmp_path: Path) -> None:
+    assert ri.reference_stable_for_s(tmp_path, now=NOW) is None
+
+
+def test_artifact_roundtrip_keeps_runtime_source(tmp_path: Path) -> None:
+    identity = ri.RuntimeIdentity(
+        schema=ri.SCHEMA,
+        runtime_commit=SHA_A,
+        started_at_utc=NOW.isoformat(),
+        lock_sha256_at_start="d" * 64,
+        pid=99,
+        runtime_source="release",
+    )
+    path = tmp_path / "runtime_identity.json"
+    ri.write_runtime_identity_artifact(identity, path)
+    assert ri.read_runtime_identity_artifact(path) == identity
+
+
+def test_evaluate_unequal_reference_without_count_is_a_finding() -> None:
+    report = _report(drift_commits=None, runtime_commit=SHA_A, checkout_commit=SHA_B)
+    assert ri.evaluate_runtime_drift(report, checkout_stable_for_s=600) == []
+    warn = ri.evaluate_runtime_drift(report, checkout_stable_for_s=2 * 3600)
+    assert [f.severity for f in warn] == ["warning"]
+    assert "aaaaaaaa" in warn[0].message
+    assert "bbbbbbbb" in warn[0].message
+    crit = ri.evaluate_runtime_drift(report, checkout_stable_for_s=3 * 86400)
+    assert [f.severity for f in crit] == ["critical"]
+
+
+def test_evaluate_equal_reference_without_count_is_no_drift_finding() -> None:
+    report = _report(drift_commits=0, runtime_commit=SHA_A, checkout_commit=SHA_A)
+    assert ri.evaluate_runtime_drift(report, checkout_stable_for_s=None) == []

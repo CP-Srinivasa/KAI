@@ -73,3 +73,26 @@ def test_health_reports_real_identity_of_this_checkout() -> None:
         assert body["runtime_commit"] == body["checkout_commit"]
         assert body["drift_commits"] == 0
     assert body["started_at_utc"] is not None
+
+
+def test_health_exposes_runtime_and_reference_source(monkeypatch) -> None:
+    """Release-Modus (Cutover 2026-09-04): /health sagt, WOHER der Commit stammt."""
+    monkeypatch.setattr(health_router, "get_runtime_identity", lambda: _identity("7" * 40))
+    monkeypatch.setattr(
+        health_router,
+        "drift_report",
+        lambda identity, **_k: {
+            "runtime_commit": identity.runtime_commit,
+            "checkout_commit": "7" * 40,
+            "drift_commits": 0,
+            "started_at_utc": identity.started_at_utc,
+            "uptime_s": 60.0,
+            "lock_changed": False,
+            "runtime_source": "release",
+            "reference_source": "release",
+        },
+    )
+    body = TestClient(app).get("/health").json()
+    assert body["runtime_source"] == "release"
+    assert body["reference_source"] == "release"
+    assert body["drift_commits"] == 0
