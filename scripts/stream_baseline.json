@@ -1,6 +1,6 @@
 {
   "_comment": "G4-Ratchet (KMA-20260827): Ist-Bestand der im Code deklarierten JSONL-Stroeme. Der Bestand wird NICHT rueckwirkend saniert \u2014 nur der Zuwachs braucht einen Vertrag in config/stream_contracts.json. Neu erzeugen: python scripts/stream_consumer_ratchet.py --update",
-  "count": 108,
+  "count": 107,
   "streams": [
     "agent_scoreboard.jsonl",
     "alert_audit.jsonl",
@@ -21,7 +21,6 @@
     "commands.jsonl",
     "conversation.jsonl",
     "counterfactual_comparison.jsonl",
-    "decision_governance_audit.jsonl",
     "decision_journal.jsonl",
     "decision_journal_chain.jsonl",
     "entry_watcher_audit.jsonl",
