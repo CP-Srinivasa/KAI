@@ -58,7 +58,11 @@ CURRENT_LINK="${KAI_STANDBY_CURRENT:-/home/kai/current}"
 RELEASES_ROOT="${KAI_STANDBY_RELEASES_ROOT:-/home/ubuntu/releases}"
 STATE_ROOT="${KAI_STANDBY_STATE_ROOT:-$REPO}"
 USB="${KAI_STANDBY_USB:-/mnt/kai-data/kai-standby}"
-MOUNT_GUARD="${KAI_STANDBY_MOUNT_GUARD:-/mnt/kai-data}"
+# `-` statt `:-`: ein AUSDRUECKLICH leer gesetzter Wert schaltet den Guard ab,
+# ein ungesetzter bekommt den Produktionspfad. Mit `:-` waere beides gleich
+# gewesen — der Guard haette sich nicht abschalten lassen, und ein Test, der
+# ihn abschalten will, liefe stattdessen gegen /mnt/kai-data.
+MOUNT_GUARD="${KAI_STANDBY_MOUNT_GUARD-/mnt/kai-data}"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 LOG=$USB/standby.log
 
@@ -88,10 +92,16 @@ tar_snapshot() {
 
 # Ein JSON-Feld ohne Python: dieses Skript laeuft im Wiederherstellungspfad und
 # darf nicht davon abhaengen, dass ein Interpreter mit passenden Paketen da ist.
+#
+# `|| true` ist hier kein Schlampern, sondern noetig: unter `set -o pipefail`
+# laesst ein NICHT gefundenes Feld die ganze Pipeline mit 1 zurueckkommen, und
+# `set -e` beendet das Skript dann SOFORT -- fail-closed zwar, aber ohne Grund im
+# Log und im Journal. Ein fehlendes Feld ist hier schlicht ein leerer Wert; die
+# Bewertung macht der Aufrufer, der den passenden BACKUP_FAIL-Grund kennt.
 json_field() {
     local file=$1 key=$2
     grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$file" 2>/dev/null \
-        | head -1 | sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/'
+        | head -1 | sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' || true
 }
 
 # Enthaelt das Archiv wirklich, was es enthalten soll? Ein tar, das leise nichts

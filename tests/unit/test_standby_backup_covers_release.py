@@ -229,6 +229,42 @@ def test_ein_unlesbarer_marker_ist_backup_fail(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
+def test_der_mount_guard_laesst_sich_nur_ausdruecklich_abschalten() -> None:
+    """`${VAR-default}`, nicht `${VAR:-default}` — der Unterschied ist der Fehler.
+
+    Mit `:-` greift der Vorgabewert auch bei einem AUSDRUECKLICH leer gesetzten
+    Wert. Der Guard liesse sich dann gar nicht abschalten, und ein Test, der ihn
+    abschalten will, liefe gegen `/mnt/kai-data`: auf dem CI-Runner ist das
+    nicht gemountet und alles schlaegt fehl, auf dem Pi IST es gemountet und der
+    Guard besteht aus dem falschen Grund. Genau so ist es passiert.
+    """
+    text = SKRIPT.read_text(encoding="utf-8")
+    assert "${KAI_STANDBY_MOUNT_GUARD-" in text
+    assert "${KAI_STANDBY_MOUNT_GUARD:-" not in text
+
+
+def test_ein_nicht_gemounteter_guard_pfad_bricht_ab(tmp_path: Path) -> None:
+    """Die Gegenprobe: gesetzt und kein Mountpoint => Abbruch, kein Backup."""
+    welt = _welt(tmp_path)
+    ergebnis = subprocess.run(  # noqa: S603
+        ["bash", str(SKRIPT), "system"],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "KAI_STANDBY_REPO": str(welt["repo"]),
+            "KAI_STANDBY_CURRENT": str(welt["current"]),
+            "KAI_STANDBY_RELEASES_ROOT": str(welt["releases"]),
+            "KAI_STANDBY_USB": str(welt["usb"]),
+            "KAI_STANDBY_MOUNT_GUARD": str(tmp_path / "kein-mountpoint"),
+        },
+        check=False,
+    )
+    assert ergebnis.returncode != 0
+    assert "not mounted" in ergebnis.stderr
+    assert not list(welt["usb"].glob("*.tar.gz")), "kein Archiv bei blockiertem Guard"
+
+
 def test_die_kanonische_fassung_liegt_im_repository() -> None:
     assert SKRIPT.is_file()
     text = SKRIPT.read_text(encoding="utf-8")
