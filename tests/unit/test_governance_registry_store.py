@@ -4,7 +4,6 @@ Pins the persistence + loader behaviour that wires the gates into production:
 - round-trip model/prompt entries through JSONL
 - lookup by (id, version); unknown → None (fail-closed at the gate)
 - missing file → empty mapping; malformed row skipped, never crashes
-- decision governance audit sidecar append/load
 """
 
 from __future__ import annotations
@@ -13,9 +12,6 @@ from pathlib import Path
 
 from app.security.governance.models import ModelRegistryEntry, PromptRegistryEntry
 from app.security.governance.registry_store import (
-    DecisionRegistryReference,
-    append_decision_governance_audit,
-    load_decision_governance_audit,
     load_model_registry,
     load_prompt_registry,
     lookup_model,
@@ -118,28 +114,3 @@ def test_entry_without_key_fields_is_not_indexed(tmp_path: Path) -> None:
     # missing version → unkeyable → never resolves a decision
     save_model_registry_entry(ModelRegistryEntry(model_id="x", version=None), path)
     assert load_model_registry(path) == {}
-
-
-def test_decision_governance_audit_round_trip(tmp_path: Path) -> None:
-    path = tmp_path / "decision_governance_audit.jsonl"
-    ref = DecisionRegistryReference(
-        model_id="m",
-        model_version="v1",
-        prompt_id="p",
-        prompt_version="v3",
-        approval_status="approved",
-        registry_hash="a" * 64,
-    )
-    append_decision_governance_audit(
-        decision_id="dec_1",
-        reference=ref,
-        authorized=True,
-        blocker_codes=[],
-        timestamp_utc="2026-06-08T00:00:00Z",
-        path=path,
-    )
-    rows = load_decision_governance_audit(path)
-    assert len(rows) == 1
-    assert rows[0]["decision_id"] == "dec_1"
-    assert rows[0]["authorized"] is True
-    assert rows[0]["registry_reference"]["registry_hash"] == "a" * 64

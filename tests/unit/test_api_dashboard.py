@@ -1057,19 +1057,15 @@ def test_audit_chain_endpoint_contract() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["state"] in {"ok", "empty", "broken", "unavailable"}
-    for key in (
-        "available",
-        "entries",
-        "errors",
-        "journal_gaps",
-        "cross_checked",
-        "generated_at",
-    ):
+    for key in ("available", "entries", "errors", "first_error", "reason", "generated_at"):
         assert key in body
+    # Die Decision-Ketten-Felder sind mit der Kette selbst entfallen (2026-09-04).
+    assert "journal_gaps" not in body
+    assert "cross_checked" not in body
 
 
 def test_audit_chain_endpoint_reflects_broken(monkeypatch) -> None:
-    """A tampered chain surfaces as state=broken with the first error (#314)."""
+    """A tampered ledger surfaces as state=broken with the first error (#314)."""
     import app.observability.audit_chain_status as acs
     from app.observability.audit_chain_status import AuditChainStatus
 
@@ -1079,10 +1075,8 @@ def test_audit_chain_endpoint_reflects_broken(monkeypatch) -> None:
             available=True,
             entries=7,
             errors=2,
-            first_error="chain_break idx=1 decision_id=dec-1 expected_prev=… got=…",
-            journal_gaps=0,
-            cross_checked=True,
-            reason="Tamper erkannt — Decision-Audit-Trail kompromittiert.",
+            first_error="seq 3: chain broken (prev_hash mismatch)",
+            reason="Tamper erkannt — der Attestation-Ledger ist kompromittiert.",
         )
 
     monkeypatch.setattr(acs, "load_audit_chain_status", _fake)
@@ -1090,7 +1084,7 @@ def test_audit_chain_endpoint_reflects_broken(monkeypatch) -> None:
     assert body["state"] == "broken"
     assert body["entries"] == 7
     assert body["errors"] == 2
-    assert body["first_error"].startswith("chain_break")
+    assert body["first_error"].startswith("seq 3:")
 
 
 def test_integrity_endpoint_ok(monkeypatch) -> None:
