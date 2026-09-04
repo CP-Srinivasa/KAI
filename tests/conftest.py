@@ -106,6 +106,11 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     monkeypatch.setenv(
         "APP_PAYMENT_JOURNAL_PATH", str(tmp_path / "payments" / "payment_journal.jsonl")
     )
+    #    Der verschluesselte Sidecar muss mit umgebogen werden. Er ist ebenfalls
+    #    append-only; ein Fixture-Eintrag darin waere zwar loeschbar, wuerde aber
+    #    Testmaterial in eine Datei schreiben, die im Backup der Geld-Journale
+    #    steht — und dort hat nichts aus einem Test etwas zu suchen.
+    monkeypatch.setenv("APP_PAYMENT_VAULT_PATH", str(tmp_path / "payments" / "intent_vault.jsonl"))
     get_payment_settings.cache_clear()
     yield
     get_payment_settings.cache_clear()

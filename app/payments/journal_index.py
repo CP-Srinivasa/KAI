@@ -65,6 +65,10 @@ class JournalIndex:
     _receivables: dict[str, Receivable] = field(default_factory=dict)
     #: Bereits gemeldete Waisen-Settlements — eine Waise wird EINMAL gemeldet.
     _orphans: set[str] = field(default_factory=set)
+    #: Bereits gemeldete Doppelbefunde beider Geldjournale (ADR §12). Dieselbe
+    #: Regel wie bei den Waisen: ein Alarm im Fuenf-Minuten-Takt ist ein
+    #: stummgeschalteter Alarm.
+    _dual_conflicts: set[str] = field(default_factory=set)
 
     # -- Aufbau ------------------------------------------------------------- #
 
@@ -112,6 +116,10 @@ class JournalIndex:
         if event_type == "orphan_settlement":
             if isinstance(dedup, str) and dedup:
                 self._orphans.add(dedup)
+            return
+        if event_type == "dual_journal_conflict":
+            if isinstance(dedup, str) and dedup:
+                self._dual_conflicts.add(dedup)
             return
         if isinstance(dedup, str) and dedup and intent_id and event_type == "submitted":
             self._dedup.setdefault(intent_id, dedup)
@@ -195,6 +203,10 @@ class JournalIndex:
         """Waisen, die schon einen Record haben. Zweimal melden waere Laerm."""
         return frozenset(self._orphans)
 
+    def dual_conflict_keys(self) -> frozenset[str]:
+        """Doppelbefunde beider Journale, die schon einen Record haben."""
+        return frozenset(self._dual_conflicts)
+
     def totals_for_day(self, moment: datetime) -> DayTotals:
         day = self._day_key(moment)
         return self._days.get(day or "", DayTotals())
@@ -219,6 +231,7 @@ class JournalIndex:
                 for ref, r in sorted(self._receivables.items())
             },
             "orphans": sorted(self._orphans),
+            "dual_conflicts": sorted(self._dual_conflicts),
         }
 
 

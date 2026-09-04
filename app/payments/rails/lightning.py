@@ -43,6 +43,7 @@ from app.payments.rail import (
     RailPaymentList,
     RailResult,
 )
+from app.payments.rails import lightning_invoice
 from app.payments.rails.lightning_mapping import (
     destination_from_payreq,
     lookup_from_payment,
@@ -50,7 +51,6 @@ from app.payments.rails.lightning_mapping import (
     payments_from_rows,
     result_from_send,
     sat,
-    sha,
     wallet_is_locked,
 )
 from app.payments.rails.lightning_scan import scan_payments
@@ -280,69 +280,21 @@ class LightningRail:
         )
 
     # -- Empfangen ---------------------------------------------------------- #
+    #
+    # Beide Wege gehen ueber den INVOICE-Scope und nie ueber ein
+    # Sende-Credential: Geld annehmen braucht kein Recht, Geld zu bewegen.
 
     async def create_invoice(self, request: InvoiceRequest) -> Invoice:
-        """``add_invoice`` im INVOICE-Scope — kein Sende-Credential noetig."""
-        try:
-            response = await self._client("invoice").add_invoice(
-                value_sat=request.amount.minor_units,
-                expiry_seconds=request.expiry_seconds,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise RailError(f"create_invoice failed: {type(exc).__name__}: {exc}") from exc
-        ref_hash = normalise_payment_hash(response.get("r_hash"))
-        if not ref_hash:
-            raise RailError("add_invoice returned no usable r_hash")
-        # Ohne die kodierte Aufforderung kann der Zahler nichts tun; ein
-        # ``ref_hash`` allein ist eine Quittungsnummer ohne Rechnung. Der Node
-        # liefert sie immer mit — tut er es nicht, ist die Antwort kaputt und
-        # nicht "eine Invoice ohne Text".
-        payment_request = str(response.get("payment_request") or "")
-        if not payment_request:
-            raise RailError("add_invoice returned no payment_request")
-        return Invoice(
-            rail=self.name,
-            ref_hash=ref_hash,
-            amount=request.amount,
-            payee_hash=sha(f"self:{self.name}"),
-            expires_at=datetime.now(UTC) + timedelta(seconds=request.expiry_seconds),
-            memo_hash=request.memo_hash,
-            payment_request=payment_request,
+        """Eine eigene Forderung ausstellen (Self-Use-Receivable, ADR §1)."""
+        return await lightning_invoice.create_invoice(
+            self._client("invoice"), request, rail=self.name
         )
 
     async def invoice_status(self, ref_hash: str) -> InvoiceStatus:
         """Nie werfen: eine unbeantwortete Frage heisst "noch nicht bezahlt"."""
-        moment = datetime.now(UTC)
-        wanted = normalise_payment_hash(ref_hash)
-        pending = InvoiceStatus(
-            rail=self.name,
-            ref_hash=wanted or ref_hash,
-            settled=False,
-            observed_at=moment,
+        return await lightning_invoice.invoice_status(
+            self._client("invoice"), ref_hash, rail=self.name
         )
-        try:
-            invoices = await self._client("invoice").list_invoices()
-        except Exception:  # noqa: BLE001
-            return pending
-        for raw in invoices:
-            if not isinstance(raw, dict):
-                continue
-            if normalise_payment_hash(raw.get("r_hash")) != wanted:
-                continue
-            if not bool(raw.get("settled", False)):
-                return pending
-            settled_index = int(raw.get("settle_date") or 0)
-            return InvoiceStatus(
-                rail=self.name,
-                ref_hash=wanted,
-                settled=True,
-                observed_at=moment,
-                amount_paid=sat(int(raw.get("amt_paid_sat") or 0)),
-                settled_at=(
-                    datetime.fromtimestamp(settled_index, tz=UTC) if settled_index > 0 else None
-                ),
-            )
-        return pending
 
 
 __all__ = ["LightningRail"]

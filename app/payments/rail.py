@@ -30,6 +30,12 @@ from pydantic import BaseModel, Field, field_validator
 from app.payments.enums import CounterpartyKind, RailOutcome, SettlementFinality
 from app.payments.models import Invoice, Money, PaymentAttempt, PaymentIntent, Proof, Quote
 from app.payments.money import FROZEN, HASH_LENGTH, require_aware
+from app.payments.rail_invoice import (
+    MAX_MEMO_LENGTH,
+    MEMO_PREFIX,
+    InvoiceRequest,
+    InvoiceStatus,
+)
 
 
 class RailAction(StrEnum):
@@ -229,38 +235,6 @@ class RailPaymentList(BaseModel):
     complete: bool = True
 
 
-class InvoiceRequest(BaseModel):
-    """Eine Forderung, die KAI ausstellen will (Self-Use-Receivable, ADR §1)."""
-
-    model_config = FROZEN
-
-    amount: Money
-    memo_hash: str = Field(default="", max_length=HASH_LENGTH)
-    #: Eine Stunde — dieselbe Frist wie an der HTTP-Grenze. Zwei Defaults fuer
-    #: dieselbe Frist waeren eine Falle: der interne Aufrufer bekaeme still
-    #: eine andere Invoice als der Operator ueber die API.
-    expiry_seconds: int = Field(default=3600, gt=0, le=86_400)
-    purpose: str = Field(min_length=1, max_length=64)
-
-
-class InvoiceStatus(BaseModel):
-    """Ob eine ausgestellte Forderung beglichen wurde."""
-
-    model_config = FROZEN
-
-    rail: str = Field(min_length=1, max_length=32)
-    ref_hash: str = Field(min_length=HASH_LENGTH, max_length=HASH_LENGTH)
-    settled: bool
-    observed_at: datetime
-    amount_paid: Money | None = None
-    settled_at: datetime | None = None
-
-    @field_validator("observed_at")
-    @classmethod
-    def _aware(cls, value: datetime) -> datetime:
-        return require_aware(value, "observed_at")
-
-
 @runtime_checkable
 class PaymentRail(Protocol):
     """Was jeder Rail koennen muss (ADR §7).
@@ -301,6 +275,8 @@ class RailError(RuntimeError):
 
 
 __all__ = [
+    "MAX_MEMO_LENGTH",
+    "MEMO_PREFIX",
     "CaptureModel",
     "DecodedDestination",
     "DedupGuarantee",

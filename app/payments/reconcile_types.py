@@ -62,6 +62,11 @@ class ReconcileReport:
     #: ungeklaerter Sends von einem sauberen nicht zu unterscheiden.
     unresolved: int = 0
     checked_receivables: int = 0
+    #: Zahlungen, die BEIDE Geldjournale fuehren und die der Altpfad nicht
+    #: bewiesen abgeschlossen hat (ADR §12). Genau wie eine Waise: einmal
+    #: gemeldet, danach still — aber der Lauf bleibt ``attention``, solange
+    #: sie in diesem Lauf gefunden wurden.
+    dual_conflicts: tuple[str, ...] = ()
     #: Vom Rail durchgereichte Ehrlichkeit seiner Aufzaehlung (ADR §8).
     window_enforced: bool = False
     complete: bool = True
@@ -79,6 +84,7 @@ class ReconcileReport:
             "checked_intents": self.checked_intents,
             "unresolved": self.unresolved,
             "checked_receivables": self.checked_receivables,
+            "dual_conflicts": list(self.dual_conflicts),
             "window_enforced": self.window_enforced,
             "complete": self.complete,
             "ran_at": self.ran_at,

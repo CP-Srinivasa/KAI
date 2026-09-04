@@ -128,3 +128,27 @@ def test_der_router_haengt_die_payment_sektion_selbst_an(monkeypatch: pytest.Mon
 
     assert set(captured["extra"]) == {"payments"}
     assert isinstance(captured["extra"]["payments"], PaymentSettings)
+
+
+def test_der_vault_schluessel_erscheint_nur_als_fingerprint() -> None:
+    """``APP_PAYMENT_VAULT_KEY`` ist Schluesselmaterial und gehoert in keine Antwort.
+
+    Der Operator muss trotzdem sehen KOENNEN, welcher Schluessel geladen ist —
+    sonst kann er nach einem Rotationsfehler nicht unterscheiden, ob der Vault
+    leer ist oder der falsche Schluessel dranhaengt. Genau dafuer gibt es den
+    Fingerprint.
+    """
+    import base64
+
+    from app.core.config_redaction import redacted_config_snapshot
+    from app.core.settings import AppSettings
+
+    secret = base64.b64encode(b"s" * 32).decode("ascii")
+    snapshot = redacted_config_snapshot(
+        AppSettings(_env_file=None),
+        extra_sections={"payments": PaymentSettings(mode="simulation", vault_key=secret)},
+    )
+
+    shown = snapshot["sections"]["payments"]["vault_key"]
+    assert secret not in str(snapshot)
+    assert shown.startswith("(set:")

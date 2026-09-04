@@ -117,9 +117,14 @@ class FakeClient:
             raise pages
         return FakePage(list(pages or []))
 
-    async def add_invoice(self, *, value_sat: int, expiry_seconds: int = 300) -> dict[str, Any]:
+    async def add_invoice(
+        self, *, value_sat: int, memo: str = "", expiry_seconds: int = 300
+    ) -> dict[str, Any]:
         self.calls.append(
-            ("add_invoice", {"value_sat": value_sat, "expiry_seconds": expiry_seconds})
+            (
+                "add_invoice",
+                {"value_sat": value_sat, "memo": memo, "expiry_seconds": expiry_seconds},
+            )
         )
         response = self.behaviour.get("add_invoice")
         if isinstance(response, Exception):
@@ -475,6 +480,51 @@ async def test_create_invoice_without_a_payment_request_is_refused() -> None:
         await a_rail(FakeClient(add_invoice={"r_hash": PAYMENT_HASH})).create_invoice(
             InvoiceRequest(amount=sat(1000), purpose="self_test")
         )
+
+
+async def test_create_invoice_sends_a_memo_to_the_node() -> None:
+    """Ohne ``memo`` am Node traegt die Invoice keinen Absender.
+
+    Der Befund aus dem LIVE-Fenster 2026-09-04: ``add_invoice`` wurde ohne
+    ``memo`` gerufen, die Forderungen kamen ohne KAI-Praefix am Node an, und die
+    Einnahmenbuchung (``app/lightning/earnings_ledger.py``, die auf dem
+    Memo-Praefix matcht) hat sie nie gesehen. Ein Default aus dem Verwendungs-
+    zweck ist die kleinste Zusage, die das schliesst.
+    """
+    client = FakeClient()
+    await a_rail(client).create_invoice(InvoiceRequest(amount=sat(1000), purpose="self_test"))
+    sent = [payload for name, payload in client.calls if name == "add_invoice"]
+    assert sent and sent[0]["memo"] == "kai-pay: self_test"
+
+
+async def test_create_invoice_passes_an_explicit_memo_through() -> None:
+    client = FakeClient()
+    await a_rail(client).create_invoice(
+        InvoiceRequest(amount=sat(1000), purpose="self_test", memo="kai-pay: oracle scope x")
+    )
+    sent = [payload for name, payload in client.calls if name == "add_invoice"]
+    assert sent and sent[0]["memo"] == "kai-pay: oracle scope x"
+
+
+async def test_invoice_memo_hash_is_the_hash_of_the_memo_that_was_sent() -> None:
+    """Der Hash im Journal muss den Text belegen, den der Node wirklich sah.
+
+    Ein vom Aufrufer mitgegebener ``memo_hash`` waere ein Hash ohne Urbild —
+    er belegt nichts, weil niemand pruefen kann, wovon er stammt.
+    """
+    import hashlib
+
+    memo = "kai-pay: self_test"
+    invoice = await a_rail(FakeClient()).create_invoice(
+        InvoiceRequest(amount=sat(1000), purpose="self_test")
+    )
+    assert invoice.memo_hash == hashlib.sha256(memo.encode()).hexdigest()
+
+
+async def test_a_memo_never_carries_the_payment_request() -> None:
+    """Ein Memo ist oeffentlich — es darf nie Rail-Material tragen."""
+    with pytest.raises(ValueError, match="memo"):
+        InvoiceRequest(amount=sat(1000), purpose="self_test", memo=BOLT11)
 
 
 async def test_create_invoice_without_a_usable_hash_is_refused() -> None:

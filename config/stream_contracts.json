@@ -32,21 +32,30 @@
       "decision_that_would_change": "Der Operator wuerde nicht erfahren, dass die Pipeline steht — und keinen Neustart ausloesen; ohne den Strom sieht ein tauber Kanal aus wie ein ruhiger.",
       "monitoring": "freshness"
     },
-    "ln_input_contract_rejections.jsonl": {
-      "reader": "app/audit/input_contract_rejections.py",
-      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund; der Geldpfad bleibt zwar fail-closed, aber der Operator koennte Caller-Fehler und Vertragsverletzung nicht auseinanderhalten.",
-      "failure_would_be_noticed_by": "Der Writer kennzeichnet einen fehlgeschlagenen Reject-Append sofort in LightningOpsLedgerError; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
-      "time_to_notice": "Im selben abgelehnten Writer-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
-      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder fehlerhaften Money-Caller vor einem erneuten Intent, statt die Ablehnung als Journal- oder Node-Ausfall zu behandeln.",
-      "monitoring": "alternative_watcher",
-      "watcher": "_check_input_contract_rejection_streams"
-    },
     "analysis_input_contract_rejections.jsonl": {
       "reader": "app/audit/input_contract_rejections.py",
       "failure_consequence": "Eine vor dem LLM abgelehnte Quelle waere nicht dauerhaft von Provider-Ausfall oder normalem Analysefehler unterscheidbar.",
       "failure_would_be_noticed_by": "Der PipelineResult kennzeichnet einen fehlgeschlagenen Reject-Append sofort; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
       "time_to_notice": "Im selben abgelehnten Analyse-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
       "decision_that_would_change": "Der Operator repariert Reject-Speicher oder die betroffene Inhaltsquelle, bevor diese Quelle erneut fuer LLM-Klassifikation freigegeben wird.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_input_contract_rejection_streams"
+    },
+    "intent_vault.jsonl": {
+      "reader": "app/alerts/health_check_payments.py",
+      "failure_consequence": "Der verschluesselte Sidecar traegt die Rohfelder jedes freigegebenen, noch nicht gesendeten Vorgangs (ADR 0018 §5). Faellt er aus oder wird er unlesbar, ueberlebt kein Intent mehr einen Neustart von kai-server: der Operator muss jeden Vorgang mitten im scharfen Fenster neu anlegen — genau der Befund aus dem LIVE-Fenster 2026-09-04. Geld bewegt sich dadurch nicht falsch (das Journal bleibt die Wahrheit), aber der Sendepfad wird unbenutzbar, ohne dass etwas kaputt aussieht.",
+      "failure_would_be_noticed_by": "_check_payment_journal_chain in app/alerts/health_check.py ruft check_payment_intent_vault in app/alerts/health_check_payments.py mit auf: die Sonde prueft die Form jeder Zeile (ohne Schluessel) und meldet warning, sobald ein offener Vorgang vor dem Send keinen Vault-Eintrag hat; zusaetzlich bricht PaymentService.recover() beim Prozessstart fail-closed ab, wenn der Vault nicht zu oeffnen ist.",
+      "time_to_notice": "Beim naechsten Health-Check-Lauf (5-Minuten-Timer), spaetestens beim naechsten Start von kai-server — dort sofort und blockierend.",
+      "decision_that_would_change": "Der Operator repariert Vault oder Schluessel VOR dem naechsten Neustart, statt im laufenden Fenster festzustellen, dass ein freigegebener Intent nicht mehr ausfuehrbar ist und neu angelegt werden muss.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_payment_journal_chain"
+    },
+    "ln_input_contract_rejections.jsonl": {
+      "reader": "app/audit/input_contract_rejections.py",
+      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund; der Geldpfad bleibt zwar fail-closed, aber der Operator koennte Caller-Fehler und Vertragsverletzung nicht auseinanderhalten.",
+      "failure_would_be_noticed_by": "Der Writer kennzeichnet einen fehlgeschlagenen Reject-Append sofort in LightningOpsLedgerError; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
+      "time_to_notice": "Im selben abgelehnten Writer-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder fehlerhaften Money-Caller vor einem erneuten Intent, statt die Ablehnung als Journal- oder Node-Ausfall zu behandeln.",
       "monitoring": "alternative_watcher",
       "watcher": "_check_input_contract_rejection_streams"
     },
