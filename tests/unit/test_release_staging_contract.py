@@ -103,8 +103,7 @@ def test_der_builder_faellt_auf_ein_nicht_startfaehiges_release_durch(skript: st
     smoke = skript.index("SMOKE_IMPORT_FAILED")
     ready = skript.index("RELEASE_READY=")
     assert smoke < ready, (
-        "der Smoke-Test steht hinter RELEASE_READY — ein totes Release "
-        "wuerde als fertig gemeldet"
+        "der Smoke-Test steht hinter RELEASE_READY — ein totes Release wuerde als fertig gemeldet"
     )
 
 
