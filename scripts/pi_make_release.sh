@@ -22,20 +22,30 @@
 # Restarts.
 #
 # Usage:
-#   bash scripts/pi_make_release.sh [--repo <checkout>] [--releases <dir>] [--state <dir>]
+#   bash scripts/pi_make_release.sh [--repo <checkout>] [--releases <dir>]
+#                                  [--state <dir>] [--rebuild]
+#
+# `--rebuild` nur fuer den Fall RELEASE_TREE_MISMATCH: derselbe `repo_sha`,
+# aber ein anderer Baum (praktisch immer ein neu gebautes `web/dist`). Ohne
+# das Flag bricht der Builder ab, statt den alten Baum stillschweigend
+# weiterzureichen; mit dem Flag baut er DANEBEN, unter `<SHA>-<tree8>`, und
+# laesst das aktive Release unangetastet.
 #
 # Exit: 0 = Release gebaut und versiegelt (Pfad auf stdout) · 1 = gescheitert
+#       (auch bei RELEASE_TREE_MISMATCH ohne --rebuild)
 set -uo pipefail
 
 BUILDER_VERSION="pi_make_release/1"
 REPO="."
 RELEASES=""
 STATE=""
+REBUILD=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo) REPO="$2"; shift 2 ;;
         --releases) RELEASES="$2"; shift 2 ;;
         --state) STATE="$2"; shift 2 ;;
+        --rebuild) REBUILD=1; shift ;;
         *) echo "unbekanntes Argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -52,37 +62,101 @@ LOCK="$REPO/requirements.lock"
 TARGET="$RELEASES/$REPO_SHA"
 STAGE="$RELEASES/.staging-$REPO_SHA.$$"
 
+# Der Code-Teil des Stagings, als Funktion -- denn die Idempotenz-Pruefung
+# unten braucht denselben Baum ein zweites Mal, nur ohne venv. Zwei Kopien
+# dieser Liste waeren zwei Wahrheiten darueber, was ein Release ausmacht.
+stage_code() {
+    local dest=$1
+    rm -rf "$dest"
+    mkdir -p "$dest" || return 1
+    for d in app config deploy monitor scripts; do
+        [ -d "$REPO/$d" ] && cp -a "$REPO/$d" "$dest/$d"
+    done
+    # Wurzel-Artefakte, die der laufende Code ueber ``parents[2]`` liest. Fehlt
+    # CONFIG_SCHEMA.json, wirft bereits ``get_settings()`` -- das Release liesse
+    # sich versiegeln und koennte trotzdem nicht starten (gemessen 2026-09-04).
+    for f in requirements.lock pyproject.toml CONFIG_SCHEMA.json DECISION_SCHEMA.json alembic.ini; do
+    [ -f "$REPO/$f" ] && cp -a "$REPO/$f" "$dest/$f"
+    done
+    # Die gebaute SPA ist Code, kein Zustand: `app/api/main.py` mountet sie ueber
+    # das CWD-relative `web/dist`, und das CWD ist nach dem Cutover die
+    # Release-Wurzel. Fehlt sie dort, verschwindet /dashboard STILL -- der Mount
+    # steht hinter `if _spa_dir.is_dir()`, es gibt also weder Fehler noch Log.
+    if [ -d "$REPO/web/dist" ]; then
+    mkdir -p "$dest/web"
+    cp -a "$REPO/web/dist" "$dest/web/dist"
+    else
+    echo "WARNUNG: $REPO/web/dist fehlt — dieses Release liefert KEIN Dashboard." >&2
+    fi
+
+    # Caches gehoeren nicht in eine Identitaet.
+    find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+}
+
+# Existiert das Ziel schon, entscheidet der BAUM, nicht der Pfad.
+#
+# Bis 2026-09-04 genuegte hier `[ -d "$TARGET" ] && exit 0`. Das war richtig,
+# solange `repo_sha` den Baum bestimmte. Seit `web/dist` zur Identitaet gehoert
+# (#873) stimmt das nicht mehr: die gebaute SPA ist gitignored und damit NICHT
+# aus dem Commit ableitbar. Zwei verschiedene Baeume koennen sich denselben
+# `repo_sha` teilen -- und der Builder gab den alten zurueck, ohne hinzusehen.
+#
+# Gemessen: Release b78872b0 trug `assets/index-DkDllgvZ.js`, gebaut VOR #848,
+# waehrend sein eigener Code von DANACH stammte. `verify_release` blieb gruen,
+# weil der Baum zu seinem eigenen Manifest passte -- nur eben nicht zum Commit.
+#
+# Die Probe ist billig: sie stellt nur den Code-Baum her (kein venv, der geht
+# nicht in den Hash ein) und rechnet mit DEMSELBEN Code, der spaeter prueft.
 if [ -d "$TARGET" ]; then
-    echo "Release existiert bereits: $TARGET" >&2
-    echo "$TARGET"
-    exit 0
+    PROBE="$RELEASES/.probe-$REPO_SHA.$$"
+    trap 'rm -rf "$PROBE"' EXIT
+    stage_code "$PROBE" || { echo "Probe-Staging gescheitert" >&2; exit 1; }
+    NEW_TREE="$(python3 -c "
+import sys
+sys.path.insert(0, '$PROBE')
+from app.observability.release_identity import release_tree_sha256
+from pathlib import Path
+print(release_tree_sha256(Path('$PROBE')))
+")" || { echo "Probe-Hash gescheitert" >&2; exit 1; }
+    OLD_TREE="$(python3 -c "
+import json, sys
+try:
+    print(json.load(open('$TARGET/release.json'))['release_tree_sha256'])
+except Exception:
+    sys.exit(1)
+")" || OLD_TREE=""
+    rm -rf "$PROBE"; trap - EXIT
+
+    if [ "$NEW_TREE" = "$OLD_TREE" ]; then
+        echo "Release existiert bereits und ist baum-identisch: $TARGET" >&2
+        echo "$TARGET"
+        exit 0
+    fi
+
+    echo "RELEASE_TREE_MISMATCH: $TARGET traegt einen ANDEREN Baum als der" >&2
+    echo "  aktuelle Arbeitsbaum unter demselben repo_sha." >&2
+    echo "    vorhanden: ${OLD_TREE:-<unlesbar>}" >&2
+    echo "    aktuell:   $NEW_TREE" >&2
+    echo "  Ueblichste Ursache: web/dist wurde neu gebaut (gitignored, also nicht" >&2
+    echo "  aus dem Commit ableitbar). Ein stilles Wiederverwenden waere eine" >&2
+    echo "  Luege ueber den ausgelieferten Code." >&2
+    if [ "$REBUILD" -eq 1 ]; then
+        TARGET="$RELEASES/$REPO_SHA-${NEW_TREE:0:8}"
+        STAGE="$RELEASES/.staging-$REPO_SHA.$$"
+        if [ -d "$TARGET" ]; then
+            echo "  --rebuild: $TARGET existiert bereits" >&2
+            echo "$TARGET"
+            exit 0
+        fi
+        echo "  --rebuild: baue nach $TARGET" >&2
+    else
+        echo "  --rebuild baut daneben, unter <SHA>-<tree8>." >&2
+        exit 1
+    fi
 fi
 
 echo "== 1/6 Code in die Staging-Flaeche ==" >&2
-rm -rf "$STAGE"
-mkdir -p "$STAGE" || { echo "kann $STAGE nicht anlegen" >&2; exit 1; }
-for d in app config deploy monitor scripts; do
-    [ -d "$REPO/$d" ] && cp -a "$REPO/$d" "$STAGE/$d"
-done
-# Wurzel-Artefakte, die der laufende Code ueber ``parents[2]`` liest. Fehlt
-# CONFIG_SCHEMA.json, wirft bereits ``get_settings()`` -- das Release liesse
-# sich versiegeln und koennte trotzdem nicht starten (gemessen 2026-09-04).
-for f in requirements.lock pyproject.toml CONFIG_SCHEMA.json DECISION_SCHEMA.json alembic.ini; do
-    [ -f "$REPO/$f" ] && cp -a "$REPO/$f" "$STAGE/$f"
-done
-# Die gebaute SPA ist Code, kein Zustand: `app/api/main.py` mountet sie ueber
-# das CWD-relative `web/dist`, und das CWD ist nach dem Cutover die
-# Release-Wurzel. Fehlt sie dort, verschwindet /dashboard STILL -- der Mount
-# steht hinter `if _spa_dir.is_dir()`, es gibt also weder Fehler noch Log.
-if [ -d "$REPO/web/dist" ]; then
-    mkdir -p "$STAGE/web"
-    cp -a "$REPO/web/dist" "$STAGE/web/dist"
-else
-    echo "WARNUNG: $REPO/web/dist fehlt — dieses Release liefert KEIN Dashboard." >&2
-fi
-
-# Caches gehoeren nicht in eine Identitaet.
-find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
+stage_code "$STAGE" || { echo "kann $STAGE nicht anlegen" >&2; exit 1; }
 
 echo "== 2/6 Zustand VERLINKEN, nicht kopieren ==" >&2
 # Wanderten .env, logs/, data/ und artifacts/ mit ins Release, verlore jeder
