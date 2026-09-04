@@ -15,6 +15,7 @@ darf dabei nichts bewegen. Drei Zusagen tragen diese Datei:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -524,3 +525,54 @@ async def test_a_settled_intent_is_never_sent_again_after_the_timer_settled_it(
     assert view.replayed is True
     assert view.status is PaymentStatus.SETTLED
     assert rail.pay_calls == sends_before, "kein zweiter Send auf einem erledigten Intent"
+
+
+# --------------------------------------------------------------------------- #
+# Vierte Richtung: Journal gegen Journal (ADR §12)
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_dual_journal_conflict_makes_the_run_attention(tmp_path: Path) -> None:
+    """Solange zwei Buecher laufen, ist ihr Widerspruch ein Befund.
+
+    Der Reconciler hielt bisher jedes Journal einzeln gegen den Node und nie die
+    beiden gegeneinander (Evidenzbericht §11, bekannte Grenze). Eine Zahlung,
+    die beide fuehren und die der Altpfad fuer offen haelt, war damit unsichtbar.
+    """
+    journal, rail, service, intent_id = await open_intent(tmp_path)
+    key = journal.index.dedup_key(intent_id)
+    assert key is not None
+
+    legacy = tmp_path / "ln_ops_ledger_v2.jsonl"
+    legacy.write_text(
+        json.dumps(
+            {
+                "ts": NOW.isoformat(),
+                "intent_id": "legacy-1",
+                "action": "pay_invoice",
+                "state": "intent",
+                "plan": {"payment_hash": key},
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = await run(journal, rail, tmp_path, legacy_path=legacy)
+    assert report.dual_conflicts == (key,)
+    assert report.status == "attention"
+    assert report.counts["DUAL_JOURNAL_CONFLICT"] == 1
+    assert "dual_journal_conflict" in [event.event_type for event in journal.events()]
+
+
+async def test_a_run_without_a_legacy_journal_stays_ok(tmp_path: Path) -> None:
+    """Nach dem Rueckbau des Altpfads verschwindet diese Richtung geraeuschlos."""
+    journal, rail, service, intent_id = await open_intent(tmp_path)
+    key = journal.index.dedup_key(intent_id)
+    assert key is not None
+    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000)
+
+    report = await run(journal, rail, tmp_path, legacy_path=tmp_path / "nothing.jsonl")
+    assert report.dual_conflicts == ()
+    assert report.status == "ok"
