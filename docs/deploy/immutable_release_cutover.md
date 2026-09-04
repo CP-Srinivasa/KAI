@@ -131,6 +131,12 @@ führt ausschließlich 5–7 aus. Wer sich auf den Kommentar verlässt und 3/4
 überspringt, schaltet `current` um, während die Units noch auf den Checkout
 zeigen — der Switch bleibt dann folgenlos und `/health` meldet trotzdem grün.
 
+**Erst-Cutover:** solange `current` fehlt, hält Schritt 3 die fünf
+RELEASE_BOUND-Units zurück (siehe [Apply vor Cutover](#apply-vor-cutover--der-vorfall-vom-2026-09-04)).
+Beim ersten Mal lautet die Reihenfolge deshalb 1 → 2 → 5/6/7 → 3 → 4 → 8 → 9 → 10.
+Das verletzt Regel 1 nicht: sie schützt den ersten **Start** (Schritt 8), und
+der kommt weiterhin nach den Units.
+
 ---
 
 ## Schritt 2 — `pi_make_release.sh`
@@ -198,6 +204,60 @@ Termin hat, sieht in jeder anderen Prüfung gesund aus.
 **Ehrliche Grenze:** kein transaktionaler Vorgang. Zwischen erster Kopie und
 letztem Beweis existiert ein Zustand, in dem manche Units neu und manche alt
 sind. Der Rollback ist ein Rückweg, keine Atomarität.
+
+### Apply vor Cutover — der Vorfall vom 2026-09-04
+
+`pi_apply_systemd_units.sh` hat die fünf RELEASE_BOUND-Units nach `/etc`
+kopiert, während `/home/kai/current` auf der Pi nicht existierte (Messung
+oben: weder `releases/` noch `current`). Kopieren ist bei diesen Units nicht
+folgenlos: die Datei in `/etc` wird beim nächsten Restart gelesen, egal wer ihn
+auslöst. Der nächste `systemctl restart kai-server` scheiterte mit
+`status=200/CHDIR`, `kai-agent-worker` und `kai-entry-watch` folgten als
+Abhängige — rund 10 Minuten Ausfall, Rückweg aus `/var/backups/kai-units/<ts>/`.
+Der Installer-Guard aus #855 (`assert_release_ready`) sass nur vor
+`enable --now` und hat den Apply-Pfad nie gesehen.
+
+Seitdem gilt für den Apply — und für `pi_unit_sync_apply`, das er aufruft:
+
+```
+release-gebunden   =  `--repo <ziel>` hinter runtime-exec
+                      oder WorkingDirectory auf …/current
+Release aktiv      =  <ziel> ist ein Verzeichnis (Symlink aufgelöst)
+                   +  <ziel>/release.json          (pi_make_release.sh, Stufe 5)
+                   +  <ziel>/.venv/bin/python      (pi_make_release.sh, Stufe 3)
+```
+
+Eine release-gebundene Unit wird **nur** dann nach `/etc` geschrieben, wenn ihr
+Ziel auf diesem Host ein aktives Release ist. Andernfalls:
+
+- die Datei wird **übersprungen** — `/etc` behält den alten Stand, es wird
+  nichts gesichert und nichts bewiesen, was nicht geschrieben wurde;
+- der Lauf meldet je Unit `SKIPPED_RELEASE_NOT_ACTIVE <unit> (<grund>)`;
+- die übrigen Units (CHECKOUT_BOUND, REPO_INDEPENDENT) laufen unverändert durch;
+- Exit-Code **10** (HOLD), nicht 1 — übersprungen ist kein Fehlschlag und löst
+  keinen Rollback aus; `--dry-run` zeigt denselben HOLD, bevor ein Passwort
+  fällt;
+- das Ergebnis nennt die Übersprungenen beim Namen. Kein `[ -d ] || continue`:
+  `FALSE_GREEN_ON_MISSING_ACTIVE_RELEASE = IMPOSSIBLE` gilt hier genauso wie
+  beim Backup-Vertrag unten.
+
+Das Kriterium liegt in **einer** Quelle, `scripts/lib/pi_release_guard.sh`;
+Installer (`assert_release_ready`, #855) und Unit-Sync fragen dieselbe
+Funktion. Was der Guard nicht prüft: den Baum-Hash — das bleibt
+`verify_release` in `pi_activate_release.sh`. Ein Shell-Guard vor dem Kopieren
+einer Unit-Datei muss nur wissen, ob der Start überhaupt landen kann.
+
+```
+$ bash scripts/pi_apply_systemd_units.sh --dry-run
+SKIPPED_RELEASE_NOT_ACTIVE kai-server.service (/home/kai/current existiert nicht)
+…
+Uebersprungen (kein aktives Release auf diesem Host): kai-server.service …
+Erst  bash scripts/pi_make_release.sh  und  bash scripts/pi_activate_release.sh,
+dann erneut anwenden. Ein Start in einen leeren Pfad erzeugt tote Dienste (200/CHDIR).
+--dry-run: nichts geschrieben.
+$ echo $?
+10
+```
 
 ---
 
