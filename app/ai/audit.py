@@ -52,10 +52,14 @@ Outcome = Literal["success", "fallthrough", "exhausted", "skipped"]
 # Classes for which a second attempt cannot possibly help. Everything else is
 # retryable - deliberately a deny-list, so unclassified errors keep the
 # pre-existing retry behaviour instead of silently losing it.
-_NON_RETRYABLE: frozenset[str] = frozenset({"auth", "quota", "schema", "cancelled"})
+NON_RETRYABLE_CLASSES: frozenset[str] = frozenset({"auth", "quota", "schema", "cancelled"})
+#: Rueckwaertskompatibler interner Name. Die OEFFENTLICHE Menge steht darueber:
+#: `app.ai.retry` braucht dieselbe Taxonomie und darf sie nicht zweitschreiben.
+_NON_RETRYABLE: frozenset[str] = NON_RETRYABLE_CLASSES
 
 # 4xx codes that DO warrant a retry (the rest of 4xx is a client-side defect).
-_RETRYABLE_CLIENT_STATUS: frozenset[int] = frozenset({408, 409, 425, 429})
+RETRYABLE_CLIENT_STATUS: frozenset[int] = frozenset({408, 409, 425, 429})
+_RETRYABLE_CLIENT_STATUS: frozenset[int] = RETRYABLE_CLIENT_STATUS
 
 _TRANSPORT_MARKERS: tuple[str, ...] = (
     "connecterror",

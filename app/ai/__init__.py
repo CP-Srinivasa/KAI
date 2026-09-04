@@ -54,6 +54,14 @@ from app.ai.modes import (
     resolve_mode,
     unknown_route_keys,
 )
+from app.ai.retry import (
+    MAX_ATTEMPTS_CEILING,
+    RetryPolicy,
+    delay_before_attempt,
+    is_retryable_class,
+    should_retry,
+    total_backoff_s,
+)
 from app.ai.routes import ROUTES, Route, route_for
 
 __all__ = [
@@ -74,17 +82,21 @@ __all__ = [
     "CallScope",
     "InferenceResult",
     "Mode",
+    "MAX_ATTEMPTS_CEILING",
     "Route",
+    "RetryPolicy",
     "ErrorClass",
     "classify_error",
     "correlation_scope",
     "current_correlation_id",
     "http_status",
+    "is_retryable_class",
     "is_retryable_error",
     "accumulate",
     "circuit_key",
     "cost_known_rate",
     "decide",
+    "delay_before_attempt",
     "execute",
     "headroom_usd",
     "graduated_routes",
@@ -93,6 +105,8 @@ __all__ = [
     "parse_mode",
     "resolve_mode",
     "route_for",
+    "should_retry",
+    "total_backoff_s",
     "total_cost_usd",
     "unknown_route_keys",
 ]
