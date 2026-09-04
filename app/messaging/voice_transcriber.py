@@ -12,6 +12,7 @@ import logging
 import httpx
 
 from app.ai.audit import llm_call_scope
+from app.ai.runtime import LiteLLMRequest, invoke
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +89,37 @@ class VoiceTranscriber:
         files = {"file": (f"voice.{ext}", audio_data, "audio/ogg")}
         data = {"model": self._whisper_model, "language": "de"}
 
-        try:
-            # NEO-F-005/-F-010: audit scope only. The raw httpx multipart POST
-            # is deliberately LEFT IN PLACE — swapping it for the SDK would
-            # move the test patch point and is a separate change.
+        async def direct_call() -> str:
             async with llm_call_scope(purpose="stt", provider="openai", model=self._whisper_model):
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
                     resp.raise_for_status()
                     text = str(resp.json().get("text", "")).strip()
-                if text:
-                    logger.info("[VOICE] Transcribed %d chars", len(text))
-                    return text
-                logger.warning("[VOICE] Whisper returned empty transcript")
+            if not text:
+                raise ValueError("empty_transcription")
+            return text
+
+        def parse_litellm(body: dict[str, object]) -> str:
+            text = body.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("empty_transcription")
+            return text.strip()
+
+        try:
+            routed = await invoke(
+                purpose="stt",
+                direct_call=direct_call,
+                direct_provider="openai",
+                direct_model=self._whisper_model,
+                litellm=LiteLLMRequest(
+                    parser=parse_litellm,
+                    endpoint="/v1/audio/transcriptions",
+                    files=files,
+                    data={"language": "de"},
+                ),
+            )
+            logger.info("[VOICE] Transcribed %d chars", len(routed.value))
+            return routed.value
         except Exception as exc:  # noqa: BLE001
             logger.error("[VOICE] Whisper error: %s", exc)
         return None

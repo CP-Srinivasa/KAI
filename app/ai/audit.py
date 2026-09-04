@@ -26,12 +26,15 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from app.observability.llm_telemetry import record_llm_call
+
+if TYPE_CHECKING:
+    from app.ai.models import AttemptTrace
 
 ErrorClass = Literal[
     "timeout",
@@ -156,6 +159,20 @@ def classify_error(exc: BaseException) -> ErrorClass:
     return "unknown"
 
 
+def is_retryable_error_class(error_class: ErrorClass | None, status: int | None = None) -> bool:
+    """Canonical retry decision for both exceptions and recorded attempts.
+
+    LiteLLM transports return :class:`~app.ai.models.AttemptTrace` instead of
+    raising.  Keeping this decision here prevents an exception policy and a
+    trace policy from drifting apart.
+    """
+    if error_class is None or error_class in _NON_RETRYABLE:
+        return False
+    if status is not None and 400 <= status < 500 and status not in _RETRYABLE_CLIENT_STATUS:
+        return False
+    return True
+
+
 def is_retryable_error(exc: BaseException) -> bool:
     """Retry predicate for the provider-level ``tenacity`` decorators.
 
@@ -163,12 +180,66 @@ def is_retryable_error(exc: BaseException) -> bool:
     retry cannot fix - those previously cost three attempts plus up to 15 s of
     backoff for nothing (NEO-F-006).
     """
-    if classify_error(exc) in _NON_RETRYABLE:
-        return False
-    status = http_status(exc)
-    if status is not None and 400 <= status < 500 and status not in _RETRYABLE_CLIENT_STATUS:
-        return False
-    return True
+    return is_retryable_error_class(classify_error(exc), http_status(exc))
+
+
+def record_attempt_trace(
+    attempt_trace: AttemptTrace,
+    *,
+    correlation_id: str,
+    purpose: Purpose,
+    logical_route: str,
+    mode: str,
+    role: str,
+    attempt_number: int,
+    budget_decision: str,
+    circuit_state: str,
+    execution_authority: bool,
+    schema_status: str | None,
+    outcome: Outcome,
+    fallback_from: str | None = None,
+    fallback_to: str | None = None,
+    path: Path | None = None,
+) -> None:
+    """Append one physical returned attempt to the canonical telemetry stream."""
+    raw_status = attempt_trace.detail.get("status_code")
+    status = raw_status if isinstance(raw_status, int) else None
+    record_llm_call(
+        provider=attempt_trace.actual_provider,
+        model=attempt_trace.actual_model,
+        ok=attempt_trace.ok,
+        latency_ms=attempt_trace.latency_ms,
+        role=role,
+        error_type=str(attempt_trace.detail.get("exception") or "") or None,
+        path=path,
+        correlation_id=correlation_id,
+        call_id=f"llmc_{uuid4().hex[:8]}",
+        purpose=purpose,
+        attempt=attempt_number,
+        error_class=attempt_trace.error_class,
+        http_status=status,
+        prompt_tokens=attempt_trace.input_tokens or 0,
+        completion_tokens=attempt_trace.output_tokens or 0,
+        outcome=outcome,
+        logical_route=logical_route,
+        mode=mode,
+        transport=attempt_trace.transport,
+        requested_model_alias=attempt_trace.requested_model,
+        actual_provider=attempt_trace.actual_provider or None,
+        actual_model=attempt_trace.actual_model or None,
+        identity_proven=attempt_trace.identity_proven,
+        retry_count=max(0, attempt_number - 1),
+        fallback_from=fallback_from,
+        fallback_to=fallback_to,
+        input_tokens=attempt_trace.input_tokens,
+        output_tokens=attempt_trace.output_tokens,
+        cost_usd=attempt_trace.cost_usd,
+        schema_status=schema_status,
+        budget_decision=budget_decision,
+        circuit_state=circuit_state,
+        execution_authority=execution_authority,
+        upstream_request_id=attempt_trace.request_id or None,
+    )
 
 
 @dataclass

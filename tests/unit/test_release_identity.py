@@ -388,13 +388,14 @@ def test_das_aufraeumen_schont_current_und_lebende_prozesse() -> None:
     assert "release_path" in src, "lebende Prozessmarker muessen geschont werden"
 
 
-def test_die_fuenf_langlebigen_units_laufen_aus_dem_release() -> None:
+def test_die_sechs_langlebigen_units_laufen_aus_dem_release() -> None:
     units = [
         "kai-server.service",
         "kai-agent-worker.service",
         "kai-tg-listener.service",
         "kai-liquidation-stream.service",
         "kai-entry-watch.service",
+        "kai-litellm.service",
     ]
     for name in units:
         text = (REPO_ROOT / "deploy" / "systemd" / name).read_text(encoding="utf-8")
@@ -403,7 +404,7 @@ def test_die_fuenf_langlebigen_units_laufen_aus_dem_release() -> None:
         assert "PYTHONDONTWRITEBYTECODE=1" in text, name
         # Zustand bleibt draussen: WO ``ReadWritePaths`` gesetzt ist, zeigt es
         # ausschliesslich auf den Zustandspfad, nie auf den Release-Baum. Nicht
-        # alle fuenf Units sind so gehaertet — das zu behaupten waere falsch.
+        # alle sechs Units sind so gehaertet — das zu behaupten waere falsch.
         rw = [ln for ln in text.splitlines() if ln.startswith("ReadWritePaths=")]
         assert rw in ([], ["ReadWritePaths=/home/kai/ai_analyst_trading_bot"]), name
         assert "ReadWritePaths=/home/kai/current" not in text, name
@@ -415,8 +416,8 @@ def test_die_uebrigen_units_bleiben_bewusst_am_alten_pfad() -> None:
     release_gebunden = [
         u for u in alle if "WorkingDirectory=/home/kai/current" in u.read_text(encoding="utf-8")
     ]
-    assert len(release_gebunden) == 5, [u.name for u in release_gebunden]
-    assert len(alle) > 5, "die uebrigen Units existieren weiterhin"
+    assert len(release_gebunden) == 6, [u.name for u in release_gebunden]
+    assert len(alle) > 6, "die uebrigen Units existieren weiterhin"
 
 
 @pytest.mark.parametrize("script", ["pi_make_release.sh", "pi_activate_release.sh"])
