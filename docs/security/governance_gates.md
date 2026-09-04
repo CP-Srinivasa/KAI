@@ -1,7 +1,7 @@
 # Governance Gates (SENTR)
 
-**Status:** live (gate primitives + tests) **and wired** into the productive
-decision path (Issue #165) — see "Integration" below.
+**Status:** gate primitives + tests live; **nicht verdrahtet** — der produktive
+Aufrufer wurde am 2026-09-04 entfernt (siehe "Integration" unten).
 **Owner:** SENTR (Security & Inspection)
 **Module:** `app/security/governance/`
 **Scope guard:** This is deliberately **not** a full RBAC/ABAC enterprise
@@ -64,7 +64,7 @@ Every productive decision's audit event must carry a complete
 `prompt_version`, `approval_status`, `registry_hash`. A missing or incomplete
 reference is rejected. `registry_hash` is a SHA-256 over the canonical
 (model, prompt) registry pair (`compute_registry_hash`) — tamper-evident, same
-algorithm as `app/audit/decision_chain.py`.
+algorithm as `app/truth/attestation.py` (SHA-256 über kanonisches JSON).
 
 ### Combined — `authorize_productive_decision(model, prompt, requested_tools=...)`
 Runs model gate + prompt gate + per-tool checks and, **only** when all pass,
@@ -83,36 +83,17 @@ required adversarial scenarios plus happy paths and fail-closed edges:
 4. Agent attempts live-key access → denied
 5. Audit event without registry reference → rejected
 
-## Integration (wired — Issue #165)
+## Integration — entfernt am 2026-09-04
 
-The gate primitives are now wired into the productive decision path (additive,
-fail-closed, no `entry_mode` change):
+Die produktive Verdrahtung (`app/orchestrator/governed_decision.py`, der
+Governance-Audit-Sidecar `decision_governance_audit.jsonl` und der SENTR-Modus
+`governance-audit`) wurde am 2026-09-04 entfernt: sie hatte fan-in 0 in
+Produktion, und der Sidecar-Leser war über keinen Enqueue-Pfad erreichbar
+(`_AGENTS["sentr"].modes` kennt den Modus nicht).
 
-- **Registry persistence** — `app/security/governance/registry_store.py`:
-  append-only JSONL under `artifacts/governance/` for the model + prompt
-  registries, with loaders keyed by `(id, version)`. A missing/unknown entry
-  resolves to `None` → the gate refuses (fail-closed). The `save_*` writers are
-  **operator/CLI-only**; agents have no import path to them and the
-  `mutate_registry` capability stays forbidden.
-- **Governed append** — `app/orchestrator/governed_decision.py`
-  `authorize_and_append_decision(...)`: runs `authorize_productive_decision`
-  then `validate_decision_audit` as a **hard gate before the append**. On pass it
-  writes the journal record and persists the `DecisionRegistryReference` (incl.
-  `registry_hash`) to the governance audit sidecar
-  (`decision_governance_audit.jsonl`, keyed by `decision_id`). On fail it writes
-  a refusal audit record, **no** journal record, and raises
-  `GovernanceRejectedError`. `resolve_and_append_decision(...)` resolves the
-  entries from the persisted registries first.
-- **Why a sidecar, not the record?** The canonical `DecisionRecord` is
-  `extra="forbid", frozen`. Persisting the reference in a parallel audit stream
-  keeps the wiring additive and tolerates legacy records without a reference
-  (analog to the `decision_chain` legacy gap) — they surface as
-  `ungoverned (legacy)` in the report rather than crashing the loader.
-- **SENTR `governance-audit` worker mode** — `app/agents/worker.py`: read-only
-  report over the journal + sidecar; counts governed / refused / ungoverned
-  decisions and raises a finding whose severity tracks refusals
-  (`sentr governance-audit`, analog to `sentr kyt-review`).
-
-Existing `append_decision_jsonl` is unchanged (back-compat); callers opt in to
-governance explicitly. `tests/unit/test_governance_registry_store.py`,
-`test_governed_decision.py`, `test_worker_governance_audit.py` pin the contract.
+Damit sind die Gates in `gates.py`/`models.py` heute **geprüfte, ungenutzte
+Primitive**: `authorize_productive_decision` hat keinen Produktionsaufrufer, und
+`app/orchestrator/trading_loop.py` importiert `app.security.governance` nicht.
+`registry_store.py` (Model-/Prompt-Registry) bleibt als Operator-/CLI-Substrat
+stehen. Wer die Gates verdrahtet, baut den Aufrufer neu — vorheriger Stand:
+Commit e6c8936.

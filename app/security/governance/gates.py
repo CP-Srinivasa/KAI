@@ -368,7 +368,7 @@ def compute_registry_hash(
     """Deterministic SHA-256 over the canonical JSON of the (model, prompt)
     registry pair. Tamper-evident: any registry field change changes the hash,
     so an audit event's ``registry_hash`` pins the exact governance posture the
-    decision ran under. Algorithm matches :mod:`app.audit.decision_chain`."""
+    decision ran under (SHA-256 over canonical JSON, wie :mod:`app.truth.attestation`)."""
     payload = {
         "model": {
             "model_id": model_entry.model_id,

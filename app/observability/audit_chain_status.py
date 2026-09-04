@@ -1,24 +1,26 @@
-"""Audit-Chain-Integritäts-Status (#314): Tamper-Evidence des Decision-Journals.
+"""Audit-Chain-Integritäts-Status (#314): Tamper-Evidence des Attestation-Ledgers.
 
-``artifacts/decision_journal_chain.jsonl`` ist der hash-verkettete Tamper-
-Evidence-Stream über ``artifacts/decision_journal.jsonl`` (siehe
-:mod:`app.audit.decision_chain`). Dieses Modul fährt :func:`verify_chain`
-darüber — inkl. Cross-Check der Record-Hashes gegen die Journal-Payloads — und
-leitet einen kompakten, dashboard-tauglichen *Integritäts*-Status ab. Es ist die
-dritte Truth-Layer-KPI neben Replay-Status (Portfolio-Rekonstruierbarkeit) und
-OTS-Integrity (On-Chain-Anchoring).
+``artifacts/truth/attestation_ledger.jsonl`` ist die forward-only Hash-Kette über
+attestierte Aussagen (:mod:`app.truth.ledger`, ADR 0013 Tier 1). Dieses Modul
+rechnet sie über :func:`app.truth.ledger.verify_ledger` nach — Payload-Hash,
+Record-Hash und Verkettung je Record — und leitet einen kompakten,
+dashboard-tauglichen *Integritäts*-Status ab. Es ist die dritte Truth-Layer-KPI
+neben Replay-Status (Portfolio-Rekonstruierbarkeit) und OTS-Integrity
+(On-Chain-Anchoring).
+
+**Quellenwechsel 2026-09-04.** Bis dahin las dieses Modul
+``decision_journal_chain.jsonl``. Dieser Strom hatte keinen Produktionsschreiber
+(``append_chain_entry`` wurde nur von Tests aufgerufen), also konnte das KPI
+strukturell nur ``empty`` liefern: ein Integritätsindikator, der nicht
+fehlschlagen kann, ist schlimmer als keiner. Die Decision-Kette wurde entfernt;
+das Panel zeigt jetzt die Kette, die in Produktion wirklich fortgeschrieben wird.
 
 EHRLICH:
-  * ``empty``       — noch kein Chain-Entry (legitime Migration-Lücke, kein Fehler);
-  * ``ok``          — N Entries, lückenlos verkettet, Record-Hashes konsistent;
-  * ``broken``      — echtes Tamper erkannt (Chain-Bruch / Hash-Mismatch /
-                      Record-Mismatch / Duplikat), mit Anzahl + erstem Fehler;
-  * ``unavailable`` — Chain-Datei unlesbar (mit Grund).
-
-``missing_journal_record`` (Chain-Entry ohne Journal-Payload) zählt NICHT als
-Tamper — das ist die legitime Folge einer Journal-Rotation und wird separat als
-``journal_gaps`` (informativ) gemeldet. So bleibt ein grünes KPI ehrlich und ein
-rotes KPI bedeutet wirklich Manipulation.
+  * ``empty``       — noch kein Ledger-Record (frische Installation, kein Fehler);
+  * ``ok``          — N Records, lückenlos verkettet, Hashes nachgerechnet;
+  * ``broken``      — echtes Tamper erkannt (Verkettung/Payload/Record-Hash),
+                      mit Anzahl + erstem Fehler;
+  * ``unavailable`` — Ledger-Datei unlesbar (mit Grund).
 
 Reine Ableitung (:func:`derive_audit_chain_status`); IO nur im dünnen
 :func:`load_audit_chain_status`-Wrapper. Fail-soft, nie 500.
@@ -30,53 +32,42 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from app.audit.decision_chain import (
-    iter_chain_entries,
-    load_journal_records_for_verify,
-    verify_chain,
-)
+from app.truth.ledger import DEFAULT_TRUTH_LEDGER_PATH, verify_ledger
 
-# Kanonische Pfade (deckungsgleich mit app.audit.decision_chain-Docstring und
-# app.agents.tools._helpers.DECISION_JOURNAL_DEFAULT_PATH).
-DEFAULT_CHAIN_PATH = Path("artifacts/decision_journal_chain.jsonl")
-DEFAULT_JOURNAL_PATH = Path("artifacts/decision_journal.jsonl")
-
-# Fehler-Präfixe aus verify_chain, die ECHTES Tamper bedeuten (rot). Ein
-# ``missing_journal_record`` ist bewusst NICHT dabei (Rotation, nicht Tamper).
-_TAMPER_PREFIXES = (
-    "chain_break",
-    "chain_hash_mismatch",
-    "record_hash_mismatch",
-    "duplicate_chain_entry",
-)
+#: Fehlergrund aus ``read_verified_ledger``, der KEIN Tamper ist, sondern ein
+#: Lesefehler (Datei fehlt/ist keine Datei/kein UTF-8) — das ist ``unavailable``.
+_UNREADABLE_PREFIX = "ledger unreadable"
 
 
 @dataclass(frozen=True)
 class AuditChainStatus:
     state: str  # ok | empty | broken | unavailable
     available: bool
-    entries: int
-    errors: int  # Anzahl echter Tamper-Fehler
+    entries: int  # verifizierte Ledger-Records
+    errors: int  # Anzahl echter Integritätsfehler
     first_error: str | None
-    journal_gaps: int  # missing_journal_record (Rotation, informativ)
-    cross_checked: bool  # ob Journal-Payloads zum Cross-Check vorlagen
     reason: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def derive_audit_chain_status(
-    *, entries: int, errors: list[str], cross_checked: bool
-) -> AuditChainStatus:
-    """Pure: Entry-Count + ``verify_chain``-Fehlerliste → Integritäts-Status.
+def derive_audit_chain_status(*, entries: int, errors: list[str]) -> AuditChainStatus:
+    """Pure: Record-Count + Fehlerliste → Integritäts-Status.
 
-    Klassifiziert die Fehlerliste nach Präfix: echte Tamper-Fehler treiben
-    ``broken``; ``missing_journal_record`` ist Rotation und nur informativ.
+    Jeder Fehler aus :func:`verify_ledger` ist ein echter Integritätsbefund
+    (Seq-Lücke, gebrochene Verkettung, Payload-/Record-Hash-Mismatch) — es gibt
+    hier bewusst keine "informative" Fehlerklasse, die ein rotes KPI grün redet.
     """
-    tamper = [e for e in errors if e.split(" ", 1)[0] in _TAMPER_PREFIXES]
-    journal_gaps = sum(1 for e in errors if e.startswith("missing_journal_record"))
-
+    if errors:
+        return AuditChainStatus(
+            state="broken",
+            available=True,
+            entries=entries,
+            errors=len(errors),
+            first_error=errors[0],
+            reason="Tamper erkannt — der Attestation-Ledger ist kompromittiert.",
+        )
     if entries == 0:
         return AuditChainStatus(
             state="empty",
@@ -84,20 +75,7 @@ def derive_audit_chain_status(
             entries=0,
             errors=0,
             first_error=None,
-            journal_gaps=0,
-            cross_checked=cross_checked,
-            reason="Noch keine Decisions verkettet (Migration-Lücke, kein Fehler).",
-        )
-    if tamper:
-        return AuditChainStatus(
-            state="broken",
-            available=True,
-            entries=entries,
-            errors=len(tamper),
-            first_error=tamper[0],
-            journal_gaps=journal_gaps,
-            cross_checked=cross_checked,
-            reason="Tamper erkannt — Decision-Audit-Trail kompromittiert.",
+            reason="Noch keine Attestierung im Ledger (kein Fehler).",
         )
     return AuditChainStatus(
         state="ok",
@@ -105,35 +83,39 @@ def derive_audit_chain_status(
         entries=entries,
         errors=0,
         first_error=None,
-        journal_gaps=journal_gaps,
-        cross_checked=cross_checked,
         reason="",
     )
 
 
 def load_audit_chain_status(
-    chain_path: Path = DEFAULT_CHAIN_PATH,
-    journal_path: Path = DEFAULT_JOURNAL_PATH,
+    ledger_path: Path = DEFAULT_TRUTH_LEDGER_PATH,
 ) -> AuditChainStatus:
-    """IO-Wrapper: Chain verifizieren (mit Journal-Cross-Check wenn vorhanden) und
-    Status ableiten. Fail-soft → ``unavailable`` (Panel degradiert, nie 500)."""
+    """IO-Wrapper: Ledger nachrechnen und Status ableiten.
+
+    Fail-soft → ``unavailable`` (Panel degradiert, nie 500).
+    """
     try:
-        entries = sum(1 for _ in iter_chain_entries(chain_path))
-        journal_records = load_journal_records_for_verify(journal_path)
-        cross_checked = bool(journal_records)
-        errors = verify_chain(
-            chain_path=chain_path,
-            journal_records=journal_records or None,
-        )
+        result = verify_ledger(ledger_path)
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, nie 500
-        return AuditChainStatus(
-            state="unavailable",
-            available=False,
-            entries=0,
-            errors=0,
-            first_error=None,
-            journal_gaps=0,
-            cross_checked=False,
-            reason=f"Chain-Read-Fehler: {exc}",
-        )
-    return derive_audit_chain_status(entries=entries, errors=errors, cross_checked=cross_checked)
+        return _unavailable(f"Ledger-Read-Fehler: {exc}")
+
+    reasons = [str(e.get("reason", "")) for e in result.get("errors", [])]
+    unreadable = [r for r in reasons if r.startswith(_UNREADABLE_PREFIX)]
+    if unreadable:
+        return _unavailable(f"Ledger-Read-Fehler: {unreadable[0]}")
+
+    formatted = [
+        f"seq {e.get('seq')}: {e.get('reason')}" for e in result.get("errors", []) if e is not None
+    ]
+    return derive_audit_chain_status(entries=int(result.get("records", 0)), errors=formatted)
+
+
+def _unavailable(reason: str) -> AuditChainStatus:
+    return AuditChainStatus(
+        state="unavailable",
+        available=False,
+        entries=0,
+        errors=0,
+        first_error=None,
+        reason=reason,
+    )
