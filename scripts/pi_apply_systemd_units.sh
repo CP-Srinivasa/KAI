@@ -21,6 +21,15 @@
 #     19.08.: `kai-tv-auto-promote.timer` stand fuenf Wochen auf enabled+active
 #     mit `NextElapseUSecMonotonic=infinity`. Ein Timer, der laeuft und trotzdem
 #     keinen Termin hat, sieht in jeder anderen Pruefung gesund aus.
+#   * KEINE release-gebundene Unit in ein Release, das es hier nicht gibt.
+#     VORFALL 2026-09-04: die fuenf Units mit WorkingDirectory=/home/kai/current
+#     wurden nach /etc kopiert, `current` existierte nicht, der naechste
+#     `restart kai-server` scheiterte mit 200/CHDIR (~10 min Ausfall, Restore
+#     aus /var/backups/kai-units). Der Installer-Guard aus #855 sass nur vor
+#     `enable --now`. Dieser Weg fragt jetzt dieselbe Bibliothek
+#     (`lib/pi_release_guard.sh`), ueberspringt die Unit LAUT
+#     (SKIPPED_RELEASE_NOT_ACTIVE <unit>) und endet mit 10 — die uebrigen Units
+#     laufen durch, und das Ergebnis nennt die Uebersprungenen beim Namen.
 #
 # EHRLICHE GRENZE: das ist kein transaktionaler Vorgang. Zwischen erster Kopie
 # und letztem Beweis existiert ein Zustand, in dem manche Units neu und manche
@@ -31,8 +40,9 @@
 #   bash scripts/pi_apply_systemd_units.sh
 #   bash scripts/pi_apply_systemd_units.sh --yes      # ohne Rueckfrage
 #
-# Exit: 0 = angewendet und bewiesen · 10 = teils wegen Writer-Freeze
-#       zurueckgestellt · 1 = gescheitert (Rollback versucht)
+# Exit: 0 = angewendet und bewiesen · 10 = HOLD: teils wegen Writer-Freeze
+#       zurueckgestellt oder als release-gebundene Unit ohne aktives Release
+#       uebersprungen (auch im --dry-run) · 1 = gescheitert (Rollback versucht)
 set -uo pipefail
 
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,6 +90,7 @@ fi
 # dieselbe Funktion gefragt, die auch der Sync fragt: eine Kopie des AUFRUFS,
 # keine Kopie der LOGIK.
 deferred=()
+release_skipped=()
 apply_set=()
 for base in "${changed[@]}"; do
     if [ "${base##*.}" = "timer" ] && declare -F paper_writer_freeze_guard_restart >/dev/null 2>&1; then
@@ -88,23 +99,44 @@ for base in "${changed[@]}"; do
             continue
         fi
     fi
+    # Release-gebunden, aber das Release gibt es auf diesem Host nicht: nicht
+    # kopieren, nicht sichern, nicht beweisen — und laut sagen. Dieselbe
+    # Funktion wie im Sync und im Installer, eine Kopie des AUFRUFS.
+    target="$(pi_release_unit_target "$SRC/$base")"
+    if [ -n "$target" ] && ! reason="$(pi_release_active_reason "$target")"; then
+        release_skipped+=("$base")
+        echo "SKIPPED_RELEASE_NOT_ACTIVE $base ($reason)"
+        continue
+    fi
     apply_set+=("$base")
 done
 
 echo "Anzuwenden (${#apply_set[@]} von ${#changed[@]}):"
-printf '%s\n' "$diff_out" | grep -E '^(DIFF|NEW) ' | sed 's/^/  /'
+for base in ${apply_set[@]+"${apply_set[@]}"}; do
+    printf '%s\n' "$diff_out" | grep -E "^(DIFF|NEW) $base\$" | sed 's/^/  /'
+done
 if [ "${#deferred[@]}" -gt 0 ]; then
     echo "Zurueckgestellt (Writer-Freeze aktiv): ${deferred[*]}"
 fi
+if [ "${#release_skipped[@]}" -gt 0 ]; then
+    echo "Uebersprungen (kein aktives Release auf diesem Host): ${release_skipped[*]}"
+    pi_release_hint
+fi
+
+# HOLD ist ein eigener Ausgang: "fertig" waere gelogen, "gescheitert" falsch.
+hold_rc=0
+if [ "${#deferred[@]}" -gt 0 ] || [ "${#release_skipped[@]}" -gt 0 ]; then
+    hold_rc=10
+fi
 
 if [ "${#apply_set[@]}" -eq 0 ]; then
-    echo "Alles zurueckgestellt — nichts geschrieben."
+    echo "Alles zurueckgestellt/uebersprungen — nichts geschrieben."
     exit 10
 fi
 
 if [ "$dry" = "1" ]; then
     echo "--dry-run: nichts geschrieben."
-    exit 0
+    exit "$hold_rc"
 fi
 
 if [ "$assume_yes" != "1" ]; then
@@ -258,4 +290,15 @@ if { [ "$apply_rc" != "0" ] && [ "$apply_rc" != "10" ]; } || [ "${#proof_failure
 fi
 
 echo "OK: ${#apply_set[@]} Unit(s) angewendet und bewiesen. Sicherung: $backup"
-exit "$apply_rc"
+# Das Ergebnis nennt, was NICHT angewendet wurde — kein stilles `continue`
+# (FALSE_GREEN_ON_MISSING_ACTIVE_RELEASE = IMPOSSIBLE, Runbook).
+if [ "$apply_rc" = "10" ]; then
+    hold_rc=10
+fi
+if [ "${#deferred[@]}" -gt 0 ]; then
+    echo "HOLD: ${#deferred[@]} Unit(s) zurueckgestellt (Writer-Freeze aktiv): ${deferred[*]}"
+fi
+if [ "${#release_skipped[@]}" -gt 0 ]; then
+    echo "HOLD: ${#release_skipped[@]} release-gebundene Unit(s) NICHT angewendet (kein aktives Release auf diesem Host): ${release_skipped[*]}"
+fi
+exit "$hold_rc"

@@ -299,3 +299,178 @@ def test_orphans_are_reported_never_deleted(units) -> None:
 
     assert "ORPHAN" in proc.stdout
     assert (units.dst / "kai-orphan.timer").exists()
+
+
+# ── Der Vorfall vom 04.09. als Abnahmekriterium ─────────────────────────────
+#
+# Die fuenf release-gebundenen Units zeigen mit WorkingDirectory und ExecStart
+# auf `/home/kai/current`. Der Apply hat sie nach /etc kopiert, obwohl es diesen
+# Pfad auf der Pi nicht gab — der Cutover war nicht vollzogen. Der naechste
+# `restart kai-server` scheiterte mit status=200/CHDIR, agent-worker und
+# entry-watch als Abhaengige; ~10 min Ausfall, Restore aus /var/backups.
+#
+# Der Installer-Guard aus #855 deckte nur `enable --now` ab, nicht das Kopieren.
+# Kopieren ist hier eben NICHT folgenlos: die Datei liegt dann in /etc und wird
+# beim naechsten Restart gelesen, egal wer ihn ausloest.
+
+_RELEASE_OLD = (
+    "[Service]\n"
+    "WorkingDirectory=/home/kai/ai_analyst_trading_bot\n"
+    "ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m uvicorn app.api.main:app\n"
+)
+_CHECKOUT_OLD = "[Service]\nExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/x.sh\n"
+_CHECKOUT_NEW = "[Service]\nExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/y.sh\n"
+
+
+def _release_unit(target: Path) -> str:
+    """Eine Unit nach dem Muster der fuenf Daemons (runtime-exec + --repo)."""
+    return (
+        "[Service]\n"
+        f"WorkingDirectory={target.as_posix()}\n"
+        f"ExecStart={target.as_posix()}/.venv/bin/python -m app.cli.main trading runtime-exec "
+        f"--unit %n --repo {target.as_posix()} -- {target.as_posix()}/.venv/bin/python -m app\n"
+    )
+
+
+def _make_active_release(target: Path) -> None:
+    """Das Kriterium des #855-Guards: Verzeichnis + release.json + .venv/bin/python."""
+    (target / ".venv" / "bin").mkdir(parents=True)
+    (target / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    (target / "release.json").write_text(json.dumps({"schema": "kai_release/v1"}), encoding="utf-8")
+
+
+def _empty_dir(target: Path) -> None:
+    target.mkdir()
+
+
+def _manifest_without_venv(target: Path) -> None:
+    target.mkdir()
+    (target / "release.json").write_text("{}", encoding="utf-8")
+
+
+def _venv_without_manifest(target: Path) -> None:
+    (target / ".venv" / "bin").mkdir(parents=True)
+    (target / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+
+def test_release_unit_is_skipped_without_active_release_and_the_rest_is_applied(
+    units, tmp_path
+) -> None:
+    """Fall A — der Vorfall selbst.
+
+    Release fehlt: die release-gebundene Unit bleibt in /etc auf dem alten
+    Stand, die checkout-gebundene daneben wird trotzdem angewendet, der Lauf
+    endet mit HOLD (10) und nennt die uebersprungene Unit beim Namen.
+    """
+    current = tmp_path / "current"  # existiert NICHT — der Cutover ist nicht vollzogen
+    (units.src / "kai-server.service").write_text(_release_unit(current), encoding="utf-8")
+    (units.dst / "kai-server.service").write_text(_RELEASE_OLD, encoding="utf-8")
+    (units.src / "kai-paper-trading.service").write_text(_CHECKOUT_NEW, encoding="utf-8")
+    (units.dst / "kai-paper-trading.service").write_text(_CHECKOUT_OLD, encoding="utf-8")
+
+    proc = _run(units, "--yes")
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in proc.stdout
+    assert (units.dst / "kai-server.service").read_text(encoding="utf-8") == _RELEASE_OLD, (
+        "die Release-Unit haette /etc nie erreichen duerfen"
+    )
+    assert (units.dst / "kai-paper-trading.service").read_text(encoding="utf-8") == _CHECKOUT_NEW, (
+        "die checkout-gebundene Unit darf durch den Skip nicht blockiert werden"
+    )
+    # Das Ergebnis muss die Uebersprungenen nennen — kein stilles `continue`.
+    last_lines = "\n".join(proc.stdout.strip().splitlines()[-3:])
+    assert "kai-server.service" in last_lines, proc.stdout
+    assert "pi_make_release" in proc.stdout, "die Meldung muss den Ausweg nennen"
+    assert not (_backup_dir(units) / "kai-server.service").exists(), (
+        "was nicht geschrieben wird, braucht keine Sicherung"
+    )
+
+
+def test_release_unit_is_applied_when_the_release_is_active(units, tmp_path) -> None:
+    """Fall B — Positivkontrolle. Sonst wuerde der Guard einfach immer verweigern."""
+    current = tmp_path / "current"
+    _make_active_release(current)
+    (units.src / "kai-server.service").write_text(_release_unit(current), encoding="utf-8")
+    (units.dst / "kai-server.service").write_text(_RELEASE_OLD, encoding="utf-8")
+    (units.src / "kai-paper-trading.service").write_text(_CHECKOUT_NEW, encoding="utf-8")
+    (units.dst / "kai-paper-trading.service").write_text(_CHECKOUT_OLD, encoding="utf-8")
+
+    proc = _run(units, "--yes")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "SKIPPED_RELEASE_NOT_ACTIVE" not in proc.stdout + proc.stderr
+    assert (units.dst / "kai-server.service").read_text(encoding="utf-8") == _release_unit(current)
+    assert (units.dst / "kai-paper-trading.service").read_text(encoding="utf-8") == _CHECKOUT_NEW
+    assert "beweis: kai-server.service byte-gleich" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "prepare",
+    [
+        pytest.param(_empty_dir, id="leeres-verzeichnis"),
+        pytest.param(_manifest_without_venv, id="release.json-ohne-venv"),
+        pytest.param(_venv_without_manifest, id="venv-ohne-release.json"),
+    ],
+)
+def test_release_dir_without_marker_is_not_a_release(units, tmp_path, prepare) -> None:
+    """Fall C — ein Verzeichnis allein ist kein Release."""
+    current = tmp_path / "current"
+    prepare(current)
+    (units.src / "kai-server.service").write_text(_release_unit(current), encoding="utf-8")
+    (units.dst / "kai-server.service").write_text(_RELEASE_OLD, encoding="utf-8")
+    (units.src / "kai-x.timer").write_text(_NEW, encoding="utf-8")
+    (units.dst / "kai-x.timer").write_text(_OLD, encoding="utf-8")
+
+    proc = _run(units, "--yes")
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in proc.stdout
+    assert (units.dst / "kai-server.service").read_text(encoding="utf-8") == _RELEASE_OLD
+    assert (units.dst / "kai-x.timer").read_text(encoding="utf-8") == _NEW
+
+
+def test_new_release_unit_is_not_created_without_active_release(units, tmp_path) -> None:
+    """Auch eine Unit, die es in /etc noch gar nicht gibt, wird nicht angelegt."""
+    current = tmp_path / "current"
+    (units.src / "kai-liquidation-stream.service").write_text(
+        _release_unit(current), encoding="utf-8"
+    )
+    (units.src / "kai-x.timer").write_text(_NEW, encoding="utf-8")
+    (units.dst / "kai-x.timer").write_text(_OLD, encoding="utf-8")
+
+    proc = _run(units, "--yes")
+
+    assert proc.returncode == 10
+    assert not (units.dst / "kai-liquidation-stream.service").exists()
+    assert (units.dst / "kai-x.timer").read_text(encoding="utf-8") == _NEW
+
+
+def test_only_release_units_pending_writes_nothing_and_holds(units, tmp_path) -> None:
+    current = tmp_path / "current"
+    (units.src / "kai-server.service").write_text(_release_unit(current), encoding="utf-8")
+    (units.dst / "kai-server.service").write_text(_RELEASE_OLD, encoding="utf-8")
+
+    proc = _run(units, "--yes")
+
+    assert proc.returncode == 10
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in proc.stdout
+    assert "nichts geschrieben" in proc.stdout
+    assert not _backup_dir(units).exists(), "ohne Schreibvorgang keine Sicherung"
+    assert (units.dst / "kai-server.service").read_text(encoding="utf-8") == _RELEASE_OLD
+
+
+def test_dry_run_already_shows_the_release_hold(units, tmp_path) -> None:
+    """Wer erst misst, soll den HOLD vor dem Passwort sehen, nicht danach."""
+    current = tmp_path / "current"
+    (units.src / "kai-server.service").write_text(_release_unit(current), encoding="utf-8")
+    (units.dst / "kai-server.service").write_text(_RELEASE_OLD, encoding="utf-8")
+    (units.src / "kai-x.timer").write_text(_NEW, encoding="utf-8")
+    (units.dst / "kai-x.timer").write_text(_OLD, encoding="utf-8")
+
+    proc = _run(units, "--dry-run")
+
+    assert proc.returncode == 10, proc.stdout + proc.stderr
+    assert "SKIPPED_RELEASE_NOT_ACTIVE kai-server.service" in proc.stdout
+    assert (units.dst / "kai-x.timer").read_text(encoding="utf-8") == _OLD
+    assert not _backup_dir(units).exists()
