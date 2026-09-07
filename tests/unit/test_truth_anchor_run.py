@@ -1,21 +1,25 @@
 """Unit tests for the self-healing truth-anchor runner (scripts/truth_anchor_run.py).
 
 The runner attests new preregs/verdicts (covered by test_truth_ledger.py), binds the
-Lightning money-journal tip into the same chain, and then ensures the ledger TIP is
-on-chain anchored. These tests pin two things:
+money-journal tip into the same chain, and then ensures the ledger TIP is on-chain
+anchored. These tests pin two things:
 
   * the SELF-HEALING gate: anchoring keys on "is the current tip proof present", NOT on
     "were new records chained this run" — so a pre-existing backlog gets anchored and a
     failed OTS attempt is retried;
-  * BL-1: the LN-ops step is BEST EFFORT. The tests below deliberately do NOT patch
-    ``attest_ln_ops_tip`` — they run the real function against a real broken ledger,
-    because patching exactly the function under suspicion is what made CI blind to the
-    deploy blocker in the first place.
+  * BL-1: the money-tip step is BEST EFFORT. The tests below deliberately do NOT patch
+    ``attest_payment_journal_tip`` — they run the real function against a real broken
+    journal, because patching exactly the function under suspicion is what made CI blind
+    to the deploy blocker in the first place.
+
+ADR 0018 §12: the subject is the Payment Control Plane journal, not the retired
+``ln_ops_ledger_v2.jsonl``. The guarantee is unchanged — SOME money movement stays
+bound into the OTS-anchored chain — but it now points at the journal that is
+actually written.
 """
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -107,29 +111,30 @@ def test_anchor_error_returns_nonzero(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_legacy_ln_ops_ledger_warns_but_does_not_block_the_anchor(
+def _redirect_journal(monkeypatch, path) -> None:  # noqa: ANN001, ANN202
+    """Zeige die prozessweit gecachten Settings auf ein tmp-Journal.
+
+    ``cache_clear`` gehoert dazu: ein reines ``setenv`` bliebe wirkungslos,
+    weil ``get_payment_settings`` ``lru_cache`` traegt. Die autouse-Fixture in
+    ``tests/conftest.py`` raeumt den Cache nach dem Test wieder auf.
+    """
+    from app.core.payment_settings import get_payment_settings
+
+    monkeypatch.setenv("APP_PAYMENT_JOURNAL_PATH", str(path))
+    get_payment_settings.cache_clear()
+
+
+def test_torn_payment_journal_warns_but_does_not_block_the_anchor(
     tmp_path, monkeypatch, capsys
 ) -> None:
-    # The real deploy situation: the box still has an unmigrated, unchained v1-style
-    # journal. verify_ln_ops_ledger() → ok:False → attest_ln_ops_tip() raises. Before
-    # the guard this aborted main() BEFORE chain_tip(), so the OTS anchoring of the
-    # ENTIRE truth chain silently stopped on the first timer run after deploy.
-    ledger = tmp_path / "ledger" / "ln_ops_ledger_v2.jsonl"
-    ledger.parent.mkdir(parents=True)
-    ledger.write_text(
-        json.dumps(
-            {
-                "ts": "2026-07-02T05:46:20+00:00",
-                "action": "pay_invoice",
-                "state": "error",
-                "plan": {"payment_request": "lnbc250u1legacy"},
-                "response": {},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(ledger))
+    # A power-cut torn tail (the realistic defect): unparseable, so verify_chain()
+    # reports not-ok and attest_payment_journal_tip refuses. Before the BL-1 guard
+    # this aborted main() BEFORE chain_tip(), and the OTS anchoring of the ENTIRE
+    # truth chain stopped silently.
+    journal = tmp_path / "payments" / "payment_journal.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text('{"seq": 1, "ts": "2026-09-04T00:00:00+00:0', encoding="utf-8")
+    _redirect_journal(monkeypatch, journal)
 
     rc, calls = _run(
         enabled=True,
@@ -139,35 +144,15 @@ def test_legacy_ln_ops_ledger_warns_but_does_not_block_the_anchor(
     out = capsys.readouterr().out
     assert rc == 0
     assert calls == [(_TIP_HASH, "truthledger")]  # the OTS step was still reached
-    assert "WARNING ln-ops-tip attestation skipped" in out
-    assert "LightningOpsLedgerError" in out
-    assert "ln-ops-tip attested=0/0" in out
+    assert "WARNING payment-journal-tip attestation skipped" in out
+    assert "JournalIntegrityError" in out
+    assert "payment-journal-tip attested=0/0" in out
 
 
-def test_torn_ln_ops_ledger_warns_but_does_not_block_the_anchor(
-    tmp_path, monkeypatch, capsys
-) -> None:
-    # Same guarantee for a power-cut torn tail (M-5) — unparseable, not merely legacy.
-    ledger = tmp_path / "ledger" / "ln_ops_ledger_v2.jsonl"
-    ledger.parent.mkdir(parents=True)
-    ledger.write_text('{"ts": "2026-08-05T00:00:00+00:0', encoding="utf-8")
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(ledger))
-
-    rc, calls = _run(
-        enabled=True,
-        proofs_dir=str(tmp_path),
-        anchor_result=AnchorResult(state="anchored", proof_path=str(tmp_path / "p.ots")),
-    )
-    assert rc == 0
-    assert calls == [(_TIP_HASH, "truthledger")]
-    assert "WARNING ln-ops-tip attestation skipped" in capsys.readouterr().out
-
-
-def test_missing_ln_ops_ledger_is_a_quiet_noop(tmp_path, monkeypatch, capsys) -> None:
-    # PR-B ships the v2 machinery unwired: on a box that has no v2 journal yet the
-    # step must be a silent 0/0, not a daily WARNING that trains the operator to
-    # ignore the line.
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(tmp_path / "ledger" / "absent.jsonl"))
+def test_missing_payment_journal_is_a_quiet_noop(tmp_path, monkeypatch, capsys) -> None:
+    # On a box without a journal yet the step must be a silent 0/0, not a daily
+    # WARNING that trains the operator to ignore the line.
+    _redirect_journal(monkeypatch, tmp_path / "payments" / "absent.jsonl")
     rc, calls = _run(
         enabled=True,
         proofs_dir=str(tmp_path),
@@ -177,17 +162,18 @@ def test_missing_ln_ops_ledger_is_a_quiet_noop(tmp_path, monkeypatch, capsys) ->
     assert rc == 0
     assert calls == [(_TIP_HASH, "truthledger")]
     assert "WARNING" not in out
-    assert "ln-ops-tip attested=0/0" in out
+    assert "payment-journal-tip attested=0/0" in out
 
 
-def test_valid_ln_ops_tip_is_attested_into_the_run(tmp_path, monkeypatch, capsys) -> None:
-    # The happy path PR-C will rely on: a verified v2 journal contributes its tip.
-    from app.lightning.ops_ledger import append_ln_outcome, prepare_ln_intent
+def test_valid_payment_journal_tip_is_attested_into_the_run(tmp_path, monkeypatch, capsys) -> None:
+    # The happy path the timer relies on: a verified journal contributes its tip.
+    from app.payments.journal import PaymentJournal
 
-    ledger = tmp_path / "ledger" / "ln_ops_ledger_v2.jsonl"
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(ledger))
-    prepare_ln_intent("create_invoice", plan={"value_sat": 10}, intent_id="i1")
-    append_ln_outcome("create_invoice", "executed", plan={"value_sat": 10}, intent_id="i1")
+    journal_path = tmp_path / "payments" / "payment_journal.jsonl"
+    _redirect_journal(monkeypatch, journal_path)
+    journal = PaymentJournal(journal_path)
+    journal.open()
+    journal.append("pi_1", "intent_created", {"actor": "operator"})
 
     truth = tmp_path / "truth.jsonl"
     with (
@@ -203,5 +189,5 @@ def test_valid_ln_ops_tip_is_attested_into_the_run(tmp_path, monkeypatch, capsys
     assert rc == 0
     assert calls == [(_TIP_HASH, "truthledger")]
     assert "WARNING" not in out
-    assert "ln-ops-tip attested=1/1" in out
+    assert "payment-journal-tip attested=1/1" in out
     assert truth.exists()
