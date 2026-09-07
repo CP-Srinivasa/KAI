@@ -95,12 +95,6 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     # Rotation sonst wieder unsichtbar leer laufen wie vor dem Voll-Audit.
     "asset_rotation_shadow.jsonl": 1560,
     "asset_rotation_state.json": 1560,
-    # Lightning-Reconciliation (PR-D/T6b, live seit 2026-08-08): der Timer
-    # laeuft alle 15 min und schreibt JEDEN Lauf eine Reportzeile — auch den
-    # Leerlauf ohne offene Intents. 45 min = 3 verpasste Laeufe, also klar
-    # ueber der legitimen Stille (15 min + RandomizedDelaySec 2 min), aber
-    # eng genug, um einen toten Timer binnen einer Stunde aufzudecken.
-    "ln_reconciliation.jsonl": 45,
     # EINGANGSSTROM (Audit 09.08.). Jede andere Schwelle hier bewacht einen
     # Ausgang; diese bewacht, ob ueberhaupt noch etwas hereinkommt.
     # 720 min = 12 h: TradingView-Alerts feuern unregelmaessig, aber ein ganzer
@@ -351,16 +345,13 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             "asset_rotation_state",
             False,
         ),
-        # Geldpfad-Integritaet (PR-D/T6b): der Reconcile-Timer war der erste
-        # neue Timer nach der TV-Ingest-Lehre vom 2026-08-08 — ein Ausgang
-        # OHNE Waechter faellt sechs Tage lang niemandem auf. required=False,
-        # weil ein frischer Checkout die Datei legitim noch nicht hat.
-        (
-            adir / "lightning" / "ln_reconciliation.jsonl",
-            "ln_reconciliation.jsonl",
-            "ln_reconcile",
-            False,
-        ),
+        # Geldpfad-Integritaet: der Reconcile-Timer war der erste neue Timer
+        # nach der TV-Ingest-Lehre vom 2026-08-08 — ein Ausgang OHNE Waechter
+        # faellt sechs Tage lang niemandem auf. Seine Lebend-Wache steht seit
+        # ADR 0018 §12 (PR 2) NICHT mehr hier: der Alt-Report
+        # ``ln_reconciliation.jsonl`` hat keinen Schreiber mehr. Gemessen wird
+        # jetzt ``last_run_utc`` in ``payments/reconcile_state.json``, mit
+        # derselben 45-min-Schwelle, in ``check_payment_reconciliation``.
         # EINGANGSSTROM, kein Ausgang (Audit 09.08.). Bis hier wachte diese
         # Liste ausschliesslich ueber Ergebnisse — und ein gesunder Ausgang
         # beweist keinen lebenden Eingang: der TV-Webhook war vom 02.08. bis
@@ -501,8 +492,8 @@ def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
     return _hcp.check_payment_journal_chain(adir) + _hcp.check_payment_intent_vault(adir)
 
 
-def _check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
-    return _hcp.check_payment_reconciliation(adir)
+def _check_payment_reconciliation(adir: Path, *, now: datetime | None = None) -> list[HealthIssue]:
+    return _hcp.check_payment_reconciliation(adir, now=now)
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -1494,7 +1485,9 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
-    report.issues.extend(_check_payment_journal_chain(adir) + _check_payment_reconciliation(adir))
+    report.issues.extend(
+        _check_payment_journal_chain(adir) + _check_payment_reconciliation(adir, now=now)
+    )
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).

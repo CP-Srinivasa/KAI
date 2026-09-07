@@ -9,11 +9,20 @@ diese Aufrufstelle.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.alerts.health_check import HealthIssue
+
+#: Wie alt der letzte Reconcile-Lauf werden darf, bevor er als tot gilt.
+#: ``kai-ln-reconcile.timer`` laeuft ``OnCalendar=*-*-* *:00/15:00`` mit
+#: ``RandomizedDelaySec=2min``; 45 min sind drei verpasste Laeufe und damit
+#: klar jenseits der legitimen Stille, aber eng genug, um einen toten Timer
+#: binnen einer Stunde aufzudecken. Woertlich die Schwelle, die bis PR 2 auf
+#: ``ln_reconciliation.jsonl`` lag — der Wert ist umgezogen, nicht gelockert.
+RECONCILE_STALE_AFTER_MIN = 45
 
 
 def _issue(severity: str, component: str, message: str) -> HealthIssue:
@@ -159,8 +168,8 @@ def _pre_send_intents(adir: Path) -> set[str]:
     }
 
 
-def check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
-    """Waechter des Reconcile-Laufs (ADR 0018 §8/§10).
+def check_payment_reconciliation(adir: Path, *, now: datetime | None = None) -> list[HealthIssue]:
+    """Waechter des Reconcile-Laufs (ADR 0018 §8/§10/§12).
 
     Der Reconcile-Timer laeuft als eigener Prozess und hinterlaesst sein
     Ergebnis in ``artifacts/payments/reconcile_state.json``. Ohne diesen
@@ -169,8 +178,22 @@ def check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
     niemand liest. Der ``OnFailure=``-Pfad der Unit genuegt dafuer NICHT: der
     Lauf ist erfolgreich, sein BEFUND ist das Problem.
 
-    ``critical``, nicht ``warning``: jeder der drei Ausloeser
-    (Waise, ungeklaerter Send, Uhr-Sprung) ist eine offene Frage ueber Geld.
+    **Seit ADR §12 (PR 2) haengt hier auch die LEBENDIGKEIT des Laufs.** Vorher
+    trug sie ``ln_reconciliation.jsonl`` mit einer 45-min-Freshness-Schwelle:
+    derselbe Timer schrieb beide Journal-Haelften, der Alt-Report verriet also
+    nebenbei den Tod des neuen Laufs. Mit dem Wegfall der v2-Haelfte hat diese
+    Datei keinen Schreiber mehr — eine Schwelle darauf waere ab sofort ein
+    Daueralarm, ihr ersatzloses Streichen ein Geldpfad ohne Lebend-Wache. Genau
+    das Muster vom 2026-08-08 (toter TV-Eingang, sechs Tage gruene Unit).
+
+    Gemessen wird ``last_run_utc``, nicht die mtime: die mtime setzt jedes
+    ``cp``, ``rsync`` ohne ``-a`` und jeder Restore neu und koennte einen toten
+    Reconciler von aussen gruen faerben. Das Feld schreibt nur der Reconciler
+    selbst, und zwar bei JEDEM Lauf (``reconcile.run`` -> ``save_state``), auch
+    beim Leerlauf ohne offenen Intent.
+
+    ``critical``, nicht ``warning``: jeder Ausloeser (Waise, ungeklaerter Send,
+    Uhr-Sprung, toter Lauf) ist eine offene Frage ueber Geld.
     """
     from app.payments.reconcile_types import STATE_FILENAME, load_state
 
@@ -188,6 +211,13 @@ def check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
                 message=f"payment reconcile state unreadable: {path}",
             )
         ]
+    stale = _reconcile_staleness(state.last_run_utc, state.last_status, now=now)
+    if stale is not None:
+        # Zuerst das Alter, dann erst der Inhalt: ein Zustand, den niemand mehr
+        # fortschreibt, ist keine Aussage ueber heute — auch dann nicht, wenn
+        # als Letztes ``ok`` darin stand. Genau EIN Befund, damit dieselbe
+        # Komponente nicht zweimal in derselben Meldung steht.
+        return [stale]
     if state.last_status == "ok":
         return []
     return [
@@ -201,6 +231,37 @@ def check_payment_reconciliation(adir: Path) -> list[HealthIssue]:
             ),
         )
     ]
+
+
+def _reconcile_staleness(
+    last_run_utc: str, last_status: str, *, now: datetime | None
+) -> HealthIssue | None:
+    """Ist der letzte Lauf zu lange her? ``None`` heisst: der Timer lebt."""
+    moment = now or datetime.now(UTC)
+    try:
+        last = datetime.fromisoformat(last_run_utc)
+    except ValueError:
+        # Fail-closed wie die leere Zustandsdatei: ein ``last_run_utc``, das
+        # keine Zeit ist, beweist keinen jungen Lauf.
+        return _issue(
+            severity="critical",
+            component="payment_reconciliation",
+            message=f"payment reconcile state has an unreadable last run: {last_run_utc!r}",
+        )
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    age_min = int((moment - last).total_seconds() / 60)
+    if age_min < RECONCILE_STALE_AFTER_MIN:
+        return None
+    return _issue(
+        severity="critical",
+        component="payment_reconciliation",
+        message=(
+            f"payment reconciliation has not run for {age_min}min "
+            f"(threshold: {RECONCILE_STALE_AFTER_MIN}min, last status={last_status or 'unknown'}, "
+            f"last run {last_run_utc}) — kai-ln-reconcile.timer pruefen"
+        ),
+    )
 
 
 def check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
