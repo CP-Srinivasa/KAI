@@ -40,7 +40,9 @@
 #   bash scripts/pi_apply_systemd_units.sh
 #   bash scripts/pi_apply_systemd_units.sh --yes      # ohne Rueckfrage
 #
-# Exit: 0 = angewendet und bewiesen · 10 = HOLD: teils wegen Writer-Freeze
+# Exit: 0 = angewendet und bewiesen · 4 = DROPIN_OVERRIDE: ein Drop-In in
+#       /etc/systemd/system/<unit>.d/ setzt eine Direktive, die entscheidet,
+#       welcher Code laeuft -- nichts angefasst · 10 = HOLD: teils wegen Writer-Freeze
 #       zurueckgestellt oder als release-gebundene Unit ohne aktives Release
 #       uebersprungen (auch im --dry-run) · 1 = gescheitert (Rollback versucht)
 set -uo pipefail
@@ -70,6 +72,48 @@ while [ $# -gt 0 ]; do
 done
 
 [ -d "$SRC" ] || { echo "FATAL: $SRC nicht gefunden — im Checkout ausfuehren." >&2; exit 1; }
+
+# ── 0. Drop-Ins, die den Byte-Beweis aushebeln ──────────────────────────────
+#
+# Diese Pruefung steht VOR allem anderen, und zwar aus zwei Gruenden.
+#
+# Erstens: der Beweis weiter unten vergleicht `.service`-Dateien. systemd
+# wertet danach `/etc/systemd/system/<unit>.d/*.conf` aus, und ein zweites
+# `ExecStart=` ersetzt den Befehl vollstaendig. "byte-gleich" sagt dann nichts
+# darueber, welcher Code startet. Gemessen 2026-09-07:
+# `kai-server.service.d/graceful-shutdown.conf` (root, 23.06.) setzte
+# `ExecStart=` auf den CHECKOUT-venv zurueck; kai-server lief mit
+# Checkout-Interpreter und Release-Code, schrieb keinen Prozessmarker -- und der
+# Deploy meldete fuer alle fuenf Units Byte-Gleichheit.
+#
+# Zweitens, und darum steht sie ganz vorn: der beruhigendste Ausgang dieses
+# Skripts ist `Nichts zu tun: $SRC == $DST` (Schritt 1). Genau dann ist gar
+# nichts angewendet worden, und eine Pruefung am Ende liefe nie. Ein
+# Drop-In-Override ist ohnehin ein Zustand, kein Ergebnis dieses Laufs -- ihn
+# zu melden, BEVOR eine Datei angefasst wird, laesst weder einen halben
+# Zustand noch eine Rollback-Frage entstehen. `--dry-run` sieht ihn dadurch
+# ebenfalls.
+#
+# Gemeldet wird nur, was ueber den geladenen Code entscheidet. `TimeoutStopSec`
+# und Verwandte bleiben still: ein Dauerbefund kostet mehr, als er einbringt.
+dropin_funde=()
+while IFS= read -r zeile; do
+    [ -n "$zeile" ] && dropin_funde+=("$zeile")
+done < <(pi_unit_sync_dropin_overrides "$DST" 2>/dev/null)
+
+if [ "${#dropin_funde[@]}" -gt 0 ]; then
+    echo "DROPIN_OVERRIDE: ${#dropin_funde[@]} Drop-In-Direktive(n) entscheiden ueber den" >&2
+    echo "  geladenen Code. Sie stehen NICHT in den Unit-Dateien, die dieser Lauf" >&2
+    echo "  vergleichen wuerde, und wuerden jeden Byte-Beweis unterlaufen:" >&2
+    for zeile in "${dropin_funde[@]}"; do
+        read -r _ d_unit d_conf d_direktive <<<"$zeile"
+        echo "    $d_unit  <- $d_conf setzt $d_direktive" >&2
+    done
+    echo "  Es wurde nichts angefasst. Entweder das Drop-In ins Repo aufnehmen" >&2
+    echo "  (dann traegt es der Abgleich mit) oder entfernen:" >&2
+    echo "    sudo rm $DST/<unit>.d/<datei>.conf && sudo systemctl daemon-reload" >&2
+    exit 4
+fi
 
 # ── 1. Was steht an? ────────────────────────────────────────────────────────
 diff_out="$(pi_unit_sync_diff "$SRC" "$DST")"
