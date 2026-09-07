@@ -37,6 +37,12 @@ def record_llm_call(
     # reader (llm_telemetry_summary) is unaffected. No new artifact stream.
     correlation_id: str | None = None,
     call_id: str | None = None,
+    # --- v3 (2026-09-07): der Paarungsschluessel --------------------
+    # `correlation_id` haelt eine Kette zusammen, `call_id` beschreibt
+    # eine Zeile. Fuer die Frage "welche DIRECT- und welche SHADOW-Zeile
+    # beschreiben denselben Aufruf?" taugt keine von beiden. Additiv:
+    # jeder bestehende Aufrufer bleibt gueltig und schreibt hier `null`.
+    evaluation_id: str | None = None,
     purpose: str | None = None,
     chain_position: int = 0,
     attempt: int = 1,
@@ -84,6 +90,7 @@ def record_llm_call(
         "prompt_tokens": int(prompt_tokens),
         "completion_tokens": int(completion_tokens),
         "outcome": outcome or ("success" if ok else "exhausted"),
+        "evaluation_id": evaluation_id,
         "logical_route": logical_route,
         "mode": mode,
         "transport": transport or "direct",
