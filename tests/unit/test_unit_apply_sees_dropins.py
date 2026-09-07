@@ -180,8 +180,7 @@ def test_ohne_fund_wird_dieselbe_abweichung_angewendet(tmp_path: Path) -> None:
 
     assert p.returncode == 0, f"rc={p.returncode}{NL}{p.stdout}{NL}{p.stderr}"
     assert ziel.read_text(encoding="utf-8") == UNIT_TEXT, (
-        "das Skript wendet in dieser Sandbox gar nichts an -- dann beweist der "
-        "Test darueber nichts"
+        "das Skript wendet in dieser Sandbox gar nichts an -- dann beweist der Test darueber nichts"
     )
 
 
