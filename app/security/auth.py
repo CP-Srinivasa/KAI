@@ -184,11 +184,12 @@ _AUTH_DISABLED_WARNED = False
 # ``/dashboard/api/ln/*`` path requires real auth UNLESS it is an explicitly
 # allowlisted READ-ONLY endpoint below. A new LN endpoint thus defaults to strong auth.
 #
-# W0/PR-A: ``/dashboard/api/ln/ops`` is deliberately NOT on this list. It serves the
-# money-path audit trail (payment metadata, counterparties, amounts) — read access to
-# it is a disclosure surface, not dashboard convenience. Its only consumer is the
-# browser panel via Cloudflare Access, which authenticates through the CF-Access branch
-# below and is therefore unaffected; there is no local unauthenticated reader.
+# ADR 0018 §12 (PR 1): ``/dashboard/api/ln/ops`` gibt es nicht mehr. Der Endpunkt
+# las das alte v2-Geldjournal, das keinen Schreiber mehr hat; die Audit-Sicht auf
+# den lebenden Geldpfad ist ``GET /payments/audit`` (und die verlangt eine
+# ``intent_id``, weil ein leerer Filter ein Dump wäre). Die Inversion oben bleibt
+# der Punkt: jeder NEUE ``/dashboard/api/ln/*``-Pfad braucht starke Auth, bis ihn
+# jemand bewusst hier einträgt.
 _LN_CONTROL_PREFIX = "/dashboard/api/ln/"
 _LN_LOCAL_BYPASS_READS: frozenset[str] = frozenset(
     {

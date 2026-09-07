@@ -1010,15 +1010,15 @@ def test_ln_reputation_endpoint_summarises_window(monkeypatch) -> None:
     assert body["latest"]["ts"] == "t2"
 
 
-def test_ln_ops_endpoint_empty_until_value_layer(monkeypatch) -> None:
-    """Ops-Audit-Trail ist ehrlich leer, solange die gegatete Wert-Schicht nichts schreibt."""
-    monkeypatch.setattr("app.lightning.ops_ledger.read_recent_ln_ops", lambda: [])
-    resp = TestClient(_make_app()).get("/dashboard/api/ln/ops")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["count"] == 0
-    assert body["ops"] == []
-    assert "generated_at" in body
+def test_ln_ops_endpoint_is_gone() -> None:
+    """ADR 0018 §12 (PR 1): die Listenansicht des ALTEN Geldjournals ist entfallen.
+
+    Sie las ``ln_ops_ledger_v2.jsonl``, das keinen Schreiber mehr hat — ein
+    Panel, das dauerhaft denselben eingefrorenen Stand zeigt, sieht aus wie ein
+    Live-Trail. Die Audit-Sicht auf den lebenden Geldpfad ist
+    ``GET /payments/audit`` und verlangt bewusst eine ``intent_id``.
+    """
+    assert TestClient(_make_app()).get("/dashboard/api/ln/ops").status_code == 404
 
 
 def test_ln_earnings_endpoint_aggregates_by_source(monkeypatch) -> None:

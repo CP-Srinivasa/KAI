@@ -1,19 +1,35 @@
-"""Sprint 5 — value-action control endpoint (plan/execute, policy + B-005, inert).
+"""Die Kontrollflaeche ``POST /dashboard/api/ln/value-action`` nach dem Rueckbau.
 
-Covers: plan mode returns the plan + policy verdict + plan_hash; execute is denied
-for a disallowed action; an in-envelope auto_execute runs straight through but stays
-INERT (pay_enabled off → disabled); a needs_confirm execute with a mismatched
-plan-hash is rejected (B-005) WITHOUT touching the node.
+Der Bestand pruefte hier eine ganze zweite Geldkette: Operator-Envelope,
+Risikoklassen, Frisch-Balance-Gate, Tages-Cap aus dem v2-Journal,
+Reserve-Boden, HOTP-Zeremonie und persistenten Idempotenz-Store. All das ist
+mit ADR 0018 §12 (PR 1) entweder in den Payment Control Plane gewandert
+(Regelkette inklusive ``reserve_floor``, Freigabeschwelle, Idempotenz am
+Journal) oder mit dem alten Sendeweg gefallen.
+
+Was hier bleibt, sind die Zusagen, die diese Flaeche noch SELBST traegt:
+
+* nur zwei Aktionen sind erreichbar — ``pay_invoice`` (delegiert) und
+  ``create_invoice`` (Empfangs-Gate);
+* reservierte Gate-kwargs koennen nicht ueber ``params`` eingeschmuggelt werden;
+* der Mint bleibt an den vorgeschauten Plan gebunden (keine Parameter-
+  Substitution zwischen Vorschau und Ausfuehrung);
+* der Mint bleibt inert, solange ``receive_enabled`` aus ist.
+
+Die Zusagen des Sendepfads werden dort geprueft, wo er ist:
+``tests/unit/payments/test_ln_control_delegation.py`` und
+``tests/unit/payments/test_policy.py``.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routers import ln_control as lc
-from app.lightning import ops_ledger
-from app.lightning.policy import PolicyEnvelope
 
 _URL = "/dashboard/api/ln/value-action"
 
@@ -24,330 +40,109 @@ def _app() -> FastAPI:
     return a
 
 
-async def _bal_million() -> int:
-    return 1_000_000
+def _post(body: dict[str, Any]) -> Any:
+    return TestClient(_app()).post(_URL, json=body)
 
 
-async def _fresh_bal_million() -> int | None:
-    return 1_000_000
+# --------------------------------------------------------------------------- #
+# Register: nur noch zwei Aktionen
+# --------------------------------------------------------------------------- #
 
 
-async def _fresh_bal_none() -> int | None:
-    return None
+@pytest.mark.parametrize("action", ["keysend", "send_coins", "open_channel", "close_channel"])
+def test_the_deferred_actions_are_gone_not_denied(action: str) -> None:
+    """ADR §1 fuehrt sie als DEFERRED — dann duerfen sie kein Menuepunkt sein.
+
+    Sie standen im Register und wurden von der Policy abgelehnt. Ein Eintrag,
+    der nur existiert, um abgelehnt zu werden, liest sich wie eine Faehigkeit,
+    die man nur freischalten muesste.
+    """
+    r = _post({"action": action, "params": {}})
+    assert r.status_code == 422
+    assert "unknown action" in r.json()["detail"]
 
 
-def _patch(monkeypatch, envelope: PolicyEnvelope) -> None:
-    lc.reset_control_state()
-    monkeypatch.setattr(lc.PolicyStore, "load", lambda self: envelope)
-    monkeypatch.setattr(lc, "_available_balance_sat", _bal_million)
-    # Capital actions read the W0-P1 freshness-gated balance; default the tests to
-    # "fresh and rich" so policy decisions stay deterministic.
-    monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh_bal_million)
-    # Isolate the daily-cap input from the shared money journal (other tests append
-    # spends to the default path) so the policy decision is deterministic. Source is
-    # the v2 journal since the PR-C cutover.
-    monkeypatch.setattr(lc, "spent_today_sat_v2", lambda: 0)
+def test_unknown_action_is_422() -> None:
+    assert _post({"action": "payout", "params": {}}).status_code == 422
 
 
-def test_plan_mode_returns_plan_decision_and_hash(monkeypatch) -> None:
-    _patch(monkeypatch, PolicyEnvelope.default())  # deny everything
-    r = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-        },
+def test_reserved_params_cannot_be_smuggled_in() -> None:
+    """Ein injiziertes ``authorization`` schriebe eine LUEGE in den Audit-Trail."""
+    r = _post(
+        {
+            "action": "create_invoice",
+            "params": {"value_sat": 10, "authorization": {"policy_decision": "auto"}},
+        }
     )
-    assert r.status_code == 200
-    b = r.json()
-    assert b["mode"] == "plan"
-    assert b["policy"]["decision"] == "denied"  # default envelope denies
-    assert len(b["plan_hash"]) == 64
-    assert b["plan"]["state"] == "disabled"  # inert: pay_enabled off → node never touched
+    assert r.status_code == 422
+    assert "reserved params" in r.json()["detail"]
 
 
-def test_execute_denied_for_disallowed_action(monkeypatch) -> None:
-    _patch(monkeypatch, PolicyEnvelope.default())
-    r = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-            "confirm": {"hotp": "x", "plan_hash": "y", "idempotency_key": "k"},
-        },
+# --------------------------------------------------------------------------- #
+# Mint: Plan-Bindung und Inertheit
+# --------------------------------------------------------------------------- #
+
+
+def test_plan_mode_previews_without_touching_the_node() -> None:
+    body = _post({"action": "create_invoice", "params": {"value_sat": 1000}}).json()
+    assert body["mode"] == "plan"
+    assert len(body["plan_hash"]) == 64
+    # receive_enabled ist in der Suite aus (conftest) → ehrlich ``disabled``.
+    assert body["plan"]["state"] == "disabled"
+    assert "receive_enabled" in body["plan"]["detail"]
+
+
+def test_execute_with_a_stale_plan_hash_is_refused() -> None:
+    """B-005-Kern: zwischen Vorschau und Ausfuehrung darf nichts ausgetauscht werden."""
+    params = {"value_sat": 1000}
+    plan = _post({"action": "create_invoice", "params": params}).json()
+    r = _post(
+        {
+            "action": "create_invoice",
+            "params": {"value_sat": 500_000},  # anderer Betrag, alter Hash
+            "confirm": {"plan_hash": plan["plan_hash"], "idempotency_key": "k1"},
+        }
     )
-    assert r.status_code == 403 and "policy denied" in r.json()["detail"]
+    assert r.status_code == 403
+    assert "plan hash mismatch" in r.json()["detail"]
 
 
-def test_execute_auto_within_envelope_is_inert(monkeypatch) -> None:
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}), per_action_cap_sat=10_000, daily_cap_sat=50_000
-    )
-    _patch(monkeypatch, env)
-    client = TestClient(_app())
-    params = {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}
-    plan = client.post(_URL, json={"action": "send_coins", "params": params}).json()
-    r = client.post(
-        _URL,
-        json={
-            "action": "send_coins",
+def test_execute_without_an_idempotency_key_is_refused() -> None:
+    params = {"value_sat": 1000}
+    plan = _post({"action": "create_invoice", "params": params}).json()
+    r = _post(
+        {
+            "action": "create_invoice",
             "params": params,
-            "confirm": {
-                "hotp": "x",
-                "plan_hash": plan["plan_hash"],
-                "idempotency_key": "k-auto-1",
-            },
-        },
+            "confirm": {"plan_hash": plan["plan_hash"], "idempotency_key": ""},
+        }
     )
-    assert r.status_code == 200
-    b = r.json()
-    # auto_execute needs NO HOTP (max automation) but MUST echo the previewed
-    # plan_hash and burn a fresh idempotency key (W0-P4); stays INERT (pay off).
-    assert b["mode"] == "execute" and b["result"]["state"] == "disabled"
+    assert r.status_code == 403
+    assert "idempotency key required" in r.json()["detail"]
 
 
-# --- W0-P4: the auto_execute path enforces plan binding + replay guard -------------
-
-
-def test_execute_auto_wrong_plan_hash_rejected(monkeypatch) -> None:
-    """Previously the auto path ignored the confirm content entirely — params could
-    be substituted between preview and execute without detection."""
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}), per_action_cap_sat=10_000, daily_cap_sat=50_000
-    )
-    _patch(monkeypatch, env)
-    r = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-            "confirm": {"hotp": "x", "plan_hash": "WRONG", "idempotency_key": "k"},
-        },
-    )
-    assert r.status_code == 403 and "confirm rejected" in r.json()["detail"]
-
-
-def test_execute_auto_replayed_idempotency_key_rejected(monkeypatch) -> None:
-    """W0-P4-Gate: ein Replay derselben create_invoice-Anfrage schlägt fehl."""
-    env = PolicyEnvelope(allowed_actions=frozenset({"create_invoice"}))
-    _patch(monkeypatch, env)
-    client = TestClient(_app())
-    params = {"memo": "w0p4", "value_sat": 0}
-    plan = client.post(_URL, json={"action": "create_invoice", "params": params}).json()
-    body = {
-        "action": "create_invoice",
-        "params": params,
-        "confirm": {"hotp": "x", "plan_hash": plan["plan_hash"], "idempotency_key": "k-once"},
-    }
-    first = client.post(_URL, json=body)
-    assert first.status_code == 200 and first.json()["mode"] == "execute"
-    replay = client.post(_URL, json=body)
-    assert replay.status_code == 403 and "replay" in replay.json()["detail"]
-
-
-# --- W0-P1: capital actions fail closed on stale/unavailable node state ------------
-
-
-def test_capital_action_stale_node_state_is_denied(monkeypatch) -> None:
-    """W0-P1-Gate: ohne frischen, balance-tragenden Node-State wird eine
-    Kapitalaktion hart abgelehnt — nie gegen einen stale Cache-Stand bewertet."""
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}),
-        per_action_cap_sat=1_000_000,
-        daily_cap_sat=1_000_000,
-    )
-    _patch(monkeypatch, env)
-    monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh_bal_none)
-    client = TestClient(_app())
-    params = {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000}
-    plan = client.post(_URL, json={"action": "send_coins", "params": params})
-    assert plan.status_code == 200
-    assert plan.json()["policy"]["decision"] == "denied"
-    assert "stale" in plan.json()["policy"]["reason"]
-    r = client.post(
-        _URL,
-        json={
-            "action": "send_coins",
+def test_execute_stays_inert_while_receive_is_off() -> None:
+    """Der Kill-Switch ist die aeussere Grenze, nicht die Zeremonie davor."""
+    params = {"value_sat": 1000}
+    plan = _post({"action": "create_invoice", "params": params}).json()
+    body = _post(
+        {
+            "action": "create_invoice",
             "params": params,
-            "confirm": {"hotp": "x", "plan_hash": plan.json()["plan_hash"], "idempotency_key": "k"},
-        },
-    )
-    assert r.status_code == 403 and "policy denied" in r.json()["detail"]
+            "confirm": {"plan_hash": plan["plan_hash"], "idempotency_key": "k1"},
+        }
+    ).json()
+    assert body["mode"] == "execute"
+    assert body["result"]["state"] == "disabled"
+    assert "receive_enabled" in body["result"]["detail"]
 
 
-def test_stale_node_state_does_not_block_receive_action(monkeypatch) -> None:
-    """create_invoice (receive, kein Kapitalabfluss) bleibt bei stale Node-State
-    nutzbar — das Freshness-Gate bindet nur Kapitalaktionen."""
-    env = PolicyEnvelope(allowed_actions=frozenset({"create_invoice"}))
-    _patch(monkeypatch, env)
-    monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh_bal_none)
-    r = TestClient(_app()).post(
-        _URL, json={"action": "create_invoice", "params": {"memo": "w0p1", "value_sat": 0}}
-    )
-    assert r.status_code == 200
-    assert r.json()["policy"]["decision"] == "auto_execute"
+def test_bad_params_for_the_action_are_422_not_500() -> None:
+    """Ein Tippfehler in ``params`` ist eine Eingabe, kein Serverfehler.
 
-
-# --- W0-B1: an unknown v2 cap is never interpreted as zero -----------------------
-
-
-def _use_real_cap_reader(monkeypatch, path) -> None:
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(path))
-    monkeypatch.setattr(lc, "spent_today_sat_v2", ops_ledger.spent_today_sat_v2)
-    # Isolate this controller gate: in production money_journal_status independently
-    # denies the same missing/corrupt states before the node can be touched.
-    monkeypatch.setattr(lc, "_money_journal_blocker", lambda: "")
-
-
-def test_missing_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> None:
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}),
-        per_action_cap_sat=1_000_000,
-        daily_cap_sat=1_000_000,
-    )
-    _patch(monkeypatch, env)
-    _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
-
-    response = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["policy"]["decision"] == "denied"
-    assert "daily spend cap unknown" in response.json()["policy"]["reason"]
-
-
-def test_corrupt_v2_cap_denies_allowed_capital_action(tmp_path, monkeypatch) -> None:
-    path = tmp_path / "corrupt.jsonl"
-    path.write_text('{"seq":1', encoding="utf-8")
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}),
-        per_action_cap_sat=1_000_000,
-        daily_cap_sat=1_000_000,
-    )
-    _patch(monkeypatch, env)
-    _use_real_cap_reader(monkeypatch, path)
-
-    response = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-        },
-    )
-
-    assert response.json()["policy"]["decision"] == "denied"
-    assert "daily spend cap unknown" in response.json()["policy"]["reason"]
-
-
-def test_existing_empty_v2_cap_is_known_zero(tmp_path, monkeypatch) -> None:
-    path = tmp_path / "freshly_migrated.jsonl"
-    path.write_text("", encoding="utf-8")
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}),
-        per_action_cap_sat=10_000,
-        daily_cap_sat=50_000,
-    )
-    _patch(monkeypatch, env)
-    _use_real_cap_reader(monkeypatch, path)
-
-    response = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-        },
-    )
-
-    assert response.json()["policy"]["decision"] == "auto_execute"
-
-
-def test_unknown_v2_cap_does_not_block_receive_action(tmp_path, monkeypatch) -> None:
-    _patch(monkeypatch, PolicyEnvelope(allowed_actions=frozenset({"create_invoice"})))
-    _use_real_cap_reader(monkeypatch, tmp_path / "missing.jsonl")
-
-    response = TestClient(_app()).post(
-        _URL, json={"action": "create_invoice", "params": {"memo": "receive", "value_sat": 0}}
-    )
-
-    assert response.json()["policy"]["decision"] == "auto_execute"
-
-
-# --- pay_invoice amount is parsed from the BOLT11 (Audit-P0 completion) ------------
-# A 25 000-sat invoice: HRP "lnbc250u1" → 250 * 100_000 msat = 25 000 sat.
-_INV_25K = "lnbc250u1pjfaketestinvoicexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-_INV_AMOUNTLESS = "lnbc1pjfaketestinvoicexxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-
-
-def test_pay_invoice_amount_over_cap_needs_confirm(monkeypatch) -> None:
-    # Without amount-parsing the policy saw 0 → auto_execute (covert spend hole).
-    # Now the 25k invoice exceeds the 10k per-action cap → needs_confirm (HOTP).
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"pay_invoice"}),
-        per_action_cap_sat=10_000,
-        daily_cap_sat=1_000_000,
-    )
-    _patch(monkeypatch, env)
-    r = TestClient(_app()).post(
-        _URL, json={"action": "pay_invoice", "params": {"payment_request": _INV_25K}}
-    )
-    assert r.status_code == 200
-    assert r.json()["policy"]["decision"] == "needs_confirm"
-
-
-def test_pay_invoice_breaches_reserve_floor_is_denied(monkeypatch) -> None:
-    # The reserve-floor backstop now applies to pay_invoice: balance 1_000_000 −
-    # 25_000 = 975_000 < 990_000 floor → hard denied (was silently bypassed at amount=0).
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"pay_invoice"}),
-        per_action_cap_sat=1_000_000,
-        daily_cap_sat=1_000_000,
-        reserve_floor_sat=990_000,
-    )
-    _patch(monkeypatch, env)
-    r = TestClient(_app()).post(
-        _URL, json={"action": "pay_invoice", "params": {"payment_request": _INV_25K}}
-    )
-    assert r.status_code == 200
-    assert r.json()["policy"]["decision"] == "denied"
-
-
-def test_pay_invoice_amountless_forces_confirm(monkeypatch) -> None:
-    # Amountless invoice → amount unknown → fail-closed to needs_confirm even under
-    # generous caps (never auto-execute an unbounded spend).
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"pay_invoice"}),
-        per_action_cap_sat=1_000_000,
-        daily_cap_sat=1_000_000,
-    )
-    _patch(monkeypatch, env)
-    r = TestClient(_app()).post(
-        _URL, json={"action": "pay_invoice", "params": {"payment_request": _INV_AMOUNTLESS}}
-    )
-    assert r.status_code == 200
-    b = r.json()
-    assert b["policy"]["decision"] == "needs_confirm"
-    # W0-P4: die Kapitalklassen-Regel (amount<=0 → confirm) greift bereits in der
-    # Policy; der Endpoint-Fallback "amount unknown" bleibt als Defense-in-Depth.
-    assert "amount" in b["policy"]["reason"]
-
-
-def test_execute_needs_confirm_rejects_bad_plan_hash(monkeypatch) -> None:
-    # cap below the amount → needs_confirm; a wrong plan_hash is rejected before HOTP.
-    env = PolicyEnvelope(
-        allowed_actions=frozenset({"send_coins"}), per_action_cap_sat=100, daily_cap_sat=50_000
-    )
-    _patch(monkeypatch, env)
-    r = TestClient(_app()).post(
-        _URL,
-        json={
-            "action": "send_coins",
-            "params": {"addr": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", "amount_sat": 1000},
-            "confirm": {"hotp": "x", "plan_hash": "WRONG", "idempotency_key": "k"},
-        },
-    )
-    assert r.status_code == 403 and "confirm rejected" in r.json()["detail"]
+    Er faellt schon in der Vorschau auf — der ``TypeError`` des Aufrufs wird zu
+    422 uebersetzt, statt als 500 zu entkommen.
+    """
+    r = _post({"action": "create_invoice", "params": {"nonsense": 1}})
+    assert r.status_code == 422
+    assert "invalid params" in r.json()["detail"]

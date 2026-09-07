@@ -9,12 +9,11 @@ import pytest
 from app.lightning.client import LightningUnavailableError, LndPayment, LndPaymentPage
 from app.lightning.ops_ledger import (
     append_ln_outcome,
-    attest_ln_ops_tip,
-    prepare_ln_intent,
     read_verified_ln_ops_snapshot,
     verify_ln_ops_ledger,
 )
 from app.lightning.reconciliation import reconcile_ln_ops
+from app.truth.attestation import compute_attestation
 from app.truth.ledger import append_attestation
 
 PAYMENT_HASH = "ab" * 32
@@ -79,6 +78,53 @@ def _payment(
     )
 
 
+def prepare_ln_intent(
+    action: str,
+    *,
+    intent_id: str,
+    plan: dict[str, object],
+    path: Path,
+) -> dict[str, object]:
+    """Schreibe eine offene Alt-Intent-Zeile — als FIXTURE, nicht als Produktionscode.
+
+    Der Produktions-Eroeffner ist mit ADR 0018 §12 (PR 1) geloescht; das
+    Archivmodul kann einen Vorgang nur noch SCHLIESSEN. Der Reconciler braucht
+    trotzdem offene Alt-Intents, um seine Aufgabe zu haben — also baut der Test
+    sie selbst. Das ist die ehrlichere Fassung: der Fixture-Aufbau steht jetzt
+    sichtbar hier, statt sich als Aufruf einer Faehigkeit zu tarnen, die die
+    Produktion nicht mehr hat.
+    """
+    from app.lightning.receive_ledger import redact_ln_op_record
+
+    rows = []
+    if path.exists():
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    tip = rows[-1] if rows else None
+    record = redact_ln_op_record(
+        {
+            "ts": "2026-08-06T12:00:00+00:00",
+            "intent_id": intent_id,
+            "action": action,
+            "state": "intent",
+            "plan": plan,
+            "response": {},
+            "authorization": {},
+        }
+    )
+    record["seq"] = int(tip["seq"]) + 1 if tip else 1
+    record["prev_hash"] = str(tip["record_hash"]) if tip else "0" * 64
+    record["record_hash"] = compute_attestation(record)["hash"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        handle.write(line + "\n")
+    return record
+
+
 def _open_invoice(ops_path: Path, *, intent_id: str = "intent-1") -> dict[str, object]:
     return prepare_ln_intent(
         "pay_invoice",
@@ -94,12 +140,32 @@ def _open_invoice(ops_path: Path, *, intent_id: str = "intent-1") -> dict[str, o
 
 
 def _attest(ops_path: Path, truth_path: Path) -> None:
-    result = attest_ln_ops_tip(
-        ops_path=ops_path,
-        truth_path=truth_path,
+    """Attestiere den Tip des ALT-Journals — ebenfalls als Fixture.
+
+    ``attest_ln_ops_tip`` ist mit dem Altpfad gefallen; sein Nachfolger
+    (``payments.journal_chain.attest_payment_journal_tip``) ankert das
+    Geld-Journal des Control Plane. Der Reconciler prueft aber weiterhin die
+    Containment des ALTEN Tips (er lebt bis PR 2) — der Test stellt die
+    Vorbedingung deshalb direkt her.
+    """
+    rows = [
+        json.loads(line)
+        for line in ops_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    last = rows[-1]
+    append_attestation(
+        "lightning_ops_tip",
+        f"ln-ops-tip:{last['record_hash']}",
+        {
+            "schema": "ln-ops-tip/v1",
+            "record_hash": str(last["record_hash"]),
+            "seq": int(last["seq"]),
+            "open_intents": list(verify_ln_ops_ledger(ops_path)["open_intents"]),
+        },
+        path=truth_path,
         mirror_audit=False,
     )
-    assert result["attested"] == 1
 
 
 def _read_report(path: Path) -> dict[str, object]:

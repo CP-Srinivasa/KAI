@@ -163,7 +163,7 @@ def test_treasury_endpoint_aggregates_live(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from app.api.routers.dashboard import router
-    from app.lightning.policy import PolicyEnvelope
+    from app.core.payment_settings import get_payment_settings
 
     monkeypatch.setattr(
         "app.lightning.earnings_ledger.read_recent_ln_earnings",
@@ -194,10 +194,11 @@ def test_treasury_endpoint_aggregates_live(monkeypatch) -> None:
 
     monkeypatch.setattr("app.lightning.cache.get_cached_node_status", _node)
     monkeypatch.setattr("app.lightning.treasury.get_pending_channels_snapshot", _pending)
-    monkeypatch.setattr(
-        "app.lightning.policy.PolicyStore.load",
-        lambda self: PolicyEnvelope(reserve_floor_sat=300_000),
-    )
+    # ADR 0018 §12: der Reserve-Boden steht in der Payment-Konfiguration, nicht
+    # mehr in ``artifacts/ln_policy.json`` — dieselbe Zahl, die die Regel
+    # ``reserve_floor`` durchsetzt.
+    monkeypatch.setenv("APP_PAYMENT_RESERVE_FLOOR_SAT", "300000")
+    get_payment_settings.cache_clear()
 
     app = FastAPI()
     app.include_router(router)
