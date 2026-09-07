@@ -127,6 +127,16 @@ class LightningRail:
                 update={"reason": f"{type(exc).__name__}: {str(exc)[:150]}"}
             )
         locked = wallet_is_locked(state)
+        # Bestand best-effort und UNABHAENGIG von der Gesundheit: ein Node, der
+        # seine Bilanz nicht nennt, ist nicht krank — aber der Reserve-Boden
+        # bekommt dann ``None`` und lehnt ab, statt mit einer Null zu rechnen.
+        balance: int | None
+        try:
+            channels = await client.channel_balance()
+            wallet = await client.wallet_balance()
+            balance = _sat_of(channels.get("local_balance")) + _sat_of(wallet.get("total_balance"))
+        except Exception:  # noqa: BLE001 - Bilanz ist Beiwerk, kein Gesundheitsurteil
+            balance = None
         return RailHealth(
             rail=self.name,
             reachable=True,
@@ -135,6 +145,7 @@ class LightningRail:
             wallet_locked=locked,
             observed_at=moment,
             reason=f"state={state}",
+            available_balance_sat=balance,
         )
 
     # -- Decode / Quote ----------------------------------------------------- #
@@ -298,3 +309,19 @@ class LightningRail:
 
 
 __all__ = ["LightningRail"]
+
+
+def _sat_of(value: object) -> int:
+    """lnd-Betrag lesen: ``{"sat": "123", "msat": …}`` oder nackte Zahl; unlesbar = 0.
+
+    Dieselbe Lesart wie ``app.lightning.adapter._amt_sat`` — hier eigenstaendig,
+    weil ``app/payments`` nur ueber den Client mit ``app/lightning`` spricht.
+    """
+    if isinstance(value, dict):
+        value = value.get("sat")
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        return 0
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return 0

@@ -29,6 +29,7 @@ gemacht.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -41,16 +42,19 @@ from app.payments.service import PaymentRequest, PaymentService, PaymentServiceE
 DEFAULT_PURPOSE = "operator_pay_invoice"
 
 
-async def legacy_pay_invoice_moved(**_kwargs: Any) -> Any:
-    """Stolperdraht im Value-Layer-Register (ADR §12).
+def plan_hash(action: str, params: dict[str, Any]) -> str:
+    """Kanonischer SHA-256 ueber ``(action, params)`` — stabil ueber Key-Order.
 
-    Der Eintrag in ``ln_control._ACTIONS`` bleibt, damit die Taxonomie-
-    Invariante haelt und die Kapital-Gates weiter greifen. Wer diese Funktion
-    tatsaechlich erreicht, hat die Abzweigung in ``value_action`` entfernt und
-    damit einen zweiten Sendeweg wiederhergestellt — lieber ein lauter Fehler
-    als eine zweite Wahrheit ueber dieselbe Zahlung.
+    Stand in ``app/lightning/control_gate.py``, das mit dem Altpfad faellt (ADR
+    0018 §12). Die Funktion selbst faellt NICHT mit: sie ist die Bindung
+    zwischen der Vorschau und dem, was ausgefuehrt wird, und sie ist die
+    Haelfte von :func:`bind_idempotency_key`. Sie steht jetzt neben ihrem
+    einzigen Verwender, statt in einem Modul, das nur noch sie enthielte.
     """
-    raise RuntimeError("pay_invoice is routed through the payment control plane (ADR 0018 §12)")
+    canonical = json.dumps(
+        {"action": action, "params": params}, sort_keys=True, separators=(",", ":"), default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def bind_idempotency_key(plan_hash: str, cockpit_key: str) -> str:
@@ -211,9 +215,9 @@ __all__ = [
     "DEFAULT_PURPOSE",
     "bind_idempotency_key",
     "derive_fee_limit",
-    "legacy_pay_invoice_moved",
     "execute_pay_invoice",
     "handle_pay_invoice",
+    "plan_hash",
     "plan_view",
     "service_of",
 ]

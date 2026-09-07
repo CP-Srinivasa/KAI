@@ -62,15 +62,18 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     1. **Kill-Switch:** die Geld-Gates als OS-Env (schlägt die ``.env``-Datei
        in der pydantic-settings-Präzedenz; Tests mit explizitem
        ``LightningSettings(...)``-Objekt gewinnen weiterhin).
-    2. **Ops-Ledger-Redirect:** Writer und ``spent_today_sat`` arbeiten auf
-       einem tmp-File, nie auf ``artifacts/ln_ops_ledger.jsonl``. Gilt für
-       ALLE DREI Journale — v1 (Pfadkonstante), v2
-       (``APP_LN_OPS_LEDGER_V2_PATH``) und seit dem PR-C-Cutover das getrennte
-       Receive-Journal (``APP_LN_RECEIVE_LEDGER_PATH``), sonst schriebe die
-       Suite in die echten Geld-/Empfangs-Journale.
-    3. **Idempotenz-Redirect:** der Cockpit-Singleton zeigt auf einen
-       frischen tmp-Store — ``reset_control_state()`` kann keinen
-       Prod-Zustand mehr löschen.
+    2. **Journal-Redirect:** jedes Journal, in das ein Test schreiben könnte,
+       zeigt auf ein tmp-File — das archivierte v2-Journal
+       (``APP_LN_OPS_LEDGER_V2_PATH``), das Empfangs-Journal
+       (``APP_LN_RECEIVE_LEDGER_PATH``) und das Geld-Journal des Control Plane
+       (``APP_PAYMENT_JOURNAL_PATH`` + Vault, siehe unten).
+
+    **Was mit ADR 0018 §12 (PR 1) hier entfallen ist**, weil die Module weg
+    sind und nicht, weil die Garantie gelockert wurde: der v1-Pfad-Patch auf
+    ``ops_ledger._OPS_PATH`` (die v1-Hälfte existiert nicht mehr) und der
+    Idempotenz-Redirect auf ``ln_control._seen_idempotency`` (der persistente
+    Cockpit-Store ist mit dem alten Sendeweg gegangen). Beides waren Patches
+    auf Schreibpfade, die es nicht mehr gibt.
     """
     monkeypatch.setenv("APP_LN_ENABLED", "false")
     monkeypatch.setenv("APP_LN_PAY_ENABLED", "false")
@@ -80,18 +83,8 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     # sähe sonst `pending` statt `disabled` (Rest-Fail vom 05.08.).
     monkeypatch.setenv("APP_CHAIN_ENABLED", "false")
 
-    from app.lightning import ops_ledger
-
-    monkeypatch.setattr(ops_ledger, "_OPS_PATH", tmp_path / "ln_ops_ledger.jsonl")
     monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(tmp_path / "ln_ops_ledger_v2.jsonl"))
     monkeypatch.setenv("APP_LN_RECEIVE_LEDGER_PATH", str(tmp_path / "ln_receive_ledger.jsonl"))
-
-    from app.api.routers import ln_control
-    from app.lightning.idempotency_store import PersistentSeenKeys
-
-    monkeypatch.setattr(
-        ln_control, "_seen_idempotency", PersistentSeenKeys(tmp_path / "ln_seen_keys.jsonl")
-    )
 
     # 4. **Geld-Journal-Redirect (ADR 0018 §5).** Seit dem Lifespan den
     #    ``PaymentService`` baut, oeffnet JEDER Test, der die App hochfaehrt,

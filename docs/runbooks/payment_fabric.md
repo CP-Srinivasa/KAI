@@ -74,6 +74,59 @@ der QR-Code lebte (Rückweg-Test 2026-09-04).
 
 ---
 
+## 1b. Reserve-Boden — der Kapital-Backstop (ADR 0018 §12, seit dem Rückbau)
+
+`APP_PAYMENT_RESERVE_FLOOR_SAT` ist der Bodensatz, den eine Zahlung **nie**
+antasten darf. Die Regel `reserve_floor` steht in der Kette **vor**
+`amount_limits`:
+
+```
+DENY, wenn  available_liquidity - amount - fee_limit  <  reserve_floor
+```
+
+Der Wert stand bis zum Rückbau in `artifacts/ln_policy.json`
+(`reserve_floor_sat`, am Gerät **1.840.000**) und wurde von
+`app/lightning/policy.py` durchgesetzt. Beides ist gelöscht; die Zahl gehört
+jetzt in die `.env` des Payment Control Plane:
+
+```
+APP_PAYMENT_RESERVE_FLOOR_SAT=1840000
+```
+
+**Default ist 0 = aus.** Das ist kein bequemer Default, sondern die einzige
+ehrliche Voreinstellung: ein Boden, den der Operator nicht selbst gesetzt hat,
+wäre eine erfundene Zahl über fremdes Kapital. `GET /dashboard/api/ln/treasury`
+liest `operating_sat` seit dem Rückbau aus genau diesem Wert — die Anzeige und
+das Gate haben damit EINE Quelle.
+
+> ⚠ **Fail-closed.** Ist der Boden > 0 und liefert der Rail **keine**
+> Bilanz, wird die Zahlung ABGELEHNT (`reserve_floor armed … but no liquidity
+> reading`). Das entspricht dem Bestand — dessen `_available_balance_sat()` gab
+> im Fehlerfall 0 zurück, was denselben DENY erzeugte.
+>
+> **Woher die Zahl kommt (seit dem Rückbau-Nachtrag):** `RailHealth.available_balance_sat`
+> — der `LightningRail` liest sie im selben Health-Aufruf, den der Service vor
+> jedem Intent ohnehin macht, aus `/v1/balance/channels` (Kanal-Local) plus
+> `/v1/balance/blockchain` (On-Chain-Total). Das ist exakt die Summe, an der die
+> alte Regel gemessen hat. Ein Node, der seine Bilanz nicht nennt, bleibt
+> gesund, liefert aber `None` — und der Boden lehnt ab, statt mit einer Null zu
+> rechnen. SIMULATION hat keine Bilanz (`SimulationRail(balance_sat=…)` nur im
+> Test); SHADOW am Gerät liest den echten Node.
+>
+> Reihenfolge für die Aktivierung:
+>
+> 1. Boden setzen (`APP_PAYMENT_RESERVE_FLOOR_SAT=1840000`), Server neu starten.
+> 2. `GET /dashboard/api/ln/treasury` → `operating_sat == 1840000` prüfen.
+> 3. Einen Intent im SHADOW anlegen und das Verdikt lesen: mit ~1,9 Mio sat
+>    Bestand ist ein 1.000-sat-Intent erwartet **nicht** vom Boden abgelehnt;
+>    ein Intent über `Bestand − 1.840.000` wird mit `rule_ids=["reserve_floor"]`
+>    verweigert.
+> 4. Meldet das Verdikt `no liquidity reading`, liest der Rail die Bilanz nicht
+>    (Macaroon-Scope `readonly` prüfen, `/v1/balance/*` muss erlaubt sein) —
+>    dann ist der Boden eine Sperre, nicht eine Grenze, und PAY bleibt faktisch zu.
+
+---
+
 ## 2. SHADOW-Preview (read-only am echten Node)
 
 ```
@@ -197,7 +250,13 @@ APP_PAYMENT_FEE_LIMIT_MAX_SAT=5
 APP_PAYMENT_APPROVAL_THRESHOLD_SAT=1          # jede Zahlung braucht HOTP
 APP_PAYMENT_DESTINATION_ALLOWLIST=<sha256(payee_pubkey)>
 APP_PAYMENT_PURPOSES_ALLOWED=self_test
+APP_PAYMENT_RESERVE_FLOOR_SAT=0               # siehe §1b — 0 ist hier BEWUSST
 ```
+
+`APP_PAYMENT_RESERVE_FLOOR_SAT` steht im LIVE-Fenster bewusst auf 0: solange
+kein Rail `available_liquidity_sat` liefert, würde ein scharfer Boden das
+Fenster vollständig sperren (§1b). Die Kapitalgrenze des Fensters tragen
+`per_payment_max` und `daily_hard_cap` — beide auf 1.000 sat.
 
 Betrag: **1.000 sat**, Ziel: eine EIGENE Invoice (Self-Payment). Ein fremdes
 Ziel im ersten Fenster verschenkt den einzigen Vorteil des Testes — die

@@ -178,23 +178,3 @@ def test_read_recent_returns_records_newest_last_and_honours_limit(tmp_path) -> 
 
     recs = read_recent_ln_reputation(path=out, limit=3)
     assert [r["num_peers"] for r in recs] == [2, 3, 4]  # last 3, newest last, blank skipped
-
-
-# --- ops ledger reader (audit trail; writer is gated/Sprint 4-5) -----------------
-
-
-def test_ops_reader_missing_file_returns_empty(tmp_path) -> None:
-    from app.lightning.ops_ledger import read_recent_ln_ops
-
-    assert read_recent_ln_ops(path=tmp_path / "ops.jsonl") == []
-
-
-def test_ops_reader_reads_records(tmp_path) -> None:
-    from app.lightning.ops_ledger import read_recent_ln_ops
-
-    out = tmp_path / "ops.jsonl"
-    out.write_text(
-        json.dumps({"action": "create_invoice", "state": "planned"}) + "\n", encoding="utf-8"
-    )
-    ops = read_recent_ln_ops(path=out)
-    assert len(ops) == 1 and ops[0]["action"] == "create_invoice"

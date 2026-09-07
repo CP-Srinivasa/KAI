@@ -19,7 +19,8 @@ Jede Aussage trägt eine Klassifikation: **IMPLEMENTED** (Code im Baum) · **TES
 | KEEP (Rail-Adapter) | `client`, `adapter`, `cache`, `plan_guards`, `golive_preflight`, `backup_monitor`, `lightning_settings` (TLS-Boot, Capability-Scopes) | IMPLEMENTED |
 | FIX (im Control Plane gelöst) | Fee-Limit Pflicht · Sync-/Wallet-Gate · harter Tages-Cap · Idempotenz ohne Evict · Destination-Bindung · Unbekannt ≠ FAILED · Scope-Kollisions-Guard | IMPLEMENTED/TESTED |
 | REWRITE (ersetzt) | `value_layer.pay_invoice`-Sendeweg → `PaymentService`; `ln_control.pay_invoice` delegiert | IMPLEMENTED/TESTED |
-| DELETE (nach 7 Tagen Dual-Read) | `value_layer`, `ops_ledger` (v1+v2), `reconciliation`, `policy`, `control_gate`, `idempotency_store`, `ops_annotations`, Reste `ln_control` (~2,7k LOC) | DEFERRED |
+| DELETE — PR 1 (2026-09-04, vorgezogen nach G-1..G-4) | `value_layer`, `policy`, `control_gate`, `idempotency_store`, `ops_annotations`, `ops_resolution`, `plan_guards`, `input_contract_rejections`, `ln_control_gates`, Reste `ln_control`; `ops_ledger` auf ein READ-ONLY-Archiv geschrumpft (kein Eröffner) | DONE |
+| DELETE — PR 2 (offen) | `ops_ledger` (Rest), `reconciliation`, `reconcile_dual`, `ln_reconciliation_eval` + die zugehörigen Units | DEFERRED |
 | DEFER | keysend, `send_coins`, `open/close_channel` (Policy DENY `unsupported_action`) · L402/Oracle-Revenue, `demand_*`, `earnings_*`, `treasury`, `reputation`, `selfpay` (QUARANTINE, nicht Payment-Kern) | DEFERRED |
 
 ## 4. Implemented Changeset — IMPLEMENTED

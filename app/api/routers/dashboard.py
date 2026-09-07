@@ -2197,26 +2197,6 @@ async def dashboard_ln_reputation_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
-@router.get("/dashboard/api/ln/ops", tags=["dashboard"])
-async def dashboard_ln_ops_api() -> JSONResponse:
-    """Read-only Audit-Trail der Lightning-Wert-Schicht-Aktionen (default leer).
-
-    Liest ``artifacts/ln_ops_ledger.jsonl`` — jede gegatete Wert-Schicht-Aktion
-    (Plan + Ausführung) wird dort tamper-evident protokolliert. Der WRITER kommt
-    mit der gegateten Wert-Schicht (Sprint 4/5); bis dahin ehrlich ``ops: []``.
-    Kein schreibender/kapitalrelevanter Pfad.
-    """
-    from app.lightning.ops_ledger import read_recent_ln_ops
-
-    ops = read_recent_ln_ops()
-    payload = {
-        "count": len(ops),
-        "ops": ops,
-        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
-
-
 @router.get("/dashboard/api/ln/earnings", tags=["dashboard"])
 async def dashboard_ln_earnings_api() -> JSONResponse:
     """Read-only souveräne Einnahmen-Übersicht (UC-7 Treasury-Quelle, default leer).
@@ -2251,15 +2231,21 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
     """Read-only Self-Funding-Treasury-Bilanz (UC-7, shadow, sats-only/B-004).
 
     Aggregiert den Earnings-Ledger + die eigenen Node-Balancen (Cache) zu
-    earnings/operating/tradable. ``operating`` = Reserve-Floor aus der Policy
-    (souveräne Reserve). KEINE Allokation/Spend (gegated bei G2), kein USD
-    (separate Dimension, nicht co-mingled).
+    earnings/operating/tradable. ``operating`` = Reserve-Floor
+    (``APP_PAYMENT_RESERVE_FLOOR_SAT``, souveräne Reserve). KEINE
+    Allokation/Spend (gegated bei G2), kein USD (separate Dimension, nicht
+    co-mingled).
+
+    Die Quelle des Reserve-Bodens ist seit ADR 0018 §12 die Payment-Konfiguration
+    statt ``artifacts/ln_policy.json`` — dieselbe Zahl, die die Regel
+    ``reserve_floor`` durchsetzt. Zwei Quellen für einen Kapital-Boden wären eine
+    Anzeige, die etwas anderes behauptet als das Gate.
     """
     from dataclasses import asdict
 
+    from app.core.payment_settings import get_payment_settings
     from app.lightning.cache import get_cached_node_status
     from app.lightning.earnings_ledger import read_recent_ln_earnings
-    from app.lightning.policy import PolicyStore
     from app.lightning.treasury import compute_treasury_snapshot, get_pending_channels_snapshot
 
     earnings = read_recent_ln_earnings()
@@ -2267,7 +2253,7 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
     pending = await get_pending_channels_snapshot()
     onchain = int(getattr(status, "wallet_total_sat", 0) or 0)
     channel = int(getattr(status, "channel_local_sat", 0) or 0)
-    reserve = PolicyStore().load().reserve_floor_sat
+    reserve = get_payment_settings().reserve_floor_sat
     snap = compute_treasury_snapshot(
         earnings,
         onchain_sat=onchain,

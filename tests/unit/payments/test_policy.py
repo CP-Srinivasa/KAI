@@ -151,6 +151,7 @@ def test_chain_order_matches_the_adr() -> None:
     assert [rule.rule_id for rule in RULE_CHAIN] == [
         "mode_and_environment",
         "rail_capability",
+        "reserve_floor",
         "amount_limits",
         "fee_limit_required",
         "destination_allowlist",
@@ -161,6 +162,82 @@ def test_chain_order_matches_the_adr() -> None:
         "retry_policy",
         "approval_threshold",
     ]
+
+
+class TestReserveFloor:
+    """Der souveraene Kapital-Backstop (ADR 0018 §6, uebernommen aus ADR §12).
+
+    Die Regel stand bis zum Rueckbau in ``app/lightning/policy.py:112``
+    ("would breach reserve floor") und war die einzige Stelle, die eine Zahlung
+    am Bodensatz des Vermoegens gestoppt hat. Sie ersatzlos zu loeschen waere
+    ein stiller Verlust gewesen: die Regelkette des Control Plane kannte
+    ``reserve`` bis hierher ueberhaupt nicht.
+
+    Sie steht VOR ``amount_limits``, weil ein Boden-Bruch die fundamentalere
+    Ablehnung ist: wer sein Tages-Cap senkt, aendert nichts daran, dass die
+    Reserve nicht angetastet werden darf.
+    """
+
+    def test_off_by_default(self) -> None:
+        """Default 0 heisst aus — kein Bestandssystem aendert sein Verhalten."""
+        assert settings().reserve_floor_sat == 0
+        decision = evaluate(a_context(available_liquidity_sat=None))
+        assert decision.verdict is Verdict.ALLOW
+
+    def test_spend_above_the_floor_passes(self) -> None:
+        ctx = a_context(
+            settings=settings(reserve_floor_sat=1_000),
+            available_liquidity_sat=1_505,  # 1505 - 500 - 5 == 1000, genau auf dem Boden
+        )
+        assert evaluate(ctx).verdict is not Verdict.DENY
+
+    def test_spend_that_breaches_the_floor_is_denied(self) -> None:
+        ctx = a_context(
+            settings=settings(reserve_floor_sat=1_000),
+            available_liquidity_sat=1_504,  # ein sat zu wenig
+        )
+        decision = evaluate(ctx)
+        assert decision.verdict is Verdict.DENY
+        assert decision.rule_ids == ("reserve_floor",)
+        assert "reserve_floor" in decision.reasons[0]
+
+    def test_the_fee_limit_counts_against_the_floor(self) -> None:
+        """Die Gebuehr fliesst mit ab — ein Boden, der sie ignoriert, ist keiner."""
+        ctx = a_context(
+            intent=an_intent(fee_limit=sat(200)),
+            settings=settings(reserve_floor_sat=1_000),
+            available_liquidity_sat=1_600,  # ohne Fee ueber dem Boden, mit Fee darunter
+        )
+        decision = evaluate(ctx)
+        assert decision.verdict is Verdict.DENY
+        assert decision.rule_ids == ("reserve_floor",)
+
+    def test_unknown_liquidity_with_an_armed_floor_is_a_deny(self) -> None:
+        """Fail-closed: ein Boden, den niemand messen kann, ist kein Freibrief.
+
+        ``liquidity`` laesst ``None`` bewusst durch (SIMULATION/SHADOW haben
+        keine Kanalbilanz). Fuer den Reserve-Boden gilt das Gegenteil: der
+        Bestand kam ueber ``_available_balance_sat()`` an die Zahl und lieferte
+        im Fehlerfall 0 — also ebenfalls DENY.
+        """
+        ctx = a_context(
+            settings=settings(reserve_floor_sat=1_840_000),
+            available_liquidity_sat=None,
+        )
+        decision = evaluate(ctx)
+        assert decision.verdict is Verdict.DENY
+        assert decision.rule_ids == ("reserve_floor",)
+        assert "no liquidity reading" in decision.reasons[0]
+
+    def test_the_floor_is_evaluated_before_the_daily_cap(self) -> None:
+        """Die Reihenfolge ist die Begruendung, die der Operator sieht."""
+        ctx = a_context(
+            settings=settings(reserve_floor_sat=1_000),
+            available_liquidity_sat=1_000,
+            spent_today_sat=1_999,  # zusaetzlich ueber dem Tages-Cap
+        )
+        decision = evaluate(ctx)
+        assert decision.rule_ids == ("reserve_floor",)
 
 
 def test_a_clean_intent_is_allowed() -> None:

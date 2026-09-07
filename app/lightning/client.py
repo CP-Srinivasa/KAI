@@ -312,11 +312,14 @@ class LndRestClient:
             total_num_payments=total,
         )
 
-    # ── write surface (value layer; gated) ────────────────────────────────────
-    # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.
-    # Requires a SCOPE-MINIMAL macaroon (invoices / channel-open) — NEVER the
-    # readonly macaroon, NEVER admin. Read-only Phase-1 deployments never reach
-    # these (the value layer refuses while pay_enabled is False).
+    # ── write surface (gated) ─────────────────────────────────────────────────
+    # Since ADR 0018 §12 there are exactly TWO callers: ``add_invoice`` from
+    # ``app.lightning.receive_gate`` (behind ``receive_enabled``) and
+    # ``pay_invoice`` from ``app.payments.rails.lightning`` (behind the
+    # ``pay_enabled`` kill-switch AND the payment rule chain). Requires a
+    # SCOPE-MINIMAL macaroon — NEVER the readonly macaroon, NEVER admin.
+    # ``keysend``/``send_coins``/``open_channel``/``close_channel`` below have no
+    # caller (ADR §1 DEFERRED); they stay as the transport, not as a path.
     async def _post(
         self, path: str, body: dict[str, Any], *, timeout: float | None = None
     ) -> dict[str, Any]:

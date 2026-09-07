@@ -40,7 +40,7 @@ from app.lightning.l402 import (
     verify,
 )
 from app.lightning.mint_limiter import MintLimiter
-from app.lightning.value_layer import create_invoice
+from app.lightning.receive_gate import create_invoice
 
 router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 

@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from app.api.routers import truth_oracle
 from app.lightning.demand_ledger import ACCESS_GRANTED, CHALLENGE_MINTED, requester_fingerprint
 from app.lightning.l402 import mint_token
-from app.lightning.value_layer import ValueLayerResult
+from app.lightning.receive_gate import ValueLayerResult
 
 _SECRET = "oracle-test-secret"
 _PREIMAGE = "33" * 32

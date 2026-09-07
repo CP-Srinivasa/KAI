@@ -468,19 +468,25 @@ def test_missing_write_credential_fails_closed_without_read_fallback(scope: str)
 
 
 async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -> None:
-    """W0/PR-C cutover invariant (replaces the PR-A additivity guard).
+    """W0/PR-C cutover invariant, nachgezogen auf ADR 0018 §12 (PR 1).
 
-    PR-A declared five credentials while every caller still rode the read macaroon;
-    the guard test that pinned that additivity is deleted HERE, because this is the
-    PR that switches the consumers. What replaces it is stricter: each path is
-    executed for real and must have asked for exactly ONE, correct capability. A
-    future refactor that drops a ``credential_scope=`` silently falls back to
-    ``"read"`` — and lands in this assertion instead of in production.
+    PR-A deklarierte fuenf Credentials, waehrend jeder Aufrufer noch das
+    Read-Macaroon ritt; der Additivitaets-Waechter ist damals hier gestorben.
+    Was ihn ersetzt, ist strenger: jeder Pfad wird WIRKLICH ausgefuehrt und muss
+    genau EINE, richtige Capability angefordert haben. Ein Refactor, der ein
+    ``credential_scope=`` verliert, faellt still auf ``"read"`` zurueck — und
+    landet in dieser Assertion statt in der Produktion.
+
+    Der Sendepfad steht seit PR 1 nicht mehr in ``app/lightning``: er gehoert
+    dem Payment-Rail (``payments/rails/lightning.py``, Scope ``payment``), und
+    ``tests/unit/payments/test_lightning_rail.py`` prueft ihn dort. Hier
+    bleiben die beiden Pfade, die ``app/lightning`` noch selbst faehrt — und
+    beide sind Empfang.
     """
     from unittest.mock import AsyncMock, MagicMock
 
     from app.lightning import earnings_booking as eb
-    from app.lightning import value_layer as vl
+    from app.lightning import receive_gate as rg
 
     seen: list[tuple[str, str]] = []
     label = ""
@@ -488,28 +494,11 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
     def _recorder(cfg, *, credential_scope: str = "read"):  # type: ignore[no-untyped-def]
         seen.append((label, credential_scope))
         client = MagicMock()
-        payment_hash = "11" * 32
-        for method in (
-            "add_invoice",
-            "pay_invoice",
-            "keysend",
-            "send_coins",
-            "open_channel",
-            "close_channel",
-        ):
-            setattr(client, method, AsyncMock(return_value={}))
-        client.decode_pay_req = AsyncMock(
-            return_value={
-                "num_satoshis": "1000",
-                "num_msat": "1000000",
-                "payment_hash": payment_hash,
-            }
-        )
-        client.pay_invoice = AsyncMock(return_value={"payment_hash": payment_hash})
+        client.add_invoice = AsyncMock(return_value={})
         client.list_invoices = AsyncMock(return_value=[])
         return client
 
-    monkeypatch.setattr(vl, "_build_client", _recorder)
+    monkeypatch.setattr(rg, "_build_client", _recorder)
     monkeypatch.setattr(eb, "_build_client", _recorder)
     cfg = LightningSettings(
         _env_file=None,
@@ -523,34 +512,9 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
         onchain_macaroon_hex="onchain",
         channel_macaroon_hex="channel",
     )
-    gates = {"dry_run": False, "confirm": True, "cfg": cfg}
 
     calls = [
-        ("create_invoice", lambda: vl.create_invoice(value_sat=10, dry_run=False, cfg=cfg)),
-        ("pay_invoice", lambda: vl.pay_invoice(payment_request="lnbc10u1x", **gates)),
-        (
-            "keysend",
-            lambda: vl.keysend(
-                dest_pubkey_hex="02abababababababababababababababababababababababababababababababab",
-                amt_sat=10,
-                **gates,
-            ),
-        ),
-        (
-            "send_coins",
-            lambda: vl.send_coins(
-                addr="bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", amount_sat=10, **gates
-            ),
-        ),
-        (
-            "open_channel",
-            lambda: vl.open_channel(
-                node_pubkey_hex="02abababababababababababababababababababababababababababababababab",
-                local_funding_sat=10,
-                **gates,
-            ),
-        ),
-        ("close_channel", lambda: vl.close_channel(funding_txid="ab", output_index=0, **gates)),
+        ("create_invoice", lambda: rg.create_invoice(value_sat=10, dry_run=False, cfg=cfg)),
         ("earnings_booking", lambda: eb.book_oracle_earnings(cfg=cfg)),
     ]
     for name, call in calls:
@@ -559,11 +523,6 @@ async def test_every_money_path_requests_its_own_capability_scope(monkeypatch) -
 
     assert seen == [
         ("create_invoice", "invoice"),
-        ("pay_invoice", "payment"),
-        ("keysend", "payment"),
-        ("send_coins", "onchain"),
-        ("open_channel", "channel"),
-        ("close_channel", "channel"),
         ("earnings_booking", "invoice"),
     ]
 

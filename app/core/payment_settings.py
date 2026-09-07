@@ -72,6 +72,20 @@ class PaymentSettings(BaseSettings):
     #: Das eine Journal (ADR §5). Nie rotiert, in den Backup-REQUIRED_SOURCES.
     journal_path: str = "artifacts/payments/payment_journal.jsonl"
 
+    #: Der souveraene Kapital-Boden (``APP_PAYMENT_RESERVE_FLOOR_SAT``).
+    #:
+    #: Uebernommen aus ``app/lightning/policy.py`` ("would breach reserve
+    #: floor"), das mit dem Rueckbau des Altpfads faellt (ADR 0018 §12). Die
+    #: Regel ``reserve_floor`` verweigert eine Zahlung, die den verbleibenden
+    #: Bestand unter diesen Wert druecken wuerde.
+    #:
+    #: **Default 0 heisst AUS** — und das ist kein bequemer Default, sondern die
+    #: einzige ehrliche Voreinstellung: ein Boden, den der Operator nicht selbst
+    #: gesetzt hat, waere eine erfundene Zahl ueber fremdes Kapital. Solange er
+    #: > 0 ist, ist eine FEHLENDE Liquiditaetsmessung ein DENY (der Bestand kam
+    #: ueber ``_available_balance_sat()`` an die Zahl und lieferte im Fehlerfall
+    #: 0, also ebenfalls DENY). Siehe docs/runbooks/payment_fabric.md.
+    reserve_floor_sat: int = Field(default=0, ge=0)
     #: Obergrenze je Zahlung. Ein Betrag darueber wird abgelehnt, nicht bestaetigt.
     per_payment_max_sat: int = Field(default=10_000, ge=0)
     #: Harter Tagesdeckel (ADR §6): DENY, ausdruecklich kein ``needs_confirm``.

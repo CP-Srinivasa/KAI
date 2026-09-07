@@ -15,6 +15,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.bolt11 import bolt11_amount_sat, normalize_payment_hash
 from app.payments.enums import ProofKind, RailOutcome
 from app.payments.models import Money, PaymentAttempt, Proof
 from app.payments.rail import (
@@ -35,25 +36,6 @@ _LOCKED_STATES = {"LOCKED", "NON_EXISTING", "WAITING_TO_START", "UNKNOWN", ""}
 _SAT_CURRENCY = "SAT"
 
 
-def _sat(amount: int) -> Money:
-    return Money(minor_units=max(0, int(amount)), currency=_SAT_CURRENCY, scale=0)
-
-
-def _sha(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _normalise_payment_hash(raw: Any) -> str:
-    """Auf lowercase-Hex normalisieren (MI-1).
-
-    lnd spricht an manchen Stellen base64 (``r_hash``), an anderen Hex. Zwei
-    Schreibweisen desselben Hashes wuerden die Dedup blind machen.
-    """
-    from app.lightning.ops_ledger import normalize_payment_hash
-
-    return str(normalize_payment_hash(raw)).lower()
-
-
 def sat(amount: int) -> Money:
     return Money(minor_units=max(0, int(amount)), currency=_SAT_CURRENCY, scale=0)
 
@@ -67,10 +49,12 @@ def normalise_payment_hash(raw: Any) -> str:
 
     lnd spricht an manchen Stellen base64 (``r_hash``), an anderen Hex. Zwei
     Schreibweisen desselben Hashes wuerden die Dedup blind machen.
-    """
-    from app.lightning.ops_ledger import normalize_payment_hash
 
-    return str(normalize_payment_hash(raw)).lower()
+    Die Rechnung selbst steht in :mod:`app.core.bolt11` — sie ist rein und wird
+    auch vom Empfangs-Audit gebraucht, das ``app.payments`` nicht importieren
+    darf (ADR 0018 §2).
+    """
+    return normalize_payment_hash(raw).lower()
 
 
 def wallet_is_locked(state: str) -> bool:
@@ -194,9 +178,11 @@ def lookup_from_payment(payment: Any, *, rail: str, moment: datetime) -> RailLoo
 
 
 __all__ = [
+    "bolt11_amount_sat",
     "destination_from_payreq",
     "lookup_from_payment",
     "normalise_payment_hash",
+    "normalize_payment_hash",
     "payments_from_rows",
     "result_from_send",
     "sat",

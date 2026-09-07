@@ -17,6 +17,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from app.payments.models import PaymentAuditEvent
@@ -138,6 +139,78 @@ def verify_link(record: dict[str, Any], *, tip_seq: int, tip_hash: str) -> None:
         )
 
 
+def attest_payment_journal_tip(
+    *,
+    journal_path: Path | None = None,
+    truth_path: Path | None = None,
+    mirror_audit: bool = True,
+) -> dict[str, Any]:
+    """Binde den verifizierten Tip des Geld-Journals idempotent in KAI Truth.
+
+    Der Ersatz fuer ``ops_ledger.attest_ln_ops_tip``, das mit dem Altpfad
+    faellt (ADR 0018 §12). Ohne ihn waere nach dem Rueckbau **keine
+    Geldbewegung mehr on-chain verankert**: die Truth-Kette wird per OTS
+    gestempelt, das Payment-Journal ist zwar in sich verkettet, aber nicht
+    attestiert — und eine Kette, die nur sich selbst bezeugt, datiert nichts.
+
+    Die Zusage ist woertlich uebernommen, inklusive ihrer unbequemen Haelfte:
+    eine gebrochene Kette wird **verweigert**. Ein defektes Geldjournal in die
+    Truth-Kette zu schreiben hiesse, es dort zu waschen. Aufrufer auf dem
+    gemeinsamen Anker-Pfad muessen das als Warnung behandeln, nie als Grund,
+    den Rest des Laufs zu ueberspringen (BL-1).
+
+    Args:
+        journal_path: Journal; ``None`` nimmt den konfigurierten Pfad.
+        truth_path: Truth-Ledger; ``None`` nimmt den Standardpfad.
+        mirror_audit: Spiegelung in den KAI-Audit-Strom.
+
+    Returns:
+        ``{"total", "attested", "skipped"}`` — ``total=0`` heisst leeres Journal.
+
+    Raises:
+        JournalIntegrityError: die Kette verifiziert nicht.
+    """
+    # Verzoegerte Importe: ``journal`` importiert dieses Modul (Zyklus), und
+    # ``app.truth`` waere zur Importzeit eine Paketkante, die der
+    # Richtungs-Test von ADR §2 als Zyklus zaehlt.
+    from app.core.payment_settings import get_payment_settings
+    from app.payments.journal import PaymentJournal
+    from app.truth.ledger import (
+        DEFAULT_TRUTH_LEDGER_PATH,
+        append_attestation,
+        attested_subject_ids,
+    )
+
+    source = journal_path or get_payment_settings().resolved_journal_path()
+    target = truth_path or DEFAULT_TRUTH_LEDGER_PATH
+    journal = PaymentJournal(source)
+    status = journal.verify_chain()
+    if not status.ok:
+        raise JournalIntegrityError(f"refusing to attest a broken payment journal: {status.reason}")
+    if status.records == 0:
+        return {"total": 0, "attested": 0, "skipped": 0}
+
+    subject = f"payment-tip:{status.tip_hash}"
+    if subject in attested_subject_ids(target, kind="payment_journal_tip"):
+        return {"total": 1, "attested": 0, "skipped": 1}
+    # Der Index kommt aus einem eigenen, vollstaendigen Lauf — ``verify_chain``
+    # arbeitet bewusst auf einer Sonde und laesst den Index des Aufrufers in Ruhe.
+    journal.open()
+    append_attestation(
+        "payment_journal_tip",
+        subject,
+        {
+            "schema": "payment-journal-tip/v1",
+            "record_hash": status.tip_hash,
+            "seq": status.records,
+            "open_intents": sorted(journal.index.open_intents()),
+        },
+        path=target,
+        mirror_audit=mirror_audit,
+    )
+    return {"total": 1, "attested": 1, "skipped": 0}
+
+
 __all__ = [
     "GENESIS_HASH",
     "RUNBOOK",
@@ -145,6 +218,7 @@ __all__ = [
     "ChainStatus",
     "JournalIntegrityError",
     "as_event",
+    "attest_payment_journal_tip",
     "build_record",
     "canonical_bytes",
     "compute_record_hash",

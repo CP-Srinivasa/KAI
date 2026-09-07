@@ -1,6 +1,6 @@
 """Die Regelkette (ADR 0018 §6) — fail-closed und deterministisch.
 
-Elf Regeln in fester Reihenfolge, jede eine Funktion ``(ctx) -> RuleResult``,
+Zwoelf Regeln in fester Reihenfolge, jede eine Funktion ``(ctx) -> RuleResult``,
 die erste DENY gewinnt. Das Ergebnis nennt immer die Regel, die es getragen
 hat — der Bestand gab einen Freitext-``reason`` direkt in einen HTTP-403-Body
 (``ln_control.py:275``), und damit war die Begruendung weder auswertbar noch
@@ -34,7 +34,7 @@ def _is_agent(actor: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Die elf Regeln, in der Reihenfolge des ADR
+# Die zwoelf Regeln, in der Reihenfolge des ADR
 # --------------------------------------------------------------------------- #
 
 
@@ -69,6 +69,45 @@ def rail_capability(ctx: PolicyContext) -> RuleResult:
         return RuleResult.deny(
             f"unsupported_action: rail {caps.name} offers no dedup guarantee; "
             "a retry after a timeout could not be distinguished from a second payment"
+        )
+    return RuleResult.allow()
+
+
+@rule_id("reserve_floor")
+def reserve_floor(ctx: PolicyContext) -> RuleResult:
+    """Der souveraene Kapital-Boden. Kein ``needs_confirm`` — ein harter DENY.
+
+    Die Regel kommt aus ``app/lightning/policy.py:112`` und ist die einzige,
+    die nicht am Vorgang misst, sondern am Rest: was nach dieser Zahlung noch
+    da sein MUSS. Ein Tages-Cap begrenzt den Verbrauch, ein Boden schuetzt den
+    Bestand — das sind zwei verschiedene Zusagen, und die zweite hatte im
+    Control Plane bis hierher kein Gegenstueck.
+
+    Sie steht VOR ``amount_limits``, weil ein Boden-Bruch die fundamentalere
+    Ablehnung ist: der Operator soll nicht sein Cap nachziehen, wenn in
+    Wahrheit die Reserve im Weg steht.
+
+    **Unbekannte Liquiditaet ist bei bewaffnetem Boden ein DENY.** Die Regel
+    ``liquidity`` laesst ``None`` bewusst durch (SIMULATION und SHADOW haben
+    keine Kanalbilanz, und eine erfundene Null waere dort ein Dauer-DENY ohne
+    Aussage). Hier ist es umgekehrt: wer einen Boden setzt, sagt damit, dass
+    unterhalb davon nichts passieren darf — und "ich weiss nicht, wo ich stehe"
+    ist kein Beleg dafuer, dass man darueber steht.
+    """
+    floor = ctx.settings.reserve_floor_sat
+    if floor <= 0:
+        return RuleResult.allow()
+    available = ctx.available_liquidity_sat
+    if available is None:
+        return RuleResult.deny(
+            f"reserve_floor armed ({floor} sat) but no liquidity reading — "
+            "refusing to spend against an unknown balance"
+        )
+    outflow = ctx.intent.amount_requested.minor_units + ctx.intent.fee_limit.minor_units
+    remaining = available - outflow
+    if remaining < floor:
+        return RuleResult.deny(
+            f"reserve_floor breached: {available} - {outflow} = {remaining} < {floor}"
         )
     return RuleResult.allow()
 
@@ -231,6 +270,7 @@ def approval_threshold(ctx: PolicyContext) -> RuleResult:
 RULE_CHAIN: tuple[Rule, ...] = (
     mode_and_environment,
     rail_capability,
+    reserve_floor,
     amount_limits,
     fee_limit_required,
     destination_allowlist,

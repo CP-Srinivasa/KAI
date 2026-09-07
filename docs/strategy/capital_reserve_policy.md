@@ -33,7 +33,7 @@ Neues Modul `app/capital/{segmentation,reserve_policy}.py` — Blaupause `app/li
 - **Append-only Ledger**, auditiert über `app/audit/kai_audit_service.py` (Hash-Chain).
 - `ReserveSettings` in `app/core/settings.py` (`env_prefix=CAPITAL_`): default **alles inert** — `CAPITAL_SEGMENTATION_ENABLED=false`, `CAPITAL_APPLY_ENABLED=false`.
 - Guardrail (`validate_mode_guardrails`-Erweiterung): **Apply nur mit HOTP + Edge-Gate grün**.
-- Bucket-Promotion/-Transfer als Transition-Whitelist (Muster `app/learning/source_lifecycle.py`); jede reale Bewegung müsste durch `app/lightning/control_gate.py` `verify_capital_confirm` (im Scaffolding nur simuliert).
+- Bucket-Promotion/-Transfer als Transition-Whitelist (Muster `app/learning/source_lifecycle.py`); jede reale Bewegung müsste durch die Payment-Regelkette `app/payments/policy.py` (inkl. `reserve_floor`) und die HOTP-Freigabe des Control Plane (im Scaffolding nur simuliert). ⚠ Der bis 2026-09-04 hier genannte `app/lightning/control_gate.py::verify_capital_confirm` existiert seit ADR 0018 §12 nicht mehr.
 - Ausgabe rein rechnerisch/empfehlend („welcher Split wäre fällig") — **null Ausführung, keine reale Kapitalbewegung.**
 
 ## Nachweis/Steuer

@@ -105,6 +105,10 @@ class RailHealth(BaseModel):
     wallet_locked: bool = True
     observed_at: datetime
     reason: str = Field(default="", max_length=200)
+    #: Verfuegbarer Bestand in sat (Kanal-Local plus On-Chain-Total — dieselbe
+    #: Summe, an der die alte Reserve-Regel mass). ``None`` = nicht gelesen;
+    #: ein bewaffneter Reserve-Boden macht daraus einen DENY, nie eine Null.
+    available_balance_sat: int | None = Field(default=None, ge=0)
 
     @field_validator("observed_at")
     @classmethod

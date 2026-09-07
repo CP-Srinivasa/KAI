@@ -30,13 +30,17 @@ class LightningSettings(BaseSettings):
         the lnd REST API (getinfo/channelbalance/feereport). Pure observation.
 
     Invoice/pay capabilities live behind their own flags + the capital gate;
-    ``pay_enabled`` is the wired master kill-switch for every value-layer send
-    (``value_layer._assert_send_allowed``) and defaults to False.
+    ``pay_enabled`` is the wired master kill-switch for every send and defaults
+    to False. Since ADR 0018 §12 it is enforced in TWO places, and both are the
+    outermost gate of their path: ``payments/rails/lightning.py`` (the only send)
+    and ``lightning/receive_gate._assert_send_allowed`` (fail-closed backstop of
+    the mint — an action that is not on the receive allowlist gates on ``pay_enabled``).
 
     Credentials are declared per CAPABILITY (``macaroon_credentials``): read,
-    invoice, payment, onchain, channel. Since W0/PR-C every consumer requests its
-    OWN scope (invoice → minting, payment → pay/keysend, onchain → send_coins,
-    channel → open/close, read → observation); there is no fallback to the read
+    invoice, payment, onchain, channel. Every consumer requests its OWN scope
+    (invoice → minting, payment → the Control-Plane send, read → observation);
+    ``onchain``/``channel`` have had no caller since ADR 0018 §12 removed the
+    deferred verbs, and stay declared. There is no fallback to the read
     credential, and :func:`validate_lightning_boot` refuses to start a deployment
     whose ENABLED capability has no credential (C-1).
     """

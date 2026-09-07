@@ -54,7 +54,7 @@ Cap-Zählung: `SUBMITTED`, `IN_FLIGHT`, `RECONCILIATION_REQUIRED`, `SETTLED*` z�
 
 ## 6. Policy (fail-closed, deterministisch)
 
-Regelkette in fester Reihenfolge, erste DENY gewinnt, Ergebnis mit `rule_ids`: `mode_and_environment` → `rail_capability` (`unsupported_action`) → `amount_limits` (per Zahlung, harter Tages-Cap = DENY, nicht `needs_confirm`) → `fee_limit_required` (≤ 0 = DENY) → `destination_allowlist` (Payee aus Decode gebunden, nie `None`) → `actor_limits` (Agent-Tabelle) → `purpose_allowed` → `node_health` (unsynced/locked/offline = DENY) → `liquidity` → `retry_policy` (Retry nur mit Node-Evidenz) → `approval_threshold` (REQUIRES_APPROVAL → HOTP). Jede Regel liefert ALLOW/DENY/REQUIRES_APPROVAL; Fehler in einer Regel = DENY.
+Regelkette in fester Reihenfolge, erste DENY gewinnt, Ergebnis mit `rule_ids`: `mode_and_environment` → `rail_capability` (`unsupported_action`) → `reserve_floor` (souveräner Kapital-Boden, `APP_PAYMENT_RESERVE_FLOOR_SAT`, Default 0 = aus; bewaffnet UND Liquidität unbekannt = DENY — nachgezogen aus `lightning/policy.py` beim Rückbau, §12) → `amount_limits` (per Zahlung, harter Tages-Cap = DENY, nicht `needs_confirm`) → `fee_limit_required` (≤ 0 = DENY) → `destination_allowlist` (Payee aus Decode gebunden, nie `None`) → `actor_limits` (Agent-Tabelle) → `purpose_allowed` → `node_health` (unsynced/locked/offline = DENY) → `liquidity` → `retry_policy` (Retry nur mit Node-Evidenz) → `approval_threshold` (REQUIRES_APPROVAL → HOTP). Jede Regel liefert ALLOW/DENY/REQUIRES_APPROVAL; Fehler in einer Regel = DENY.
 
 ## 7. Rail-Interface
 
@@ -91,6 +91,31 @@ Read-Scope auf `readonly.macaroon` (heute Invoice-Macaroon für Lesepfade) · Fe
 ## 12. Übergang und Rückbau
 
 `ln_control` `pay_invoice` delegiert an `PaymentService` (kein zweiter Weg); Dual-Read 7 Tage (altes `ops_ledger` v2 bleibt lesbar, Reconciler prüft beide), danach DELETE-Kandidaten laut Architect §10 (~2,7k LOC: `value_layer`, `ops_ledger`, `reconciliation`, `ln_control`-Reste, `policy`, `ops_annotations`, `idempotency_store`, `control_gate`). Netto-Ziel ≈ 0 zusätzliche LOC nach Rückbau.
+
+### Nachtrag 2026-09-04 — Rückbau vorgezogen, PR 1 „Der Altpfad schreibt nicht mehr“
+
+**Warum vorgezogen.** Die 7-Tage-Frist sollte nicht Zeit vergehen lassen, sondern eine Frage beantworten: *gibt es einen offenen Alt-Vorgang, den nach dem Rückbau niemand mehr sieht?* Das ist eine Eigenschaft der Datei, nicht der Zeit — ein Lauf beantwortet sie abschließend. Vier Gates wurden am Gerät geprüft, bevor eine Zeile gelöscht wurde:
+
+| Gate | Frage | Befund am Gerät (2026-09-04) |
+|---|---|---|
+| G-1 | Ist das Alt-Journal geschlossen? | `verify_ln_ops_ledger()` → `ok=true`, `open_intents=[]`, `errors=[]` |
+| G-2 | Gibt es einen Doppelbefund? | `dual_conflicts=()` |
+| G-3 | Steht die versiegelte Prä-Reg dem entgegen? | `0879a65c5fd01f65` verdict=**PASS**, Fenster abgelaufen 2026-08-15 |
+| G-4 | Schreibt noch ein Alt-Writer? | Letzter Record 2026-08-05, älter als der Cutover |
+
+Ohne G-1 und G-2 wäre der Rückbau kein Rückbau, sondern ein Wegsehen.
+
+**Was PR 1 tut.** Der Gate-Stack (`policy`, `control_gate`, `idempotency_store`, `ops_annotations`, `ops_resolution`, `plan_guards`, `input_contract_rejections`, `ln_control_gates`) und die Sende-Hälfte (`value_layer`) sind gelöscht. `ops_ledger.py` ist auf ein **READ-ONLY-Archiv** geschrumpft: es kann einen Vorgang nur noch SCHLIESSEN (`append_ln_outcome` für den Crash-Gap-Reconciler), nicht mehr eröffnen — `_append_chained_record` verlangt strukturell einen vorhandenen `intent`-Record.
+
+**Drei Zusagen sind VOR dem Löschen nachgebaut worden**, weil sie sonst ersatzlos verschwunden wären:
+
+1. **Reserve-Boden** — Regel `reserve_floor` in `payments/policy.py` (§6) + `APP_PAYMENT_RESERVE_FLOOR_SAT`. ⚠ Der Boden ist erst wirksam, wenn der Rail eine Liquiditätszahl liefert; `PolicyContext.available_liquidity_sat` wird heute von keiner Produktionsstelle gesetzt, ein bewaffneter Boden lehnt deshalb JEDE Zahlung ab (fail-closed, wie der Bestand mit seinem 0-Fallback). Siehe Runbook.
+2. **Truth-Anker des Geldes** — `payments/journal_chain.attest_payment_journal_tip` ersetzt `ops_ledger.attest_ln_ops_tip` in `scripts/truth_anchor_run.py`. Sonst wäre nach dem Rückbau keine Geldbewegung mehr on-chain verankert.
+3. **Empfangspfad** — `create_invoice` ist nach `lightning/receive_gate.py` EXTRAHIERT, nicht migriert. `PaymentService.create_invoice` journalliert die Forderung und schöbe den anonymen `/oracle`-Mint hinter den exklusiven Geldjournal-Lock (BL-2); die Memo-Semantik `kai-oracle:{scope}` bleibt unverändert, weil `earnings_ledger` daran die Quelle zuordnet.
+
+**Was PR 1 NICHT tut.** `lightning/reconciliation.py`, `payments/reconcile_dual.py` und `scripts/ln_reconciliation_eval.py` bleiben — sie sind PR 2 („Das Alt-Journal wird Archiv“). `artifacts/ln_ops_ledger_v2.jsonl` wird nicht angefasst und bleibt in `DEFAULT_SOURCES` und `MONEY_SOURCES` des Backups.
+
+**Bewusst aufgegeben, nicht übersehen:** der Operator-Envelope aus `artifacts/ln_policy.json` (`allowed_actions`) fällt mit `lightning/policy.py`. Für `pay_invoice` war er schon vorher wirkungslos (die Delegation stand vor dem 403); für den kapitalfreien Cockpit-Mint bleiben `receive_enabled`, die Operator-Auth und die Plan-Hash-Bindung. `GET /dashboard/api/ln/ops` und sein Panel entfallen ersatzlos — sie zeigten ein Journal, das keinen Schreiber mehr hat.
 
 ## 13. Konsequenzen
 

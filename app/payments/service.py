@@ -151,6 +151,10 @@ class PaymentService:
                     settings=self._settings,
                     rail_caps=rail.capabilities(),
                     rail_health=health,
+                    # Bestand aus demselben Health-Aufruf: der Reserve-Boden misst am Rest.
+                    available_liquidity_sat=(
+                        health.available_balance_sat if health is not None else None
+                    ),
                     spent_today_sat=self._journal.index.totals_for_day(moment).amount_sent,
                     actor_limits=self._actor_limits.get(intent.actor),
                     decoded_destination=decoded,

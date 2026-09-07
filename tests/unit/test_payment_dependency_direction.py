@@ -29,18 +29,16 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 #: Die vier Pakete, deren Verflechtung ADR 0018 §2 aufloest.
 WATCHED_PACKAGES = frozenset({"app.payments", "app.lightning", "app.audit", "app.truth"})
 
-#: Ausnahmen der Richtungsregel — beide strukturell abgesichert, nicht behauptet:
+#: Ausnahmen der Richtungsregel — strukturell abgesichert, nicht behauptet:
+#: ``rail``/``models`` sind reine Typvertraege. Sie stehen hier, damit ein
+#: bewusster Protocol-Import nicht heimlich zu einem Laufzeit-Import auswaechst.
 #:
-#: * ``rail``/``models``: reine Typvertraege. Sie stehen hier, damit ein bewusster
-#:   Protocol-Import nicht heimlich zu einem Laufzeit-Import auswaechst.
-#: * ``input_rejections``: der Nebenstrom, den ``ops_ledger`` schreibt, wenn es
-#:   einen Plan ablehnt. Er ist ein BLATT (importiert nichts aus ``app.*``,
-#:   siehe :func:`test_payments_input_rejections_is_a_leaf_module`) und kann
-#:   deshalb keinen Paketzyklus schliessen — die Kante ``lightning -> payments``
-#:   hat hier keine Rueckkante, ueber die sie zurueckfinden koennte.
-PAYMENT_TYPE_ONLY_MODULES = frozenset(
-    {"app.payments.rail", "app.payments.models", "app.payments.input_rejections"}
-)
+#: ``app.payments.input_rejections`` stand hier, WEIL ``ops_ledger`` es
+#: importierte. Mit ADR 0018 §12 (PR 1) ist dieser Aufrufer gefallen — und eine
+#: Ausnahme ohne Fall ist keine Ausnahme, sondern eine offene Tuer, durch die
+#: irgendwann etwas anderes geht. Sie ist deshalb mitgegangen; ``app/lightning``
+#: importiert ``app.payments`` seither ueberhaupt nicht mehr.
+PAYMENT_TYPE_ONLY_MODULES = frozenset({"app.payments.rail", "app.payments.models"})
 
 
 def _package_of(module: str) -> str | None:
@@ -201,11 +199,32 @@ def test_audit_reads_the_rejection_stream_from_payments() -> None:
     assert "app.lightning.input_contract_rejections" not in source
 
 
-def test_legacy_rejection_module_is_a_re_export_only() -> None:
-    """Der alte Pfad bleibt 7 Tage lesbar — aber ohne eigene Logik."""
-    path = APP_ROOT / "lightning" / "input_contract_rejections.py"
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    defined = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
-    assert not defined, f"Re-Export-Schicht darf nichts definieren, fand: {defined}"
-    assert "app.payments.input_rejections" in source
+def test_the_legacy_rejection_shim_is_gone() -> None:
+    """Die 7-Tage-Bruecke ist abgebaut (ADR 0018 §2 → §12).
+
+    ``app/lightning/input_contract_rejections.py`` war ein Re-Export ohne
+    eigene Logik, ausdruecklich als Uebergang deklariert. Ein Shim, der laenger
+    liegen bleibt als sein Anlass, wird zu einer zweiten Adresse fuer dieselbe
+    Sache.
+    """
+    assert not (APP_ROOT / "lightning" / "input_contract_rejections.py").exists()
+
+
+def test_lightning_does_not_import_payments_at_all_anymore() -> None:
+    """Die Richtung ist seit PR 1 nicht mehr "fast" eingehalten, sondern ganz.
+
+    ``ops_ledger`` war der letzte Importeur (``app.payments.input_rejections``)
+    und ist auf ein Archiv geschrumpft. Der Test ist absichtlich schaerfer als
+    :func:`test_lightning_never_imports_payments`: er laesst auch die
+    Typvertrags-Ausnahmen nicht zu — sie sind heute ungenutzt, und wer sie
+    wieder braucht, soll das bewusst hier eintragen.
+    """
+    offenders: list[str] = []
+    for path in _python_files(APP_ROOT / "lightning"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [
+            f"{path.relative_to(APP_ROOT.parent).as_posix()} -> {imported}"
+            for imported in _all_imports(tree)
+            if imported.startswith("app.payments")
+        ]
+    assert not offenders, offenders

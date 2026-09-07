@@ -52,10 +52,10 @@
     },
     "ln_input_contract_rejections.jsonl": {
       "reader": "app/audit/input_contract_rejections.py",
-      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund; der Geldpfad bleibt zwar fail-closed, aber der Operator koennte Caller-Fehler und Vertragsverletzung nicht auseinanderhalten.",
-      "failure_would_be_noticed_by": "Der Writer kennzeichnet einen fehlgeschlagenen Reject-Append sofort in LightningOpsLedgerError; kai audit input-rejections liest die Gruende und der Health-Check prueft vorhandene Records.",
-      "time_to_notice": "Im selben abgelehnten Writer-Aufruf; eine unlesbare oder schemawidrige vorhandene Datei zusaetzlich beim naechsten Health-Check.",
-      "decision_that_would_change": "Der Operator repariert Reject-Speicher oder fehlerhaften Money-Caller vor einem erneuten Intent, statt die Ablehnung als Journal- oder Node-Ausfall zu behandeln.",
+      "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund. Seit ADR 0018 §12 (PR 1) schreibt KEIN Produktionsmodul mehr in diesen Strom — der Writer war ``ops_ledger.prepare_ln_intent``, der mit dem alten Sendeweg gefallen ist. Die vorhandenen Records bleiben lesbar und beweiskraeftig; die Entscheidung ueber Strom, Vertrag und Sonde faellt mit PR 2 zusammen mit ``reconciliation.py`` und ``reconcile_dual.py``.",
+      "failure_would_be_noticed_by": "``kai audit input-rejections`` liest die historischen Gruende, und der Health-Check prueft eine vorhandene Datei weiterhin auf Lesbarkeit und Schema. Ein AUSBLEIBEN neuer Records ist seit PR 1 der erwartete Zustand und kein Befund.",
+      "time_to_notice": "Eine unlesbare oder schemawidrige vorhandene Datei beim naechsten Health-Check.",
+      "decision_that_would_change": "Der Operator liest historische Ablehnungen des alten Geldpfads, statt sie fuer Journal- oder Node-Ausfaelle zu halten — und entscheidet in PR 2, ob Strom und Sonde mit dem Archiv gehen.",
       "monitoring": "alternative_watcher",
       "watcher": "_check_input_contract_rejection_streams"
     },

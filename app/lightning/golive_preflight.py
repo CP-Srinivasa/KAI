@@ -65,9 +65,12 @@ def golive_preflight(
             PreflightCheck(
                 "value_layer_armed",
                 True,
-                "APP_LN_PAY_ENABLED=true — value layer intentionally armed; the receive-only "
-                "spend-off invariant is N/A. Spend safety now rests on the policy envelope "
-                "(caps + reserve floor + HOTP), not on the kill-switch.",
+                "APP_LN_PAY_ENABLED=true — the send path is intentionally armed; the "
+                "receive-only spend-off invariant is N/A. Spend safety now rests on the "
+                "payment rule chain (per-payment + daily cap, fee limit, destination "
+                "allowlist, reserve_floor, HOTP above the approval threshold), not on the "
+                "kill-switch. Since ADR 0018 §12 that chain lives in app/payments/policy.py; "
+                "the check name is kept so the preflight report stays comparable.",
             ),
             PreflightCheck(
                 # In armed mode the PAYMENT macaroon SHOULD carry spend scope, so the

@@ -44,10 +44,6 @@ def _app(*, cf_allowed: list[str] | None = None) -> FastAPI:
     async def _demand() -> dict[str, str]:
         return {"verdict": "NO-PASS"}
 
-    @app.get("/dashboard/api/ln/ops")
-    async def _ops() -> dict[str, list[object]]:
-        return {"ops": []}
-
     @app.get("/dashboard/api/ping")
     async def _ping() -> dict[str, str]:
         return {"ok": "true"}
@@ -101,40 +97,15 @@ def test_readonly_dashboard_local_bypass_preserved() -> None:
         assert client.get("/dashboard/api/ln/demand").status_code == 200
 
 
-def test_ops_ledger_read_requires_auth_even_locally() -> None:
-    """W0/PR-A — INVERTED against the previous allowlist entry: the money-path audit
-    trail (payment metadata/amounts) is not local dashboard convenience. A local reader
-    without credentials is rejected; a Bearer token still gets through."""
-    with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
-        assert client.get("/dashboard/api/ln/ops").status_code == 401
-        assert (
-            client.get(
-                "/dashboard/api/ln/ops", headers={"Authorization": "Bearer secret"}
-            ).status_code
-            == 200
-        )
-
-
-def test_ops_ledger_read_unchanged_for_the_cf_access_browser() -> None:
-    """Deploy-safety for the only real consumer: the dashboard panel reaches
-    /dashboard/api/ln/ops through Cloudflare Access, which passes the CF-Access branch.
-    Removing the local bypass must not change ANYTHING for that path."""
-    with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
-        assert (
-            client.get(
-                "/dashboard/api/ln/ops",
-                headers={**_TUNNEL, "Cf-Access-Authenticated-User-Email": "ops@example.com"},
-            ).status_code
-            == 200
-        )
-        # …and an unauthenticated tunnel request stays rejected.
-        assert client.get("/dashboard/api/ln/ops", headers=_TUNNEL).status_code == 401
-
-
 def test_unknown_ln_endpoint_requires_auth_fail_closed() -> None:
     """satoshi auflage 1: a NOT-allowlisted /dashboard/api/ln/* path requires auth even
     locally — a FUTURE LN mutation cannot silently inherit the bypass (fail-closed). The
-    middleware auth decision precedes routing, so this is 401, not a no-auth 404."""
+    middleware auth decision precedes routing, so this is 401, not a no-auth 404.
+
+    Diese eine Aussage traegt seit ADR 0018 §12 auch den Fall, den vorher zwei
+    eigene Tests fuer ``/dashboard/api/ln/ops`` behaupteten: der Endpunkt ist
+    mit dem alten Geldjournal entfallen, die Inversion gilt fuer JEDEN nicht
+    allowlisteten LN-Pfad — auch fuer einen, den es (noch) nicht gibt."""
     with TestClient(_app(cf_allowed=["ops@example.com"])) as client:
         assert client.post("/dashboard/api/ln/payout", json={}).status_code == 401
 

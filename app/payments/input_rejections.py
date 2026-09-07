@@ -12,10 +12,18 @@ the import cycle ``audit -> lightning -> truth -> audit``.  The STREAM NAME is
 deliberately unchanged — the contract in ``config/stream_contracts.json`` and
 its reader keep pointing at the same artefact.
 
-Deliberately a LEAF: this module imports nothing from ``app.*``.  That is what
-lets ``app.lightning.ops_ledger`` keep importing it without recreating the cycle
-in the other direction (enforced by
-``tests/unit/test_payment_dependency_direction.py``).
+Deliberately a LEAF: this module imports nothing from ``app.*``. That was what
+let ``app.lightning.ops_ledger`` import it without recreating the cycle in the
+other direction.
+
+⚠ **Seit ADR 0018 §12 (PR 1) hat dieser Strom KEINEN Schreiber mehr.** Der
+einzige war ``ops_ledger.prepare_ln_intent``, das mit dem alten Sendeweg
+gefallen ist; die Ausnahme in ``PAYMENT_TYPE_ONLY_MODULES`` ist damit
+ebenfalls entfallen. Leser (``app.audit.input_contract_rejections``,
+``kai audit input-rejections``) und Health-Sonde bleiben, weil die bereits
+geschriebenen Records beweiskraeftig sind. Ob Strom, Vertrag und Sonde ganz
+gehen, entscheidet PR 2 zusammen mit dem Archiv-Journal — bis dahin ist ein
+AUSBLEIBEN neuer Records der erwartete Zustand, kein Befund.
 """
 
 from __future__ import annotations

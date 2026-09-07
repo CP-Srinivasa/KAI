@@ -28,7 +28,6 @@ from fastapi.testclient import TestClient
 from app.api.routers import ln_control as lc
 from app.api.routers import ln_control_delegate as delegate
 from app.core.payment_settings import PaymentSettings
-from app.lightning.policy import PolicyEnvelope
 from app.payments.journal import PaymentJournal
 from app.payments.rails.simulation import SimulationRail
 from app.payments.service import PaymentService
@@ -64,21 +63,27 @@ def test_ln_control_ruft_den_value_layer_nicht_mehr_zum_zahlen() -> None:
     )
 
 
-def test_der_value_layer_taucht_im_zahlungs_register_nicht_mehr_auf() -> None:
-    source = Path(lc.__file__).read_text(encoding="utf-8")
-    assert "vl.pay_invoice" not in source
+def test_der_value_layer_existiert_nicht_mehr() -> None:
+    """Der Stolperdraht ist durch die Loeschung ersetzt (ADR 0018 §12, PR 1).
+
+    ``delegate.legacy_pay_invoice_moved`` war eine Funktion, die laut wurde,
+    falls jemand die Abzweigung entfernt und wieder auf
+    ``value_layer.pay_invoice`` zeigt. Sie ist entfallen, weil es das Ziel
+    nicht mehr gibt: ein zweiter Sendeweg laesst sich nicht mehr versehentlich
+    wiederherstellen, er muesste neu geschrieben werden.
+    """
+    with pytest.raises(ModuleNotFoundError):
+        import app.lightning.value_layer  # noqa: F401
 
 
-def test_die_taxonomie_invariante_haelt_weiter() -> None:
-    """``pay_invoice`` bleibt im Register — sonst faellt es aus den Kapital-Gates."""
-    from app.lightning.policy import ACTION_RISK_CLASSES
+def test_das_register_kennt_nur_noch_zwei_aktionen() -> None:
+    """``keysend``/``send_coins``/``open_channel``/``close_channel`` sind DEFERRED.
 
-    assert set(lc._ACTIONS) == set(ACTION_RISK_CLASSES)
-
-
-async def test_der_alte_pfad_ist_ein_stolperdraht() -> None:
-    with pytest.raises(RuntimeError, match="control plane"):
-        await delegate.legacy_pay_invoice_moved(payment_request="whatever")
+    Sie standen im Register, obwohl die Regelkette des Control Plane sie mit
+    ``unsupported_action`` abgelehnt haette. Ein Menuepunkt, der nur existiert,
+    um abgelehnt zu werden, sieht aus wie eine Faehigkeit.
+    """
+    assert lc.ACTIONS == {"pay_invoice", "create_invoice"}
 
 
 def test_der_modul_kommentar_behauptet_den_bypass_nicht_mehr() -> None:
@@ -133,29 +138,15 @@ def _app(tmp_path: Path, **overrides: Any) -> FastAPI:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch) -> None:
-    lc.reset_control_state()
-    monkeypatch.setattr(
-        lc.PolicyStore,
-        "load",
-        lambda self: PolicyEnvelope(
-            allowed_actions=frozenset({"pay_invoice"}),
-            per_action_cap_sat=1_000_000,
-            daily_cap_sat=1_000_000,
-        ),
-    )
+    """Nur noch EINE Stelle: der Betrag steckt sonst im BOLT11.
 
-    async def _rich() -> int:
-        return 1_000_000
-
-    async def _fresh() -> int | None:
-        return 1_000_000
-
-    monkeypatch.setattr(lc, "_available_balance_sat", _rich)
-    monkeypatch.setattr(lc, "_fresh_capital_balance_sat", _fresh)
-    monkeypatch.setattr(lc, "spent_today_sat_v2", lambda: 0)
-    monkeypatch.setattr(lc, "_money_journal_blocker", lambda: "")
-    # Der Betrag steckt sonst im BOLT11; die Simulation kennt kein BOLT11.
-    monkeypatch.setattr(lc, "_effective_amount_sat", lambda *_a, **_kw: (1000, True))
+    Der Bestand brauchte hier fuenf Patches — Envelope, Cache-Balance,
+    Frisch-Balance, Tages-Cap aus dem v2-Journal und den Journal-Blocker. Alle
+    fuenf gehoerten zur zweiten Geldkette, die ``ln_control`` neben dem Control
+    Plane fuehrte; mit ihr sind sie gegangen. Die Simulation kennt kein BOLT11,
+    deshalb bleibt die Betragsableitung.
+    """
+    monkeypatch.setattr(lc, "bolt11_amount_sat", lambda _request: 1000)
 
 
 def test_plan_mode_nennt_den_control_plane_als_weg(
