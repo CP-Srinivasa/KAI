@@ -112,31 +112,11 @@ def test_no_research_dir_means_no_prereg_check(tmp_path: Path) -> None:
     assert not any(i.component == "prereg_ledger_presence" for i in issues)
 
 
-def test_stale_reconciliation_report_is_flagged(tmp_path: Path) -> None:
-    """Ein still gestorbener kai-ln-reconcile.timer muss sichtbar werden.
-
-    Der Timer lief ab 2026-08-08 alle 15 min, aber sein Ausgang stand in
-    KEINER Wache — exakt das Muster, das den TV-Ingest 6 Tage unbemerkt tot
-    liegen liess.
-    """
-    _base(tmp_path)
-    report = tmp_path / "lightning" / "ln_reconciliation.jsonl"
-    report.parent.mkdir(parents=True)
-    report.write_text("{}\n", encoding="utf-8")
-    _age(report, 60)  # > 45 min (3 verpasste 15-min-Laeufe)
-    issues, stale = _check_data_freshness(tmp_path, NOW)
-    assert any(i.component == "ln_reconcile_freshness" for i in issues)
-    assert stale is True
-
-
-def test_fresh_reconciliation_report_is_clean(tmp_path: Path) -> None:
-    _base(tmp_path)
-    report = tmp_path / "lightning" / "ln_reconciliation.jsonl"
-    report.parent.mkdir(parents=True)
-    report.write_text("{}\n", encoding="utf-8")
-    _age(report, 20)  # ein verpasster Lauf ist noch kein Alarm
-    issues, _ = _check_data_freshness(tmp_path, NOW)
-    assert not any(i.component == "ln_reconcile_freshness" for i in issues)
+# Die beiden Tests des alten ``ln_reconciliation.jsonl``-Waechters standen hier
+# bis ADR 0018 §12 (PR 2). Sie sind nicht ersatzlos entfallen: die Lebend-Wache
+# des Geldpfads misst jetzt ``last_run_utc`` in ``payments/reconcile_state.json``
+# und wird in ``tests/unit/payments/test_reconcile_timer.py`` eingefordert
+# (``test_ein_still_gestorbener_reconcile_timer_ist_ein_befund``).
 
 
 def test_stale_asset_rotation_artifacts_are_flagged(tmp_path: Path) -> None:

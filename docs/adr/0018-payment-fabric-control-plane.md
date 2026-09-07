@@ -115,8 +115,26 @@ Ohne G-1 und G-2 wäre der Rückbau kein Rückbau, sondern ein Wegsehen.
 
 **Was PR 1 NICHT tut.** `lightning/reconciliation.py`, `payments/reconcile_dual.py` und `scripts/ln_reconciliation_eval.py` bleiben — sie sind PR 2 („Das Alt-Journal wird Archiv“). `artifacts/ln_ops_ledger_v2.jsonl` wird nicht angefasst und bleibt in `DEFAULT_SOURCES` und `MONEY_SOURCES` des Backups.
 
+### Nachtrag 2026-09-07 — PR 2 „Das Alt-Journal wird Archiv“ VOLLZOGEN
+
+**Der Archivpunkt ist erreicht.** Ab diesem Release liest und schreibt **keine Zeile Produktionscode** mehr `artifacts/ln_ops_ledger_v2.jsonl`. Gelöscht: `lightning/reconciliation.py`, `lightning/ops_ledger.py` (vollständig, inklusive `append_ln_outcome`), `payments/reconcile_dual.py`, `scripts/ln_reconciliation_eval.py`, die v2-Hälfte von `scripts/ln_reconcile.py`, `kai-ln-reconcile-verdict.{service,timer}` und die zugehörigen Tests.
+
+**Vorbedingung G-3, am Gerät geprüft:** Prä-Reg `0879a65c5fd01f65` trägt verdict=**PASS** (gezogen 2026-08-27, `runs=96`), das Fenster 2026-08-08 → 2026-08-15 ist abgelaufen und geschlossen. Der stündliche Evaluator hätte ab Fensterschluss nur noch dasselbe Archiv neu gelesen. **Das Verdikt bleibt** in `artifacts/research/ln_reconciliation_verdict.jsonl` und wird weiter von `app/research/prereg_reconciliation.py` gelesen — gelöscht wird der Evaluator, nicht der Beweis.
+
+**Eine Zusage ist VOR dem Löschen umgehängt worden.** Die Lebend-Wache des Geldpfads hing an `artifacts/lightning/ln_reconciliation.jsonl` (Freshness 45 min). Sie funktionierte nur durch einen Nebeneffekt: ein Timer fuhr beide Journal-Hälften, also verriet der Alt-Report auch den Tod des NEUEN Laufs. `check_payment_reconciliation` prüft jetzt das Alter von `last_run_utc` in `artifacts/payments/reconcile_state.json`, mit derselben 45-min-Schwelle und derselben Klasse P0. Gemessen wird das Feld, nicht die mtime: die mtime setzt jedes `cp` und jeder Restore neu.
+
+**Bewusst NICHT gelöscht, obwohl der Schreiber fällt:**
+
+* `dual_journal_conflict` bleibt in `AUDIT_EVENT_TYPES` und im `JournalIndex`. Das Geld-Journal ist append-only und wird nie rotiert; `JournalEvent` validiert `event_type` gegen diese Menge auch beim LESEN. Das Ereignis zu streichen würde einen historischen Record unlesbar machen und den Ketten-Wächter das Geld-Journal für gebrochen erklären lassen. Ein Vokabular schrumpft nicht mit seinem Schreiber.
+* `artifacts/ln_ops_ledger_v2.jsonl`, `artifacts/lightning/ln_reconciliation.jsonl` und `artifacts/research/ln_reconciliation_verdict.jsonl` bleiben am Gerät und in den Backup-Listen (`DEFAULT_SOURCES`, `MONEY_SOURCES`, `VANISHED_MONEY`-Guard scharf, unverändert).
+* `kai-ln-reconcile.timer` behält Name und Kadenz. Ein umbenannter Timer wäre ein Deploy-Schritt mit genau einem Ergebnis: ein Fenster, in dem der Geldpfad keinen Reconciler hat.
+
+**Deploy-Reihenfolge (zwingend, VOR der Aktivierung des Release):** `sudo systemctl disable --now kai-ln-reconcile-verdict.timer` und die beiden Unit-Dateien aus `/etc/systemd/system` entfernen. `pi_apply_systemd_units.sh` meldet verwaiste Units als `ORPHAN`, **entfernt sie aber nie** — ohne diesen Schritt läuft eine installierte Unit gegen ein gelöschtes Skript und `kai-unit-failure-notify` schlägt stündlich. Runbook: `docs/runbooks/ln_reconciliation.md` (als Archiv markiert).
+
 **Bewusst aufgegeben, nicht übersehen:** der Operator-Envelope aus `artifacts/ln_policy.json` (`allowed_actions`) fällt mit `lightning/policy.py`. Für `pay_invoice` war er schon vorher wirkungslos (die Delegation stand vor dem 403); für den kapitalfreien Cockpit-Mint bleiben `receive_enabled`, die Operator-Auth und die Plan-Hash-Bindung. `GET /dashboard/api/ln/ops` und sein Panel entfallen ersatzlos — sie zeigten ein Journal, das keinen Schreiber mehr hat.
 
 ## 13. Konsequenzen
 
 Positiv: eine Wahrheit pro Geldbewegung, Doppelzahlung strukturell ausgeschlossen (Dedup + Unbekannt = Reconciliation), Agenten ohne Wallet-Zugriff, Fremd-Rails ohne Umbau anschließbar. Negativ: eine Übergangsphase mit zwei Journalen; SHADOW-Preview kostet read-only Node-Calls; LIVE bleibt in diesem Sprint aus.
+
+**Stand 2026-09-07:** Die Übergangsphase ist beendet (§12, PR 2). Es gibt genau ein Geld-Journal im Code und ein Archiv auf der Platte.

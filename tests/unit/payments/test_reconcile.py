@@ -15,7 +15,6 @@ darf dabei nichts bewegen. Drei Zusagen tragen diese Datei:
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -528,51 +527,35 @@ async def test_a_settled_intent_is_never_sent_again_after_the_timer_settled_it(
 
 
 # --------------------------------------------------------------------------- #
-# Vierte Richtung: Journal gegen Journal (ADR §12)
+# Die vierte Richtung, die es nicht mehr gibt (ADR §12, PR 2)
 # --------------------------------------------------------------------------- #
 
 
-async def test_a_dual_journal_conflict_makes_the_run_attention(tmp_path: Path) -> None:
-    """Solange zwei Buecher laufen, ist ihr Widerspruch ein Befund.
+def test_der_lauf_kennt_keinen_zweiten_journal_pfad_mehr() -> None:
+    """Kein `legacy_path`, kein `dual_conflicts` — es gibt kein zweites Buch.
 
-    Der Reconciler hielt bisher jedes Journal einzeln gegen den Node und nie die
-    beiden gegeneinander (Evidenzbericht §11, bekannte Grenze). Eine Zahlung,
-    die beide fuehren und die der Altpfad fuer offen haelt, war damit unsichtbar.
+    Ein Pass, der dauerhaft gegen eine leere Menge laeuft, ist keine Wache.
+    Der Parameter bliebe eine Einladung, das Archiv wieder anzuschliessen.
     """
-    journal, rail, service, intent_id = await open_intent(tmp_path)
-    key = journal.index.dedup_key(intent_id)
-    assert key is not None
+    import inspect
 
-    legacy = tmp_path / "ln_ops_ledger_v2.jsonl"
-    legacy.write_text(
-        json.dumps(
-            {
-                "ts": NOW.isoformat(),
-                "intent_id": "legacy-1",
-                "action": "pay_invoice",
-                "state": "intent",
-                "plan": {"payment_hash": key},
-            },
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    from app.payments.reconcile_types import ReconcileReport
 
-    report = await run(journal, rail, tmp_path, legacy_path=legacy)
-    assert report.dual_conflicts == (key,)
-    assert report.status == "attention"
-    assert report.counts["DUAL_JOURNAL_CONFLICT"] == 1
-    assert "dual_journal_conflict" in [event.event_type for event in journal.events()]
+    assert "legacy_path" not in inspect.signature(reconcile.run).parameters
+    assert not hasattr(ReconcileReport(), "dual_conflicts")
+    assert "dual_conflicts" not in ReconcileReport().to_dict()
 
 
-async def test_a_run_without_a_legacy_journal_stays_ok(tmp_path: Path) -> None:
-    """Nach dem Rueckbau des Altpfads verschwindet diese Richtung geraeuschlos."""
-    journal, rail, service, intent_id = await open_intent(tmp_path)
-    key = journal.index.dedup_key(intent_id)
-    assert key is not None
-    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000)
+def test_das_ereignis_bleibt_im_vokabular_des_journals() -> None:
+    """`dual_journal_conflict` wird nicht mehr geschrieben — aber gelesen.
 
-    report = await run(journal, rail, tmp_path, legacy_path=tmp_path / "nothing.jsonl")
-    assert report.dual_conflicts == ()
-    assert report.status == "ok"
+    Das Geld-Journal ist append-only und wird nie rotiert: ein Record aus der
+    Uebergangsphase liegt dort fuer immer. `JournalEvent` validiert
+    `event_type` gegen `AUDIT_EVENT_TYPES` auch beim LESEN — das Ereignis aus
+    der Liste zu streichen wuerde einen historischen Record unlesbar machen
+    und den Ketten-Waechter das Geld-Journal fuer gebrochen erklaeren lassen.
+    Das Vokabular schrumpft nicht mit seinem Schreiber.
+    """
+    from app.payments.enums import AUDIT_EVENT_TYPES
+
+    assert "dual_journal_conflict" in AUDIT_EVENT_TYPES

@@ -63,17 +63,17 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
        in der pydantic-settings-Präzedenz; Tests mit explizitem
        ``LightningSettings(...)``-Objekt gewinnen weiterhin).
     2. **Journal-Redirect:** jedes Journal, in das ein Test schreiben könnte,
-       zeigt auf ein tmp-File — das archivierte v2-Journal
-       (``APP_LN_OPS_LEDGER_V2_PATH``), das Empfangs-Journal
+       zeigt auf ein tmp-File — das Empfangs-Journal
        (``APP_LN_RECEIVE_LEDGER_PATH``) und das Geld-Journal des Control Plane
        (``APP_PAYMENT_JOURNAL_PATH`` + Vault, siehe unten).
 
-    **Was mit ADR 0018 §12 (PR 1) hier entfallen ist**, weil die Module weg
-    sind und nicht, weil die Garantie gelockert wurde: der v1-Pfad-Patch auf
-    ``ops_ledger._OPS_PATH`` (die v1-Hälfte existiert nicht mehr) und der
-    Idempotenz-Redirect auf ``ln_control._seen_idempotency`` (der persistente
-    Cockpit-Store ist mit dem alten Sendeweg gegangen). Beides waren Patches
-    auf Schreibpfade, die es nicht mehr gibt.
+    **Was mit ADR 0018 §12 hier entfallen ist**, weil die Module weg sind und
+    nicht, weil die Garantie gelockert wurde: der v1-Pfad-Patch auf
+    ``ops_ledger._OPS_PATH`` und der Idempotenz-Redirect auf
+    ``ln_control._seen_idempotency`` (PR 1), sowie mit PR 2 der v2-Redirect
+    ``APP_LN_OPS_LEDGER_V2_PATH`` — das Modul, das diese Variable las, gibt es
+    nicht mehr, und ein Redirect auf einen Schreibpfad, den niemand mehr
+    beschreitet, ist eine Zusage ohne Gegenstand.
     """
     monkeypatch.setenv("APP_LN_ENABLED", "false")
     monkeypatch.setenv("APP_LN_PAY_ENABLED", "false")
@@ -83,7 +83,6 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     # sähe sonst `pending` statt `disabled` (Rest-Fail vom 05.08.).
     monkeypatch.setenv("APP_CHAIN_ENABLED", "false")
 
-    monkeypatch.setenv("APP_LN_OPS_LEDGER_V2_PATH", str(tmp_path / "ln_ops_ledger_v2.jsonl"))
     monkeypatch.setenv("APP_LN_RECEIVE_LEDGER_PATH", str(tmp_path / "ln_receive_ledger.jsonl"))
 
     # 4. **Geld-Journal-Redirect (ADR 0018 §5).** Seit dem Lifespan den

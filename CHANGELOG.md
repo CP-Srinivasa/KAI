@@ -1,3 +1,15 @@
+## 2026-09-07 - Altpfad-Rueckbau PR 2: das Alt-Journal wird Archiv
+
+ADR 0018 §12 abgeschlossen (D-CORE-004). Vorbedingung G-3 am Geraet geprueft: Prae-Reg `0879a65c5fd01f65` verdict=PASS, `runs=96`, Fenster 2026-08-08 → 2026-08-15 abgelaufen und geschlossen. **Ab diesem Release liest und schreibt keine Zeile Produktionscode mehr `artifacts/ln_ops_ledger_v2.jsonl`.**
+
+**Zuerst umgehaengt, dann geloescht** — die Lebend-Wache des Geldpfads hing an `artifacts/lightning/ln_reconciliation.jsonl` (Freshness 45 min) und funktionierte nur durch einen Nebeneffekt: ein Timer fuhr beide Journal-Haelften, also verriet der Alt-Report auch den Tod des NEUEN Laufs. `check_payment_reconciliation` prueft jetzt das Alter von `last_run_utc` in `artifacts/payments/reconcile_state.json` — dieselbe 45-min-Schwelle, dieselbe Klasse P0, und ausdruecklich das FELD statt der mtime (die setzt jedes `cp` und jeder Restore neu und koennte einen toten Reconciler von aussen gruen faerben).
+
+**Geloescht:** `app/lightning/reconciliation.py`, `app/lightning/ops_ledger.py` (vollstaendig, inklusive `append_ln_outcome`), `app/payments/reconcile_dual.py` samt `dual_journal_pass`, `legacy_path` und `ReconcileReport.dual_conflicts`, `scripts/ln_reconciliation_eval.py`, die v2-Haelfte von `scripts/ln_reconcile.py`, `kai-ln-reconcile-verdict.{service,timer}` und die zugehoerigen Tests. `kai-ln-reconcile.timer` behaelt Name und Kadenz und faehrt nur noch `reconcile_payments()`.
+
+**Bewusst NICHT geloescht:** `dual_journal_conflict` bleibt in `AUDIT_EVENT_TYPES` und im `JournalIndex` — das Geld-Journal ist append-only und wird nie rotiert, `JournalEvent` validiert `event_type` auch beim LESEN; ein Vokabular schrumpft nicht mit seinem Schreiber. `artifacts/ln_ops_ledger_v2.jsonl`, `artifacts/lightning/ln_reconciliation.jsonl` und `artifacts/research/ln_reconciliation_verdict.jsonl` bleiben liegen; die Backup-Listen (`DEFAULT_SOURCES`, `MONEY_SOURCES`, `VANISHED_MONEY`-Guard) sind unveraendert. Das Verdikt der Prae-Reg wird weiter von `app/research/prereg_reconciliation.py` gelesen — geloescht ist der Evaluator, nicht der Beweis.
+
+**Operator-Schritt VOR der Aktivierung des Release:** `sudo systemctl disable --now kai-ln-reconcile-verdict.timer` und die beiden Unit-Dateien aus `/etc/systemd/system` entfernen. `pi_apply_systemd_units.sh` meldet verwaiste Units als `ORPHAN`, entfernt sie aber NIE — ohne diesen Schritt laeuft eine Unit gegen ein geloeschtes Skript und `kai-unit-failure-notify` schlaegt stuendlich. Runbook `docs/runbooks/ln_reconciliation.md` ist als Archiv markiert.
+
 ## 2026-09-04 - Altpfad-Rueckbau PR 1: der alte Lightning-Wertpfad schreibt nicht mehr
 
 ADR 0018 §12 vorgezogen (D-CORE-004), nachdem die vier Gates am Geraet erfuellt waren: Alt-Journal geschlossen (`ok=true`, `open_intents=[]`, `errors=[]`), kein Doppelbefund (`dual_conflicts=()`), Prae-Reg `0879a65c5fd01f65` verdict=PASS mit abgelaufenem Fenster, letzter Alt-Record 2026-08-05.
