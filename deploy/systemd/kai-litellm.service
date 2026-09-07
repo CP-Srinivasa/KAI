@@ -1,0 +1,28 @@
+[Unit]
+Description=KAI LiteLLM transport (localhost only, non-authoritative by default)
+After=network-online.target
+Wants=network-online.target
+OnFailure=kai-unit-failure-notify@%n.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+# No LiteLLM retry here: bounded retry has one policy owner in app/ai.
+ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/.venv/bin/litellm --config /home/kai/current/config/litellm.yaml --host 127.0.0.1 --port 4000
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20s
+StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/litellm.log
+StandardError=append:/home/kai/ai_analyst_trading_bot/logs/litellm.err.log
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kai/ai_analyst_trading_bot
+
+[Install]
+WantedBy=multi-user.target
