@@ -33,7 +33,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterable
+import subprocess
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -188,10 +189,84 @@ def resolve_current(current_link: Path) -> Path | None:
 PROBLEM_MANIFEST_MISSING: Final = "RELEASE_MANIFEST_MISSING"
 PROBLEM_TREE_TAMPERED: Final = "RELEASE_TREE_TAMPERED"
 PROBLEM_PATH_MISMATCH: Final = "RELEASE_PATH_MISMATCH"
+#: Der venv traegt andere Pakete als beim Bau aufgezeichnet. Kein Bau-Fehler,
+#: sondern eine Veraenderung DANACH -- der gefaehrlichere Fall, weil ihn bisher
+#: nichts gesehen haette.
+PROBLEM_DEPENDENCY_DRIFT: Final = "RELEASE_DEPENDENCY_DRIFT"
+#: Das Manifest ist aufgezeichnet, aber der Interpreter des Release fehlt --
+#: dann laesst sich die Zusage weder halten noch pruefen.
+PROBLEM_VENV_UNUSABLE: Final = "RELEASE_VENV_UNUSABLE"
 
 
-def verify_release(release_root: Path) -> list[str]:
-    """Traegt dieser Release-Baum noch die Identitaet, die er behauptet?"""
+def dependency_manifest_sha256(
+    release_root: Path,
+    *,
+    freeze: Callable[[Path], str | None] | None = None,
+    python_path: Path | None = None,
+) -> str | None:
+    """Hash ueber die installierten Pakete eines Release-venv.
+
+    EINE Rechnung fuer beide Seiten. ``pi_make_release.sh`` ruft sie beim Bau
+    auf, ``verify_release`` spaeter zur Pruefzeit -- zwei Implementierungen
+    desselben Hashes waeren zwei Wahrheiten, und derselbe Satz steht seit jeher
+    ueber dem Baum-Hash. Bis 2026-09-07 galt er hier nicht: der Builder rechnete
+    in der Shell, und geprueft wurde ueberhaupt nicht.
+
+    ``python_path`` ist fuer den Bau: dort gibt es noch kein ``release.json``,
+    aus dem sich der Interpreter ergeben koennte. ``freeze`` ist die Naht fuer
+    Tests -- sonst haengt der eine Fall, um den es geht, an einem echten venv.
+
+    ``None`` heisst "nicht ermittelbar", ausdruecklich nicht "in Ordnung".
+    """
+    if freeze is not None:
+        roh = freeze(release_root)
+    else:
+        python = python_path or _interpreter_aus_manifest(release_root)
+        roh = _pip_freeze(python) if python is not None else None
+    if roh is None:
+        return None
+    sortiert = sorted(z for z in roh.splitlines() if z.strip())
+    rein = ("\n".join(sortiert) + "\n").encode("utf-8")
+    return hashlib.sha256(rein).hexdigest()
+
+
+def _interpreter_aus_manifest(release_root: Path) -> Path | None:
+    """Den Interpreter nehmen, den das Release selbst benennt."""
+    manifest = read_release_manifest(release_root)
+    if manifest is None or not manifest.venv_python_path:
+        return None
+    return Path(manifest.venv_python_path)
+
+
+def _pip_freeze(python: Path) -> str | None:
+    if not python.is_file():
+        return None
+    try:
+        ergebnis = subprocess.run(  # noqa: S603
+            [str(python), "-m", "pip", "freeze"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return ergebnis.stdout if ergebnis.returncode == 0 else None
+
+
+def verify_release(
+    release_root: Path,
+    *,
+    freeze: Callable[[Path], str] | None = None,
+) -> list[str]:
+    """Traegt dieser Release-Baum noch die Identitaet, die er behauptet?
+
+    Seit 2026-09-07 gehoert der venv dazu. Der Baum-Hash schliesst ihn
+    ausdruecklich aus (``EXCLUDED_NAMES``), und die Begruendung -- das Lockfile
+    belege ihn -- gilt nur, solange ausschliesslich aus dem Lockfile
+    installiert wird. Was danach jemand von Hand hineinlegt, sah bis hierhin
+    NICHTS: weder der Baum-Hash noch ``pip check`` noch der Deploy-Marker.
+    """
     manifest = read_release_manifest(release_root)
     if manifest is None:
         return [PROBLEM_MANIFEST_MISSING]
@@ -200,14 +275,26 @@ def verify_release(release_root: Path) -> list[str]:
         problems.append(PROBLEM_PATH_MISMATCH)
     if release_tree_sha256(release_root) != manifest.release_tree_sha256:
         problems.append(PROBLEM_TREE_TAMPERED)
+    # Nur pruefen, was das Release selbst behauptet: aeltere Releases ohne das
+    # Feld sollen nicht ruecklings durchfallen. Fehlt der Interpreter, waehrend
+    # das Feld da steht, ist das ein eigener Befund -- "nicht pruefbar" ist
+    # nicht dasselbe wie "in Ordnung".
+    if manifest.dependency_manifest_sha256:
+        ist = dependency_manifest_sha256(release_root, freeze=freeze)
+        if ist is None:
+            problems.append(PROBLEM_VENV_UNUSABLE)
+        elif ist != manifest.dependency_manifest_sha256:
+            problems.append(PROBLEM_DEPENDENCY_DRIFT)
     return problems
 
 
 __all__ = [
     "EXCLUDED_NAMES",
+    "PROBLEM_DEPENDENCY_DRIFT",
     "PROBLEM_MANIFEST_MISSING",
     "PROBLEM_PATH_MISMATCH",
     "PROBLEM_TREE_TAMPERED",
+    "PROBLEM_VENV_UNUSABLE",
     "RELEASE_MANIFEST_NAME",
     "RELEASE_MANIFEST_SCHEMA",
     "SEALED_DIRS",
