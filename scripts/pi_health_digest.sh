@@ -71,14 +71,25 @@ fi
 SIGNAL_COUNT=0
 RAW_LOG="artifacts/telegram_channel_raw.jsonl"
 if [[ -f "$RAW_LOG" ]]; then
-    SIGNAL_COUNT="$(python3 - <<PYEOF
+    # Delimiter GEQUOTET und Werte ueber argv: mit `<<PYEOF` interpolierte die
+    # Shell `${WINDOW_DAYS}` und `${RAW_LOG}` in den Python-QUELLTEXT. Das hatte
+    # zwei Folgen. Erstens war dieses Schnipsel das einzige im Repo, das kein
+    # Parser je beurteilen kann -- der Text hier ist nicht der Text, der laeuft,
+    # also muss `test_embedded_python_is_parseable.py` es ueberspringen. Zweitens
+    # ist ein Pfad, der in Quelltext eingesetzt wird, eine Zeichenkette an der
+    # falschen Stelle: ein `"` oder `\` darin ergaebe kaputtes Python. Heute ist
+    # RAW_LOG eine Konstante zwei Zeilen darueber, also nicht ausnutzbar -- aber
+    # der Wert kommt als Argument sicherer an, und das Schnipsel wird dadurch
+    # pruefbar. Zwei Probleme, eine Anfuehrungszeichen-Aenderung.
+    SIGNAL_COUNT="$(python3 - "$WINDOW_DAYS" "$RAW_LOG" <<'PYEOF'
+import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import json
 
-cutoff = datetime.now(tz=timezone.utc) - timedelta(days=${WINDOW_DAYS})
+cutoff = datetime.now(tz=timezone.utc) - timedelta(days=int(sys.argv[1]))
 n = 0
-for line in Path("${RAW_LOG}").read_text(encoding="utf-8", errors="ignore").splitlines():
+for line in Path(sys.argv[2]).read_text(encoding="utf-8", errors="ignore").splitlines():
     line = line.strip()
     if not line:
         continue
