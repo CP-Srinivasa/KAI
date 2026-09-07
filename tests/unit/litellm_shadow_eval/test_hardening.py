@@ -521,13 +521,12 @@ def test_der_leser_verdaut_was_kai_tatsaechlich_schreibt(tmp_path: Path) -> None
     """Ein Auswerter, der seine eigene Evidenz nicht lesen kann, ist Zierde.
 
     Diese Probe ruft den ECHTEN Telemetrie-Schreiber auf, statt eine
-    handgeschriebene Zeile zu erfinden, die zufaellig zum Leser passt. Die
-    S5-Felder (`logical_route`, `transport`, `identity_proven`, ...) kommen aus
-    #874 und werden hier ueberlagert; sobald #874 in der Mainline ist, faellt
-    die Ueberlagerung weg und der Aufruf traegt sie selbst.
+    handgeschriebene Zeile zu erfinden, die zufaellig zum Leser passt. Seit dem
+    S5-Merge schreibt er alle Felder selbst -- die frueher noetige Ueberlagerung
+    ist entfallen.
 
-    Umgekehrt gilt die Richtung ausdruecklich NICHT: passt etwas nicht, wird
-    der LESER angepasst, nie der Schreiber. S6 ist eine Brille, kein Eingriff.
+    Die Richtung ist ausdruecklich einseitig: passt etwas nicht, wird der LESER
+    angepasst, nie der Schreiber. S6 ist eine Brille, kein Eingriff.
     """
     from scripts.litellm_shadow_eval.loader import SUPPORTED_SCHEMA_VERSIONS, normalize_record
 
@@ -542,31 +541,31 @@ def test_der_leser_verdaut_was_kai_tatsaechlich_schreibt(tmp_path: Path) -> None
         role="shadow",
         correlation_id="corr-1",
         call_id="llmc_abc",
+        evaluation_id="eval_abc123",
         purpose="analysis",
         attempt=1,
         outcome="success",
+        logical_route="standard",
+        mode="shadow",
+        transport="litellm",
+        requested_model_alias="kai-standard",
+        actual_provider="openai",
+        actual_model="gpt-4o-mini",
+        identity_proven=True,
+        retry_count=0,
+        input_tokens=11,
+        output_tokens=5,
+        cost_usd=0.001,
+        schema_status="valid",
+        budget_decision="allow",
+        circuit_state="closed",
+        execution_authority=False,
         path=pfad,
     )
     geschrieben = json.loads(pfad.read_text(encoding="utf-8").strip())
     assert geschrieben["schema_version"] in SUPPORTED_SCHEMA_VERSIONS, geschrieben["schema_version"]
 
-    aus_s5 = {
-        "logical_route": "standard",
-        "mode": "shadow",
-        "transport": "litellm",
-        "requested_model_alias": "kai-standard",
-        "actual_provider": "openai",
-        "actual_model": "gpt-4o-mini",
-        "identity_proven": True,
-        "retry_count": 0,
-        "input_tokens": 11,
-        "output_tokens": 5,
-        "cost_usd": 0.001,
-        "cost_known": True,
-        "schema_status": "valid",
-        "execution_authority": False,
-    }
-    record, issues = normalize_record({**geschrieben, **aus_s5}, record_ref="1:t.jsonl:1")
+    record, issues = normalize_record(geschrieben, record_ref="1:t.jsonl:1")
 
     assert not issues, [issue.code for issue in issues]
     assert record is not None
@@ -578,3 +577,161 @@ def test_der_leser_verdaut_was_kai_tatsaechlich_schreibt(tmp_path: Path) -> None
     assert record.identity_proven is True
     assert record.schema_valid is True
     assert record.execution_authority is False
+    assert record.evaluation_id == "eval_abc123"
+    assert record.pair_key == "evaluation:eval_abc123", "der Paarungsschluessel greift"
+
+
+def test_unbekannte_token_bleiben_unbekannt_beim_echten_schreiber(tmp_path: Path) -> None:
+    """``prompt_tokens`` ist 0, wenn niemand gezaehlt hat -- das ist keine Messung.
+
+    Der Leser darf vom v2-Feld nicht auf das v1-Feld zurueckfallen, sobald das
+    v2-Feld VORHANDEN und ``null`` ist. Sonst wuerde aus "nicht mitgeteilt" eine
+    gemessene Null, und eine Null ist eine Aussage ueber Verbrauch.
+    """
+    from scripts.litellm_shadow_eval.loader import normalize_record
+
+    from app.observability.llm_telemetry import record_llm_call
+
+    pfad = tmp_path / "llm_telemetry.jsonl"
+    record_llm_call(
+        provider="",
+        model="",
+        ok=False,
+        latency_ms=9.0,
+        role="shadow",
+        correlation_id="corr-2",
+        call_id="llmc_x",
+        evaluation_id="eval_x",
+        purpose="analysis",
+        attempt=1,
+        error_class="timeout",
+        outcome="exhausted",
+        logical_route="standard",
+        mode="shadow",
+        transport="litellm",
+        requested_model_alias="kai-standard",
+        execution_authority=False,
+        path=pfad,
+    )
+    geschrieben = json.loads(pfad.read_text(encoding="utf-8").strip())
+    assert geschrieben["input_tokens"] is None, "der Schreiber sagt unbekannt"
+    assert geschrieben["prompt_tokens"] == 0, "das v1-Feld kann es nicht anders"
+
+    record, issues = normalize_record(geschrieben, record_ref="1:t.jsonl:1")
+
+    assert not issues, [issue.code for issue in issues]
+    assert record is not None
+    assert record.input_tokens is None, "der Leser darf daraus keine Null machen"
+    assert record.output_tokens is None
+    assert record.cost_known is False
+    assert record.cost_usd is None
+
+
+def test_eine_echte_v1_zeile_ohne_tokenzaehlung_bleibt_unbekannt() -> None:
+    """Fehlt das v2-Feld ganz, bedeutet die 0 des v1-Feldes dasselbe."""
+    from scripts.litellm_shadow_eval.loader import normalize_record
+
+    v1_zeile: dict[str, Any] = {
+        "schema_version": "v1",
+        "ts": "2026-09-07T00:00:00+00:00",
+        "logical_route": "standard",
+        "purpose": "analysis",
+        "role": "shadow",
+        "transport": "litellm",
+        "ok": True,
+        "evaluation_id": "eval_v1",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    record, issues = normalize_record(v1_zeile, record_ref="1:t.jsonl:1")
+
+    assert not issues, [i.code for i in issues]
+    assert record is not None
+    assert record.input_tokens is None
+    assert record.output_tokens is None
+
+    gezaehlt = {**v1_zeile, "prompt_tokens": 11, "completion_tokens": 5}
+    record2, _ = normalize_record(gezaehlt, record_ref="1:t.jsonl:2")
+    assert record2 is not None
+    assert record2.input_tokens == 11, "eine echte Zaehlung bleibt erhalten"
+    assert record2.output_tokens == 5
+
+
+async def test_ein_echter_shadow_durchlauf_ergibt_ein_vollstaendiges_paar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der Endnachweis: von ``invoke`` bis zum Paar, ohne eine Zeile von Hand.
+
+    Vor dem Paarungsschluessel kamen hier NULL Paare heraus: die DIRECT-Zeile
+    trug keine Route und wurde verworfen, und die ``call_id`` unterschied sich
+    ohnehin zwischen den Seiten. Genau dieser Weg wird hier gemessen.
+    """
+    from unittest.mock import AsyncMock
+
+    from scripts.litellm_shadow_eval.loader import load_evidence
+    from scripts.litellm_shadow_eval.pairing import pair_records
+
+    from app.ai.audit import llm_call_scope
+    from app.ai.config import InferenceSettings
+    from app.ai.models import AttemptTrace
+    from app.ai.runtime import LiteLLMRequest, invoke
+    from app.integrations.litellm.provider import LiteLLMResponse
+
+    pfad = tmp_path / "llm_telemetry.jsonl"
+    monkeypatch.setattr(
+        "app.ai.runtime.call_litellm_async",
+        AsyncMock(
+            return_value=LiteLLMResponse(
+                trace=AttemptTrace(
+                    transport="litellm",
+                    requested_model="kai-standard",
+                    latency_ms=12.0,
+                    actual_provider="openai",
+                    actual_model="gpt-4o-mini",
+                    input_tokens=11,
+                    output_tokens=5,
+                    cost_usd=0.001,
+                ),
+                body={"choices": [{"message": {"content": "schatten"}}]},
+            )
+        ),
+    )
+
+    async def direct_call() -> str:
+        async with llm_call_scope(
+            purpose="analysis", provider="openai", model="gpt-4o", path=pfad
+        ) as scope:
+            scope.set_tokens(11, 5)
+            return "direkt"
+
+    def parse(body: dict[str, Any]) -> str:
+        return str(body["choices"][0]["message"]["content"])
+
+    for _ in range(3):
+        ergebnis = await invoke(
+            purpose="analysis",
+            direct_call=direct_call,
+            direct_provider="openai",
+            direct_model="gpt-4o",
+            litellm=LiteLLMRequest(parser=parse),
+            settings=InferenceSettings(
+                enabled=True,
+                mode_ceiling="shadow",
+                route_modes={"standard": "shadow"},
+                max_attempts=1,
+            ),
+            telemetry_path=pfad,
+        )
+        assert ergebnis.value == "direkt", "SHADOW ersetzt die Antwort nicht"
+
+    loaded = load_evidence([pfad])
+    assert loaded.record_count == 6, "drei Aufrufe, zwei Seiten"
+    assert not loaded.issues, [i.code for i in loaded.issues]
+
+    paare = pair_records(loaded.records)
+    assert not paare.issues, [i.code for i in paare.issues]
+    assert len(paare.pairs) == 3
+    for paar in paare.pairs:
+        assert paar.status.value == "VALID_PAIR"
+        assert paar.direct is not None and paar.shadow is not None
+        assert paar.logical_route == "standard"

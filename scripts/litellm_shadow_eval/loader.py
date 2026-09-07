@@ -53,6 +53,24 @@ def _integer(value: object) -> int | None:
     return value
 
 
+def _tokens(raw: dict[str, Any], v2: str, v1: str) -> int | None:
+    """Tokenzahl -- ``None`` heisst UNBEKANNT, nicht 0.
+
+    Die kanonische Telemetrie fuehrt beide Schreibweisen: ``input_tokens`` (v2,
+    darf ``null`` sein) und ``prompt_tokens`` (v1, immer ``int`` und deshalb 0,
+    wenn niemand gezaehlt hat). Ein Rueckfall vom einen aufs andere wuerde aus
+    "unbekannt" eine gemessene Null machen -- und eine Null ist eine Aussage.
+
+    Deshalb: ist das v2-Feld VORHANDEN, ist es die Wahrheit, auch als ``null``.
+    Nur wenn es fehlt (echte v1-Zeile), zaehlt das v1-Feld, und dessen 0 wird
+    als das gelesen, was sie dort bedeutet: nicht mitgeteilt.
+    """
+    if v2 in raw:
+        return _integer(raw.get(v2))
+    alt = _integer(raw.get(v1))
+    return alt or None
+
+
 def _schema_valid(raw: dict[str, Any]) -> bool | None:
     explicit = _bool(raw.get("schema_valid"))
     if explicit is not None:
@@ -177,12 +195,8 @@ def normalize_record(
         )
 
     latency = _number(raw.get("latency_ms"))
-    input_tokens = _integer(raw.get("input_tokens"))
-    if input_tokens is None:
-        input_tokens = _integer(raw.get("prompt_tokens"))
-    output_tokens = _integer(raw.get("output_tokens"))
-    if output_tokens is None:
-        output_tokens = _integer(raw.get("completion_tokens"))
+    input_tokens = _tokens(raw, "input_tokens", "prompt_tokens")
+    output_tokens = _tokens(raw, "output_tokens", "completion_tokens")
     cost = _number(raw.get("cost_usd"))
     quality = _number(raw.get("quality_score"))
 
