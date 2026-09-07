@@ -724,6 +724,66 @@ async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, obj
 
 _POLL_MAX_CONSECUTIVE_FAILURES = 5
 
+# 2026-09-07: ein Poll-Zyklus ohne Zeitgrenze ist der stille Tod des Backstops.
+#
+# GEMESSEN auf kai-pi5: zwischen dem 2026-09-04 15:02 UTC und dem 2026-09-07
+# 08:18 UTC schrieb der Backstop 65 Stunden lang keine Canary-Datei und keine
+# einzige ``gap-replay``-Zeile. Der Prozess lebte (der Heartbeat-Loop ist ein
+# eigener Task und tickte weiter), systemd sah nichts, und die
+# Selbstheilung unten -- fuenf aufeinanderfolgende Fehlschlaege, dann Disconnect
+# -- griff NIE: sie zaehlt Exceptions, und es flog keine. Der Loop stand in
+# einem ``await``.
+#
+# Das ist die Luecke: die Fehlerbehandlung deckte den lauten Fall (Telethon
+# wirft) und liess den leisen offen (Telethon antwortet nicht). Telethon
+# wartet auf sein Request-Future ohne Zeitgrenze; eine Verbindung, die
+# "connected" meldet aber nichts mehr beantwortet, blockiert den Zyklus
+# unbegrenzt. Genau dann ist der Backstop wertlos -- er ist die einzige
+# Absicherung gegen einen toten Push-Stream.
+#
+# 360s = ein voller FloodWait (flood_sleep_threshold=300, s.u.) plus Arbeit.
+# Ein legitimer Zyklus bleibt darunter, ein Haenger wird zur TimeoutError und
+# damit zu einem gezaehlten Fehlschlag. Nach _POLL_MAX_CONSECUTIVE_FAILURES
+# folgt der Disconnect, den systemd (Restart=always) in einen Neustart mit
+# Boot-Replay uebersetzt: aus 65 Stunden Stille werden hoechstens ~37 Minuten,
+# und jede Minute davon steht als Log-Zeile da.
+_POLL_ITERATION_TIMEOUT_SEC = 360
+
+
+async def _poll_backstop_iteration(
+    client: Any,
+    entity: Any,
+    checkpoint_path: Path,
+    process_fn: Callable[[int, str], Any],
+    chat_id_marked: int,
+) -> tuple[int, int]:
+    """Ein Poll-Zyklus: replay, Kopf-Id lesen, Canary schreiben.
+
+    Als eigene Coroutine herausgeloest, damit ``asyncio.wait_for`` den GESAMTEN
+    Zyklus abbrechen kann -- nicht nur einen der beiden Netzwerk-Aufrufe.
+
+    Gibt ``(processed, last_seen)`` zurueck.
+    """
+    checkpoint = load_checkpoint(checkpoint_path)
+    last_seen = get_last_seen_id(checkpoint, chat_id_marked)
+    result = await replay_missed_messages(
+        client,
+        entity,
+        chat_id=chat_id_marked,
+        last_seen_id=last_seen,
+        process_fn=process_fn,
+    )
+    updated_checkpoint = load_checkpoint(checkpoint_path)
+    updated_last_seen = get_last_seen_id(updated_checkpoint, chat_id_marked)
+    latest_id = await _latest_message_id(client, entity)
+    _write_semantic_canary(
+        chat_id=chat_id_marked,
+        checkpoint_message_id=updated_last_seen,
+        latest_message_id=latest_id,
+        replay_processed=int(result.get("processed", 0)),
+    )
+    return int(result.get("processed", 0)), last_seen
+
 
 async def _poll_backstop_loop(
     client: Any,
@@ -746,31 +806,28 @@ async def _poll_backstop_loop(
     failures (total connection death) it disconnects the client so
     systemd restarts the worker (Restart=always) and the next boot's
     replay recovers the gap.
+
+    Ein Zyklus, der laenger als ``_POLL_ITERATION_TIMEOUT_SEC`` braucht, gilt
+    als Fehlschlag und zaehlt mit: eine Telethon-Verbindung, die "connected"
+    meldet aber nicht mehr antwortet, laesst den Zyklus sonst unbegrenzt
+    stehen -- lautlos, weil nichts geworfen wird (kai-pi5, 65 h ab
+    2026-09-04).
     """
     consecutive_failures = 0
     while True:
         try:
             await asyncio.sleep(interval_s)
-            checkpoint = load_checkpoint(checkpoint_path)
-            last_seen = get_last_seen_id(checkpoint, chat_id_marked)
-            result = await replay_missed_messages(
-                client,
-                entity,
-                chat_id=chat_id_marked,
-                last_seen_id=last_seen,
-                process_fn=process_fn,
-            )
-            updated_checkpoint = load_checkpoint(checkpoint_path)
-            updated_last_seen = get_last_seen_id(updated_checkpoint, chat_id_marked)
-            latest_id = await _latest_message_id(client, entity)
-            _write_semantic_canary(
-                chat_id=chat_id_marked,
-                checkpoint_message_id=updated_last_seen,
-                latest_message_id=latest_id,
-                replay_processed=int(result.get("processed", 0)),
+            processed, last_seen = await asyncio.wait_for(
+                _poll_backstop_iteration(
+                    client,
+                    entity,
+                    checkpoint_path,
+                    process_fn,
+                    chat_id_marked,
+                ),
+                timeout=_POLL_ITERATION_TIMEOUT_SEC,
             )
             consecutive_failures = 0
-            processed = int(result.get("processed", 0))
             if processed > 0:
                 logger.warning(
                     "[channel-worker] poll-backstop recovered %s message(s) "
@@ -780,6 +837,31 @@ async def _poll_backstop_loop(
                 )
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            # Eigene Klausel, weil ``str(TimeoutError())`` leer ist: unter der
+            # generischen Meldung unten stuende die diagnostisch wertlose Zeile
+            # "iteration failed: ". Der Haenger ist der Fall, der 65 Stunden
+            # unsichtbar blieb — er muss sich beim Namen nennen.
+            consecutive_failures += 1
+            logger.warning(
+                "[channel-worker] poll-backstop iteration HUNG >%ss "
+                "(%s/%s consecutive) — Telethon antwortet nicht",
+                _POLL_ITERATION_TIMEOUT_SEC,
+                consecutive_failures,
+                _POLL_MAX_CONSECUTIVE_FAILURES,
+            )
+            if consecutive_failures >= _POLL_MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "[channel-worker] poll-backstop hit %s consecutive "
+                    "failures — disconnecting for systemd restart + "
+                    "boot-replay recovery",
+                    consecutive_failures,
+                )
+                try:
+                    await client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
         except Exception as exc:  # noqa: BLE001 — backstop must never crash listener
             consecutive_failures += 1
             logger.warning(
