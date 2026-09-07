@@ -170,3 +170,34 @@ def test_ohne_release_und_mit_passendem_bundle_ist_der_deploy_fertig(tmp_path: P
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert "Deploy complete" in ergebnis.stdout
     assert "kai-service-control" in log.read_text(encoding="utf-8")
+
+
+def test_ein_echt_abweichender_hash_bricht_den_transfer_ab(tmp_path: Path) -> None:
+    """Die dritte Zeile der Matrix: die Sicherung muss weiter beissen.
+
+    POSIX-Dateiname -> PASS und Windows-Backslashes -> PASS sind nur dann eine
+    Aussage, wenn ein WIRKLICH anderer Hash weiterhin durchfaellt. Sonst waere
+    "beide gleich" auch erfuellt, indem die Normalisierung alles gleichmacht.
+    """
+    repo, bin_dir, log = _welt(tmp_path, release_aktiv=False, serviert=BUNDLE_NEU)
+    # Der Stub antwortet mit einem Hash, der zu nichts passt.
+    _stub(
+        bin_dir,
+        "ssh",
+        'echo "ssh $*" >> "$SSH_LOG"'
+        + NL
+        + 'case "$*" in *sha256sum*) echo "'
+        + ("f" * 64)
+        + '" ;; *"echo ok"*) echo ok ;; *) : ;; esac'
+        + NL
+        + "exit 0"
+        + NL,
+    )
+
+    ergebnis = _lauf(repo, bin_dir, log)
+
+    assert ergebnis.returncode == 2, ergebnis.stdout + ergebnis.stderr
+    assert "sha256 mismatch" in ergebnis.stderr
+    assert "kai-service-control" not in log.read_text(encoding="utf-8"), (
+        "bei gescheiterter Uebertragung darf kein Restart passieren"
+    )

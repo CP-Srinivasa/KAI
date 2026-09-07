@@ -96,7 +96,20 @@ trap 'rm -f "$TARBALL"' EXIT
 
 echo "=== packing $TARBALL ==="
 tar -czf "$TARBALL" -C "$ROOT" web/dist || { echo "ERROR: tar failed" >&2; exit 2; }
-LOCAL_SHA="$(sha256sum "$TARBALL" | awk '{print $1}')"
+# GNU coreutils stellt der AUSGABE ein \ voran, sobald der DATEINAME einen
+# Backslash oder Newline enthaelt, und escaped ihn zusaetzlich im Namen. Unter
+# Git-Bash auf Windows ist $TARBALL haeufig ein Windows-Pfad, und dann liefert
+# awk '{print $1}' einen Hash MIT fuehrendem Backslash -- der Vergleich unten
+# schlaegt fehl, obwohl die Uebertragung in Ordnung war. Gemessen 2026-09-07:
+#
+#     sha256sum /tmp/tmp.vwewC    ->    e3b0c442...  */tmp/tmp.vwewC
+#     sha256sum C:\Users\...     ->   \e3b0c442...  *C:\\Users\\...
+#
+# Alle vier Tests von test_pi_deploy_web_release_aware scheiterten auf Windows
+# daran, waehrend die Linux-CI gruen blieb. Ein Hash enthaelt nie einen
+# Backslash, deshalb ist das Entfernen verlustfrei.
+entschaerfe_hash() { tr -d '\\'; }
+LOCAL_SHA="$(sha256sum "$TARBALL" | awk '{print $1}' | entschaerfe_hash)"
 
 echo "=== transfer to $REMOTE_HOST ==="
 if ! scp -o BatchMode=yes "$TARBALL" "$REMOTE_HOST:/tmp/kai_web_dist.tar.gz"; then
@@ -104,7 +117,7 @@ if ! scp -o BatchMode=yes "$TARBALL" "$REMOTE_HOST:/tmp/kai_web_dist.tar.gz"; th
     exit 2
 fi
 
-REMOTE_SHA="$(ssh -o BatchMode=yes "$REMOTE_HOST" "sha256sum /tmp/kai_web_dist.tar.gz | awk '{print \$1}'")"
+REMOTE_SHA="$(ssh -o BatchMode=yes "$REMOTE_HOST" "sha256sum /tmp/kai_web_dist.tar.gz | awk '{print \$1}'" | entschaerfe_hash)"
 if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
     echo "ERROR: sha256 mismatch after scp ($LOCAL_SHA vs $REMOTE_SHA)" >&2
     exit 2
