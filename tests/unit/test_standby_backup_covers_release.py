@@ -288,3 +288,78 @@ def test_beide_skripte_sind_syntaktisch_gueltig() -> None:
             ["bash", "-n", str(pfad)], capture_output=True, text=True, check=False
         )
         assert ergebnis.returncode == 0, f"{pfad.name}: {ergebnis.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# Der Fall, den diese Datei bis 2026-09-07 NICHT sehen konnte.
+#
+# Alle Fixtures oben bauen Mini-Archive. Darin ist ``tar`` fertig, bevor
+# ``grep -q`` beim ersten Treffer aussteigt -- die Pipe wird nie unter ``tar``
+# geschlossen, es gibt kein SIGPIPE, und die Pruefung sah gesund aus.
+#
+# Auf kai-pi5 mit 24.817 Eintraegen sah sie es anders: ``grep -q`` stieg nach
+# wenigen Zeilen aus, ``tar`` bekam SIGPIPE und endete mit 141, und
+# ``set -o pipefail`` machte daraus den Status der Pipeline. Ein GEFUNDENER
+# Eintrag las sich als fehlender:
+#
+#     BACKUP_FAIL: ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (release.json)
+#
+# Seit dem 2026-08-31 entstand deshalb kein System-Backup mehr.
+#
+# Der Test erzwingt den Fall deterministisch statt ihn nachzustellen: viele
+# Dateien, und der gesuchte Eintrag liegt vorne. Je frueher der Treffer, desto
+# sicherer schlaegt die kaputte Fassung fehl.
+# ---------------------------------------------------------------------------
+
+#: Genug Eintraege, dass `tar` beim Aussteigen von `grep` noch schreibt. 4000
+#: reichen auf jedem Runner; das echte Archiv hatte 24.817.
+_VIELE = 4000
+
+
+def test_ein_grosses_release_archiv_wird_nicht_faelschlich_als_leer_gemeldet(
+    tmp_path: Path,
+) -> None:
+    """Die Inventar-Pruefung darf nicht davon abhaengen, WANN der Treffer kommt."""
+    welt = _welt(tmp_path)
+    fueller = welt["release"] / ".venv" / "lib"
+    fueller.mkdir(parents=True, exist_ok=True)
+    for i in range(_VIELE):
+        (fueller / f"m{i:05d}.py").write_text("x\n", encoding="utf-8")
+
+    ergebnis = _lauf(welt)
+
+    assert ergebnis.returncode == 0, (
+        "ein vollstaendiges, nur grosses Archiv wurde als unvollstaendig gemeldet:\n"
+        f"{ergebnis.stdout}\n{ergebnis.stderr}"
+    )
+    assert "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT" not in ergebnis.stderr
+
+    # Und der Beweis, dass die Pruefung nicht einfach uebersprungen wurde:
+    # das Archiv enthaelt wirklich, was sie behauptet.
+    with tarfile.open(_archiv(welt["usb"], "release")) as tar:
+        namen = tar.getnames()
+    assert any(n.endswith("release.json") for n in namen)
+    assert sum(1 for n in namen if "/.venv/" in n or n.startswith("./.venv")) > _VIELE
+
+
+def test_die_pruefung_meldet_einen_echt_fehlenden_eintrag_auch_im_grossen_archiv(
+    tmp_path: Path,
+) -> None:
+    """Die Gegenprobe: gross UND unvollstaendig muss weiterhin durchfallen.
+
+    Ohne sie koennte man den Fehler oben auch dadurch 'beheben', dass die
+    Pruefung gar nichts mehr prueft.
+    """
+    welt = _welt(tmp_path)
+    fueller = welt["release"] / ".venv" / "lib"
+    fueller.mkdir(parents=True, exist_ok=True)
+    for i in range(_VIELE):
+        (fueller / f"m{i:05d}.py").write_text("x\n", encoding="utf-8")
+    (welt["release"] / "release.json").unlink()
+
+    ergebnis = _lauf(welt)
+
+    assert ergebnis.returncode != 0
+    assert "RELEASE_JSON_MISSING" in ergebnis.stderr or (
+        "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT" in ergebnis.stderr
+    )
