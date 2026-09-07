@@ -12,17 +12,28 @@ Send-Gate) gegated.
 > Sendepfad materialisiert sein Payment-Credential nur bei
 > `APP_LN_PAY_ENABLED=true`. Der Read-Scope bleibt der Default ausschließlich für
 > Lesepfade — Write-Scopes fallen niemals auf ihn zurück.
+>
+> **Nachtrag ADR 0018 §12 (2026-09-04, Altpfad-Rückbau):** `value_layer.py` gibt
+> es nicht mehr. Von den sechs Write-Pfaden unten haben noch **zwei** einen
+> Aufrufer: der Mint (`lightning/receive_gate.create_invoice`, Invoice-Scope) und
+> die Zahlung (`payments/rails/lightning.py::pay`, Payment-Scope). Keysend,
+> On-Chain-Withdraw und beide Channel-Verben sind ADR §1 DEFERRED und aus dem
+> Code entfernt; ihre Zeilen bleiben hier stehen, weil die Matrix die
+> **Bakery-Vorschrift** ist — welches Recht ein Credential tragen darf, ändert
+> sich nicht dadurch, dass gerade niemand es benutzt. `onchain`/`channel` sind
+> damit deklariert, aber ohne Konsument: wer sie neu verdrahtet, findet die
+> Vorschrift hier und muss sie nicht erraten.
 
 | Pfad / Aktion | Modul | lnd REST | Benötigte lnd-Permission (`lncli bakemacaroon`) |
 |---|---|---|---|
 | Node-Status / Balances / Channels (Phase 1) | `adapter.py` | GET `/v1/state`,`/v1/getinfo`,`/v1/balance/*`,`/v1/channels`,`/v1/fees` | `info:read offchain:read onchain:read` (= readonly) |
-| Invoice erstellen (Receive) | `value_layer.create_invoice` | POST `/v1/invoices` | `invoices:write` |
+| Invoice erstellen (Receive) | `receive_gate.create_invoice` | POST `/v1/invoices` | `invoices:write` |
 | BOLT12-Offer (Receive, Sprint 3) | (Sprint 3) | POST `/v2/...offers` | `invoices:write offchain:read` |
-| Invoice zahlen / Keysend (Send) | `value_layer.pay_invoice/keysend` | GET `/v1/payreq/{pay_req}` vor POST `/v1/channels/transactions` | `offchain:read offchain:write` |
-| On-Chain-Withdraw (Send) | `value_layer.send_coins` | POST `/v1/transactions` | `onchain:write` |
-| Channel öffnen | `value_layer.open_channel` | POST `/v1/channels` | `onchain:write offchain:write` |
-| Channel schließen | `value_layer.close_channel` | DELETE `/v1/channels/{txid}/{idx}` | `offchain:write onchain:write` |
-| Rebalance (PLAN-only) | `value_layer.rebalance_plan` | — (kein Node-Write) | keine (reiner Plan) |
+| Invoice zahlen (Send) | `payments/rails/lightning.py::pay` | GET `/v1/payreq/{pay_req}` vor POST `/v1/channels/transactions` | `offchain:read offchain:write` |
+| On-Chain-Withdraw (Send) | — (DEFERRED, kein Aufrufer) | POST `/v1/transactions` | `onchain:write` |
+| Channel öffnen | — (DEFERRED, kein Aufrufer) | POST `/v1/channels` | `onchain:write offchain:write` |
+| Channel schließen | — (DEFERRED, kein Aufrufer) | DELETE `/v1/channels/{txid}/{idx}` | `offchain:write onchain:write` |
+| Rebalance (PLAN-only) | — (DEFERRED, kein Aufrufer) | — (kein Node-Write) | keine (reiner Plan) |
 
 ## Verbindliche Macaroon-Aufteilung (Bakery)
 

@@ -1,4 +1,16 @@
-# Runbook — Lightning Ops-Ledger v2 Migration (operator)
+# Runbook — Lightning Ops-Ledger v2 Migration (operator) · **ARCHIV**
+
+> ⚠ **Dieses Runbook ist historisch (Stand ADR 0018 §12, 2026-09-04).** Das
+> Migrationsskript `scripts/redact_ln_ops_ledger.py` ist mit dem Altpfad
+> gelöscht; die Migration v1→v2 ist am Gerät längst gelaufen. Es bleibt hier,
+> weil es beschreibt, WIE `artifacts/ln_ops_ledger_v2.jsonl` entstanden ist —
+> und diese Datei liegt weiterhin am Gerät, im Backup-Vertrag
+> (`DEFAULT_SOURCES` + `MONEY_SOURCES`, `VANISHED_MONEY`-Guard scharf) und ist
+> über `verify_ln_ops_ledger()` weiterhin prüfbar.
+>
+> Wer die Migration heute nachvollziehen will, holt das Skript aus der
+> Git-Historie (`git show <commit vor PR 1>:scripts/redact_ln_ops_ledger.py`).
+> Ein neuer Lauf ist NICHT vorgesehen: v2 hat seit PR 1 keinen Eröffner mehr.
 
 Ziel: das historische, flache `artifacts/ln_ops_ledger.jsonl` (v1) in das
 hash-verkettete, redigierte v2-Schema `artifacts/ln_ops_ledger_v2.jsonl` überführen —

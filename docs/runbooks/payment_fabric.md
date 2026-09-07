@@ -74,6 +74,55 @@ der QR-Code lebte (Rückweg-Test 2026-09-04).
 
 ---
 
+## 1b. Reserve-Boden — der Kapital-Backstop (ADR 0018 §12, seit dem Rückbau)
+
+`APP_PAYMENT_RESERVE_FLOOR_SAT` ist der Bodensatz, den eine Zahlung **nie**
+antasten darf. Die Regel `reserve_floor` steht in der Kette **vor**
+`amount_limits`:
+
+```
+DENY, wenn  available_liquidity - amount - fee_limit  <  reserve_floor
+```
+
+Der Wert stand bis zum Rückbau in `artifacts/ln_policy.json`
+(`reserve_floor_sat`, am Gerät **1.840.000**) und wurde von
+`app/lightning/policy.py` durchgesetzt. Beides ist gelöscht; die Zahl gehört
+jetzt in die `.env` des Payment Control Plane:
+
+```
+APP_PAYMENT_RESERVE_FLOOR_SAT=1840000
+```
+
+**Default ist 0 = aus.** Das ist kein bequemer Default, sondern die einzige
+ehrliche Voreinstellung: ein Boden, den der Operator nicht selbst gesetzt hat,
+wäre eine erfundene Zahl über fremdes Kapital. `GET /dashboard/api/ln/treasury`
+liest `operating_sat` seit dem Rückbau aus genau diesem Wert — die Anzeige und
+das Gate haben damit EINE Quelle.
+
+> ⚠ **Bevor Sie ihn scharf schalten, lesen Sie diesen Absatz zu Ende.** Die
+> Regel ist fail-closed: ist der Boden > 0 und liefert der Rail **keine**
+> Liquiditätszahl, wird die Zahlung ABGELEHNT (`reserve_floor armed … but no
+> liquidity reading`). Das entspricht dem Bestand — dessen
+> `_available_balance_sat()` gab im Fehlerfall 0 zurück, was denselben DENY
+> erzeugte. **Heute setzt kein Produktionspfad `available_liquidity_sat`**
+> (`PaymentService.create_intent` baut den `PolicyContext` ohne diesen Wert).
+> Ein Boden > 0 lehnt deshalb aktuell JEDE Zahlung ab. Das ist die sichere
+> Richtung, aber es ist kein Zustand, in dem man ein LIVE-Fenster startet.
+>
+> Reihenfolge für die Aktivierung:
+>
+> 1. Boden setzen (`APP_PAYMENT_RESERVE_FLOOR_SAT=1840000`), Server neu starten.
+> 2. `GET /dashboard/api/ln/treasury` → `operating_sat == 1840000` prüfen.
+> 3. Einen Intent im SHADOW anlegen und das Verdikt lesen: erwartet ist
+>    `DENY` mit `rule_ids=["reserve_floor"]` und `no liquidity reading`.
+> 4. Erst wenn der Rail eine Liquiditätszahl liefert (offener Punkt, siehe
+>    D-CORE-004), ist der Boden eine Grenze statt einer Sperre. Bis dahin gilt:
+>    **entweder Boden scharf und PAY faktisch zu — oder Boden 0 und die Grenze
+>    liegt allein bei `per_payment_max`/`daily_hard_cap`.** Diese Wahl ist eine
+>    Operator-Entscheidung, keine Konfigurationsdetail.
+
+---
+
 ## 2. SHADOW-Preview (read-only am echten Node)
 
 ```
@@ -197,7 +246,13 @@ APP_PAYMENT_FEE_LIMIT_MAX_SAT=5
 APP_PAYMENT_APPROVAL_THRESHOLD_SAT=1          # jede Zahlung braucht HOTP
 APP_PAYMENT_DESTINATION_ALLOWLIST=<sha256(payee_pubkey)>
 APP_PAYMENT_PURPOSES_ALLOWED=self_test
+APP_PAYMENT_RESERVE_FLOOR_SAT=0               # siehe §1b — 0 ist hier BEWUSST
 ```
+
+`APP_PAYMENT_RESERVE_FLOOR_SAT` steht im LIVE-Fenster bewusst auf 0: solange
+kein Rail `available_liquidity_sat` liefert, würde ein scharfer Boden das
+Fenster vollständig sperren (§1b). Die Kapitalgrenze des Fensters tragen
+`per_payment_max` und `daily_hard_cap` — beide auf 1.000 sat.
 
 Betrag: **1.000 sat**, Ziel: eine EIGENE Invoice (Self-Payment). Ein fremdes
 Ziel im ersten Fenster verschenkt den einzigen Vorteil des Testes — die

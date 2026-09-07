@@ -15,7 +15,7 @@
 
 ## Schlüssel- & Aktions-Sicherheit (bestehende Primitive)
 
-- Jede irreversible Kapital-Aktion (Withdraw, Transfer, Live-Order) über `app/lightning/control_gate.py` `verify_capital_confirm` — Plan-Hash + Idempotency-Key + frischer HOTP.
+- Jede irreversible Kapital-Aktion (Withdraw, Transfer, Live-Order) über den Payment Control Plane: Plan-Hash-Bindung + plan-gebundener Idempotenz-Schlüssel (`ln_control_delegate.bind_idempotency_key`) + frischer HOTP über `PaymentService.authorize`. ⚠ Der bis 2026-09-04 hier genannte `app/lightning/control_gate.py::verify_capital_confirm` existiert seit ADR 0018 §12 nicht mehr.
 - Live-Engine (`app/execution/live_engine.py`): Boot-State **LOCKED**, 5-Gate-Chain (HOTP→Caps→Risk→Perms→Server-SL), 60-min Idle-Auto-Lock, Audit `artifacts/security/live_execution_audit.jsonl`.
 - `app/security/exchange_perms.py`: **Withdraw-OFF sofern nicht bewusst freigegeben** + IP-Allowlist-Verifikation; `live_caps.py`: Hard-Caps.
 
