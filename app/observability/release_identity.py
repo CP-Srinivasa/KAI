@@ -266,6 +266,17 @@ def verify_release(
     belege ihn -- gilt nur, solange ausschliesslich aus dem Lockfile
     installiert wird. Was danach jemand von Hand hineinlegt, sah bis hierhin
     NICHTS: weder der Baum-Hash noch ``pip check`` noch der Deploy-Marker.
+
+    GRENZE, die man kennen muss, um diese Funktion nicht zu ueberlesen:
+
+    Sie prueft ein Release gegen SEIN EIGENES Manifest. Sie kann damit nie
+    beweisen, dass der Builder das GEWOLLTE Release gewaehlt hat -- gibt er
+    faelschlich ein anderes zurueck, passt dieses zu sich selbst und ist hier
+    gruen. Die Zuordnung Absicht -> Identitaet muss deshalb schon im Builder
+    und in seiner Idempotenz-Pruefung stimmen; hier endet nur die Frage, ob
+    ein einmal gebautes Release seither veraendert wurde.
+
+    "Intern stimmig" ist nicht "das richtige".
     """
     manifest = read_release_manifest(release_root)
     if manifest is None:
