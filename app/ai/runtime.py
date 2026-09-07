@@ -8,6 +8,7 @@ authority remain inside ``app.ai``.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -99,6 +100,25 @@ def inference_settings(source: Any | None = None) -> InferenceSettings:
     if isinstance(candidate, InferenceSettings):
         return candidate
     return environment_settings()
+
+
+def _transportfehler(exc: Exception, *, alias: str, woher: str) -> AttemptResult[Any]:
+    """Eine geworfene Ausnahme des Transports als SPUR statt als Abbruch.
+
+    Ein Fehler ohne Zeile ist ein Fehler, den niemand zaehlt -- und im Schatten
+    zusaetzlich einer, der den Betrieb mitreisst, obwohl er ihn nicht einmal
+    beeinflussen darf.
+    """
+    return AttemptResult(
+        trace=AttemptTrace(
+            transport="litellm",
+            requested_model=alias,
+            latency_ms=0.0,
+            error_class=classify_error(exc),
+            detail={"exception": type(exc).__name__, "raised": woher},
+        ),
+        error=exc,
+    )
 
 
 def _direct_trace(
@@ -214,13 +234,57 @@ async def invoke[T](
             timeout_s=configured.timeout_seconds,
             api_key=configured.litellm_api_key,
         )
-        async with client_factory(timeout=configured.timeout_seconds) as client:
+        # Auch der Client-AUFBAU gehoert in den Schatten. Wuerde er hier
+        # werfen, kaeme `execute_async` nie zum Zug -- und damit auch der
+        # Altpfad nicht, der noch gar nicht gelaufen ist. Der Aufruf schluege
+        # fehl, weil ein HTTP-Client nicht entstehen konnte, den er fuer die
+        # Antwort ueberhaupt nicht braucht. Der Stack deckt Konstruktion UND
+        # Eintritt ab; beides ist Transport, nicht Politik.
+        async with AsyncExitStack() as stack:
+            client: httpx.AsyncClient | None = None
+            aufbau_fehler: Exception | None = None
+            try:
+                client = await stack.enter_async_context(
+                    client_factory(timeout=configured.timeout_seconds)
+                )
+            except Exception as exc:  # noqa: BLE001 - siehe oben
+                aufbau_fehler = exc
 
             async def run_litellm() -> AttemptResult[T]:
+                if aufbau_fehler is not None:
+                    return _transportfehler(
+                        aufbau_fehler,
+                        alias=configured.route_aliases.get(route, route),
+                        woher="client_factory",
+                    )
+                try:
+                    return await _run_litellm_unsafe()
+                except Exception as exc:  # noqa: BLE001 -- siehe unten
+                    # SHADOW heisst: der Transport laeuft MIT, er entscheidet
+                    # nichts. Eine Ausnahme, die hier durchginge, wuerde den
+                    # gesamten Aufruf sprengen -- also auch den Altpfad, der
+                    # gerade nebenher laeuft und die eigentliche Antwort
+                    # traegt. Der Schattenpfad haette dann maximalen Einfluss
+                    # statt gar keinem.
+                    #
+                    # `call_litellm_async` SAGT ZU, nicht zu werfen. Eine
+                    # Zusage ist aber kein Zwang: der Client-Aufbau liegt
+                    # ausserhalb, und ein spaeterer Transport koennte sich
+                    # anders verhalten. Hier wird der Vertrag erzwungen statt
+                    # geglaubt -- der Fehler wird zu einer Spur, wie jeder
+                    # andere Fehlversuch auch, und bleibt damit zaehlbar.
+                    return _transportfehler(
+                        exc,
+                        alias=configured.route_aliases.get(route, route),
+                        woher="transport",
+                    )
+
+            async def _run_litellm_unsafe() -> AttemptResult[T]:
                 if litellm is None:
                     return await unavailable()
                 if not lite_config.is_local:
                     return await boundary_failure()
+                assert client is not None  # nur erreichbar, wenn der Aufbau gelang
                 response = await call_litellm_async(
                     config=lite_config,
                     model=configured.route_aliases.get(route, route),

@@ -235,25 +235,39 @@ async def test_shadow_analysis_bleibt_beim_direkten_ergebnis(
     assert ergebnis.sentiment_score == pytest.approx(0.6)
 
 
-async def test_shadow_ueberlebt_einen_transport_der_wirft(
+async def test_ein_werfender_transport_reisst_den_altpfad_nicht_mit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ein kaputter Schattenpfad hinterlaesst keine herrenlose Task."""
+    """SHADOW heisst: der Transport laeuft MIT und entscheidet nichts.
+
+    Diese Zusage stand hier urspruenglich falsch herum. Der Test verlangte, dass
+    ein werfender Schattenpfad den Aufruf mitnimmt -- geprueft wurde nur, dass
+    dabei keine herrenlose Task zurueckbleibt. Damit war die schlimmste Wirkung
+    festgeschrieben statt verboten: ein Fehler des Transports haette dem
+    Altpfad die Antwort weggenommen, die dieser bereits hatte.
+
+    Aufgefallen ist es erst an echter Evidenz -- der erste Lauf des
+    Evidenz-Erzeugers brach beim Fall `gateway_down` ab, statt eine Fehlerzeile
+    zu schreiben.
+    """
     from app.analysis.ai_control_plane import ControlPlaneAnalysisProvider
 
     monkeypatch.setattr(
         "app.ai.runtime.call_litellm_async",
         AsyncMock(side_effect=RuntimeError("transport kaputt")),
     )
+    erwartet = _analysis_output()
     direct = MagicMock()
     direct.provider_name = "openai"
     direct.model = "gpt-4o"
-    direct.analyze = AsyncMock(return_value=_analysis_output())
+    direct.analyze = AsyncMock(return_value=erwartet)
 
     provider = ControlPlaneAnalysisProvider(direct, _mode("standard", "shadow"))
-    with pytest.raises(RuntimeError, match="transport kaputt"):
-        await provider.analyze("Bitcoin", "Text")
-    # Entscheidend: keine zweite, unbeachtete Ausnahme aus einer vergessenen Task.
+    ergebnis = await provider.analyze("Bitcoin", "Text")
+
+    assert ergebnis is erwartet, "der Altpfad hatte die Antwort und behaelt sie"
+    direct.analyze.assert_awaited_once()
+    # Und nach wie vor: keine zweite, unbeachtete Ausnahme aus einer Task.
     await asyncio.sleep(0)
 
 
