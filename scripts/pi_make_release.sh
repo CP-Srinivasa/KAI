@@ -379,7 +379,21 @@ if [ -n "$EXTRAS" ]; then
 ' $EXTRA_SPECS | LC_ALL=C sort | sed 's/.*/"&"/' | paste -sd, -)"
 fi
 PY_VERSION="$("$PY" -c 'import platform; print(platform.python_version())')"
-DEP_MANIFEST="$("$PY" -m pip freeze | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+# Aus DEMSELBEN Code wie die spaetere Pruefung. Der Satz steht drei Zeilen
+# weiter ueber dem Baum-Hash, galt hier aber nicht: das Manifest wurde in der
+# Shell gerechnet und beim Verifizieren gar nicht herangezogen. Seit 2026-09-07
+# haelt `verify_release` es gegen den venv -- zwei Implementierungen desselben
+# Hashes waeren zwei Wahrheiten.
+DEP_MANIFEST="$("$PY" -c "
+import sys
+sys.path.insert(0, '$STAGE')
+from pathlib import Path
+from app.observability.release_identity import dependency_manifest_sha256
+wert = dependency_manifest_sha256(Path('$STAGE'), python_path=Path('$PY'))
+if not wert:
+    raise SystemExit('pip freeze nicht ermittelbar')
+print(wert)
+")" || { echo "Dependency-Manifest gescheitert" >&2; rm -rf "$STAGE"; exit 1; }
 NOW="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 # Der Baum-Hash kommt aus DEMSELBEN Code, der ihn spaeter prueft — zwei
 # Implementierungen desselben Hashes waeren zwei Wahrheiten.
