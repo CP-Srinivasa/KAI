@@ -24,6 +24,7 @@
 # Usage:
 #   bash scripts/pi_make_release.sh [--repo <checkout>] [--releases <dir>]
 #                                  [--state <dir>] [--rebuild]
+#                                  [--allow-missing-spa]
 #
 # `--rebuild` nur fuer den Fall RELEASE_TREE_MISMATCH: derselbe `repo_sha`,
 # aber ein anderer Baum (praktisch immer ein neu gebautes `web/dist`). Ohne
@@ -31,8 +32,12 @@
 # weiterzureichen; mit dem Flag baut er DANEBEN, unter `<SHA>-<tree8>`, und
 # laesst das aktive Release unangetastet.
 #
+# `--allow-missing-spa` baut ein Release OHNE Dashboard. Ohne das Flag bricht
+# der Bau ab, wenn `web/dist` fehlt -- ein Release, das unter /dashboard
+# schweigt, entsteht nur noch auf ausdrueckliche Ansage.
+#
 # Exit: 0 = Release gebaut und versiegelt (Pfad auf stdout) · 1 = gescheitert
-#       (auch bei RELEASE_TREE_MISMATCH ohne --rebuild)
+#       (auch bei RELEASE_TREE_MISMATCH ohne --rebuild und bei SPA_MISSING)
 set -uo pipefail
 
 BUILDER_VERSION="pi_make_release/1"
@@ -40,12 +45,14 @@ REPO="."
 RELEASES=""
 STATE=""
 REBUILD=0
+ALLOW_MISSING_SPA=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo) REPO="$2"; shift 2 ;;
         --releases) RELEASES="$2"; shift 2 ;;
         --state) STATE="$2"; shift 2 ;;
         --rebuild) REBUILD=1; shift ;;
+        --allow-missing-spa) ALLOW_MISSING_SPA=1; shift ;;
         *) echo "unbekanntes Argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -82,11 +89,49 @@ stage_code() {
     # das CWD-relative `web/dist`, und das CWD ist nach dem Cutover die
     # Release-Wurzel. Fehlt sie dort, verschwindet /dashboard STILL -- der Mount
     # steht hinter `if _spa_dir.is_dir()`, es gibt also weder Fehler noch Log.
+    #
+    # ABBRUCH, NICHT WARNUNG (2026-09-07).
+    #
+    # Hier stand eine Warnung auf stderr. Jede andere Stufe dieses Builders
+    # bricht ab -- fehlende Wurzel-Artefakte, `pip check`, Baum-Hash,
+    # Smoke-Import -- und ausgerechnet die SPA war eine Notiz im Bau-Log. Genau
+    # die Sorte Hinweis, die beim Cutover untergeht.
+    #
+    # Der Anlass ist real: ein frischer Worktree bringt `web/dist` nie mit (es
+    # ist gitignored), also traf es den naechsten Hotfix-Baum sofort. Ohne
+    # Abbruch waere ein Release entstanden, das startet, gruen verifiziert und
+    # unter /dashboard schweigt -- der Mount steht hinter `if _spa_dir.is_dir()`,
+    # es gibt weder Fehler noch Log. Dieselbe Klasse wie das fehlende
+    # CONFIG_SCHEMA.json, nur leiser: nicht ein Release, das durchfaellt,
+    # sondern eines, das unbemerkt weniger kann.
     if [ -d "$REPO/web/dist" ]; then
-    mkdir -p "$dest/web"
-    cp -a "$REPO/web/dist" "$dest/web/dist"
+        mkdir -p "$dest/web"
+        cp -a "$REPO/web/dist" "$dest/web/dist"
+    elif [ "$ALLOW_MISSING_SPA" -eq 1 ]; then
+        echo "SPA_MISSING_ACCEPTED: $REPO/web/dist fehlt, --allow-missing-spa gesetzt." >&2
+        echo "  Dieses Release liefert KEIN Dashboard. Das ist jetzt eine getippte" >&2
+        echo "  Entscheidung und steht so im Bau-Protokoll." >&2
     else
-    echo "WARNUNG: $REPO/web/dist fehlt — dieses Release liefert KEIN Dashboard." >&2
+        echo "SPA_MISSING: $REPO/web/dist fehlt -- dieses Release wuerde KEIN" >&2
+        echo "  Dashboard ausliefern, und zwar ohne Fehler und ohne Log." >&2
+        echo "  web/dist ist gitignored, ein frischer Worktree bringt es nicht mit." >&2
+        echo "" >&2
+        if command -v npm >/dev/null 2>&1; then
+            echo "  Bauen:" >&2
+            echo "    cd $REPO/web && npm ci && npm run build" >&2
+            echo "  Oder aus einem vorhandenen Baum uebernehmen:" >&2
+        else
+            # Auf der Pi gibt es kein npm (gemessen 2026-09-07). Dort ist
+            # Kopieren nicht die Alternative, sondern der einzige Weg -- ein
+            # Bau-Hinweis waere hier eine Sackgasse mit Anleitung.
+            echo "  Auf diesem Host gibt es kein npm, bauen faellt also aus." >&2
+            echo "  Uebernimm die SPA aus einem Baum, der sie hat:" >&2
+        fi
+        echo "    cp -a <quelle>/web/dist $REPO/web/dist" >&2
+        echo "    (z. B. aus dem aktiven Release: readlink -f <current>)" >&2
+        echo "" >&2
+        echo "  Oder ausdruecklich verzichten: --allow-missing-spa" >&2
+        return 1
     fi
 
     # Caches gehoeren nicht in eine Identitaet.
@@ -156,7 +201,10 @@ except Exception:
 fi
 
 echo "== 1/6 Code in die Staging-Flaeche ==" >&2
-stage_code "$STAGE" || { echo "kann $STAGE nicht anlegen" >&2; exit 1; }
+# Der Grund steht schon in stage_code -- hier nur noch, dass es daran lag.
+# "kann nicht anlegen" waere jetzt falsch: die haeufigste Ursache ist eine
+# fehlende SPA, nicht ein Verzeichnisproblem.
+stage_code "$STAGE" || { echo "Staging gescheitert (Grund oben) — kein Release" >&2; exit 1; }
 
 echo "== 2/6 Zustand VERLINKEN, nicht kopieren ==" >&2
 # Wanderten .env, logs/, data/ und artifacts/ mit ins Release, verlore jeder

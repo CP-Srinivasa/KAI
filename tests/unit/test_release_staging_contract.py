@@ -229,3 +229,50 @@ def test_die_staging_liste_existiert_nur_einmal(skript: str) -> None:
     """
     assert skript.count("for d in app config deploy monitor scripts; do") == 1
     assert "stage_code" in skript
+
+
+# ---------------------------------------------------------------------------
+# Vierte Haelfte: eine Warnung ist kein Gate.
+#
+# Bis 2026-09-07 warnte der Builder nur, wenn ``web/dist`` fehlte -- als einzige
+# von sechs Stufen. Der Anlass, das zu aendern, war konkret: ein frischer
+# Worktree bringt ``web/dist`` nie mit (gitignored), also traf es den naechsten
+# Hotfix-Baum sofort. Ohne Abbruch waere ein Release entstanden, das startet,
+# gruen verifiziert und unter ``/dashboard`` schweigt.
+# ---------------------------------------------------------------------------
+
+
+def test_eine_fehlende_spa_bricht_den_bau_ab(skript: str) -> None:
+    assert "SPA_MISSING:" in skript, "fehlendes web/dist fuehrt nicht zu einem eigenen Grund"
+    block = skript[skript.index("SPA_MISSING:") :]
+    # Bis zum `return 1` schneiden, nicht bis zum ersten `fi`: der Zweig enthaelt
+    # inzwischen selbst ein `if command -v npm`, und ein Schnitt an der Klammer
+    # wuerde genau die Zeile abschneiden, die hier bewiesen werden soll.
+    zweig = block[: block.index("return 1") + len("return 1")]
+    assert "return 1" in zweig, "der SPA-Zweig warnt nur, statt abzubrechen"
+
+
+def test_der_verzicht_ist_eine_getippte_entscheidung(skript: str) -> None:
+    """Ein Release ohne Dashboard darf es geben -- aber nur auf Ansage."""
+    assert "--allow-missing-spa" in skript
+    assert "ALLOW_MISSING_SPA" in skript
+    assert "SPA_MISSING_ACCEPTED" in skript, (
+        "der ausdrueckliche Verzicht hinterlaesst keine eigene Spur im Bau-Protokoll"
+    )
+
+
+def test_das_flag_steht_in_der_argumentliste(skript: str) -> None:
+    """Ein Flag, das nur im Kommentar existiert, ist keins."""
+    assert "--allow-missing-spa) ALLOW_MISSING_SPA=1" in skript
+
+
+def test_der_abbruch_nennt_einen_ausweg(skript: str) -> None:
+    """Ein Gate ohne Ausweg ist eine Sackgasse -- dieselbe Regel wie bei --rebuild."""
+    block = skript[skript.index("SPA_MISSING:") :]
+    zweig = block[: block.index("return 1") + len("return 1")]
+    # Zwei Auswege, und der zweite ist der wichtigere: auf der Pi gibt es kein
+    # npm (gemessen 2026-09-07), dort ist Kopieren nicht die Alternative,
+    # sondern der einzige Weg. Deshalb nennt die Meldung ihn plattformabhaengig.
+    assert "npm ci && npm run build" in zweig
+    assert "cp -a <quelle>/web/dist" in zweig
+    assert "--allow-missing-spa" in zweig
