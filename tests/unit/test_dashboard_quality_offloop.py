@@ -29,6 +29,10 @@ class FrozenDateTime(datetime):
         return FIXED_NOW.astimezone(tz)
 
 
+#: Wie lange der absichtlich blockierende Builder rechnet. Alle Aussagen des
+#: Offload-Tests haengen an dieser einen Zahl, deshalb steht sie einmal.
+BLOCKIERT_SEKUNDEN = 1.5
+
 FIXED_REPORT: dict[str, Any] = {
     "generated_at": "2026-08-25T12:00:00+00:00",
     "signal_quality_validation": {
@@ -296,7 +300,7 @@ async def test_quality_endpoint_offloads_blocking_payload_builder(
 
     def slow_builder(report: dict[str, Any]) -> dict[str, Any]:
         assert report == FIXED_REPORT
-        time.sleep(1.5)
+        time.sleep(BLOCKIERT_SEKUNDEN)
         return {"marker": "slow"}
 
     monkeypatch.setattr(dashboard_mod, "_build_quality_payload", slow_builder)
@@ -308,11 +312,28 @@ async def test_quality_endpoint_offloads_blocking_payload_builder(
         await asyncio.sleep(0.05)
         health_response = await client.get("/health")
         elapsed = time.perf_counter() - started_at
+        # DIE eigentliche Aussage, und sie braucht keine Uhr: /health ist
+        # zurueck, WAEHREND der blockierende Builder noch laeuft. Waere der
+        # Event-Loop blockiert, koennte /health erst nach ihm antworten -- dann
+        # waere die Aufgabe hier fertig.
+        laeuft_noch = not quality_task.done()
         quality_response = await quality_task
 
     assert health_response.status_code == 200
     assert health_response.json()["status"] == "ok"
-    assert elapsed < 0.2
+    assert laeuft_noch, (
+        "/health kam erst zurueck, nachdem der blockierende Builder fertig war "
+        "— der Endpoint laeuft nicht ausgelagert"
+    )
+    # Die Wanduhr bleibt als zweites, GROBES Netz: sie faengt den Fall, dass
+    # /health zwar formal vorher zurueckkam, aber praktisch mitgeblockt hat.
+    # Die Schwelle liegt bewusst an der Blockierdauer und nicht bei 0,2 s --
+    # gemessen am 2026-09-07 lieferte derselbe Lauf unter `pytest -n auto`
+    # 0,403 s und 0,509 s, ohne dass etwas kaputt war. Eine Schwelle, die
+    # Rechnerlast misst statt Nebenlaeufigkeit, ist ein Zufallsgenerator.
+    assert elapsed < BLOCKIERT_SEKUNDEN, (
+        f"/health brauchte {elapsed:.2f}s bei {BLOCKIERT_SEKUNDEN}s Blockierdauer"
+    )
     assert quality_response.status_code == 200
     assert quality_response.json()["marker"] == "slow"
 
