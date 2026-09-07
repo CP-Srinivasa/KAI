@@ -515,3 +515,161 @@ def test_a_placeholder_is_not_a_reason(tmp_path: Path) -> None:
 
     assert "error:IpBlocked 2x" in issue.message
     assert "DEFEKT: 3 Zeile(n) NACH der Instrumentierung ohne Grund" in issue.message
+
+
+# ── Fremdverschuldeter Ausfall: Metadaten-Betrieb statt Dauerwarnung ─────────
+#
+# Gemessen am 2026-09-07: dieselbe Transcript-API liefert auch von einer ZWEITEN
+# Maschine am selben Anschluss ``IpBlocked``, waehrend der RSS-Feed antwortet.
+# Der Block liegt also beim Anbieter, nicht bei KAI, und keine Meldung an den
+# Operator kann ihn aufloesen. Vom 2026-08-31 bis dahin waren es 667 Meldungen.
+#
+# Die Quelle darf deshalb NICHT als gesund gelten — sie liefert nur noch
+# Metadaten. Was sich aendert, ist allein die Dringlichkeit.
+
+
+def test_ip_block_blackout_ist_fremdverschuldet() -> None:
+    """Ein Blackout, dessen Gruende ausserhalb liegen, wird als solcher erkannt."""
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 8, 0), ChannelCoverage("Coin Bureau", 6, 0)],
+        by_status=(("error:IpBlocked", 8), ("skipped:ip_block_cooldown", 6)),
+    )
+
+    assert verdict.status == "blackout"
+    assert verdict.is_externally_blocked
+    # Der entscheidende Punkt: fremdverschuldet heisst NICHT gesund.
+    assert not verdict.is_healthy
+
+
+def test_video_unplayable_neben_ip_block_bleibt_fremdverschuldet() -> None:
+    """Gruende, die ebenfalls ausserhalb liegen, heben die Einordnung nicht auf.
+
+    Der reale Befund vom 2026-09-07 trug ``IpBlocked 8x`` UND
+    ``VideoUnplayable 3x`` — beides nichts, was hier jemand abstellen kann.
+    """
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 11, 0)],
+        by_status=(("error:IpBlocked", 8), ("error:VideoUnplayable", 3)),
+    )
+
+    assert verdict.is_externally_blocked
+
+
+def test_eigener_fehler_neben_ip_block_bleibt_ein_normaler_befund() -> None:
+    """Ein Code-Fehler darf sich nicht hinter einer fremden Sperre verstecken.
+
+    Das ist die teuerste denkbare Verwechslung: der IP-Block ist echt, aber
+    daneben steht ein Parser-Fehler, den sehr wohl jemand beheben kann. Wuerde
+    die Einordnung schon bei EINEM externen Grund greifen, verschwaende der
+    eigene Defekt in einer P3, die niemanden mehr erreicht.
+    """
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 9, 0)],
+        by_status=(("error:IpBlocked", 6), ("error:JSONDecodeError", 3)),
+    )
+
+    assert verdict.status == "blackout"
+    assert not verdict.is_externally_blocked
+
+
+def test_blackout_ohne_ip_block_bleibt_ein_normaler_befund() -> None:
+    """Ohne benannte fremde Sperre gibt es keine Herabstufung."""
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 5, 0)],
+        by_status=(("none_found", 5),),
+    )
+
+    assert verdict.status == "blackout"
+    assert not verdict.is_externally_blocked
+
+
+def test_gedrueckte_quote_ist_kein_fremdverschuldeter_ausfall() -> None:
+    """``is_externally_blocked`` gilt nur fuer den vollstaendigen Ausfall.
+
+    Eine gedrueckte Quote hat eine Vergleichsgruppe, die liefert — dann ist der
+    IP-Block nicht die Erklaerung fuer das Ganze.
+    """
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 10, 4), ChannelCoverage("Coin Bureau", 10, 0)],
+        by_status=(("error:IpBlocked", 6),),
+    )
+
+    assert verdict.status != "blackout"
+    assert not verdict.is_externally_blocked
+
+
+def test_meldung_nennt_metadaten_betrieb_und_keine_handlung() -> None:
+    """Der Text muss Degradation von Totalausfall unterscheidbar machen."""
+    verdict = classify_coverage(
+        [ChannelCoverage("Bankless", 8, 0)],
+        by_status=(("error:IpBlocked", 8),),
+    )
+    text = render_message(verdict)
+
+    assert "Metadaten-Betrieb" in text
+    assert "Keine Handlung moeglich" in text
+    # Der irrefuehrende Ausfall-Satz gehoert hier NICHT hin.
+    assert "sondern ein Ausfall" not in text
+
+
+def test_fremdverschuldeter_block_schweigt_laenger() -> None:
+    """Die Herabstufung wirkt ueber das Re-Assert-Fenster, nicht ueber Stille.
+
+    Der Befund bleibt im Report — die Quelle gilt NICHT als gesund. Was sich
+    aendert, ist allein, wie oft ein unveraenderter Zustand den Operator
+    erreicht: `_REASSERT_MINUTES_BY_CLASS` kennt P0 (60 min) und P1 (360 min);
+    eine Klasse ohne Eintrag faellt auf den Default von 24 h zurueck.
+    """
+    from app.alerts.alert_classes import AlertClass, classify
+    from app.alerts.health_notify import _DEFAULT_REASSERT_MINUTES, reassert_minutes_for
+
+    assert classify("youtube_transcript_blocked_external") is AlertClass.P3
+    # Der normale Ausfall bleibt P1 — sonst waere die Aenderung ein Freibrief
+    # statt einer Unterscheidung.
+    assert classify("youtube_transcript_coverage") is AlertClass.P1
+
+    class _Issue:
+        def __init__(self, component: str) -> None:
+            self.severity = "warning"
+            self.component = component
+            self.message = ""
+
+    blockiert = [_Issue("youtube_transcript_blocked_external")]
+    ausfall = [_Issue("youtube_transcript_coverage")]
+
+    assert reassert_minutes_for(blockiert, default_minutes=_DEFAULT_REASSERT_MINUTES) == 1440.0, (
+        "fremdverschuldet: hoechstens taeglich"
+    )
+    assert reassert_minutes_for(ausfall, default_minutes=_DEFAULT_REASSERT_MINUTES) == 360.0, (
+        "eigener Ausfall: weiterhin viermal taeglich"
+    )
+
+
+def test_fingerprint_wechselt_beim_uebergang() -> None:
+    """Der Zustandswechsel selbst ist Neuigkeit und wartet auf kein Fenster.
+
+    Der Fingerprint bildet ``severity:component`` ab — die neue Komponente
+    aendert ihn also genau einmal, beim Uebergang. Danach ist er stabil, und
+    erst dann greift die laengere Ruhe.
+    """
+    from app.alerts.health_notify import issues_fingerprint
+
+    class _Issue:
+        def __init__(self, component: str) -> None:
+            self.severity = "warning"
+            self.component = component
+            self.message = "wechselnder Text mit 0/14 und 0/11"
+
+    vorher = issues_fingerprint([_Issue("youtube_transcript_coverage")])
+    nachher = issues_fingerprint([_Issue("youtube_transcript_blocked_external")])
+
+    assert vorher != nachher, "der Uebergang muss den Operator einmal erreichen"
+
+    class _Wechselnd(_Issue):
+        def __init__(self) -> None:
+            super().__init__("youtube_transcript_blocked_external")
+            self.message = "voellig anderer Text, andere Zahlen"
+
+    assert issues_fingerprint([_Wechselnd()]) == nachher, (
+        "wechselnde Videozahlen im Text duerfen keine neue Meldung ausloesen"
+    )

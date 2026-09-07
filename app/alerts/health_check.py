@@ -1114,13 +1114,19 @@ def _check_youtube_transcript_coverage(db_url: str, now: datetime) -> list[Healt
     )
     if verdict.is_healthy:
         return []
-    return [
-        HealthIssue(
-            severity="warning",
-            component="youtube_transcript_coverage",
-            message=render_message(verdict, window_hours=COVERAGE_WINDOW_HOURS),
-        )
-    ]
+    # Eigene Komponente statt eigener Severity: die Dringlichkeitsklasse haengt
+    # am Komponentennamen (``alert_classes.COMPONENT_CLASSES``). Literale statt
+    # einer Variablen, weil der Drift-Waechter per AST danach sucht.
+    text = render_message(verdict, window_hours=COVERAGE_WINDOW_HOURS)
+    if verdict.is_externally_blocked:
+        return [
+            HealthIssue(
+                severity="warning",
+                component="youtube_transcript_blocked_external",
+                message=text,
+            )
+        ]
+    return [HealthIssue(severity="warning", component="youtube_transcript_coverage", message=text)]
 
 
 def _check_alert_delivery(adir: Path, now: datetime) -> list[HealthIssue]:
