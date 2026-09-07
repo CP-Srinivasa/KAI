@@ -17,7 +17,10 @@
 # Exit codes:
 #   0  deployed (or already up-to-date with --skip-build)
 #   1  build failed
-#   2  transfer or verify failed
+#   2  transfer or verify failed (auch: BUNDLE_MISMATCH -- der Server
+#      liefert nicht das uebertragene Bundle aus)
+#   3  SPA_TRANSFERRED_NOT_ACTIVATED -- ein Release regiert; die SPA liegt
+#      im Checkout, wird aber erst mit einem neuen Release ausgeliefert
 
 set -uo pipefail
 
@@ -147,25 +150,82 @@ ssh -o BatchMode=yes "$REMOTE_HOST" "
     echo \"  rollback-anchors: \$(ls -d web/.dist-prev-deploy-* 2>/dev/null | wc -l)\"
 " || { echo "ERROR: remote extract failed" >&2; exit 2; }
 
+# Welches Bundle SOLL nach dem Transfer ausgeliefert werden? Der Name kommt aus
+# dem gerade extrahierten `index.html` -- nicht aus einer Annahme hier.
+ERWARTET="$(ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' '$REMOTE_ROOT/web/dist/index.html' | head -1" \
+    2>/dev/null || true)"
+[ -n "$ERWARTET" ] || { echo "ERROR: kein Bundle-Name im uebertragenen index.html" >&2; exit 2; }
+echo "  erwartetes Bundle: $ERWARTET"
+
+# REGIERT EIN RELEASE? Dann laedt kai-server die SPA aus `current`, nicht aus dem
+# Checkout -- ein Restart hier ist folgenlos.
+#
+# Gemessen 2026-09-04: dieses Skript hat `web/dist` im Checkout aktualisiert,
+# kai-server neu gestartet und "Deploy complete. /dashboard/ HTTP 200 -- SPA
+# serving" gemeldet, waehrend weiterhin das ZWEI WOCHEN alte Bundle ausgeliefert
+# wurde. Der Statuscode sagt nichts ueber den Inhalt.
+RELEASES_DIR="$(dirname "$REMOTE_ROOT")"
+RELEASE="$(ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "readlink -f '$RELEASES_DIR/current' 2>/dev/null || true" 2>/dev/null || true)"
+
+if [ -n "$RELEASE" ]; then
+    {
+        echo "=== Release-Modell aktiv: $RELEASE ==="
+        echo "Die SPA liegt jetzt im Checkout, ausgeliefert wird aber aus dem Release."
+        echo "Ein kai-server-Restart aendert daran nichts -- deshalb wird hier keiner"
+        echo "ausgeloest und kein Erfolg gemeldet."
+        echo
+        echo "Naechste Schritte auf $REMOTE_HOST (unprivilegiert):"
+        echo "  cd $REMOTE_ROOT"
+        echo "  bash scripts/pi_make_release.sh --repo $REMOTE_ROOT \\"
+        echo "       --releases $RELEASES_DIR/releases --state $REMOTE_ROOT --rebuild"
+        echo "  bash scripts/pi_activate_release.sh --release <neuer Pfad> \\"
+        echo "       --current $RELEASES_DIR/current --state $REMOTE_ROOT"
+        echo "  for u in kai-server kai-agent-worker kai-tg-listener kai-entry-watch \\"
+        echo "           kai-liquidation-stream; do"
+        echo "    sudo -n /usr/local/sbin/kai-service-control restart \$u.service; done"
+        echo
+        echo "SPA_TRANSFERRED_NOT_ACTIVATED"
+    } >&2
+    exit 3
+fi
+
 echo "=== restart kai-server (load new dist via StaticFiles mount) ==="
 ssh -o BatchMode=yes "$REMOTE_HOST" \
     "sudo -n /usr/local/sbin/kai-service-control restart kai-server.service" || {
-    echo "WARNING: kai-server restart failed — invoke manually:" >&2
+    echo "WARNING: kai-server restart failed -- invoke manually:" >&2
     echo "  ssh $REMOTE_HOST 'sudo -n /usr/local/sbin/kai-service-control restart kai-server.service'" >&2
     exit 2
 }
 
-echo "=== smoke: /dashboard/ on $REMOTE_HOST ==="
-ssh -o BatchMode=yes "$REMOTE_HOST" "
-    until curl -s --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; do sleep 1; done
-    code=\$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/dashboard/)
-    if [[ \"\$code\" == \"200\" ]]; then
-        echo \"  /dashboard/ HTTP \$code — SPA serving\"
-    else
-        echo \"  /dashboard/ HTTP \$code — NOT 200, check logs\" >&2
-        exit 2
-    fi
-" || exit 2
+# Der Smoke prueft den INHALT, nicht den Statuscode. Ein 200 beweist, dass
+# irgendeine SPA ausgeliefert wird -- nicht, dass es die gerade uebertragene ist.
+#
+# Die REMOTE-Seite holt nur Daten, entschieden wird HIER. Eine Entscheidung im
+# fernen Shell-String ist weder testbar noch lesbar: sie liegt hinter zwei
+# Ebenen Quoting und laesst sich nur mit einem echten Pi pruefen.
+echo "=== smoke: /dashboard/ liefert $ERWARTET ? ==="
+ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "until curl -s --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; do sleep 1; done" \
+    || { echo "  /health antwortet nicht" >&2; exit 2; }
+
+CODE="$(ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/dashboard/" 2>/dev/null || true)"
+if [ "$CODE" != "200" ]; then
+    echo "  /dashboard/ HTTP $CODE -- NOT 200, check logs" >&2
+    exit 2
+fi
+
+SERVIERT="$(ssh -o BatchMode=yes "$REMOTE_HOST" \
+    "curl -s --max-time 5 http://127.0.0.1:8000/dashboard/ | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1" \
+    2>/dev/null || true)"
+if [ "$SERVIERT" != "$ERWARTET" ]; then
+    echo "  BUNDLE_MISMATCH: ausgeliefert ${SERVIERT:-<keins>}, erwartet $ERWARTET" >&2
+    echo "  Der Transfer ist angekommen, der Server liefert ihn nicht aus." >&2
+    exit 2
+fi
+echo "  /dashboard/ HTTP 200, Bundle $SERVIERT -- bestaetigt"
 
 echo "Deploy complete."
 exit 0
