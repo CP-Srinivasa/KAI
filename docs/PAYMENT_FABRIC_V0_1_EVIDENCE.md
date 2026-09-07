@@ -20,7 +20,7 @@ Jede Aussage trägt eine Klassifikation: **IMPLEMENTED** (Code im Baum) · **TES
 | FIX (im Control Plane gelöst) | Fee-Limit Pflicht · Sync-/Wallet-Gate · harter Tages-Cap · Idempotenz ohne Evict · Destination-Bindung · Unbekannt ≠ FAILED · Scope-Kollisions-Guard | IMPLEMENTED/TESTED |
 | REWRITE (ersetzt) | `value_layer.pay_invoice`-Sendeweg → `PaymentService`; `ln_control.pay_invoice` delegiert | IMPLEMENTED/TESTED |
 | DELETE — PR 1 (2026-09-04, vorgezogen nach G-1..G-4) | `value_layer`, `policy`, `control_gate`, `idempotency_store`, `ops_annotations`, `ops_resolution`, `plan_guards`, `input_contract_rejections`, `ln_control_gates`, Reste `ln_control`; `ops_ledger` auf ein READ-ONLY-Archiv geschrumpft (kein Eröffner) | DONE |
-| DELETE — PR 2 (offen) | `ops_ledger` (Rest), `reconciliation`, `reconcile_dual`, `ln_reconciliation_eval` + die zugehörigen Units | DEFERRED |
+| DELETE — PR 2 (2026-09-07, G-3 erfüllt: Prä-Reg `0879a65c5fd01f65` PASS, `runs=96`, Fenster abgelaufen) | `ops_ledger` (vollständig), `reconciliation`, `reconcile_dual`, `ln_reconciliation_eval`, v2-Hälfte von `scripts/ln_reconcile.py`, `kai-ln-reconcile-verdict.{service,timer}` | DONE |
 | DEFER | keysend, `send_coins`, `open/close_channel` (Policy DENY `unsupported_action`) · L402/Oracle-Revenue, `demand_*`, `earnings_*`, `treasury`, `reputation`, `selfpay` (QUARANTINE, nicht Payment-Kern) | DEFERRED |
 
 ## 4. Implemented Changeset — IMPLEMENTED
@@ -66,7 +66,7 @@ Failure-Injection (Mission §20, `tests/integration/test_payment_failure_injecti
 
 ## 11. Reconciliation — TESTED / VERIFIED
 
-Vorwärts (offene Intents ↔ `rail.lookup`), rückwärts (Node-Zahlungen ohne Intent → `orphan_settlement` + Alarm über `_check_payment_reconciliation`, P0-Klasse), Receivables, Uhr-Sprung-Guard; Timer-Prozess sendet nie (Spy-Test); zweimaliger Lauf idempotent. Am Gerät: erster Lauf `ok` (§ 8). Bekannte Grenze: Alt-Journal (`ln_ops_ledger_v2`) und Payment-Journal werden noch nicht gegeneinander abgeglichen (**DEFERRED**).
+Vorwärts (offene Intents ↔ `rail.lookup`), rückwärts (Node-Zahlungen ohne Intent → `orphan_settlement` + Alarm über `_check_payment_reconciliation`, P0-Klasse), Receivables, Uhr-Sprung-Guard; Timer-Prozess sendet nie (Spy-Test); zweimaliger Lauf idempotent. Am Gerät: erster Lauf `ok` (§ 8). Der Kreuzabgleich Alt-Journal ↔ Payment-Journal lief in PR #871 (`dual_conflicts: []`) und ist mit ADR 0018 §12 PR 2 entfallen — es gibt kein zweites Buch mehr. Neu seit PR 2: der Lauf hat selbst eine Lebend-Wache (`last_run_utc` älter als 45 min ⇒ P0).
 
 ## 12. Deployment Evidence — VERIFIED (mit Vorfall)
 

@@ -1,91 +1,83 @@
-# Lightning-Reconciliation (PR-D)
+# Lightning-Reconciliation — ARCHIV (ADR 0018 §12, PR 2)
 
-`kai-ln-reconcile.timer` schliesst ausschliesslich die Crash-Luecke zwischen einem
-bereits fsync-ten v2-Intent und dessen fehlendem Terminal-Outcome. Er bezahlt und
-wiederholt nichts. Der Node-Zugriff ist `GET /v1/payments` mit dem Read-Credential.
+> **Dieser Runbook beschreibt einen Reconciler, den es nicht mehr gibt.**
+> `app/lightning/reconciliation.py` und `scripts/ln_reconciliation_eval.py`
+> sind am 2026-09-07 mit dem Rückbau des alten Lightning-Wertpfads gelöscht
+> worden. Er bleibt liegen, weil er beschreibt, **wie** die Zeilen in
+> `artifacts/lightning/ln_reconciliation.jsonl` und das Verdikt in
+> `artifacts/research/ln_reconciliation_verdict.jsonl` entstanden sind — beide
+> Dateien liegen weiterhin am Gerät und sind Beweismittel.
+>
+> **Der lebende Reconciler steht in `docs/runbooks/payment_fabric.md`.**
+> `kai-ln-reconcile.timer` gibt es weiter, unter demselben Namen; er fährt seit
+> PR 2 ausschließlich `reconcile_payments()` über
+> `artifacts/payments/payment_journal.jsonl`.
 
-## Sicherheitsreihenfolge
+## Was der alte Reconciler tat
 
-1. Das komplette v2-Geldjournal wird unter Shared-Lock aus exakt einem Snapshot
-   gelesen und voll verifiziert. Missing, Lock-/Lesefehler oder Kettenfehler sind
+`kai-ln-reconcile.timer` schloss ausschliesslich die Crash-Luecke zwischen einem
+bereits fsync-ten v2-Intent und dessen fehlendem Terminal-Outcome. Er bezahlte und
+wiederholte nichts. Der Node-Zugriff war `GET /v1/payments` mit dem Read-Credential.
+
+Sicherheitsreihenfolge (zur Beurteilung der Altzeilen):
+
+1. Das komplette v2-Geldjournal wurde unter Shared-Lock aus exakt einem Snapshot
+   gelesen und voll verifiziert. Missing, Lock-/Lesefehler oder Kettenfehler waren
    ein harter Fehler.
-2. Der letzte verifizierte Truth-Eintrag vom Typ `lightning_ops_tip` muss mit Hash
-   **und** Seq in diesem Snapshot vorkommen. Fehlt er, bleibt jedes Intent offen;
-   der Node wird nicht gelesen und das Geldjournal nicht geschrieben.
-3. Nur wenn offene `pay_invoice`-Intents existieren, wird die gesamte paginierte,
-   redigierte LND-Payment-Historie gelesen. Ein Teilscan gilt als gar kein Scan.
-4. Journal und Truth-Tip werden nach dem Node-Scan erneut geprueft. Erst danach
-   darf genau ein eindeutiges `SUCCEEDED` als `executed` bzw. `FAILED` als `error`
-   angehaengt werden. Hash und Betrag muessen dem versiegelten Intent entsprechen.
-   Unmatched, doppelte, unbekannte oder laufende Zustaende bleiben offen und laut.
+2. Der letzte verifizierte Truth-Eintrag vom Typ `lightning_ops_tip` musste mit Hash
+   **und** Seq in diesem Snapshot vorkommen. Fehlte er, blieb jedes Intent offen;
+   der Node wurde nicht gelesen und das Geldjournal nicht geschrieben.
+3. Nur wenn offene `pay_invoice`-Intents existierten, wurde die gesamte paginierte,
+   redigierte LND-Payment-Historie gelesen. Ein Teilscan galt als gar kein Scan.
+4. Journal und Truth-Tip wurden nach dem Node-Scan erneut geprueft. Erst danach
+   durfte genau ein eindeutiges `SUCCEEDED` als `executed` bzw. `FAILED` als `error`
+   angehaengt werden. Hash und Betrag mussten dem versiegelten Intent entsprechen.
+   Unmatched, doppelte, unbekannte oder laufende Zustaende blieben offen und laut.
 
-Jeder Lauf schreibt eine fsync-te, streng gelockte und redigierte Zeile nach
-`artifacts/lightning/ln_reconciliation.jsonl`. Exit 0 bedeutet `status=ok`;
-`attention` oder `error` liefern Exit 1 und werden dadurch in systemd sichtbar.
+Jeder Lauf schrieb eine fsync-te, streng gelockte und redigierte Zeile nach
+`artifacts/lightning/ln_reconciliation.jsonl`.
 
-## Installation und Aktivierung
+## Die versiegelte Prä-Registrierung `0879a65c5fd01f65`
 
-Die Units sind Teil von `UNITS`, aber absichtlich **nicht** von
-`ENABLE_ON_INSTALL`. Sie haben kein `Requires=` und der Timer ist weder persistent
-noch ein Boot-Hook. Aktivierung erst nach versiegelter Shadow-Prae-Registrierung:
+Prä-Reg `ln_reconciliation_shadow_integrity_v1`, Familie `money_path_integrity`,
+Fenster 2026-08-08 → 2026-08-15, Stichprobenziel 96.
+
+**Verdikt `PASS`, gezogen am 2026-08-27, Fenster geschlossen, `attested: true`.**
+Es steht in `artifacts/research/ln_reconciliation_verdict.jsonl`, wird von
+`app/research/prereg_reconciliation.py` gelesen und ist in
+`config/prereg_supervision.json` archiviert. Der stündliche Evaluator
+(`kai-ln-reconcile-verdict.timer`) hätte ab Fensterschluss nur noch dasselbe
+Archiv neu gelesen und ist deshalb mit PR 2 entfallen — **das Verdikt bleibt.**
+
+Der Evaluator-Quelltext ist über die Git-Historie erreichbar:
 
 ```bash
-CRITERIA='In the first 96 enabled shadow runs within 7d: all runs pass Truth-tip containment and zero unsupported, unmatched, ambiguous, amount-mismatched or nonterminal intents are terminalised; every naturally observed uniquely matched terminal BOLT11 payment with equal hash and amount is appended exactly once by the next completed run. If zero eligible open-intent incidents occur, transition-effectiveness remains INSUFFICIENT_N and only the safety/tip axis may pass. This is no readiness, capital, alpha or revenue claim.'
-.venv/bin/trading-bot trading prereg-register \
-  --name ln_reconciliation_shadow_integrity_v1 \
-  --direction neutral --horizon 7d --sample-target 96 \
-  --family money_path_integrity --success-criteria "$CRITERIA"
-sudo install -m 0644 deploy/systemd/kai-ln-reconcile.{service,timer} /etc/systemd/system/
+git show 2ebe54d8~1:scripts/ln_reconciliation_eval.py
+```
+
+## Operator-Schritt vor dem Deploy dieses Release
+
+`pi_apply_systemd_units.sh` meldet verwaiste Units als `ORPHAN`, **entfernt sie
+aber nie**. Ohne diesen Schritt läuft eine installierte Unit gegen ein
+gelöschtes Skript und `kai-unit-failure-notify` schlägt stündlich.
+
+```bash
+sudo systemctl disable --now kai-ln-reconcile-verdict.timer
+sudo rm -f /etc/systemd/system/kai-ln-reconcile-verdict.service \
+           /etc/systemd/system/kai-ln-reconcile-verdict.timer
 sudo systemctl daemon-reload
-sudo systemctl enable --now kai-ln-reconcile.timer
-sudo systemctl start kai-ln-reconcile.service
-systemctl status kai-ln-reconcile.service kai-ln-reconcile.timer
+systemctl list-timers 'kai-ln-reconcile*'   # nur noch kai-ln-reconcile.timer
 ```
 
-Bei `attested_tip_not_in_journal`, `truth_ledger_invalid`,
-`money_journal_invalid` oder `node_scan_failed:*` nichts reparieren/abschneiden und
-keinen Outcome manuell setzen. Timer deaktivieren, Originaldateien sichern und die
-Truth-/v2-Kette gegen `docs/runbooks/ln_ops_ledger_v2_migration.md` untersuchen.
+`kai-ln-reconcile.timer` bleibt **aktiv**. Er ist seit PR 2 die Lebend-Wache des
+Geldpfads: bleibt er aus, meldet `check_payment_reconciliation` das Alter von
+`last_run_utc` in `artifacts/payments/reconcile_state.json` nach 45 Minuten als
+P0-Befund.
 
-Rollback der Automatik (keine Datenloeschung):
+## Wenn eine Altzeile Fragen aufwirft
 
-```bash
-sudo systemctl disable --now kai-ln-reconcile.timer
-```
-
-## Verdikt der Shadow-Prä-Registrierung
-
-`kai-ln-reconcile-verdict.timer` zieht stündlich das Verdikt zur versiegelten
-Prä-Reg `0879a65c5fd01f65` und ist rein lesend:
-
-```bash
-sudo systemctl enable --now kai-ln-reconcile-verdict.timer
-systemctl list-timers kai-ln-reconcile-verdict.timer
-```
-
-Der Evaluator (`scripts/ln_reconciliation_eval.py`) liest Fenster und
-Stichprobenziel aus dem Prä-Reg-Satz, prüft sechs wörtliche Klauseln des
-versiegelten `success_criteria` und bricht bei Divergenz ab. Die Konstruktion
-wird nie geändert, nur ausgewertet.
-
-Verhalten des Timers:
-
-* **Chronik** — angehängt wird nach `artifacts/research/ln_reconciliation_verdict.jsonl`
-  ausschließlich bei einem **Verdikt-Wechsel**. Stündliches Schreiben würde die
-  Datei zu Rauschen machen, in dem ein echter Wechsel untergeht.
-* **Alarm** — nur bei `FAIL`, und nur beim Wechsel dorthin: Telegram über
-  `ALERT_TELEGRAM_TOKEN`/`ALERT_TELEGRAM_CHAT_ID` plus Exit≠0, wodurch die Unit
-  `failed` wird und im Failed-Units-Sweep sowie in der Health-Probe auftaucht.
-* **`IMMATURE`** ist bis zur Reife der Normalzustand: kein Alarm, kein roter
-  Unit-Status. Unreife ist kein Sachverdikt.
-
-Bei `FAIL` gilt dieselbe Regel wie beim Reconciler selbst: nichts reparieren,
-nichts abschneiden, keinen Outcome manuell setzen. Verdikt-JSON und
-Reportzeilen sichern, dann die Truth-/v2-Kette untersuchen.
-
-Verdikt manuell und reproduzierbar ziehen — immer über `--json` in eine Datei
-und programmatisch lesen, nie aus gerendertem Text:
-
-```bash
-.venv/bin/python scripts/ln_reconciliation_eval.py --json > /tmp/verdict.json
-```
+Bei `attested_tip_not_in_journal`, `truth_ledger_invalid`, `money_journal_invalid`
+oder `node_scan_failed:*` in einer historischen Zeile gilt unverändert: nichts
+reparieren, nichts abschneiden, keinen Outcome manuell setzen. Originaldateien
+sichern und die Truth-/v2-Kette gegen `docs/runbooks/ln_ops_ledger_v2_migration.md`
+untersuchen.

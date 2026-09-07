@@ -13,17 +13,19 @@ deliberately unchanged — the contract in ``config/stream_contracts.json`` and
 its reader keep pointing at the same artefact.
 
 Deliberately a LEAF: this module imports nothing from ``app.*``. That was what
-let ``app.lightning.ops_ledger`` import it without recreating the cycle in the
-other direction.
+let the old money journal import it without recreating the cycle in the other
+direction; the module is gone (ADR 0018 §12), the property stays.
 
 ⚠ **Seit ADR 0018 §12 (PR 1) hat dieser Strom KEINEN Schreiber mehr.** Der
 einzige war ``ops_ledger.prepare_ln_intent``, das mit dem alten Sendeweg
 gefallen ist; die Ausnahme in ``PAYMENT_TYPE_ONLY_MODULES`` ist damit
 ebenfalls entfallen. Leser (``app.audit.input_contract_rejections``,
 ``kai audit input-rejections``) und Health-Sonde bleiben, weil die bereits
-geschriebenen Records beweiskraeftig sind. Ob Strom, Vertrag und Sonde ganz
-gehen, entscheidet PR 2 zusammen mit dem Archiv-Journal — bis dahin ist ein
-AUSBLEIBEN neuer Records der erwartete Zustand, kein Befund.
+geschriebenen Records beweiskraeftig sind. **PR 2 hat entschieden: Strom,
+Vertrag und Sonde BLEIBEN.** Sie unlesbar zu machen, um eine Zeile
+Konfiguration zu sparen, waere der schlechteste Tausch. Bewacht wird
+ausschliesslich Lesbarkeit und Schema, nie eine Kadenz: ein AUSBLEIBEN neuer
+Records ist der erwartete Zustand, kein Befund.
 """
 
 from __future__ import annotations

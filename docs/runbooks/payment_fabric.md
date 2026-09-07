@@ -352,30 +352,47 @@ Der Reconcile-Timer **sendet nie**. Ihn zu starten ist in jeder Lage sicher.
 |---|---|---|
 | `payment_journal` | P0 | Kette gebrochen oder unlesbar (`_check_payment_journal_chain`) |
 | `payment_intent_vault` | P1 | Vault-Zeile unlesbar, oder ein freigabebereiter Vorgang hat keinen Eintrag und überlebt den nächsten Neustart nicht (derselbe Wächter) |
-| `payment_reconciliation` | P0 | letzter Lauf `attention`: Waise, ungeklärter Send, Uhr-Sprung **oder Doppelbefund beider Geldjournale** (`_check_payment_reconciliation`) |
-
-`dual_journal_conflict` heißt: eine Zahlung steht in **beiden** Büchern
-(`ln_ops_ledger_v2.jsonl` und `payment_journal.jsonl`), und der Altpfad hat sie
-nicht bewiesen abgeschlossen. Der `rail_dedup_key` im Record ist der
-`payment_hash` — damit lässt sich die Zeile im v2-Journal finden. **Nicht
-erneut senden**: erst am Node nachschlagen, dann den offenen v2-Intent
-abschließen. Mit dem Rückbau des Altpfads (ADR 0018 § 12) verschwindet diese
-Klasse.
+| `payment_reconciliation` | P0 | letzter Lauf `attention` (Waise, ungeklärter Send, Uhr-Sprung) **oder letzter Lauf älter als 45 min** (`_check_payment_reconciliation`) |
 
 Beide laufen im bestehenden Health-Check-Pfad und gehen damit über den
 regulären Telegram-Kanal — nicht nur über `OnFailure=` der Unit. Der
 Unterschied ist wesentlich: ein Reconcile-Lauf mit Befund ist ein
 **erfolgreicher** Lauf, `OnFailure=` sähe ihn nie.
 
-Überwacht wird die Kette, nicht die Kadenz. Der Strom ist ereignisgetrieben und
-in SIMULATION legitim tagelang still; eine Freshness-Schwelle wäre entweder
-wirkungslos oder ein Daueralarm — und eine Wache, die immer schreit, wird
-abgeschaltet.
+### Kette, Kadenz — und die Lebendigkeit des Laufs
+
+Beim **Journal** wird die Kette überwacht, nicht die Kadenz. Der Strom ist
+ereignisgetrieben und in SIMULATION legitim tagelang still; eine
+Freshness-Schwelle wäre entweder wirkungslos oder ein Daueralarm — und eine
+Wache, die immer schreit, wird abgeschaltet.
+
+Beim **Reconcile-Lauf** ist es umgekehrt. Er ist timergetrieben
+(`kai-ln-reconcile.timer`, alle 15 min, `RandomizedDelaySec=2min`) und schreibt
+bei **jedem** Lauf `artifacts/payments/reconcile_state.json` — auch beim
+Leerlauf ohne offenen Intent. Ist `last_run_utc` älter als 45 Minuten (drei
+verpasste Läufe), ist das ein P0-Befund: der Zustand bliebe sonst für immer auf
+dem letzten Ergebnis stehen und meldete genau so lange „in Ordnung", wie
+niemand mehr nachsieht. Genau das Muster vom 2026-08-08 (toter TV-Eingang,
+sechs Tage grüne Unit).
+
+Gemessen wird `last_run_utc`, **nicht die mtime** der Datei: die mtime setzt
+jedes `cp`, jedes `rsync` ohne `-a` und jeder Restore neu und könnte einen toten
+Reconciler von außen grün färben.
+
+Bis ADR 0018 §12 (PR 2) hing diese Lebend-Wache an
+`artifacts/lightning/ln_reconciliation.jsonl`; dieser Report hat keinen
+Schreiber mehr (`docs/runbooks/ln_reconciliation.md` ist als Archiv markiert).
+Die Klasse `dual_journal_conflict` ist mit dem Dual-Read entfallen — es gibt
+kein zweites Buch mehr, gegen das zu prüfen wäre.
 
 ## 7. Backup
 
 `payment_journal.jsonl`, `intent_vault.jsonl`, `ln_ops_ledger_v2.jsonl` und
-`ln_hotp_journal.jsonl` liegen in `kai_backup_artifacts.sh::DEFAULT_SOURCES`. Fehlt eines davon,
+`ln_hotp_journal.jsonl` liegen in `kai_backup_artifacts.sh::DEFAULT_SOURCES`.
+`ln_ops_ledger_v2.jsonl` ist seit ADR 0018 §12 (PR 2) ein **Archiv ohne Code**:
+kein Modul schreibt oder liest es noch. Es bleibt trotzdem im Vertrag — es
+trägt die Geldhistorie bis 2026-08-05, und es zu „räumen" ließe den
+`VANISHED_MONEY`-Guard zuschlagen. Fehlt eines davon,
 obwohl es im Manifest des letzten Archivs stand, bricht das Backup mit
 `fail_missing_money_journal` ab — geprüft wird gegen Evidenz, nicht gegen eine
 Behauptung. Auf einer Anlage, die noch nie gezahlt hat, ist ihr Fehlen normal

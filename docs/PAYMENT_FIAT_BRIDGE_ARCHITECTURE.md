@@ -28,7 +28,7 @@
 | Payment Control Plane | `app/payments/` | `DESIGNED` | ADR 0018 §2 — Verzeichnis existiert im Baum **nicht** |
 | Lightning-Rail-Adapter | `app/payments/rails/lightning.py` | `DESIGNED` | ADR 0018 §2 |
 | LN-Client/Adapter (vor Control Plane) | `app/lightning/client.py`, `adapter.py` | `IMPLEMENTED` | im Baum vorhanden |
-| LN-Reconciliation (outcome-only) | `app/lightning/reconciliation.py`, `scripts/ln_reconcile.py`, `kai-ln-reconcile.timer` | `IMPLEMENTED` | `docs/CODEMAP.md:85` |
+| LN-Reconciliation | `app/payments/reconcile.py`, `scripts/ln_reconcile.py`, `kai-ln-reconcile.timer` | `IMPLEMENTED` | `docs/CODEMAP.md:87` — der outcome-only v2-Reconciler ist mit ADR 0018 §12 PR 2 entfallen |
 | Provenance-/SoF-Export | `app/compliance/provenance.py` | `IMPLEMENTED` | ADR 0014 §2 Schicht 6 |
 | Dritt-Gate (fail-closed) | `app/governance/third_party_gate.py` | `IMPLEMENTED` | ADR 0014 §2 Schicht 6 |
 | Kapital-Buckets / Reserve-Floor | `app/capital/reserve_policy.py`, `segmentation.py` | `IMPLEMENTED` (inert) | ADR 0014 §2 Schicht 7 |
@@ -177,7 +177,7 @@ Neun Domänen, je genau **eine** Owner-Komponente. Wo keine existiert, steht `DE
 | **Banking** | Konto, Mandate, Referenzen, Kontoauszug | keine — Welle 2 `rails/bank_read.py` (read-only) | CAMT.053-Import oder lizenzierter AIS-Anbieter | `DESIGNED` / `DEFERRED` |
 | **Compliance** | KYT, AML, Sanktionslisten, Travel Rule | **kein Modul** — nur Gate-Schnittstelle | Policy-Regel `compliance_gate` → `ALLOW/DENY/REQUIRES_APPROVAL`, Ergebnis mit `rule_ids` ins Journal | Schnittstelle `DESIGNED`, Inhalt `BLOCKED` |
 | **Accounting** | Ableitung der Buchung aus dem Journal, keine zweite Wahrheit | `app/payments/journal.py` (Quelle) → Projektion; heute `app/lightning/earnings_ledger.py`, `earnings_booking.py` | Projektion ist **idempotent über `intent_id`**; Journal ist append-only, Buchung wird nie zurückgeschrieben | Journal `DESIGNED`, LN-Booking `IMPLEMENTED` |
-| **Reconciliation** | Abgleich Rail-/Bank-Evidenz gegen Journal, beide Richtungen, T+1-Fenster für Fiat | `app/payments/reconcile.py`; heute `app/lightning/reconciliation.py` + `scripts/ln_reconcile.py` + `kai-ln-reconcile.timer` | `rail.lookup()` vorwärts; Statement→Journal rückwärts, Waise = `orphan_settlement` + Alarm | LN `IMPLEMENTED`, Fiat `DESIGNED` |
+| **Reconciliation** | Abgleich Rail-/Bank-Evidenz gegen Journal, beide Richtungen, T+1-Fenster für Fiat | `app/payments/reconcile.py` + `scripts/ln_reconcile.py` + `kai-ln-reconcile.timer` (seit ADR 0018 §12 PR 2 der einzige Reconciler) | `rail.lookup()` vorwärts; Statement→Journal rückwärts, Waise = `orphan_settlement` + Alarm | LN `IMPLEMENTED`, Fiat `DESIGNED` |
 
 **Drei Regeln, die aus dieser Trennung folgen und nicht verhandelbar sind:**
 
