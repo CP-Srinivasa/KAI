@@ -81,14 +81,31 @@ def test_der_builder_kennt_optionale_extras() -> None:
     assert "EXTRA_SPECS" in code
 
 
-def test_die_extras_werden_vor_pip_check_installiert() -> None:
-    """Ein Extra, das dem Lockfile widerspricht, darf kein Release werden.
+def test_das_extra_wird_gegen_das_lockfile_gezwungen() -> None:
+    """Ohne `-c` gibt es den Konflikt am Ende gar nicht mehr.
 
-    Nach `pip check` installiert, käme der Widerspruch als versiegelter,
-    verifizierbarer Baum heraus — mit sich widersprechenden Abhängigkeiten.
+    pip löst ihn auf, indem es hochzieht: erst httpx auf die gepinnte Version,
+    dann verlangt das Extra eine neuere, pip hebt sie an — und `pip check` ist
+    grün, weil der venv in sich stimmig ist. Er entspricht nur dem Lockfile
+    nicht mehr.
+
+    Ein Test, der bloß die Reihenfolge festhält, sicherte damit etwas ab, das
+    ohne Constraint nichts mehr sichert.
     """
     code = _code()
-    install = code.index("pip install $EXTRA_SPECS")
+    zeile = next(z for z in code.splitlines() if "pip install" in z and "$EXTRA_SPECS" in z)
+    assert '-c "$LOCK"' in zeile, zeile
+
+
+def test_die_extras_werden_vor_pip_check_installiert() -> None:
+    """Die Reihenfolge bleibt trotzdem richtig — sie ist die zweite Haelfte.
+
+    Der Constraint faengt den Versionskonflikt, `pip check` die uebrige
+    Metadaten-Inkonsistenz. Nach dem Versiegeln geprueft, kaeme beides als
+    fertiges Release heraus.
+    """
+    code = _code()
+    install = code.index('pip install -c "$LOCK" $EXTRA_SPECS')
     pruefung = code.index("-m pip check")
     assert install < pruefung, "erst installieren, dann prüfen"
 

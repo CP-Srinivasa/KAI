@@ -326,10 +326,33 @@ if ! "$PY" -m pip install -r "$LOCK" >/tmp/kai-release-pip.$$.log 2>&1; then
 fi
 
 if [ -n "$EXTRA_SPECS" ]; then
-    # Vor `pip check`, nicht danach: ein Extra, das mit dem Lockfile in Konflikt
-    # steht, soll den Bau abbrechen und nicht als versiegeltes Release
-    # herauskommen, dessen Abhaengigkeiten sich widersprechen.
-    if ! "$PY" -m pip install $EXTRA_SPECS >>/tmp/kai-release-pip.$$.log 2>&1; then
+    # `-c "$LOCK"` ist das Tragende an dieser Zeile, nicht die Reihenfolge.
+    #
+    # Ohne Constraint gibt es den Konflikt, den `pip check` finden soll, am Ende
+    # gar nicht mehr: pip loest ihn auf, indem es hochzieht. Erst wird httpx auf
+    # die gepinnte Version installiert, dann verlangt das Extra eine neuere, pip
+    # hebt sie an -- und `pip check` ist gruen, weil der venv in sich stimmig
+    # ist. Er entspricht nur dem Lockfile nicht mehr.
+    #
+    # Herausgekommen waere ein versiegeltes Release, das `requirements_lock_sha256`
+    # fuer ein Lockfile traegt, das seinen venv nicht mehr beschreibt. Und es
+    # faellt auch spaeter nicht auf: `dependency_manifest_sha256` wird NACH
+    # dieser Installation gebildet, stimmt also mit sich selbst ueberein.
+    # `verify_release` saehe "unveraendert seit dem Bau", nicht "widerspricht
+    # dem Lock" -- zwei Felder mit verschiedenen Wahrheiten, die niemand
+    # gegenueberstellt.
+    #
+    # Mit Constraint kann das Extra keine gepinnte Version anheben: entweder es
+    # passt ins Lockfile, oder die Installation scheitert. Der Abbruch kommt
+    # dann aus diesem Schritt, statt aus einer Pruefung, die ihn strukturell
+    # nicht mehr finden kann.
+    #
+    # Ein Rest bleibt: transitive Pakete des Extras, die im Lock gar nicht
+    # vorkommen, sind weiterhin ungepinnt. Sie stehen ueber
+    # `dependency_manifest_sha256` in `release.json` und sind damit nachlesbar --
+    # die billige Idempotenz-Probe sieht sie nicht, weil sie bewusst nur den
+    # Code-Baum herstellt.
+    if ! "$PY" -m pip install -c "$LOCK" $EXTRA_SPECS             >>/tmp/kai-release-pip.$$.log 2>&1; then
         echo "Extra-Installation gescheitert - siehe /tmp/kai-release-pip.$$.log" >&2
         rm -rf "$STAGE"; exit 1
     fi
