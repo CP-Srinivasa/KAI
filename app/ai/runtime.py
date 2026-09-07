@@ -16,7 +16,7 @@ from typing import Any, Final
 
 import httpx
 
-from app.ai.audit import Purpose, classify_error, correlation_scope
+from app.ai.audit import Purpose, classify_error, correlation_scope, evaluation_scope
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
 from app.ai.models import AttemptResult, AttemptTrace
@@ -145,10 +145,19 @@ async def invoke[T](
     # This branch deliberately adds no network client, task or retry around the
     # legacy path. It is the hard rollback invariant, not merely a mode label.
     if mode == "off":
+        # Kein `evaluation_scope`: OFF ist der Altpfad, unveraendert. Eine
+        # Auswertung, die es nicht gibt, bekommt auch keine Id.
         with correlation_scope(correlation_id) as _:
             return RoutedValue(value=await direct_call(), transport="direct")
 
-    with correlation_scope(correlation_id) as active_correlation:
+    with (
+        correlation_scope(correlation_id) as active_correlation,
+        # Ab hier gehoert alles Telemetrierte zu EINER Auswertung -- auch die
+        # Zeile, die der Altpfad ueber `llm_call_scope` selbst schreibt. Ohne
+        # das traegt sie weder Route noch Zuordnung, und die Auswertung findet
+        # spaeter eine SHADOW-Seite ohne Gegenstueck.
+        evaluation_scope(logical_route=route, mode=mode) as active_evaluation,
+    ):
 
         async def run_direct() -> AttemptResult[T]:
             started = clock()
@@ -246,6 +255,7 @@ async def invoke[T](
             outcome = await execute_async(
                 purpose=purpose,
                 alias=configured.route_aliases.get(route, route),
+                evaluation_id=active_evaluation,
                 direct_call=run_direct,
                 litellm_call=run_litellm,
                 per_route=configured.route_modes,

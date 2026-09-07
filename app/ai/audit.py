@@ -100,6 +100,61 @@ def correlation_scope(correlation_id: str | None) -> Iterator[str]:
         _CORRELATION_ID.reset(token)
 
 
+#: Die Zuordnung EINER logischen Auswertung. Sie ist der einzige Schluessel,
+#: mit dem sich hinterher sagen laesst, welche DIRECT-Zeile und welche
+#: SHADOW-Zeile denselben Aufruf beschreiben.
+#:
+#: WARUM NICHT ``call_id``: die wird pro ZEILE vergeben, also fuer jeden
+#: physischen Versuch und fuer jede Seite eine eigene. Als Paarungsschluessel
+#: waere sie das Gegenteil dessen, was gebraucht wird.
+#:
+#: WARUM NICHT ``correlation_id`` allein: die haelt eine ganze Kette zusammen.
+#: Ein Aufrufer, der sie durchreicht (``text_intent`` tut das), haette darunter
+#: mehrere Auswertungen -- und zwei Auswertungen mit je einer DIRECT- und einer
+#: SHADOW-Seite saehen aus wie eine Auswertung mit zwei Duplikaten.
+_EVALUATION_ID: ContextVar[str | None] = ContextVar("kai_llm_evaluation_id", default=None)
+
+#: Route und Modus der laufenden Auswertung. Der Direktpfad wird von den
+#: Aufrufern instrumentiert, lange bevor es eine Control-Plane gab; er KENNT
+#: seine Route nicht. Ohne diese beiden Werte traegt seine Telemetriezeile
+#: keine Zuordnung, und die Auswertung wirft sie weg.
+_LOGICAL_ROUTE: ContextVar[str | None] = ContextVar("kai_llm_logical_route", default=None)
+_MODE: ContextVar[str | None] = ContextVar("kai_llm_mode", default=None)
+
+
+def current_evaluation_id() -> str | None:
+    """Auswertungs-Id des aktuellen Kontexts, falls einer laeuft."""
+    return _EVALUATION_ID.get()
+
+
+@contextmanager
+def evaluation_scope(
+    *, logical_route: str, mode: str, evaluation_id: str | None = None
+) -> Iterator[str]:
+    """Bindet EINE Auswertung an alles, was in diesem Block telemetriert wird.
+
+    Damit traegt auch die Zeile des Direktpfads Route, Modus und Auswertungs-Id,
+    ohne dass ein einziger Aufrufer geaendert werden muesste: sie stehen im
+    Kontext, und ``llm_call_scope`` liest sie dort ab.
+
+    Wie ``correlation_scope`` wird beim Verlassen immer zurueckgesetzt -- eine
+    inline erwartete Pipeline darf ihre Zuordnung nicht an den Aufrufer
+    weitervererben.
+    """
+    resolved = evaluation_id or f"eval_{uuid4().hex[:12]}"
+    marken = (
+        _EVALUATION_ID.set(resolved),
+        _LOGICAL_ROUTE.set(logical_route),
+        _MODE.set(mode),
+    )
+    try:
+        yield resolved
+    finally:
+        _MODE.reset(marken[2])
+        _LOGICAL_ROUTE.reset(marken[1])
+        _EVALUATION_ID.reset(marken[0])
+
+
 def http_status(exc: BaseException) -> int | None:
     """Best-effort HTTP status of *exc*, duck-typed across SDKs. Never raises.
 
@@ -187,6 +242,7 @@ def record_attempt_trace(
     attempt_trace: AttemptTrace,
     *,
     correlation_id: str,
+    evaluation_id: str | None = None,
     purpose: Purpose,
     logical_route: str,
     mode: str,
@@ -213,7 +269,9 @@ def record_attempt_trace(
         error_type=str(attempt_trace.detail.get("exception") or "") or None,
         path=path,
         correlation_id=correlation_id,
+        # Pro ZEILE neu -- deshalb taugt sie nicht als Paarungsschluessel.
         call_id=f"llmc_{uuid4().hex[:8]}",
+        evaluation_id=evaluation_id if evaluation_id is not None else _EVALUATION_ID.get(),
         purpose=purpose,
         attempt=attempt_number,
         error_class=attempt_trace.error_class,
@@ -351,6 +409,11 @@ async def llm_call_scope(
             prompt_tokens=scope.prompt_tokens,
             completion_tokens=scope.completion_tokens,
             outcome=scope.failure_outcome,
+            # Aus dem Kontext, nicht vom Aufrufer: der Direktpfad wurde
+            # instrumentiert, als es noch keine Routen gab.
+            evaluation_id=_EVALUATION_ID.get(),
+            logical_route=_LOGICAL_ROUTE.get(),
+            mode=_MODE.get(),
         )
         raise
     record_llm_call(
@@ -368,4 +431,7 @@ async def llm_call_scope(
         prompt_tokens=scope.prompt_tokens,
         completion_tokens=scope.completion_tokens,
         outcome=scope.success_outcome,
+        evaluation_id=_EVALUATION_ID.get(),
+        logical_route=_LOGICAL_ROUTE.get(),
+        mode=_MODE.get(),
     )

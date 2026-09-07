@@ -324,6 +324,7 @@ async def execute_async[T](
     jitter: Callable[[], float] = lambda: 0.0,
     clock: Callable[[], float] = monotonic,
     correlation_id: str = "",
+    evaluation_id: str | None = None,
     telemetry_path: Path | None = None,
 ) -> AsyncGatewayOutcome[T]:
     """Async execution mechanics with the same KAI policy as :func:`execute`.
@@ -400,6 +401,7 @@ async def execute_async[T](
                     record_attempt_trace(
                         result.trace,
                         correlation_id=correlation_id,
+                        evaluation_id=evaluation_id,
                         purpose=purpose,
                         logical_route=route,
                         mode=mode,
