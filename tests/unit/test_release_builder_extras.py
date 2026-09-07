@@ -318,6 +318,22 @@ def test_die_lockdatei_ist_als_constraint_zulaessig() -> None:
     Gezählt werden die ECHTEN Requirement-Zeilen, nicht alle: zwei Drittel der
     Datei sind `# via`-Kommentare, und ein eingeschmuggeltes `-e` ginge in
     dieser Grundgesamtheit unter.
+
+    WARUM DIESER TEST HIER STEHT UND NICHT BEIM LOCK-REFRESH
+
+    Er prüft die WIRKUNG, nicht die Ursache. Wer dem Lockfile ein `-e`
+    hinzufügt, sieht einen roten Test bei den Extras — an einer Stelle, die er
+    nicht angefasst hat. Das ist besser als der Status quo, wo der Erste, der
+    davon erführe, ein `pip`-Fehler im Release-Bau wäre, Wochen später und bei
+    jemand anderem. Aber es ist nicht der richtige Ort für die Zusage selbst.
+
+    Der gehört ins Lock-Refresh-Gate, wo die Ursache gesetzt wird (bin-ec führt
+    das als V13). Kommt dieser Ratchet, kann der Test hier schrumpfen: dann ist
+    die Eigenschaft erzwungen, statt nur beobachtet.
+
+    Bis dahin ist er kein Ballast, sondern die kürzeste verfügbare Kette
+    zwischen Ursache und Meldung — dieser Absatz steht hier, damit ihn niemand
+    für das eine hält, während er das andere ist.
     """
     lock = (REPO / "requirements.lock").read_text(encoding="utf-8").splitlines()
     pins = [z for z in lock if z and not z[0].isspace() and not z.lstrip().startswith("#")]
