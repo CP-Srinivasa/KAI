@@ -19,7 +19,9 @@ from app.ai.audit import (
     current_correlation_id,
     http_status,
     is_retryable_error,
+    is_retryable_error_class,
     llm_call_scope,
+    record_attempt_trace,
 )
 from app.ai.budget import (
     BudgetDecision,
@@ -37,8 +39,17 @@ from app.ai.circuit import (
     CircuitState,
     circuit_key,
 )
-from app.ai.gateway import GatewayOutcome, TransportCall, execute
+from app.ai.config import InferenceSettings
+from app.ai.gateway import (
+    AsyncGatewayOutcome,
+    AsyncTransportCall,
+    GatewayOutcome,
+    TransportCall,
+    execute,
+    execute_async,
+)
 from app.ai.models import (
+    AttemptResult,
     AttemptTrace,
     InferenceResult,
     cost_known_rate,
@@ -54,13 +65,30 @@ from app.ai.modes import (
     resolve_mode,
     unknown_route_keys,
 )
+from app.ai.retry import (
+    DEFAULT_MAX_ATTEMPTS,
+    MAX_ATTEMPTS_CEILING,
+    RetryPolicy,
+    retry_delay_s,
+    should_retry,
+    worst_case_backoff_s,
+)
 from app.ai.routes import ROUTES, Route, route_for
+from app.ai.runtime import (
+    LiteLLMCallError,
+    LiteLLMRequest,
+    RoutedValue,
+    environment_settings,
+    invoke,
+    reset_environment_settings,
+)
 
 __all__ = [
     "DEFAULT_MODE",
     "MODES",
     "ROUTES",
     "AttemptTrace",
+    "AttemptResult",
     "BudgetDecision",
     "BudgetEntry",
     "BudgetPolicy",
@@ -70,9 +98,12 @@ __all__ = [
     "CircuitPolicy",
     "CircuitState",
     "GatewayOutcome",
+    "AsyncGatewayOutcome",
+    "AsyncTransportCall",
     "TransportCall",
     "CallScope",
     "InferenceResult",
+    "InferenceSettings",
     "Mode",
     "Route",
     "ErrorClass",
@@ -81,18 +112,33 @@ __all__ = [
     "current_correlation_id",
     "http_status",
     "is_retryable_error",
+    "is_retryable_error_class",
     "accumulate",
     "circuit_key",
     "cost_known_rate",
     "decide",
     "execute",
+    "execute_async",
     "headroom_usd",
     "graduated_routes",
     "has_execution_authority",
     "llm_call_scope",
+    "record_attempt_trace",
     "parse_mode",
     "resolve_mode",
     "route_for",
     "total_cost_usd",
     "unknown_route_keys",
+    "RetryPolicy",
+    "DEFAULT_MAX_ATTEMPTS",
+    "MAX_ATTEMPTS_CEILING",
+    "worst_case_backoff_s",
+    "LiteLLMCallError",
+    "LiteLLMRequest",
+    "RoutedValue",
+    "invoke",
+    "environment_settings",
+    "reset_environment_settings",
+    "retry_delay_s",
+    "should_retry",
 ]

@@ -45,6 +45,24 @@ def record_llm_call(
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     outcome: str | None = None,
+    logical_route: str | None = None,
+    mode: str | None = None,
+    transport: str | None = None,
+    requested_model_alias: str | None = None,
+    actual_provider: str | None = None,
+    actual_model: str | None = None,
+    identity_proven: bool = False,
+    retry_count: int = 0,
+    fallback_from: str | None = None,
+    fallback_to: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_usd: float | None = None,
+    schema_status: str | None = None,
+    budget_decision: str | None = None,
+    circuit_state: str | None = None,
+    execution_authority: bool | None = None,
+    upstream_request_id: str | None = None,
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
     row: dict[str, Any] = {
@@ -66,6 +84,36 @@ def record_llm_call(
         "prompt_tokens": int(prompt_tokens),
         "completion_tokens": int(completion_tokens),
         "outcome": outcome or ("success" if ok else "exhausted"),
+        "logical_route": logical_route,
+        "mode": mode,
+        "transport": transport or "direct",
+        "requested_model_alias": requested_model_alias,
+        "actual_provider": actual_provider,
+        "actual_model": actual_model,
+        "identity_proven": bool(identity_proven),
+        "retry_count": int(retry_count),
+        "fallback_from": fallback_from,
+        "fallback_to": fallback_to,
+        # UNKNOWN != 0, auch bei Token. Die v1-Felder ``prompt_tokens`` /
+        # ``completion_tokens`` sind ``int`` und tragen 0 sowohl fuer "null
+        # Token" als auch fuer "nicht mitgeteilt" -- fuer den v1-Leser bleibt
+        # das so. Die v2-Felder duerfen diese Vermengung nicht erben: ein
+        # fehlgeschlagener Versuch ohne Usage-Block haette sonst 0 Token
+        # gezaehlt und die Auswertung haette den Verbrauch zu niedrig gesehen.
+        # 0 gibt es bei einem echten Aufruf nicht, deshalb ist die Umdeutung
+        # nach ``None`` hier verlustfrei.
+        "input_tokens": input_tokens if input_tokens is not None else (int(prompt_tokens) or None),
+        "output_tokens": (
+            output_tokens if output_tokens is not None else (int(completion_tokens) or None)
+        ),
+        # None is the canonical representation of UNKNOWN cost.
+        "cost_usd": cost_usd,
+        "cost_known": cost_usd is not None,
+        "schema_status": schema_status,
+        "budget_decision": budget_decision,
+        "circuit_state": circuit_state,
+        "execution_authority": execution_authority,
+        "upstream_request_id": upstream_request_id,
     }
     try:
         sink = path if path is not None else DEFAULT_TELEMETRY_PATH

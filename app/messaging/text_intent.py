@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from openai import AsyncOpenAI
 
 from app.ai.audit import llm_call_scope
+from app.ai.runtime import LiteLLMRequest, invoke
 
 logger = logging.getLogger(__name__)
 
@@ -139,13 +141,29 @@ class TextIntentProcessor:
         else:
             user_content = text
 
-        # Audit F-1 (2026-07-11): offizieller SDK-Client statt rohem httpx —
-        # gleiche Transport-Konventionen (Retries/Timeout/Fehlerklassen) wie der
-        # Rest des Systems; CLAUDE.md §LLM Integration.
-        try:
+        messages: list[Any] = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+        def parse_content(content: str) -> dict[str, object]:
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("intent payload is not a JSON object")
+            return parsed
+
+        def parse_litellm(body: dict[str, object]) -> dict[str, object]:
+            choices = body.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                raise ValueError("intent response has no choices")
+            message = choices[0].get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, str):
+                raise ValueError("intent response has no content")
+            return parse_content(content)
+
+        async def direct_call() -> dict[str, object]:
             client = AsyncOpenAI(api_key=self._api_key, timeout=self._timeout)
-            # NEO-F-005: audit scope only — same client, same timeout, so the
-            # existing AsyncOpenAI patch points in the tests stay valid.
             async with llm_call_scope(
                 purpose="intent",
                 provider="openai",
@@ -154,10 +172,7 @@ class TextIntentProcessor:
             ) as scope:
                 resp = await client.chat.completions.create(
                     model=self._model,
-                    messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
+                    messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.3,
                     max_tokens=800,
@@ -169,14 +184,39 @@ class TextIntentProcessor:
                         getattr(usage, "completion_tokens", 0),
                     )
                 content = resp.choices[0].message.content or ""
-                parsed = json.loads(content)
-                if not isinstance(parsed, dict):
-                    raise ValueError("intent payload is not a JSON object")
+                return parse_content(content)
+
+        try:
+            routed = await invoke(
+                purpose="intent",
+                direct_call=direct_call,
+                direct_provider="openai",
+                direct_model=self._model,
+                litellm=LiteLLMRequest(
+                    parser=parse_litellm,
+                    payload={
+                        "messages": messages,
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.3,
+                        "max_tokens": 800,
+                    },
+                ),
+                correlation_id=correlation_id,
+            )
+            parsed = routed.value
+            intent = parsed.get("intent")
+            response = parsed.get("response")
+            signal = parsed.get("signal")
+            mapped_command = parsed.get("mapped_command")
             return IntentResult(
-                intent=parsed.get("intent", "chat"),
-                response=parsed.get("response", "Keine Antwort generiert."),
-                signal=parsed.get("signal"),
-                mapped_command=parsed.get("mapped_command"),
+                intent=intent if isinstance(intent, str) else "chat",
+                response=response if isinstance(response, str) else "Keine Antwort generiert.",
+                signal=(
+                    {str(key): str(value) for key, value in signal.items()}
+                    if isinstance(signal, dict)
+                    else None
+                ),
+                mapped_command=mapped_command if isinstance(mapped_command, str) else None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("[TEXT_INTENT] Processing error: %s", exc)
