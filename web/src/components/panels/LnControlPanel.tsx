@@ -17,22 +17,15 @@ import { usePolling } from "@/lib/usePolling";
 // pay_enabled=false (Node wird nie berührt). Kein Service-Token (Email-Allowlist).
 
 const POLL_MS = 60_000;
-const ACTIONS = [
-  "create_invoice",
-  "pay_invoice",
-  "keysend",
-  "send_coins",
-  "open_channel",
-  "close_channel",
-] as const;
+// ADR 0018 §12: keysend/send_coins/open_channel/close_channel sind entfallen.
+// Sie standen im Menü, obwohl die Regelkette sie mit unsupported_action abgelehnt
+// hätte — ein Eintrag, der nur existiert, um abgelehnt zu werden, sieht aus wie
+// eine Fähigkeit, die man nur freischalten müsste.
+const ACTIONS = ["create_invoice", "pay_invoice"] as const;
 
 const PARAM_HINT: Record<string, string> = {
   create_invoice: '{"value_sat": 1000, "memo": "test"}',
-  pay_invoice: '{"payment_request": "lnbc..."}',
-  keysend: '{"dest_pubkey_hex": "02..", "amt_sat": 1000}',
-  send_coins: '{"addr": "bc1q..", "amount_sat": 1000}',
-  open_channel: '{"node_pubkey_hex": "02..", "local_funding_sat": 50000}',
-  close_channel: '{"funding_txid": "..", "output_index": 0}',
+  pay_invoice: '{"payment_request": "lnbc...", "purpose": "operator_pay_invoice"}',
 };
 
 function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
@@ -120,7 +113,7 @@ export function LnControlPanel() {
         {payOn ? (
           <span>
             <span className="font-semibold text-warn">pay_enabled=true</span> — kapital-wirksame
-            Aktionen KÖNNEN ausführen (innerhalb der Policy-Envelopes). Confirm = HOTP + Plan-Hash.
+            Aktionen KÖNNEN ausführen (innerhalb der Payment-Regelkette). Confirm = HOTP + Plan-Hash.
           </span>
         ) : (
           <span>

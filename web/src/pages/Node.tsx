@@ -18,7 +18,6 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
 import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
 import { NodeReputationPanel } from "@/components/panels/NodeReputationPanel";
-import { LnOpsAuditPanel } from "@/components/panels/LnOpsAuditPanel";
 import { LnControlPanel } from "@/components/panels/LnControlPanel";
 import { BlitzInfoPanel } from "@/components/panels/BlitzInfoPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
@@ -281,7 +280,6 @@ export function NodePage() {
             />
             <NodeReputationPanel />
             <LnControlPanel />
-            <LnOpsAuditPanel />
           </div>
         </div>
       </section>

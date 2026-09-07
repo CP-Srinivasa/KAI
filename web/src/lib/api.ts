@@ -959,19 +959,6 @@ export function fetchLnReputation(signal?: AbortSignal): Promise<LnReputation> {
   return apiGet<LnReputation>("/dashboard/api/ln/reputation", { signal });
 }
 
-// Wert-Schicht-Ops-Audit-Trail (read-only). Writer gebaut (ln_ops_ledger); bleibt leer,
-// bis eine gegatete Aktion bei receive_enabled/pay_enabled erfolgt (Default false = inert).
-export type LnOp = Record<string, unknown>;
-export type LnOps = {
-  count: number;
-  ops: LnOp[];
-  generated_at: string;
-};
-
-export function fetchLnOps(signal?: AbortSignal): Promise<LnOps> {
-  return apiGet<LnOps>("/dashboard/api/ln/ops", { signal });
-}
-
 // L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
 export type ChainStatus = {
   state: "disabled" | "pending" | "unavailable" | "ok";
