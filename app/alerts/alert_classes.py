@@ -105,6 +105,13 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     "timer_scheduleability": AlertClass.P1,
     "document_ingest": AlertClass.P1,
     "youtube_transcript_coverage": AlertClass.P1,
+    # Derselbe Messwert, andere Herkunft: die Transkript-Sperre liegt beim
+    # Anbieter, nicht bei uns (nachgemessen 2026-09-07 von einer zweiten
+    # Maschine am selben Anschluss). Die Quelle laeuft im Metadaten-Betrieb
+    # weiter und bleibt als Befund sichtbar — aber ein Zustand, den der
+    # Operator nicht aufloesen kann, darf ihn nicht wiederholt erreichen.
+    # P3 ist nicht ``is_notifiable``; genau das ist hier der Zweck.
+    "youtube_transcript_blocked_external": AlertClass.P3,
     # G5-Eingangsvertraege: der Reject-Strom traegt den GRUND einer Ablehnung.
     # Faellt er aus, bleibt der Geldpfad fail-closed (deshalb nicht P0), aber
     # der Operator kann Caller-Fehler nicht mehr von Vertragsverletzung

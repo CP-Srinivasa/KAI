@@ -145,6 +145,41 @@ class CoverageVerdict:
     def is_healthy(self) -> bool:
         return self.status in ("ok", "no_population")
 
+    @property
+    def is_externally_blocked(self) -> bool:
+        """Ist der Ausfall nachweislich fremdverschuldet — und nur das?
+
+        Drei Bedingungen, und die dritte ist die wichtigste:
+
+        1. Es ist ein vollstaendiger Ausfall (``blackout``), keine gedrueckte Quote.
+        2. Mindestens ein aufgezeichneter Grund benennt die fremde Sperre.
+        3. **Kein** Grund zeigt auf uns. Steht neben dem IP-Block ein
+           ``API_ERROR`` oder ``PARSER_ERROR``, bleibt es ein normaler Befund —
+           sonst koennte sich ein Code-Fehler hinter einer fremden Sperre
+           verstecken, und genau das waere die teuerste Verwechslung.
+
+        Gruende wie ``VIDEO_UNPLAYABLE`` oder ``TRANSCRIPTS_DISABLED`` stehen
+        dem nicht entgegen: sie liegen ebenfalls ausserhalb, verlangen nichts
+        und kommen im Normalbetrieb vor.
+
+        Die Folge steht im Health-Check: der fremdverschuldete Zustand traegt
+        dort einen eigenen Komponentennamen, weil die Dringlichkeitsklasse am
+        Namen haengt (``alert_classes.COMPONENT_CLASSES``) und nicht am Text.
+        Gemessen vom 2026-08-31 bis 2026-09-07: 667 Meldungen fuer einen
+        Zustand, gegen den keine einzige davon etwas ausrichten konnte.
+
+        ``is_healthy`` bleibt davon unberuehrt. Die Quelle ist NICHT gesund —
+        sie liefert nur noch Metadaten. Was sich aendert, ist die Dringlichkeit:
+        ein Zustand, den hier niemand aufloesen kann, darf den Operator nicht
+        im 15-Minuten-Takt daran erinnern.
+        """
+        if self.status != "blackout":
+            return False
+        klassen = {classify_transcript_reason(raw) for raw, _ in self.by_status}
+        if not klassen & EXTERNAL_BLOCK_CLASSES:
+            return False
+        return not (klassen & OWN_FAULT_CLASSES)
+
 
 def classify_coverage(
     channels: list[ChannelCoverage],
@@ -198,7 +233,25 @@ def render_message(verdict: CoverageVerdict, *, window_hours: int = COVERAGE_WIN
         parts[-1] += f" (+{len(verdict.by_channel) - 6} weitere)"
 
     dry = verdict.dry_channels
-    if verdict.status == "blackout":
+    if verdict.is_externally_blocked:
+        # Kein Ausfall, den hier jemand abstellen kann — und keiner, der die
+        # Quelle wertlos macht. Der Feed laeuft weiter, also traegt jedes
+        # Dokument Titel, Beschreibung, Kanal, Zeitpunkt und URL. Was fehlt,
+        # ist der Transkript-Text. Der Satz muss beides sagen, sonst liest
+        # sich ein Degradations- wie ein Totalzustand.
+        parts.append(
+            "Transkripte extern gesperrt — die Quelle laeuft im Metadaten-Betrieb "
+            "weiter (Titel, Beschreibung, Kanal, Zeitpunkt, URL aus dem Feed); "
+            "nur der Transkript-Text fehlt"
+        )
+        parts.append(_render_reasons(verdict))
+        parts.append(
+            "Keine Handlung moeglich: gemessen am 2026-09-07 liefert dieselbe "
+            "Transcript-API auch von einer zweiten Maschine am selben Anschluss "
+            "IpBlocked, waehrend der RSS-Feed antwortet. Der Sperrpausen-"
+            "Kurzschluss prueft von selbst weiter"
+        )
+    elif verdict.status == "blackout":
         parts.append(
             "KEIN einziger Kanal liefert — das ist kein Sprach-Artefakt, sondern ein Ausfall"
         )
@@ -296,6 +349,20 @@ def classify_transcript_reason(raw: str) -> str:
         return "API_ERROR"
     return "UNKNOWN_ERROR"
 
+
+#: Gruende, die AUSSERHALB von KAI liegen und die niemand hier abstellen kann.
+#: Gemessen am 2026-09-07: ein frischer Abruf derselben Transcript-API von einer
+#: zweiten Maschine — anderer Prozess, gleiche Anschluss-IP — liefert ebenfalls
+#: ``IpBlocked``. Der RSS-Feed laeuft dabei weiter. Gesperrt ist also die
+#: Transcript-API fuer den Anschluss, nicht KAI und nicht YouTube insgesamt.
+EXTERNAL_BLOCK_CLASSES: frozenset[str] = frozenset({"IP_BLOCKED", "IP_BLOCK_COOLDOWN"})
+
+#: Gruende, die auf UNS zeigen koennten. Ist einer davon dabei, bleibt der
+#: Befund ein normaler Ausfall — auch wenn daneben ein IP-Block steht. Ein
+#: Code-Fehler darf sich nicht hinter einer fremden Sperre verstecken.
+OWN_FAULT_CLASSES: frozenset[str] = frozenset(
+    {"API_ERROR", "PARSER_ERROR", "UNKNOWN_ERROR", "TIMEOUT"}
+)
 
 _PLACEHOLDERS = (NO_REASON_RECORDED, NO_REASON_PRE_INSTRUMENTATION)
 
