@@ -1,0 +1,44 @@
+{
+  "_zweck": "Geklaerte await-Aufrufe in Endlosschleifen. Jeder Eintrag ist eine gepruefte Entscheidung mit Datum, kein Stummschalter. Geprueft von scripts/loop_timeout_ratchet.py.",
+  "_regel": "LONG_RUNNING_LOOP + externes await => explizite Zeitgrenze ODER Client mit nachweislich begrenztem Timeout. Ein Eintrag hier ersetzt die Zeitgrenze nur, wenn die Begruendung nachpruefbar ist.",
+  "_schluessel": "<datei>::<funktion>::<aufrufziel> — bewusst ohne Zeilennummer, damit die Baseline nicht bei jeder Einrueckung veraltet und pauschal neu geschrieben wird.",
+  "geklaert": {
+    "app/ingestion/liquidations/binance_stream.py::run::_consume": {
+      "grund": "bounded_client",
+      "begruendung": "Der Loop haengt an 'async for raw in ws'. websockets.connect laeuft hier mit Defaults, also ping_interval=20s und ping_timeout=20s: eine still gestorbene Verbindung wird auf Protokollebene erkannt, der Aufruf wirft, und der umgebende except-Zweig macht den Reconnect mit Backoff. Genau dieser Schutz fehlte Telethon an der entsprechenden Stelle — das ist der reale Unterschied zum Vorfall vom 2026-09-04.",
+      "nachweis": "connect(url) ohne ping_interval=None; websockets-Defaults 20s/20s",
+      "geprueft_am": "2026-09-07"
+    },
+    "app/execution/operator_entry_watch.py::run_watch_loop::run_watch_once": {
+      "grund": "bounded_client",
+      "begruendung": "Der Zyklus liest ueberwiegend lokale JSONL-Dateien; der einzige externe Pfad ist _snapshot -> get_market_data_snapshot -> Market-Data-Adapter, und die arbeiten durchgaengig mit 'httpx.AsyncClient(timeout=self._timeout)' bei einem Default von timeout_seconds=10. Empirisch gestuetzt: 1254 Zyklen in 24 h, Median 68 s, Maximum 74 s, kein einziger ueber 120 s.",
+      "nachweis": "app/market_data/binance_adapter.py:137 timeout_seconds=10, :378 httpx.AsyncClient(timeout=self._timeout); Zyklusmessung kai-pi5 2026-09-06/07",
+      "vorbehalt": "Die Deadline des Loops wird erst NACH dem await geprueft, und die Unit hat RuntimeMaxUSec=infinity. Die Absicherung liegt also vollstaendig bei den Clients. Wer hier einen Aufruf ohne eigene Zeitgrenze einhaengt, macht daraus den dritten Fall der Reihe.",
+      "geprueft_am": "2026-09-07"
+    },
+    "app/ingestion/telegram_channel_worker.py::_poll_backstop_loop::disconnect": {
+      "grund": "beendet_den_loop",
+      "begruendung": "Der Aufruf steht in den beiden Aufgabe-Pfaden des Loops (Haenger-Schwelle und Fehler-Schwelle) und trennt die Verbindung, damit systemd neu startet. Er wartet nicht IM Loop, er beendet ihn — ein Timeout darum herum wuerde den Ausstieg selbst gefaehrden.",
+      "nachweis": "beide Vorkommen unmittelbar vor 'return' in _poll_backstop_loop",
+      "geprueft_am": "2026-09-07"
+    },
+    "app/api/routers/events.py::stream::is_disconnected": {
+      "grund": "kein_externes_io",
+      "begruendung": "Fragt den lokalen Verbindungszustand des Requests ab, kein Netz-Roundtrip. Der eigentliche Wartepunkt derselben Schleife ist bereits geschuetzt: 'asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_INTERVAL_S)'. Diese Stelle ist damit das Vorbild fuer das Muster, nicht sein Gegenteil.",
+      "nachweis": "app/api/routers/events.py, wait_for im selben while-Block",
+      "geprueft_am": "2026-09-07"
+    },
+    "app/api/routers/dashboard_quality_cache.py::get::<ausdruck>": {
+      "grund": "kein_externes_io",
+      "begruendung": "'await wait_task' wartet auf eine eigene, in-process erzeugte Compute-Task, nicht auf eine Gegenstelle. Der Pfad hat ausserdem ein Stale-Serving: liegt ein Eintrag vor, wird er waehrend der Berechnung ausgeliefert, statt zu warten.",
+      "nachweis": "wait_task stammt aus asyncio.create_task(self._refresh_and_store())",
+      "geprueft_am": "2026-09-07"
+    },
+    "app/observability/event_loop_lag.py::run::_sleep": {
+      "grund": "kein_externes_io",
+      "begruendung": "'self._sleep' ist ein injizierbarer Parameter mit 'asyncio.sleep' als Default (Test-Seam). Der Aufruf misst die Verzoegerung der Event-Loop selbst und kommt garantiert zurueck.",
+      "nachweis": "app/observability/event_loop_lag.py: 'sleep: SleepFn = asyncio.sleep'",
+      "geprueft_am": "2026-09-07"
+    }
+  }
+}
