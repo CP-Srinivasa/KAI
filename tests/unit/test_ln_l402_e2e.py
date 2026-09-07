@@ -28,7 +28,7 @@ from app.core.lightning_settings import LightningSettings
 from app.lightning import demand_ledger
 from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.earnings_booking import book_oracle_earnings
-from app.lightning.value_layer import ValueLayerResult
+from app.lightning.receive_gate import ValueLayerResult
 
 _SECRET = "e2e-secret"
 _PREIMAGE = "ab" * 32
