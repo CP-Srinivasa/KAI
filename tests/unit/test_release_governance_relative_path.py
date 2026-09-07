@@ -107,7 +107,13 @@ def _welt(tmp: Path) -> Path:
                 "python_version": "3.12.0",
                 "created_at_utc": "2026-09-07T00:00:00+00:00",
                 "venv_python_path": str(release / ".venv" / "bin" / "python3"),
-                "dependency_manifest_sha256": "f" * 64,
+                # BEWUSST OHNE dependency_manifest_sha256: diese Fixture legt
+                # keinen venv an, und seit `verify_release` das Manifest gegen
+                # den venv haelt, waere das Feld hier eine Behauptung ohne
+                # Deckung -- RELEASE_VENV_UNUSABLE, und die Release-Achse fiele
+                # aus, obwohl dieser Test von Pfaden handelt und nicht von
+                # Abhaengigkeiten. Ein Feld, das man nicht einloest, gehoert
+                # nicht in eine Fixture.
                 "builder_version": "test/1",
             }
         )
