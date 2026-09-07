@@ -278,3 +278,54 @@ def test_absicht_und_zustand_bleiben_getrennte_felder() -> None:
     assert '"extras_sha256":' in code
     assert '"dependency_manifest_sha256":' in code
     assert "pip freeze" in code, "das Manifest kommt aus dem tatsaechlichen venv"
+
+
+# ---------------------------------------------------------------------------
+# Was der Pfad-Suffix bindet — und was er offenlässt.
+# ---------------------------------------------------------------------------
+
+
+def test_der_kopf_sagt_dass_die_transitive_aufloesung_eingefroren_wird() -> None:
+    """Eine Eigenschaft, die niemand kennt, ist eine Falle.
+
+    `<specs8>` hängt an den deklarierten Specs. Derselbe Aufruf eine Woche
+    später trifft denselben Pfad und bekommt den alten Baum zurück — obwohl
+    eine frische Auflösung heute andere transitive Versionen brächte. Das ist
+    Absicht (der erste Bau gewinnt), aber nur dann harmlos, wenn es dasteht.
+    """
+    kopf = _text()[: _text().index("set -uo pipefail")]
+    assert "DEKLARIERTEN Specs" in kopf
+    assert "DER ERSTE BAU GEWINNT" in kopf
+    assert "neue Spec" in kopf, "und der Ausweg steht daneben"
+
+
+def test_der_kopf_trennt_absicht_von_zustand() -> None:
+    """Bei einem späteren Rot sagt erst der Vergleich beider Felder, welcher
+    Fall vorliegt: falsch gebaut oder nachträglich verändert."""
+    kopf = _text()[: _text().index("set -uo pipefail")]
+    assert "extras_sha256" in kopf and "dependency_manifest_sha256" in kopf
+    assert "Absicht" in kopf and "Zustand" in kopf
+
+
+def test_die_lockdatei_ist_als_constraint_zulaessig() -> None:
+    """`pip` ist bei Constraints strenger als bei Requirements.
+
+    Editables lehnt es dort ab, `paket[extra]` ignoriert es unter Warnung. Wäre
+    davon etwas im Lockfile, bräche `-c "$LOCK"` ausgerechnet beim ersten
+    Release, das Extras trägt — an einer Stelle, die mit Editables nichts zu
+    tun hat.
+
+    Gezählt werden die ECHTEN Requirement-Zeilen, nicht alle: zwei Drittel der
+    Datei sind `# via`-Kommentare, und ein eingeschmuggeltes `-e` ginge in
+    dieser Grundgesamtheit unter.
+    """
+    lock = (REPO / "requirements.lock").read_text(encoding="utf-8").splitlines()
+    pins = [z for z in lock if z and not z[0].isspace() and not z.lstrip().startswith("#")]
+
+    assert pins, "ohne Requirements waere der Test wertlos"
+    for zeile in pins:
+        assert not zeile.startswith(("-e", "--editable")), zeile
+        assert "[" not in zeile, f"paket[extra] wird in Constraints ignoriert: {zeile}"
+        assert not zeile.startswith("-"), f"Options-Zeile in einer Constraint-Datei: {zeile}"
+        assert "==" in zeile, f"nicht exakt gepinnt: {zeile}"
+        assert "@" not in zeile, f"VCS-/URL-Spec: {zeile}"
