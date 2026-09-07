@@ -88,7 +88,14 @@ CounterpartyKind = Literal["ln_node", "ln_invoice", "btc_address", "iban", "inte
 #:
 #: ``dual_journal_conflict`` kommt aus der Uebergangsphase (ADR §12): eine
 #: Zahlung, die BEIDE Geldjournale fuehren und die der Altpfad nicht bewiesen
-#: abgeschlossen hat. Der Record verschwindet mit dem Rueckbau des Altpfads.
+#: abgeschlossen hat. Sein SCHREIBER ist mit PR 2 entfallen
+#: (``payments.reconcile_dual``) — das Ereignis bleibt trotzdem stehen. Das
+#: Geld-Journal ist append-only und wird nie rotiert, ein Record aus der
+#: Uebergangsphase liegt dort fuer immer, und ``JournalEvent`` validiert
+#: ``event_type`` gegen diese Menge auch beim LESEN. Wer das Ereignis hier
+#: streicht, macht einen historischen Record unlesbar und laesst den
+#: Ketten-Waechter das Geld-Journal fuer gebrochen erklaeren. Ein Vokabular
+#: schrumpft nicht mit seinem Schreiber.
 AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "intent_created",

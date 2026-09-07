@@ -65,9 +65,12 @@ class JournalIndex:
     _receivables: dict[str, Receivable] = field(default_factory=dict)
     #: Bereits gemeldete Waisen-Settlements — eine Waise wird EINMAL gemeldet.
     _orphans: set[str] = field(default_factory=set)
-    #: Bereits gemeldete Doppelbefunde beider Geldjournale (ADR §12). Dieselbe
-    #: Regel wie bei den Waisen: ein Alarm im Fuenf-Minuten-Takt ist ein
-    #: stummgeschalteter Alarm.
+    #: Doppelbefunde beider Geldjournale aus der Uebergangsphase (ADR §12).
+    #: Der Pass, der sie schrieb und diese Menge zur Alarm-Entdopplung las, ist
+    #: mit PR 2 entfallen. Der INGEST bleibt: das Geld-Journal wird nie
+    #: rotiert, und ein Snapshot, der einen vorhandenen Record verschweigt,
+    #: waere eine unvollstaendige Wiedergabe der Datei — genau die Eigenschaft,
+    #: die ``rebuild == live`` beweisen soll.
     _dual_conflicts: set[str] = field(default_factory=set)
 
     # -- Aufbau ------------------------------------------------------------- #
@@ -204,7 +207,12 @@ class JournalIndex:
         return frozenset(self._orphans)
 
     def dual_conflict_keys(self) -> frozenset[str]:
-        """Doppelbefunde beider Journale, die schon einen Record haben."""
+        """Doppelbefunde beider Journale aus der Uebergangsphase (ADR §12).
+
+        Ohne Produktions-Aufrufer seit PR 2 — der Zugang zu einem Record, den
+        die Datei noch traegt, gehoert zum Leser, nicht zum verschwundenen
+        Schreiber.
+        """
         return frozenset(self._dual_conflicts)
 
     def totals_for_day(self, moment: datetime) -> DayTotals:
