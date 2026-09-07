@@ -56,10 +56,9 @@ from app.core.lightning_settings import (
     LightningSettings,
     validate_lightning_boot,
 )
-from app.lightning import ops_ledger, receive_ledger
 from app.lightning import receive_gate as rg
+from app.lightning import receive_ledger
 from app.lightning.earnings_booking import EarningsBookingError, book_oracle_earnings
-from app.lightning.ops_ledger import ln_ops_v2_path
 
 _NOW = datetime(2026, 8, 6, 12, 0, tzinfo=UTC)
 
@@ -153,9 +152,22 @@ def test_c1_does_not_demand_credentials_for_switched_off_capabilities(tmp_path: 
 # --------------------------------------------------------------------------- #
 
 
+def _money_journal_path() -> Path:
+    """Das Geld-Journal, das es HEUTE gibt (ADR 0018 §5).
+
+    Bis PR 2 zeigte diese Hilfe auf das alte v2-Journal. Nach dessen Rueckbau
+    waere das eine Datei, die kein Produktionsmodul mehr liest — und ein
+    Waechter, der eine unbeachtete Datei zerstoert, beweist nichts. Die
+    BL-2-Asymmetrie gilt weiter, sie wird nur am lebenden Buch gemessen.
+    """
+    from app.core.payment_settings import get_payment_settings
+
+    return get_payment_settings().resolved_journal_path()
+
+
 def _break_money_journal() -> Path:
-    """Ein unverkettetes Legacy-Row + abgerissener Tail = maximal kaputtes Journal."""
-    path = ln_ops_v2_path()
+    """Ein unverketteter Row + abgerissener Tail = maximal kaputtes Journal."""
+    path = _money_journal_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps({"ts": "2026-08-01T00:00:00+00:00", "action": "keysend", "state": "executed"})
@@ -211,18 +223,23 @@ async def test_m9_mint_never_takes_the_money_journal_lock_or_rescans_it(monkeypa
     Journal-Maschinerie und portalocker selbst explodieren hier — der Mint
     laeuft trotzdem durch.
 
-    Der Beweis ist seit PR 1 STAERKER als vorher: ``receive_gate`` importiert
-    ``ops_ledger`` ueberhaupt nicht mehr, es gibt also keinen Aufruf, der noch
-    zu patchen waere. Der Waechter bleibt trotzdem stehen — er faellt in dem
-    Moment, in dem jemand die Kopplung wieder einzieht.
+    Der Waechter zeigt seit PR 2 auf das Geld-Journal, das es noch GIBT: das
+    alte v2-Journal ist Archiv ohne Modul, ein Patch darauf waere ein Patch auf
+    nichts. Gepatcht wird deshalb der Interprozess-Lock selbst (``portalocker``,
+    prozessweit) und der Schreibpfad des Payment-Journals. Der Waechter faellt
+    in dem Moment, in dem jemand die Kopplung wieder einzieht.
     """
+    import portalocker
+
+    from app.payments.journal import PaymentJournal
 
     def _boom(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("mint path must not touch the money journal")
 
-    monkeypatch.setattr(ops_ledger, "append_ln_outcome", _boom)
-    monkeypatch.setattr(ops_ledger, "verify_ln_ops_ledger", _boom)
-    monkeypatch.setattr(ops_ledger.portalocker, "Lock", _boom)
+    monkeypatch.setattr(portalocker, "Lock", _boom)
+    monkeypatch.setattr(PaymentJournal, "open", _boom)
+    monkeypatch.setattr(PaymentJournal, "append", _boom)
+    _break_money_journal()
 
     client = MagicMock()
     client.add_invoice = AsyncMock(return_value={"payment_request": "lnbc1", "r_hash": "aa"})
@@ -235,12 +252,13 @@ async def test_m9_mint_never_takes_the_money_journal_lock_or_rescans_it(monkeypa
 
 
 def test_the_mint_path_does_not_even_know_the_money_journal() -> None:
-    """Strukturell, nicht per Patch: ``receive_gate`` kennt ``ops_ledger`` nicht.
+    """Strukturell, nicht per Patch: ``receive_gate`` kennt kein Geld-Journal.
 
-    Die Richtung ist wichtig — nach PR 1 leiht sich das ARCHIV seine Redaktion
-    vom lebenden Empfangspfad, nicht umgekehrt. Eine Kante zurueck waere der
-    erste Schritt, den anonymen Mint wieder hinter den Geldjournal-Lock zu
-    schieben (BL-2).
+    Bis PR 2 hiess die verbotene Kante ``app.lightning.ops_ledger``. Mit dem
+    Wegfall des Moduls waere diese eine Zusage trivial wahr geworden — eine
+    Wache, die nichts mehr ausschliessen kann. Verboten ist deshalb ab jetzt
+    der Sendepfad, den es GIBT: der anonyme Mint darf nie hinter den
+    exklusiven Geldjournal-Lock geraten (BL-2/M-9).
     """
     source = (Path("app/lightning/receive_gate.py")).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -250,7 +268,13 @@ def test_the_mint_path_does_not_even_know_the_money_journal() -> None:
             imported.add(node.module)
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
-    assert "app.lightning.ops_ledger" not in imported
+    forbidden = {
+        "app.lightning.ops_ledger",
+        "app.payments.journal",
+        "app.payments.service",
+        "portalocker",
+    }
+    assert not (imported & forbidden), sorted(imported & forbidden)
 
 
 def test_receive_journal_is_redacted_and_separate() -> None:
@@ -268,7 +292,7 @@ def test_receive_journal_is_redacted_and_separate() -> None:
     row = json.loads(text.splitlines()[0])
     assert row["action"] == "create_invoice" and row["plan"]["value_sat"] == 10
     assert row["response"]["payment_hash"] == (b"\x01" * 32).hex()
-    assert not ln_ops_v2_path().exists()  # das Alt-Geldjournal bleibt unberuehrt
+    assert not _money_journal_path().exists()  # das Geld-Journal bleibt unberuehrt
 
 
 def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
@@ -306,53 +330,50 @@ def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
 
 
 # --------------------------------------------------------------------------- #
-# ADR 0018 §12 — der Altpfad schreibt nicht mehr.
+# ADR 0018 §12 — das Alt-Journal ist Archiv.
 # --------------------------------------------------------------------------- #
 
 
-def test_no_production_module_can_open_an_old_money_intent() -> None:
-    """Der Ersatz fuer den v1-Writer-Waechter: es gibt keinen Eroeffner mehr.
+def test_the_old_money_journal_has_no_module_left() -> None:
+    """PR 2: kein Schreiber, kein Leser, kein Modul.
 
-    Der Bestand pruefte, dass niemand ausser ``ops_ledger`` ``append_ln_op``
-    ruft — zwei fortgeschriebene Journale waeren zwei Geldhistorien. Seit PR 1
-    ist die Aussage staerker und braucht keine Aufzaehlung: ``prepare_ln_intent``
-    existiert nicht mehr, und das Archiv kann strukturell nur noch einen
-    BEREITS OFFENEN Vorgang schliessen.
+    PR 1 hatte ``ops_ledger`` auf ein Archiv geschrumpft, das einen offenen
+    Alt-Vorgang noch schliessen konnte. Diese Faehigkeit hatte genau einen
+    Aufrufer, den Crash-Gap-Reconciler; mit ihm ist sie gegenstandslos. Ein
+    Modul, das ein Geldjournal schreiben KANN und das niemand ruft, ist keine
+    Reserve, sondern ein offener Weg.
+
+    ``artifacts/ln_ops_ledger_v2.jsonl`` bleibt unangetastet am Geraet und im
+    Backup-Vertrag — geloescht wird der Code, nicht der Beweis.
     """
-    source = Path(ops_ledger.__file__).read_text(encoding="utf-8")
-    for gone in (
-        "def prepare_ln_intent",
-        "def append_ln_op(",
-        "def attest_ln_ops_tip",
-        "def migrate_legacy_ln_ops",
-        "def spent_today_sat",
-        "require_intent=",
-    ):
-        assert gone not in source, f"{gone} ist zurueck im Archivmodul"
-    assert set(ops_ledger.__all__) == {
-        "LightningOpsLedgerError",
-        "append_ln_outcome",
-        "ln_ops_v2_path",
-        "read_verified_ln_ops_snapshot",
-        "verify_ln_ops_ledger",
-    }
+    import importlib.util
+
+    assert importlib.util.find_spec("app.lightning.ops_ledger") is None
+    assert importlib.util.find_spec("app.lightning.reconciliation") is None
+    assert importlib.util.find_spec("app.payments.reconcile_dual") is None
 
 
-def test_the_archive_refuses_an_outcome_without_a_prepared_intent(tmp_path) -> None:
-    """Fail-closed in die richtige Richtung: kein Intent, kein Eintrag.
+def test_no_production_module_names_the_old_money_journal_module() -> None:
+    """Kein Import, auch kein verzoegerter, auf das verschwundene Archivmodul.
 
-    Ohne diese Regel waere ``append_ln_outcome`` durch die Hintertuer doch ein
-    Eroeffnungspfad — ein Aufrufer koennte mit einer frei gewaehlten
-    ``intent_id`` eine neue Zeile in das Geldjournal legen.
+    Der gefaehrliche Rest waere ein Funktionsrumpf-Import (das Muster, mit dem
+    ``reconcile_dual`` den Paketzyklus umging). Ein Importgraph auf Modulebene
+    sieht den nicht — ``ast.walk`` sieht ihn, egal in welcher Tiefe er steht.
+    Prosa-Erwaehnungen in Docstrings sind ausdruecklich erlaubt: sie erklaeren,
+    warum etwas weg ist.
     """
-    path = tmp_path / "v2.jsonl"
-    assert (
-        ops_ledger.append_ln_outcome(
-            "pay_invoice", "executed", plan={"amount_sat": 1}, intent_id="erfunden", path=path
-        )
-        is False
-    )
-    assert not path.exists() or path.read_text(encoding="utf-8").strip() == ""
+    gone = {"app.lightning.ops_ledger", "app.lightning.reconciliation"}
+    offenders: list[str] = []
+    for path in sorted(Path("app").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in gone:
+                offenders.append(f"{path}:{node.lineno} from {node.module}")
+            elif isinstance(node, ast.Import):
+                offenders += [
+                    f"{path}:{node.lineno} import {a.name}" for a in node.names if a.name in gone
+                ]
+    assert not offenders, offenders
 
 
 # --------------------------------------------------------------------------- #

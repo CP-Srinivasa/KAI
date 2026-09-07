@@ -91,17 +91,24 @@ fi
 # kai-forecaster-resolve.timer`. Beide sind read-only gegen den Node-losen
 # Binance-Daily-Pfad und schreiben nur artifacts/research/forecaster_panel/.
 
-# NOTE 2026-08-06: kai-ln-reconcile.timer ist ABSICHTLICH nicht in
-# ENABLE_ON_INSTALL. Der outcome-only Abgleich darf erst nach versiegelter
-# Shadow-Prae-Registrierung und explizitem Deploy-Smoke aktiviert werden. Er
-# benutzt nur das Read-Credential und sendet/erstellt niemals eine Zahlung.
+# NOTE 2026-08-06 (aktualisiert 2026-09-07): kai-ln-reconcile.timer ist
+# ABSICHTLICH nicht in ENABLE_ON_INSTALL. Der outcome-only Abgleich durfte erst
+# nach versiegelter Shadow-Prae-Registrierung und explizitem Deploy-Smoke
+# aktiviert werden; er laeuft seit 2026-08-08. Seit ADR 0018 §12 (PR 2) fuehrt
+# er nur noch den Payment Control Plane (`reconcile_payments()`), die v2-Haelfte
+# ist entfallen. Er sendet/erstellt weiterhin niemals eine Zahlung. Der Timer
+# ist die Lebend-Wache des Geldpfads: sein Ausbleiben faellt ueber
+# `check_payment_reconciliation` (last_run_utc, 45 min, P0) auf.
 
-# NOTE 2026-08-08: kai-ln-reconcile-verdict.timer ist ABSICHTLICH nicht in
-# ENABLE_ON_INSTALL (Lehre #626/#627). Er zieht stuendlich das Verdikt der
-# versiegelten Prae-Reg 0879a65c5fd01f65, schreibt NUR bei Verdikt-Wechsel nach
-# artifacts/research/ln_reconciliation_verdict.jsonl und alarmiert NUR bei FAIL.
-# Rein lesend gegenueber Geld- und Truth-Pfad; scharf via
-# `systemctl enable --now kai-ln-reconcile-verdict.timer`.
+# NOTE 2026-09-07: kai-ln-reconcile-verdict.timer ist mit ADR 0018 §12 (PR 2)
+# ENTFALLEN. Die Prae-Reg 0879a65c5fd01f65 traegt seit 2026-08-27 das Verdikt
+# PASS bei geschlossenem Fenster (2026-08-15); ein stuendlicher Evaluator haette
+# ab da nur noch dasselbe Archiv neu gelesen. Das Verdikt selbst bleibt in
+# artifacts/research/ln_reconciliation_verdict.jsonl liegen und wird weiter von
+# app/research/prereg_reconciliation.py gelesen. Vor dem Deploy dieses Release
+# am Geraet: `sudo systemctl disable --now kai-ln-reconcile-verdict.timer` und
+# die beiden Unit-Dateien aus /etc/systemd/system entfernen —
+# pi_apply_systemd_units.sh meldet verwaiste Units, entfernt sie aber NIE.
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
 # ABSENT from ENABLE_ON_INSTALL below — installed (daemon-reload aware) but
