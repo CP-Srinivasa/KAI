@@ -285,26 +285,74 @@ def test_absicht_und_zustand_bleiben_getrennte_felder() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_der_kopf_sagt_dass_die_transitive_aufloesung_eingefroren_wird() -> None:
-    """Eine Eigenschaft, die niemand kennt, ist eine Falle.
+def _extras_sha(specs: str) -> str:
+    """Die Hash-Zeile des Builders AUSFUEHREN, nicht nachbauen.
 
-    `<specs8>` hängt an den deklarierten Specs. Derselbe Aufruf eine Woche
-    später trifft denselben Pfad und bekommt den alten Baum zurück — obwohl
-    eine frische Auflösung heute andere transitive Versionen brächte. Das ist
-    Absicht (der erste Bau gewinnt), aber nur dann harmlos, wenn es dasteht.
+    Eine Nachbildung prüfte die Nachbildung. Deshalb wird die Zeile aus dem
+    Skript geschnitten und mit gesetztem ``EXTRA_SPECS`` ausgeführt — dasselbe
+    ``printf``, dasselbe ``sort``, dasselbe ``sha256sum``.
+    """
+    assert _BASH is not None
+    # Die Zuweisung ist mehrzeilig (printf mit echtem Umbruch): vom Beginn bis
+    # zur schliessenden Klammer lesen, statt eine einzelne Zeile zu greifen.
+    zeilen = _text().splitlines()
+    start = next(i for i, z in enumerate(zeilen) if 'EXTRAS_SHA="$(printf' in z)
+    ende = next(i for i in range(start, len(zeilen)) if zeilen[i].rstrip().endswith(')"'))
+    fragment = "\n".join(zeilen[start : ende + 1]).strip()
+    assert fragment.startswith("EXTRAS_SHA="), fragment
+
+    skript = f'EXTRA_SPECS="{specs}"\n{fragment}\nprintf %s "$EXTRAS_SHA"'
+    fertig = subprocess.run(  # noqa: S603
+        [_BASH, "-c", skript],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert fertig.returncode == 0, fertig.stderr
+    return fertig.stdout.strip()
+
+
+def test_gleiche_specs_ergeben_denselben_diskriminator() -> None:
+    """Sonst wäre der Pfad nicht reproduzierbar — zwei Bauten desselben Standes
+    landeten unter verschiedenen Namen."""
+    a = _extras_sha("litellm[proxy]==1.99.0")
+    b = _extras_sha("litellm[proxy]==1.99.0")
+
+    assert a == b
+    assert len(a) == 64 and all(c in "0123456789abcdef" for c in a)
+
+
+def test_die_reihenfolge_der_specs_aendert_den_diskriminator_nicht() -> None:
+    """``sort`` steht genau dafür in der Zeile: die Kommandozeile darf die
+    Identität des Release nicht bestimmen."""
+    assert _extras_sha("aaa==1 bbb==2") == _extras_sha("bbb==2 aaa==1")
+
+
+def test_eine_andere_version_ergibt_einen_anderen_diskriminator() -> None:
+    """Der eigentliche Punkt, am Verhalten gemessen statt am Wortlaut.
+
+    Gehashte NAMEN würden ``litellm==1.99.0`` und ``litellm==2.0.0``
+    gleichsetzen — beide hießen `litellm`, beide bekämen denselben Pfad, und
+    der zweite Bau bekäme still den ersten zurück. Deshalb hängt der
+    Diskriminator an den aufgelösten Specs.
+    """
+    assert _extras_sha("litellm[proxy]==1.99.0") != _extras_sha("litellm[proxy]==2.0.0")
+    assert _extras_sha("litellm[proxy]==1.99.0") != _extras_sha("litellm==1.99.0")
+
+
+def test_der_kopf_erklaert_die_eigenschaft() -> None:
+    """Die Eigenschaft ist oben am Verhalten belegt — hier steht nur, dass sie
+    überhaupt erklärt wird.
+
+    Bewusst schwach formuliert: ein Test, der Wortlaut pinnt, wird rot, wenn
+    jemand denselben Sachverhalt besser formuliert, und grün, wenn die Phrase
+    über einem Builder steht, der sich anders verhält. Die zweite Richtung ist
+    die gefährliche, deshalb tragen die Verhaltenstests oben die Zusage und
+    dieser hier nur den Hinweis, dass sie erklärt ist.
     """
     kopf = _text()[: _text().index("set -uo pipefail")]
-    assert "DEKLARIERTEN Specs" in kopf
-    assert "DER ERSTE BAU GEWINNT" in kopf
-    assert "neue Spec" in kopf, "und der Ausweg steht daneben"
-
-
-def test_der_kopf_trennt_absicht_von_zustand() -> None:
-    """Bei einem späteren Rot sagt erst der Vergleich beider Felder, welcher
-    Fall vorliegt: falsch gebaut oder nachträglich verändert."""
-    kopf = _text()[: _text().index("set -uo pipefail")]
     assert "extras_sha256" in kopf and "dependency_manifest_sha256" in kopf
-    assert "Absicht" in kopf and "Zustand" in kopf
+    assert "--extra" in kopf
 
 
 def test_die_lockdatei_ist_als_constraint_zulaessig() -> None:
