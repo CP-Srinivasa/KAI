@@ -19,10 +19,13 @@ Produces CanonicalDocuments compatible with the standard pipeline
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import time
 from collections import Counter
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -59,8 +62,61 @@ TRANSCRIPT_STATUS_NONE_FOUND = "none_found"
 #: voellig andere Handlung als ``none_found`` — die eine heisst warten, die
 #: andere heisst, dass die Videos schlicht keine Untertitel haben.
 TRANSCRIPT_STATUS_ERROR_PREFIX = "error:"
+#: Wir haben selbst aufgehoert zu fragen. Kein Fehler von YouTube, sondern
+#: unsere Entscheidung -- und deshalb ein eigener Name.
+TRANSCRIPT_STATUS_BLOCK_COOLDOWN = "skipped:ip_block_cooldown"
+
+#: Ausnahmetypen, die YouTube vergibt, wenn es die aufrufende IP sperrt.
+_IP_BLOCK_EXC_NAMES = frozenset({"IpBlocked", "RequestBlocked", "YouTubeRequestFailed"})
+
+#: Zustand ueberlebt Neustarts: der Block liegt bei YouTube, nicht im Prozess.
+#: Ein prozesslokaler Merker waere nach jedem Restart wieder auf Anfang -- und
+#: genau der Restart passiert hier mehrmals taeglich.
+_BLOCK_STATE_PATH = Path("artifacts/youtube/ip_block.json")
+_BLOCK_COOLDOWN_S = 6 * 3600.0
+
+
+def _block_state_path() -> Path:
+    return _BLOCK_STATE_PATH
+
+
+def ip_block_active(*, now_s: float | None = None) -> bool:
+    """Laeuft gerade eine selbst verhaengte Sperrpause?"""
+    now = time.time() if now_s is None else now_s
+    try:
+        raw = json.loads(_block_state_path().read_text(encoding="utf-8"))
+        until = float(raw["cooldown_until_s"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return now < until
+
+
+def _note_ip_block(*, now_s: float | None = None) -> None:
+    """Sperrpause setzen bzw. verlaengern."""
+    now = time.time() if now_s is None else now_s
+    path = _block_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.new")
+        tmp.write_text(
+            json.dumps(
+                {
+                    "blocked_at_s": now,
+                    "cooldown_until_s": now + _BLOCK_COOLDOWN_S,
+                    "cooldown_s": _BLOCK_COOLDOWN_S,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError as exc:  # pragma: no cover - Dateisystem-Ausfall
+        logger.warning("youtube.block_state_unwritable", extra={"error": str(exc)})
+
 
 __all__ = [
+    "TRANSCRIPT_STATUS_BLOCK_COOLDOWN",
     "TRANSCRIPT_STATUS_DISABLED",
     "TRANSCRIPT_STATUS_ERROR_PREFIX",
     "TRANSCRIPT_STATUS_NONE_FOUND",
@@ -69,6 +125,7 @@ __all__ = [
     "fetch_transcript",
     "fetch_transcript_with_reason",
     "fetch_youtube_channel",
+    "ip_block_active",
 ]
 
 
@@ -375,6 +432,13 @@ def fetch_transcript_with_reason(video_id: str) -> tuple[str | None, str]:
     identisch aus, und der einzige Weg, sie zu unterscheiden, war eine neue
     Anfrage an YouTube: genau die Handlung, die den IP-Block erzeugt hat.
     """
+    # Kurzschluss VOR dem Netzaufruf. Ohne ihn fragt die Pipeline pro Zyklus
+    # jedes Video erneut an, und jede dieser Anfragen erneuert genau den Block,
+    # auf dessen Ablauf wir warten. Gemessen am 2026-09-04: 0/26 Transkripte,
+    # davon 21x IpBlocked -- der Ausfall hielt sich seit Tagen selbst am Leben.
+    if ip_block_active():
+        return None, TRANSCRIPT_STATUS_BLOCK_COOLDOWN
+
     try:
         # youtube-transcript-api 1.x: `list_transcripts` (Klassenmethode) ist weg,
         # es gibt nur noch die Instanzmethode `.list()`. Der alte Aufruf warf einen
@@ -415,6 +479,10 @@ def fetch_transcript_with_reason(video_id: str) -> tuple[str | None, str]:
         # Der Typ gehoert IN den Status, nicht nur ins Log: ein Log ist weg,
         # sobald niemand hinschaut — der Status steht am Dokument.
         status = f"{TRANSCRIPT_STATUS_ERROR_PREFIX}{type(exc).__name__}"
+        if type(exc).__name__ in _IP_BLOCK_EXC_NAMES:
+            # Der Kommentar oben sagt seit jeher "die eine heisst warten". Ab
+            # hier warten wir auch, statt es nur zu protokollieren.
+            _note_ip_block()
         logger.warning(
             "youtube.transcript_error",
             extra={"video_id": video_id, "error": str(exc), "status": status},

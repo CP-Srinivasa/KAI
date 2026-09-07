@@ -258,6 +258,11 @@ TRANSCRIPT_REASON_TAXONOMY: dict[str, str] = {
     "ok": "SUCCESS",
     "found": "SUCCESS",
     "error:IpBlocked": "IP_BLOCKED",
+    # Nicht dasselbe wie IP_BLOCKED: dort hat YouTube abgelehnt, hier haben WIR
+    # gar nicht erst gefragt. Ohne eigene Klasse liefe die selbst verhaengte
+    # Sperrpause als UNKNOWN_ERROR mit — und der Bericht behauptete einen
+    # Fehler, wo eine Entscheidung steht.
+    "skipped:ip_block_cooldown": "IP_BLOCK_COOLDOWN",
     "transcripts_disabled": "TRANSCRIPTS_DISABLED",
     "error:VideoUnplayable": "VIDEO_UNPLAYABLE",
     "none_found": "NO_TRANSCRIPT_FOUND",
