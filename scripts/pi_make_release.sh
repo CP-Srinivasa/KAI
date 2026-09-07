@@ -24,7 +24,18 @@
 # Usage:
 #   bash scripts/pi_make_release.sh [--repo <checkout>] [--releases <dir>]
 #                                  [--state <dir>] [--rebuild]
-#                                  [--allow-missing-spa]
+#                                  [--allow-missing-spa] [--extra <name> ...]
+#
+# `--extra` installiert eine optionale Abhaengigkeitsgruppe aus `pyproject.toml`
+# ZUSAETZLICH zum Lockfile, vor `pip check` und vor dem Versiegeln. Sie wird in
+# `release.json` unter `extras` ausgewiesen, und der Release landet unter
+# `<SHA>+<extra>` -- ein Release mit Extra steht NEBEN einem ohne.
+#
+# Warum das noetig ist: `release_tree_sha256` schliesst den venv ausdruecklich
+# aus, `requirements_lock_sha256` kennt nur das Lockfile. Ohne eigenen Pfad und
+# eigenes Feld waeren zwei Releases mit demselben Code und demselben Lock, aber
+# verschiedenem venv, an genau den Feldern nicht zu unterscheiden, die zur
+# Unterscheidung da sind -- und der Builder gaebe den vorhandenen zurueck.
 #
 # `--rebuild` nur fuer den Fall RELEASE_TREE_MISMATCH: derselbe `repo_sha`,
 # aber ein anderer Baum (praktisch immer ein neu gebautes `web/dist`). Ohne
@@ -46,6 +57,7 @@ RELEASES=""
 STATE=""
 REBUILD=0
 ALLOW_MISSING_SPA=0
+EXTRAS=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo) REPO="$2"; shift 2 ;;
@@ -53,9 +65,17 @@ while [ $# -gt 0 ]; do
         --state) STATE="$2"; shift 2 ;;
         --rebuild) REBUILD=1; shift ;;
         --allow-missing-spa) ALLOW_MISSING_SPA=1; shift ;;
+        --extra) EXTRAS="$EXTRAS $2"; shift 2 ;;
         *) echo "unbekanntes Argument: $1" >&2; exit 1 ;;
     esac
 done
+# Sortiert und dublettenfrei: die Reihenfolge auf der Kommandozeile darf die
+# Identitaet des Releases nicht beeinflussen.
+if [ -n "$EXTRAS" ]; then
+    EXTRAS="$(printf '%s
+' $EXTRAS | LC_ALL=C sort -u | tr '
+' ' ' | sed 's/ *$//')"
+fi
 
 REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "kein Checkout: $REPO" >&2; exit 1; }
 [ -n "$RELEASES" ] || RELEASES="$(dirname "$REPO")/releases"
@@ -66,8 +86,63 @@ REPO_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || {
 LOCK="$REPO/requirements.lock"
 [ -f "$LOCK" ] || { echo "requirements.lock fehlt" >&2; exit 1; }
 
-TARGET="$RELEASES/$REPO_SHA"
-STAGE="$RELEASES/.staging-$REPO_SHA.$$"
+# Ein Extra, das es nicht gibt, ist ein Tippfehler -- und einer, der still zu
+# einem Release ohne das erwartete Paket fuehrt, faellt erst auf, wenn die Unit
+# nicht startet. Deshalb vorher pruefen, gegen pyproject.toml als einzige
+# Quelle: die Versionspins stehen dort, nicht hier.
+EXTRA_SPECS=""
+EXTRAS_SHA=""
+DEPENDENCY_PROFILE="core"
+if [ -n "$EXTRAS" ]; then
+    EXTRA_SPECS="$(python3 -c '
+import sys, tomllib
+
+with open(sys.argv[1], "rb") as fh:
+    verfuegbar = tomllib.load(fh)["project"].get("optional-dependencies", {})
+specs = []
+for name in sys.argv[2:]:
+    if name not in verfuegbar:
+        print(f"UNBEKANNTES_EXTRA {name} (verfuegbar: {sorted(verfuegbar)})", file=sys.stderr)
+        raise SystemExit(1)
+    specs.extend(verfuegbar[name])
+print("
+".join(specs))
+' "$REPO/pyproject.toml" $EXTRAS)" || { echo "Extra-Aufloesung gescheitert" >&2; exit 1; }
+    echo "Extras: $EXTRAS" >&2
+    printf '  %s
+' $EXTRA_SPECS >&2
+    # Gehasht wird, was TATSAECHLICH installiert wird, nicht wie es heisst.
+    # `litellm` mit ==1.99.0 und `litellm` mit ==2.0.0 tragen denselben Namen
+    # und muessen trotzdem verschiedene Releases sein -- dieselbe Logik wie bei
+    # `<SHA>-<tree8>`: nicht "was war gemeint", sondern "was ist drin".
+    EXTRAS_SHA="$(printf '%s
+' $EXTRA_SPECS | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+fi
+
+# Ein NAME fuer die Abhaengigkeitslage, nicht nur eine Liste. Wer spaeter
+# `verify_release` gegen den venv haelt, soll sagen koennen "dieses Release ist
+# ein core+litellm-Env" -- statt das aus einer Extras-Liste abzuleiten und dabei
+# eine eigene Meinung darueber zu bilden, was ein Profil ausmacht.
+if [ -n "$EXTRAS" ]; then
+    DEPENDENCY_PROFILE="core+$(printf '%s' "$EXTRAS" | tr ' ' '+')"
+fi
+
+# Ein Release MIT Extras steht NEBEN einem ohne, nicht darueber. Der Suffix ist
+# kein Schmuck: `release_tree_sha256` schliesst den venv ausdruecklich aus, und
+# `requirements_lock_sha256` kennt nur das Lockfile. Zwei Releases mit demselben
+# Code und demselben Lock, aber verschiedenem venv, waeren an beiden Feldern
+# nicht zu unterscheiden -- und die Idempotenz-Pruefung unten haette den zweiten
+# Bau als "baum-identisch" abgewiesen und den ERSTEN zurueckgegeben. Still, ohne
+# RELEASE_TREE_MISMATCH, ohne Hinweis auf --rebuild.
+RELEASE_ID="$REPO_SHA"
+if [ -n "$EXTRAS" ]; then
+    # Profil UND Hash: das Profil macht den Pfad lesbar, der Hash macht ihn
+    # eindeutig. Ein Pfad, den man lesen kann, wird beim Aufraeumen seltener
+    # verwechselt -- ein Pfad, der eindeutig ist, wird nie wiederverwendet.
+    RELEASE_ID="$REPO_SHA+${DEPENDENCY_PROFILE#core+}-${EXTRAS_SHA:0:8}"
+fi
+TARGET="$RELEASES/$RELEASE_ID"
+STAGE="$RELEASES/.staging-$RELEASE_ID.$$"
 
 # Der Code-Teil des Stagings, als Funktion -- denn die Idempotenz-Pruefung
 # unten braucht denselben Baum ein zweites Mal, nur ohne venv. Zwei Kopien
@@ -172,10 +247,35 @@ except Exception:
 ")" || OLD_TREE=""
     rm -rf "$PROBE"; trap - EXIT
 
-    if [ "$NEW_TREE" = "$OLD_TREE" ]; then
+    # Der Baum allein genuegt NICHT. `release_tree_sha256` schliesst den venv
+    # aus (siehe release_identity.py), also sind zwei Releases mit gleichem Code
+    # und unterschiedlichen Extras baum-identisch -- und der Builder gaebe den
+    # falschen zurueck. Beide Merkmale muessen stimmen.
+    # Verglichen wird der Hash ueber die aufgeloesten Specs, nicht die Namen:
+    # sonst gaelten zwei Releases mit demselben Extra-Namen und verschiedenen
+    # Versionen als identisch.
+    OLD_EXTRAS="$(python3 -c '
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        print(json.load(fh).get("extras_sha256", ""))
+except Exception:
+    sys.exit(1)
+' "$TARGET/release.json")" || OLD_EXTRAS=""
+
+    if [ "$NEW_TREE" = "$OLD_TREE" ] && [ "$OLD_EXTRAS" = "$EXTRAS_SHA" ]; then
         echo "Release existiert bereits und ist baum-identisch: $TARGET" >&2
         echo "$TARGET"
         exit 0
+    fi
+    if [ "$NEW_TREE" = "$OLD_TREE" ]; then
+        echo "RELEASE_EXTRAS_MISMATCH: $TARGET traegt andere Extras." >&2
+        echo "    vorhanden: ${OLD_EXTRAS:-<keine>}" >&2
+        echo "    verlangt:  ${EXTRAS_SHA:-<keine>} (${EXTRAS:-<keine>})" >&2
+        echo "  Der Code-Baum ist identisch, der venv nicht. Ein stilles" >&2
+        echo "  Wiederverwenden waere eine Luege ueber die installierten Pakete." >&2
+        exit 1
     fi
 
     echo "RELEASE_TREE_MISMATCH: $TARGET traegt einen ANDEREN Baum als der" >&2
@@ -225,6 +325,39 @@ if ! "$PY" -m pip install -r "$LOCK" >/tmp/kai-release-pip.$$.log 2>&1; then
     rm -rf "$STAGE"; exit 1
 fi
 
+if [ -n "$EXTRA_SPECS" ]; then
+    # `-c "$LOCK"` ist das Tragende an dieser Zeile, nicht die Reihenfolge.
+    #
+    # Ohne Constraint gibt es den Konflikt, den `pip check` finden soll, am Ende
+    # gar nicht mehr: pip loest ihn auf, indem es hochzieht. Erst wird httpx auf
+    # die gepinnte Version installiert, dann verlangt das Extra eine neuere, pip
+    # hebt sie an -- und `pip check` ist gruen, weil der venv in sich stimmig
+    # ist. Er entspricht nur dem Lockfile nicht mehr.
+    #
+    # Herausgekommen waere ein versiegeltes Release, das `requirements_lock_sha256`
+    # fuer ein Lockfile traegt, das seinen venv nicht mehr beschreibt. Und es
+    # faellt auch spaeter nicht auf: `dependency_manifest_sha256` wird NACH
+    # dieser Installation gebildet, stimmt also mit sich selbst ueberein.
+    # `verify_release` saehe "unveraendert seit dem Bau", nicht "widerspricht
+    # dem Lock" -- zwei Felder mit verschiedenen Wahrheiten, die niemand
+    # gegenueberstellt.
+    #
+    # Mit Constraint kann das Extra keine gepinnte Version anheben: entweder es
+    # passt ins Lockfile, oder die Installation scheitert. Der Abbruch kommt
+    # dann aus diesem Schritt, statt aus einer Pruefung, die ihn strukturell
+    # nicht mehr finden kann.
+    #
+    # Ein Rest bleibt: transitive Pakete des Extras, die im Lock gar nicht
+    # vorkommen, sind weiterhin ungepinnt. Sie stehen ueber
+    # `dependency_manifest_sha256` in `release.json` und sind damit nachlesbar --
+    # die billige Idempotenz-Probe sieht sie nicht, weil sie bewusst nur den
+    # Code-Baum herstellt.
+    if ! "$PY" -m pip install -c "$LOCK" $EXTRA_SPECS             >>/tmp/kai-release-pip.$$.log 2>&1; then
+        echo "Extra-Installation gescheitert - siehe /tmp/kai-release-pip.$$.log" >&2
+        rm -rf "$STAGE"; exit 1
+    fi
+fi
+
 echo "== 4/6 pip check ==" >&2
 if ! "$PY" -m pip check >/dev/null 2>&1; then
     echo "pip check FAILED — kein Release" >&2
@@ -234,6 +367,17 @@ fi
 
 echo "== 5/6 release.json ==" >&2
 LOCK_SHA="$(sha256sum "$LOCK" | cut -d' ' -f1)"
+# Ein Feld, das den Unterschied BENENNT, statt einer Pruefsumme, die ihn nur
+# bemerkt. `dependency_manifest_sha256` traegt die Extras zwar mit (es kommt aus
+# `pip freeze`), sagt aber nicht, WORAN es liegt.
+EXTRAS_JSON=""
+EXTRA_SPECS_JSON=""
+if [ -n "$EXTRAS" ]; then
+    EXTRAS_JSON="$(printf '%s
+' $EXTRAS | sed 's/.*/"&"/' | paste -sd, -)"
+    EXTRA_SPECS_JSON="$(printf '%s
+' $EXTRA_SPECS | LC_ALL=C sort | sed 's/.*/"&"/' | paste -sd, -)"
+fi
 PY_VERSION="$("$PY" -c 'import platform; print(platform.python_version())')"
 DEP_MANIFEST="$("$PY" -m pip freeze | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
@@ -258,6 +402,10 @@ cat > "$STAGE/release.json" <<EOF
   "created_at_utc": "$NOW",
   "venv_python_path": "$TARGET/.venv/bin/python3",
   "dependency_manifest_sha256": "$DEP_MANIFEST",
+  "dependency_profile": "$DEPENDENCY_PROFILE",
+  "extras": [$EXTRAS_JSON],
+  "extra_specs": [$EXTRA_SPECS_JSON],
+  "extras_sha256": "$EXTRAS_SHA",
   "builder_version": "$BUILDER_VERSION"
 }
 EOF
