@@ -106,9 +106,46 @@ json_field() {
 
 # Enthaelt das Archiv wirklich, was es enthalten soll? Ein tar, das leise nichts
 # eingepackt hat, ist die Kernvariante des falschen Gruens.
+#
+# WARUM HIER KEIN `grep -q` STEHT (gemessen 2026-09-07 auf kai-pi5)
+#
+# `tar tzf ... | grep -qE ...` liest das Archiv NICHT zu Ende: `grep -q` steigt
+# beim ersten Treffer aus und schliesst die Pipe, `tar` bekommt SIGPIPE und
+# endet mit 141. Unter `set -o pipefail` -- das dieses Skript in Zeile 49 setzt
+# -- ist der Status der Pipeline damit der von `tar`, also ein Fehlschlag.
+#
+# Ergebnis: ein GEFUNDENER Eintrag las sich als fehlender. Der erste echte Lauf
+# des Vertrags meldete
+#
+#     BACKUP_FAIL: ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (release.json)
+#
+# obwohl das Archiv `./release.json` und 24.817 `.venv`-Eintraege enthielt.
+# Belegt in der Shell:
+#
+#     ( set -euo pipefail; tar tzf $A | grep -qE '(^|/)release\.json$' ) -> 141
+#     ( set -eu;           tar tzf $A | grep -qE '(^|/)release\.json$' ) ->   0
+#
+# Je frueher der Treffer im Archiv liegt, desto sicherer schlaegt es fehl --
+# eine fail-closed-Pruefung, die ausgerechnet den Erfolgsfall bestraft. Seit
+# dem 2026-08-31 entstand deshalb kein System-Backup mehr.
+#
+# Die Liste wird einmal je Archiv erzeugt und dann mehrfach durchsucht: vier
+# Pruefungen brauchen sonst vier vollstaendige Entpackvorgaenge von 137 MB.
+# Einmal je Lauf, NICHT lazy in einer Kommandosubstitution: `$( )` laeuft in
+# einer Subshell, deren EXIT-Trap sofort feuert -- das Verzeichnis waere weg,
+# bevor `grep` es liest. Genau daran ist die erste Fassung gescheitert.
+_LISTING_DIR="$(mktemp -d)"
+trap 'rm -rf "$_LISTING_DIR"' EXIT
+
 archive_has() {
-    local archive=$1 pattern=$2
-    tar tzf "$archive" 2>/dev/null | grep -qE "$pattern"
+    local archive=$1 pattern=$2 cache treffer
+    cache="$_LISTING_DIR/$(basename "$archive").list"
+    if [ ! -s "$cache" ]; then
+        tar tzf "$archive" > "$cache" 2>/dev/null || return 1
+    fi
+    # `grep -c` liest bis zum Ende -- kein SIGPIPE, kein falsches Negativ.
+    treffer="$(grep -cE "$pattern" "$cache" || true)"
+    [ "${treffer:-0}" -gt 0 ]
 }
 
 # Guard: target must be the real mounted USB, not a fallback dir on the SD.

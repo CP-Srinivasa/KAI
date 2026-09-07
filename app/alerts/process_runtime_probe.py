@@ -201,7 +201,7 @@ def release_provenance_problems(state_root: Path) -> list[str]:
         verify_release,
     )
 
-    current = resolve_current(state_root.parent / "current")
+    current = resolve_current(_current_link(state_root))
     if current is None:
         return ["RELEASE_NOT_ACTIVE"]
     problems = list(verify_release(current))
@@ -242,6 +242,35 @@ def release_governs(state_root: Path) -> bool:
     return not release_provenance_problems(state_root)
 
 
+def _current_link(state_root: Path) -> Path:
+    """Der ``current``-Symlink neben dem Zustandsbaum -- AUFGELOEST abgeleitet.
+
+    ``state_root.parent`` ohne ``resolve()`` ist die Falle: bei einem relativen
+    Pfad -- und genau so ruft ``app/alerts/health_check.py`` auf, naemlich mit
+    dem CWD-relativen Repo-Wurzelpfad -- ist ``Path(".").parent`` wieder ``.``.
+    Gesucht wurde dann ``./current`` IM Checkout statt ``../current`` daneben,
+    der Symlink blieb unauffindbar, und ``release_governs`` meldete ``False``,
+    waehrend das Release nachweislich regierte.
+
+    Die Folge war kein stiller Fehler, sondern das Gegenteil: die stillgelegte
+    Checkout-Achse sprang wieder an und meldete alle 15 Minuten
+    ``runtime-provenance: HOLD`` samt DEPENDENCY-DRIFT auf einen
+    ``dependency_marker``, den im Release-Modell niemand mehr schreibt -- ein
+    CRITICAL, das kein Operator je haette schliessen koennen. Gemessen am
+    2026-09-07 auf kai-pi5, waehrend alle fuenf Prozessmarker korrekt auf das
+    aktive Release zeigten.
+
+    ``app/core/runtime_identity.py`` macht es seit jeher richtig; deshalb war
+    ``/health`` gruen, waehrend die Sonde HOLD rief. Zwei Ableitungen desselben
+    Pfades, eine davon falsch -- hier steht sie jetzt einmal.
+    """
+    try:
+        aufgeloest = state_root.resolve()
+    except OSError:
+        aufgeloest = state_root.absolute()
+    return aufgeloest.parent / "current"
+
+
 def _active_release(state_root: Path) -> tuple[str, str]:
     """``(aufgeloester Release-Pfad, release_tree_sha256)`` — leer, wenn keiner.
 
@@ -255,7 +284,7 @@ def _active_release(state_root: Path) -> tuple[str, str]:
         verify_release,
     )
 
-    current = resolve_current(state_root.parent / "current")
+    current = resolve_current(_current_link(state_root))
     if current is None:
         return "", ""
     if verify_release(current):
