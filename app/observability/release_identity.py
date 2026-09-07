@@ -61,6 +61,21 @@ SEALED_FILES: Final = (
 #: das Lockfile plus ``pip check`` beim Bau belegt, nicht byteweise gehasht —
 #: 549 MB bei jedem Health-Lauf zu lesen waere teuer und beweist nichts, was das
 #: Lockfile nicht schon sagt.
+#:
+#: DIESE ANNAHME HAT EINE VORAUSSETZUNG, und sie steht hier, weil sie sonst
+#: niemand neben ihr liest: sie gilt nur, **solange ausschliesslich aus dem
+#: Lockfile installiert wird**. Sobald etwas daneben in den venv kommt, sagt das
+#: Lockfile eben nicht mehr, was drin ist — und zwei Releases mit demselben
+#: Code, demselben ``requirements_lock_sha256`` und demselben
+#: ``release_tree_sha256`` haetten verschiedene Inhalte, ohne dass ein einziges
+#: Identitaetsfeld das zeigt.
+#:
+#: Wer optionale Pakete zulaesst, muss die Identitaet mit erweitern. Genau das
+#: tut ``pi_make_release.sh --extra``: es weist die aufgeloesten Pakete in
+#: ``release.json`` unter ``extra_specs`` aus, haengt ihren Hash an den
+#: Release-Pfad und zieht ihn in die Idempotenz-Pruefung. Ohne diese drei
+#: Schritte waere die Faehigkeit, Extras zu installieren, ein Angriff auf das
+#: Modell und nicht seine Erweiterung.
 EXCLUDED_NAMES: Final = frozenset(
     {".venv", "__pycache__", ".env", "artifacts", "data", "logs", ".git", "node_modules"}
 )
