@@ -36,6 +36,7 @@ from app.alerts.youtube_transcript_coverage import (
 CONTRACT_CLASSES = {
     "SUCCESS",
     "IP_BLOCKED",
+    "IP_BLOCK_COOLDOWN",
     "TRANSCRIPTS_DISABLED",
     "VIDEO_UNPLAYABLE",
     "NO_TRANSCRIPT_FOUND",
@@ -51,6 +52,7 @@ CONTRACT_CLASSES = {
     [
         # The four statuses actually present on the Pi right now.
         ("error:IpBlocked", "IP_BLOCKED"),
+        ("skipped:ip_block_cooldown", "IP_BLOCK_COOLDOWN"),
         ("transcripts_disabled", "TRANSCRIPTS_DISABLED"),
         ("error:VideoUnplayable", "VIDEO_UNPLAYABLE"),
         ("none_found", "NO_TRANSCRIPT_FOUND"),
