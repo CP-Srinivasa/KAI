@@ -1,0 +1,15 @@
+{
+  "maximum_unbounded_retry": false,
+  "minimum_sample_count": 100,
+  "minimum_schema_valid_rate": 0.99,
+  "minimum_success_rate": 0.99,
+  "require_auth_no_retry_proven": true,
+  "require_execution_gate_unchanged": true,
+  "require_gateway_down_fallback_proven": true,
+  "require_identity_observability": true,
+  "require_off_mode_proven": true,
+  "require_quality_evidence": true,
+  "require_rollback_proven": true,
+  "require_trading_gate_unchanged": true,
+  "route_overrides": {}
+}
