@@ -639,3 +639,29 @@ async def test_a_service_without_a_vault_keeps_the_old_behaviour(tmp_path: Path)
     view = await service.create_intent(a_request(), "idem-restart-000008")
     assert view.status is PaymentStatus.AUTHORIZED
     assert not (tmp_path / INTENT_VAULT_FILENAME).exists()
+
+
+async def test_the_reserve_floor_sees_the_rail_balance(tmp_path: Path) -> None:
+    """Der Boden misst am Rest: Bilanz aus dem Health-Signal des Rails."""
+    rail = SimulationRail(now=NOW, balance_sat=2_000)
+    # 2.000 - 1.000 (Betrag) - Fee-Limit < 1.500 → DENY durch den Boden.
+    denied = a_service(tmp_path, rail=rail, reserve_floor_sat=1_500)
+    view = await denied.create_intent(a_request(), "idem-0123456789abcdef")
+    assert view.status is PaymentStatus.DENIED
+    assert view.decision is not None
+    assert view.decision.rule_ids == ("reserve_floor",)
+
+    # Derselbe Boden, genug Bilanz → der Boden steht nicht im Weg.
+    allowed = a_service(
+        tmp_path / "b", rail=SimulationRail(now=NOW, balance_sat=2_000_000), reserve_floor_sat=1_500
+    )
+    view = await allowed.create_intent(a_request(), "idem-0123456789abcdef")
+    assert view.status is not PaymentStatus.DENIED
+
+
+async def test_an_armed_floor_without_a_balance_denies(tmp_path: Path) -> None:
+    service = a_service(tmp_path, reserve_floor_sat=1)
+    view = await service.create_intent(a_request(), "idem-0123456789abcdef")
+    assert view.status is PaymentStatus.DENIED
+    assert view.decision is not None
+    assert view.decision.rule_ids == ("reserve_floor",)

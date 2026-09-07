@@ -171,3 +171,10 @@ async def test_a_simulated_invoice_is_payable_on_this_rail() -> None:
     assert invoice.payment_request != ""
     decoded = await rail.decode(invoice.payment_request)
     assert decoded.rail == rail.name
+
+
+async def test_simulation_balance_is_unknown_unless_configured() -> None:
+    """SIMULATION hat keine Kanalbilanz — ``None`` ist die ehrliche Antwort."""
+    assert (await SimulationRail(now=NOW).health()).available_balance_sat is None
+    rail = SimulationRail(now=NOW, balance_sat=50_000)
+    assert (await rail.health()).available_balance_sat == 50_000

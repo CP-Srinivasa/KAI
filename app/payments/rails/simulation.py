@@ -62,9 +62,11 @@ class SimulationRail:
 
     name = "lightning"
 
-    def __init__(self, *, now: datetime | None = None) -> None:
+    def __init__(self, *, now: datetime | None = None, balance_sat: int | None = None) -> None:
         #: Feste Zeit fuer reproduzierbare Tests; ``None`` = echte Uhr.
         self._fixed_now = now
+        #: Simulierter Bestand; ``None`` = keine Kanalbilanz (ehrlich, nicht Null).
+        self._balance_sat = balance_sat
         self._inflight: set[str] = set()
         self._payments: list[RailPayment] = []
         self._invoices: dict[str, Invoice] = {}
@@ -111,6 +113,7 @@ class SimulationRail:
             wallet_locked=False,
             observed_at=self._now(),
             reason="simulation",
+            available_balance_sat=self._balance_sat,
         )
 
     async def decode(self, destination: str) -> DecodedDestination:

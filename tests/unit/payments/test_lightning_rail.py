@@ -83,6 +83,20 @@ class FakeClient:
 
         return Info()
 
+    async def channel_balance(self) -> dict[str, Any]:
+        self.calls.append(("channel_balance", {}))
+        value = self.behaviour.get("channel_balance")
+        if isinstance(value, Exception):
+            raise value
+        return dict(value or {"local_balance": {"sat": "0"}})
+
+    async def wallet_balance(self) -> dict[str, Any]:
+        self.calls.append(("wallet_balance", {}))
+        value = self.behaviour.get("wallet_balance")
+        if isinstance(value, Exception):
+            raise value
+        return dict(value or {"total_balance": "0"})
+
     async def decode_pay_req(self, *, payment_request: str) -> dict[str, Any]:
         self.calls.append(("decode_pay_req", {"payment_request": payment_request}))
         decoded = self.behaviour.get("decoded")
@@ -566,3 +580,39 @@ async def test_the_rail_never_exposes_a_macaroon() -> None:
     result = await rail.pay(an_intent(), an_attempt())
     assert "deadbeefcafe" not in result.model_dump_json()
     assert "deadbeefcafe" not in repr(rail.capabilities())
+
+
+# --------------------------------------------------------------------------- #
+# Bilanz im Health-Signal (Reserve-Boden, Rueckbau PR 1)
+#
+# Die alte Regel bekam ihre Zahl ueber ``_available_balance_sat()`` (Kanal-Local
+# plus On-Chain-Total). Nach dem Rueckbau setzte niemand
+# ``PolicyContext.available_liquidity_sat`` — ein bewaffneter Boden haette
+# JEDE Zahlung abgelehnt. Die Zahl kommt jetzt aus demselben Health-Aufruf,
+# den der Service ohnehin macht.
+# --------------------------------------------------------------------------- #
+
+
+async def test_health_carries_the_available_balance() -> None:
+    client = FakeClient(
+        channel_balance={"local_balance": {"sat": "1900000", "msat": "1900000000"}},
+        wallet_balance={"total_balance": "25000", "confirmed_balance": "25000"},
+    )
+    health = await a_rail(client).health()
+    assert health.healthy is True
+    assert health.available_balance_sat == 1_925_000
+    assert ("channel_balance", {}) in client.calls
+    assert ("wallet_balance", {}) in client.calls
+
+
+async def test_a_failed_balance_read_is_unknown_not_zero_and_not_unhealthy() -> None:
+    client = FakeClient(channel_balance=RuntimeError("balance timeout"))
+    health = await a_rail(client).health()
+    assert health.healthy is True
+    assert health.available_balance_sat is None
+
+
+async def test_an_unreachable_node_has_no_balance() -> None:
+    health = await a_rail(FakeClient(state=RuntimeError("down"))).health()
+    assert health.reachable is False
+    assert health.available_balance_sat is None

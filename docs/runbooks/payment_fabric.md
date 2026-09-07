@@ -99,27 +99,31 @@ wäre eine erfundene Zahl über fremdes Kapital. `GET /dashboard/api/ln/treasury
 liest `operating_sat` seit dem Rückbau aus genau diesem Wert — die Anzeige und
 das Gate haben damit EINE Quelle.
 
-> ⚠ **Bevor Sie ihn scharf schalten, lesen Sie diesen Absatz zu Ende.** Die
-> Regel ist fail-closed: ist der Boden > 0 und liefert der Rail **keine**
-> Liquiditätszahl, wird die Zahlung ABGELEHNT (`reserve_floor armed … but no
-> liquidity reading`). Das entspricht dem Bestand — dessen
-> `_available_balance_sat()` gab im Fehlerfall 0 zurück, was denselben DENY
-> erzeugte. **Heute setzt kein Produktionspfad `available_liquidity_sat`**
-> (`PaymentService.create_intent` baut den `PolicyContext` ohne diesen Wert).
-> Ein Boden > 0 lehnt deshalb aktuell JEDE Zahlung ab. Das ist die sichere
-> Richtung, aber es ist kein Zustand, in dem man ein LIVE-Fenster startet.
+> ⚠ **Fail-closed.** Ist der Boden > 0 und liefert der Rail **keine**
+> Bilanz, wird die Zahlung ABGELEHNT (`reserve_floor armed … but no liquidity
+> reading`). Das entspricht dem Bestand — dessen `_available_balance_sat()` gab
+> im Fehlerfall 0 zurück, was denselben DENY erzeugte.
+>
+> **Woher die Zahl kommt (seit dem Rückbau-Nachtrag):** `RailHealth.available_balance_sat`
+> — der `LightningRail` liest sie im selben Health-Aufruf, den der Service vor
+> jedem Intent ohnehin macht, aus `/v1/balance/channels` (Kanal-Local) plus
+> `/v1/balance/blockchain` (On-Chain-Total). Das ist exakt die Summe, an der die
+> alte Regel gemessen hat. Ein Node, der seine Bilanz nicht nennt, bleibt
+> gesund, liefert aber `None` — und der Boden lehnt ab, statt mit einer Null zu
+> rechnen. SIMULATION hat keine Bilanz (`SimulationRail(balance_sat=…)` nur im
+> Test); SHADOW am Gerät liest den echten Node.
 >
 > Reihenfolge für die Aktivierung:
 >
 > 1. Boden setzen (`APP_PAYMENT_RESERVE_FLOOR_SAT=1840000`), Server neu starten.
 > 2. `GET /dashboard/api/ln/treasury` → `operating_sat == 1840000` prüfen.
-> 3. Einen Intent im SHADOW anlegen und das Verdikt lesen: erwartet ist
->    `DENY` mit `rule_ids=["reserve_floor"]` und `no liquidity reading`.
-> 4. Erst wenn der Rail eine Liquiditätszahl liefert (offener Punkt, siehe
->    D-CORE-004), ist der Boden eine Grenze statt einer Sperre. Bis dahin gilt:
->    **entweder Boden scharf und PAY faktisch zu — oder Boden 0 und die Grenze
->    liegt allein bei `per_payment_max`/`daily_hard_cap`.** Diese Wahl ist eine
->    Operator-Entscheidung, keine Konfigurationsdetail.
+> 3. Einen Intent im SHADOW anlegen und das Verdikt lesen: mit ~1,9 Mio sat
+>    Bestand ist ein 1.000-sat-Intent erwartet **nicht** vom Boden abgelehnt;
+>    ein Intent über `Bestand − 1.840.000` wird mit `rule_ids=["reserve_floor"]`
+>    verweigert.
+> 4. Meldet das Verdikt `no liquidity reading`, liest der Rail die Bilanz nicht
+>    (Macaroon-Scope `readonly` prüfen, `/v1/balance/*` muss erlaubt sein) —
+>    dann ist der Boden eine Sperre, nicht eine Grenze, und PAY bleibt faktisch zu.
 
 ---
 
