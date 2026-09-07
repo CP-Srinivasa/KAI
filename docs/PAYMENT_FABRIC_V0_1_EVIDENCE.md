@@ -99,3 +99,53 @@ Mainline `claude/p7/reentry-ia-codex-cycle` @ `be092fab` (#861, 88 Dateien). Pi 
 ## Acceptance Gates (Mission § 24)
 
 1 Control Plane existiert — IMPLEMENTED/VERIFIED · 2 PaymentIntent einziger Einstieg (Sendeweg) — IMPLEMENTED/TESTED (Altpfad-Journal bleibt bis Rückbau lesbar) · 3 Lightning als Rail-Adapter — IMPLEMENTED/TESTED · 4 State Machine — TESTED · 5 Policies — TESTED · 6 Idempotenz — TESTED (Threads + Prozesse) · 7 Settlement-Erkennung — VERIFIED (realer Send 1.000 sat, `settled` + Node-Lookup + Reconciler) · 8 Neustart ändert nichts — TESTED · 9 Reconciliation — TESTED/VERIFIED (erster Lauf) · 10 Audit/Truth Chain — TESTED (Hash-Kette, Tamper, Torn-Tail) · 11 Simulation — TESTED/VERIFIED · 12 Merchant E2E — TESTED · 13 Agent E2E — TESTED · 14 Node-/LND-Ausfälle fail-closed — TESTED · 15 Security-P0 geprüft — VERIFIED (SENTR) mit offenen Operator-Punkten · 16 Deployment reproduzierbar — VERIFIED (inkl. dokumentiertem Vorfall) · 17 Fremd-Rails über dasselbe Interface — DESIGNED · 18 Keine unnötige Komplexität im Core — VERIFIED (Ratchets grün, keine Zeile in `settings.py`, keine neue Dependency).
+
+
+## 17. LIVE Acceptance Seal (2026-09-07) — PAYMENT FABRIC v0.1 = SEALED / MAINTENANCE ONLY
+
+**Kontext.** Nach dem Altpfad-Rückbau (PR #890, #894; Release `5dd311f7` aktiv, Checkout nachgezogen) verlangte der Operator einen finalen Acceptance-Test des einzigen verbliebenen Payment-Pfads: genau EIN kontrollierter Send, kleines Fenster, danach Gate zu. Zwei Versuche, beide am Gerät dokumentiert; der erste scheiterte fail-closed, der zweite bestand.
+
+### 17.1 Gate-Ergebnis (23 Punkte des Operators)
+
+| # | Punkt | Befund | Klasse |
+|---|---|---|---|
+| 1 | Release ≥ 5dd311f7 | `current` = `5dd311f7`, kai-server-cwd identisch, `/health` Drift 0 | VERIFIED |
+| 2 | Repo clean | keine Änderungen an versionierten Dateien (2 fremde untracked Dateien des Operators) | VERIFIED |
+| 3 | neuer Reconciler einziger Pfad | `scripts/ln_reconcile.py` ruft nur `reconcile_payments()`; Lauf am Gerät: `checked_receivables 5, status ok` | VERIFIED |
+| 4 | alter Geldpfad nicht ausführbar | `reconciliation.py`, `ops_ledger.py`, `value_layer.py`, `policy.py` im Release nicht vorhanden | VERIFIED |
+| 5 | Modus vor Test SHADOW | `mode=shadow`, `pay_enabled=false`, Allowlist leer | VERIFIED |
+| 6–8 | LND synced, Wallet unlocked, Node healthy | `reachable=True synced_chain=True synced_graph=True wallet_locked=False`, Bestand 1.918.985 sat | VERIFIED |
+| 9 | Daily Cap aktiv | Cap 1.000 zählte den Fehlversuch als gesendet (1.000/1.000) und hätte einen zweiten Versuch ohne Anhebung verweigert | VERIFIED (konservativ) |
+| 10 | Macaroon/TLS-Validation | Boot-Validierung fail-closed (Server startet sonst nicht); Lese-Scope `readonly.macaroon`, Send-Scope getrennt | VERIFIED |
+| 11 | Idempotenz-Test | Unit-Suite CI grün (10.643); am Gerät: Replay nach Settlement löst keinen zweiten Send aus (`submitted_count 1`) | VERIFIED |
+| 12 | Reconciliation-Test | Reconciler vor und nach dem Neustart `ok, orphans 0, unresolved 0` | VERIFIED |
+| 13 | Audit/Truth-Chain | Payment-Journal-Tip erstmals attestiert und OTS-verankert (Truth-Ledger seq 124); Journalkette `ok` bis seq 58 | VERIFIED |
+| 14 | kleiner Testbetrag | 1.000 sat (Versuch 1), 2.000 sat (Versuch 2, Operator-Invoice) | VERIFIED |
+| 15 | genau EIN Send | je Intent genau ein `submitted` (attempt_no 1) | VERIFIED |
+| 16 | Settlement bestätigt | `settled` 16:51:30Z, `amount_settled 2000`, `fee_actual 9`, `proof_hash c468a741…`; lnd `SUCCEEDED value 2000 fee 9` | VERIFIED |
+| 17 | Reconcile | `ok`, `orphans 0` (16:51:44Z) | VERIFIED |
+| 18 | Persistenz | nach `restart kai-server` Intent weiter `SETTLED` | VERIFIED |
+| 19 | Neustart | Broker-Restart, `/health` 200 | VERIFIED |
+| 20 | erneut Reconcile | `ok`, `orphans 0` (16:52:48Z) | VERIFIED |
+| 21 | keine Doppelzahlung | zweiter `execute` nach Neustart: „unknown intent … already submitted, its way back is reconciliation" — kein Send; Journal zählt einen `submitted` | VERIFIED |
+| 22 | Endzustand konsistent | Journal `chain ok seq 58`, `in_flight 0`, `reconciliation_required 0`, Tagesbilanz `amount_sent 3000 / amount_settled 2000` (1.000 aus Versuch 1 konservativ als gesendet gezählt) | VERIFIED |
+| 23 | Gate geschlossen | `mode=shadow`, `pay_enabled=false`, Allowlist leer, Limits zurück auf 1.000/1.000/5, sechs Long-Runner aktiv, HOTP next 3 | VERIFIED |
+
+### 17.2 Versuch 1 — FAILED_FINAL, korrekt
+
+Intent `pi_1ae367c17d4840b6`, 1.000 sat, Fee-Limit 5 sat, HOTP-Zähler 1. Audit: `intent_created → policy_decided → rail_requested → approval_granted → submitted → rail_responded (FAILED) → failed (FAILED_FINAL, failure_reason PAYMENT_ERROR, fee 0, settled 0)`. lnd: `FAILURE_REASON_NO_ROUTE`, 0 HTLCs. Ursache (read-only `estimatefee` mit den Route-Hints der Invoice): Routing-Gebühr **5,001 sat** bei Limit 5 sat — am 2026-09-04 kostete derselbe Weg 4 sat. Kein Geld bewegt; Reconciler `ok`. Fail-closed hat funktioniert; der Befund ist ein zu knappes Fee-Limit, kein Fehler im Pfad.
+
+### 17.3 Versuch 2 — SETTLED
+
+Fenster (mit ausdrücklichem Operator-Go): `APP_PAYMENT_MODE=live`, `APP_LN_PAY_ENABLED=true`, Allowlist = `payee_hash 1760bcde…` (vom Rail gebildet), `PER_PAYMENT_MAX 2000`, `DAILY_HARD_CAP 3000`, `FEE_LIMIT_MAX 20`; Reserve-Boden 1.840.000 blieb scharf und hat die Zahlung korrekt durchgelassen (Bestand − Betrag − Gebühr > Boden). Intent `pi_b4037f7af4684127`, Idempotency-Key `live-acceptance-20260907-02`, Quote 2.000 + 6 sat (settings_ppm), HOTP-Zähler 2. Settlement-Latenz p50 7,4 s. Danach Rückbau aller Fenster-Werte (Backups `.env.bak-20260907-before-live2` / `-after-live2`).
+
+### 17.4 Befunde für den Maintenance-Modus (kein Handlungsdruck)
+
+1. `POST /payments/intents/{id}/execute` auf einen bereits abgewickelten Intent antwortet nach einem Server-Neustart mit „unknown intent" statt „SETTLED / replayed" — das Journal kennt den Zustand, der Vault (nur Pre-Send) nicht. Geldrisiko: keines (kein Send möglich). Verbesserung: Antwort aus dem Journal ableiten.
+2. Das Fee-Limit der Fenster-Konfiguration (5 sat) ist für den WoS-Weg zu knapp; 20 sat war ausreichend (tatsächlich 9). Runbook-Wert anpassen, wenn je wieder ein Fenster geöffnet wird.
+3. Ein Fehlversuch zählt gegen den Tages-Cap — gewollt konservativ, aber im Runbook benennen.
+
+### 17.5 Status
+
+**KAI Value-OS Core:** IMPLEMENTED / CONSOLIDATED / RUNTIME-VERIFIED.
+**PAYMENT FABRIC v0.1:** **SEALED / MAINTENANCE ONLY** (D-CORE-005). Kein SEPA, keine Karten, keine PSPs, keine weiteren Rails, kein L402-Ausbau, kein Agent Commerce, keine neuen Payment-Agenten, solange daraus kein klarer wirtschaftlicher Nutzen entsteht. Jedes weitere LIVE-Fenster braucht eine neue ausdrückliche Operator-Freigabe.

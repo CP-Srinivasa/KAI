@@ -1,3 +1,11 @@
+## 2026-09-07 - PAYMENT FABRIC v0.1 SEALED / MAINTENANCE ONLY (LIVE-Acceptance-Test bestanden)
+
+Finaler Acceptance-Test des einzigen Payment-Pfads nach dem Altpfad-Rueckbau (D-CORE-005): ein kontrollierter Send von
+2.000 sat an eine Operator-Invoice, SETTLED mit 9 sat Gebuehr, Reconcile vor und nach Server-Neustart ok, Replay nach
+Neustart ohne zweiten Send, Gate danach geschlossen; erster Versuch scheiterte fail-closed an einem Fee-Limit von 5 sat
+bei 5,001 sat Routing-Gebuehr (kein Geld bewegt). Evidenz mit 23-Punkte-Gate in `docs/PAYMENT_FABRIC_V0_1_EVIDENCE.md` §17.
+Kein weiterer Payment-Ausbau ohne wirtschaftlichen Nutzen.
+
 ## 2026-09-07 - Altpfad-Rueckbau PR 2: das Alt-Journal wird Archiv
 
 ADR 0018 §12 abgeschlossen (D-CORE-004). Vorbedingung G-3 am Geraet geprueft: Prae-Reg `0879a65c5fd01f65` verdict=PASS, `runs=96`, Fenster 2026-08-08 → 2026-08-15 abgelaufen und geschlossen. **Ab diesem Release liest und schreibt keine Zeile Produktionscode mehr `artifacts/ln_ops_ledger_v2.jsonl`.**
