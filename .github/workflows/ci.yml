@@ -45,6 +45,11 @@ jobs:
       # ist nur mergefaehig mit Leser, Ausfallkonsequenz und Freshness-Zeile.
       # Der Bestand (Baseline) wird NICHT rueckwirkend erzwungen.
       - run: python scripts/stream_consumer_ratchet.py
+      # Loop-Timeout-Ratchet (2026-09-07): ein NEUER Dauer-Loop mit externem
+      # `await` braucht eine Zeitgrenze -- oder einen begruendeten Eintrag in
+      # config/loop_timeout_baseline.json. Zweimal hat genau diese Bauart einen
+      # Dienst still stehen lassen (46 h / 65 h), ohne dass etwas fiel.
+      - run: python scripts/loop_timeout_ratchet.py
 
   test:
     name: Tests
