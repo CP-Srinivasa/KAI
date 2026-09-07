@@ -105,8 +105,8 @@ for name in sys.argv[2:]:
         print(f"UNBEKANNTES_EXTRA {name} (verfuegbar: {sorted(verfuegbar)})", file=sys.stderr)
         raise SystemExit(1)
     specs.extend(verfuegbar[name])
-print("
-".join(specs))
+for spec in specs:
+    print(spec)
 ' "$REPO/pyproject.toml" $EXTRAS)" || { echo "Extra-Aufloesung gescheitert" >&2; exit 1; }
     echo "Extras: $EXTRAS" >&2
     printf '  %s
