@@ -42,6 +42,14 @@ pytestmark = pytest.mark.skipif(
     reason="Shell-Skript-Vertrag (laeuft in CI auf Linux)",
 )
 
+#: Bewusst eine RFC-2606-Adresse: der Test verlaesst sich darauf, dass der
+#: PATH-Stub das echte ``ssh`` verdeckt -- aber ein Skript, das `sudo -n
+#: kai-service-control restart` absetzt, darf nicht von einer einzigen
+#: PATH-Variablen davon abgehalten werden, eine PRODUKTIONS-Unit neu zu
+#: starten. ``.invalid`` loest nirgends auf, also ist der schlimme Fall
+#: nicht nur unwahrscheinlich, sondern unmoeglich.
+ZIEL = "ubuntu@kai-test.invalid"
+
 BUNDLE_NEU = "assets/index-NEU00000.js"
 BUNDLE_ALT = "assets/index-ALT00000.js"
 
@@ -107,7 +115,7 @@ def _lauf(repo: Path, bin_dir: Path, log: Path) -> subprocess.CompletedProcess[s
     umgebung["PATH"] = f"{bin_dir}{os.pathsep}{umgebung['PATH']}"
     umgebung["SSH_LOG"] = str(log)
     return subprocess.run(  # noqa: S603
-        ["bash", str(repo / "scripts" / "pi_deploy_web.sh"), "ubuntu@pi", "--skip-build"],
+        ["bash", str(repo / "scripts" / "pi_deploy_web.sh"), ZIEL, "--skip-build"],
         capture_output=True,
         text=True,
         check=False,
