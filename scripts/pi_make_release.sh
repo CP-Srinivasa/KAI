@@ -92,6 +92,7 @@ LOCK="$REPO/requirements.lock"
 # Quelle: die Versionspins stehen dort, nicht hier.
 EXTRA_SPECS=""
 EXTRAS_SHA=""
+DEPENDENCY_PROFILE="core"
 if [ -n "$EXTRAS" ]; then
     EXTRA_SPECS="$(python3 -c '
 import sys, tomllib
@@ -118,6 +119,14 @@ print("
 ' $EXTRA_SPECS | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
 fi
 
+# Ein NAME fuer die Abhaengigkeitslage, nicht nur eine Liste. Wer spaeter
+# `verify_release` gegen den venv haelt, soll sagen koennen "dieses Release ist
+# ein core+litellm-Env" -- statt das aus einer Extras-Liste abzuleiten und dabei
+# eine eigene Meinung darueber zu bilden, was ein Profil ausmacht.
+if [ -n "$EXTRAS" ]; then
+    DEPENDENCY_PROFILE="core+$(printf '%s' "$EXTRAS" | tr ' ' '+')"
+fi
+
 # Ein Release MIT Extras steht NEBEN einem ohne, nicht darueber. Der Suffix ist
 # kein Schmuck: `release_tree_sha256` schliesst den venv ausdruecklich aus, und
 # `requirements_lock_sha256` kennt nur das Lockfile. Zwei Releases mit demselben
@@ -127,8 +136,10 @@ fi
 # RELEASE_TREE_MISMATCH, ohne Hinweis auf --rebuild.
 RELEASE_ID="$REPO_SHA"
 if [ -n "$EXTRAS" ]; then
-    # Name UND Hash: der Name macht den Pfad lesbar, der Hash macht ihn eindeutig.
-    RELEASE_ID="$REPO_SHA+$(printf '%s' "$EXTRAS" | tr ' ' '+')-${EXTRAS_SHA:0:8}"
+    # Profil UND Hash: das Profil macht den Pfad lesbar, der Hash macht ihn
+    # eindeutig. Ein Pfad, den man lesen kann, wird beim Aufraeumen seltener
+    # verwechselt -- ein Pfad, der eindeutig ist, wird nie wiederverwendet.
+    RELEASE_ID="$REPO_SHA+${DEPENDENCY_PROFILE#core+}-${EXTRAS_SHA:0:8}"
 fi
 TARGET="$RELEASES/$RELEASE_ID"
 STAGE="$RELEASES/.staging-$RELEASE_ID.$$"
@@ -368,6 +379,7 @@ cat > "$STAGE/release.json" <<EOF
   "created_at_utc": "$NOW",
   "venv_python_path": "$TARGET/.venv/bin/python3",
   "dependency_manifest_sha256": "$DEP_MANIFEST",
+  "dependency_profile": "$DEPENDENCY_PROFILE",
   "extras": [$EXTRAS_JSON],
   "extra_specs": [$EXTRA_SPECS_JSON],
   "extras_sha256": "$EXTRAS_SHA",

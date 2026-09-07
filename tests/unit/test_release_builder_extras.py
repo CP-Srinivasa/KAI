@@ -41,11 +41,25 @@ def _text() -> str:
 
 
 def _code() -> str:
-    """Nur der Code, ohne Kommentare — sonst misst ein Test die Prosa."""
-    return "\n".join(
-        "" if zeile.lstrip().startswith("#") else zeile.split("#", 1)[0]
-        for zeile in _text().splitlines()
-    )
+    """Nur der Code, ohne Kommentare — sonst misst ein Test die Prosa.
+
+    Ein naives ``split("#")`` reicht dafür NICHT: in der Shell ist ``#`` auch
+    Teil der Parameter-Expansion. ``${DEPENDENCY_PROFILE#core+}`` wäre damit zu
+    ``${DEPENDENCY_PROFILE`` verstümmelt worden — und ein Test, der auf diesem
+    Rest sucht, meldet ein Fehlen, das es nicht gibt. Genau das ist beim Bau
+    dieser Datei passiert.
+
+    Ein Kommentar beginnt am Zeilenanfang oder nach einem Leerzeichen; eine
+    Expansion nicht.
+    """
+    zeilen: list[str] = []
+    for zeile in _text().splitlines():
+        if zeile.lstrip().startswith("#"):
+            zeilen.append("")
+            continue
+        stelle = zeile.find(" #")
+        zeilen.append(zeile[:stelle] if stelle != -1 else zeile)
+    return "\n".join(zeilen)
 
 
 def test_der_builder_ist_syntaktisch_heil() -> None:
@@ -203,3 +217,47 @@ def test_die_unit_startet_genau_das_binary_das_das_extra_liefert() -> None:
     manifest = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     extra = " ".join(manifest["project"]["optional-dependencies"]["litellm"])
     assert re.match(r"^litellm\[", extra), extra
+
+
+# ---------------------------------------------------------------------------
+# Das Profil benennt die Abhängigkeitslage — für den Verify-Zeit-Abgleich.
+# ---------------------------------------------------------------------------
+
+
+def test_die_abhaengigkeitslage_hat_einen_namen_keine_liste() -> None:
+    """Wer später `verify_release` gegen den venv hält, soll sagen können
+    „dieses Release ist ein core+litellm-Env" — statt das aus einer
+    Extras-Liste abzuleiten und dabei eine eigene Meinung darüber zu bilden,
+    was ein Profil ausmacht.
+    """
+    code = _code()
+    assert 'DEPENDENCY_PROFILE="core"' in code, "ohne Extras ist es schlicht core"
+    assert '"dependency_profile": "$DEPENDENCY_PROFILE"' in code
+    assert 'DEPENDENCY_PROFILE="core+$' in code
+
+
+def test_das_profil_steht_vor_jeder_verzweigung() -> None:
+    """`set -u` würde sonst beim Bau ohne Extras abbrechen."""
+    code = _code()
+    zuweisung = code.index('DEPENDENCY_PROFILE="core"')
+    erste_nutzung = code.index("$DEPENDENCY_PROFILE")
+    assert zuweisung < erste_nutzung
+
+
+def test_der_pfad_traegt_das_profil_ohne_das_core_praefix() -> None:
+    """`<SHA>+core+litellm-<8>` wäre doppelt gemoppelt; `<SHA>+litellm-<8>` reicht."""
+    code = _code()
+    assert "${DEPENDENCY_PROFILE#core+}" in code
+
+
+def test_absicht_und_zustand_bleiben_getrennte_felder() -> None:
+    """`extras_sha256` sagt, was gewollt war; `dependency_manifest_sha256`,
+    was beim Bau tatsächlich installiert wurde.
+
+    Mit nur einem der beiden wüsste man bei einem späteren Rot nicht, ob
+    falsch gebaut oder nachträglich verändert wurde.
+    """
+    code = _code()
+    assert '"extras_sha256":' in code
+    assert '"dependency_manifest_sha256":' in code
+    assert "pip freeze" in code, "das Manifest kommt aus dem tatsaechlichen venv"
