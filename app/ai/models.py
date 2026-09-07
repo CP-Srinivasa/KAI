@@ -82,6 +82,15 @@ class AttemptTrace:
         return self.identity_proven and self.actual_model != self.requested_model
 
 
+@dataclass(frozen=True)
+class AttemptResult[T]:
+    """A physical attempt plus its typed value or original failure."""
+
+    trace: AttemptTrace
+    value: T | None = None
+    error: BaseException | None = field(default=None, repr=False, compare=False)
+
+
 def total_cost_usd(attempts: Sequence[AttemptTrace]) -> float | None:
     """Summe — oder ``None``, sobald ein einziger Versuch unbelegt ist.
 
@@ -149,6 +158,7 @@ class InferenceResult:
 
 __all__ = [
     "AttemptTrace",
+    "AttemptResult",
     "InferenceResult",
     "Transport",
     "cost_known_rate",

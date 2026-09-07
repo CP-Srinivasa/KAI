@@ -23,10 +23,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
-from app.ai.audit import classify_error
+from app.ai.audit import ErrorClass, classify_error
 from app.ai.models import AttemptTrace
 
 TRANSPORT = "litellm"
@@ -55,7 +56,24 @@ class LiteLLMConfig:
 
     @property
     def is_local(self) -> bool:
-        return self.base_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]"))
+        try:
+            parsed = urlsplit(self.base_url)
+        except ValueError:
+            return False
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+            and parsed.username is None
+            and parsed.password is None
+        )
+
+
+@dataclass(frozen=True)
+class LiteLLMResponse:
+    """Transport evidence plus the unopinionated JSON response body."""
+
+    trace: AttemptTrace
+    body: dict[str, Any]
 
 
 def _first_header(headers: Any, names: tuple[str, ...]) -> str:
@@ -86,6 +104,14 @@ def _usage_int(usage: Any, key: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _response_body(response: httpx.Response) -> dict[str, Any]:
+    try:
+        parsed = response.json()
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def trace_from_response(
     response: httpx.Response,
     *,
@@ -100,13 +126,7 @@ def trace_from_response(
     faktisch gar nicht.
     """
     headers = response.headers
-    body: dict[str, Any] = {}
-    try:
-        parsed = response.json()
-        if isinstance(parsed, dict):
-            body = parsed
-    except (ValueError, UnicodeDecodeError):
-        body = {}
+    body = _response_body(response)
 
     usage = body.get("usage")
     # Das Modell aus dem BODY hat Vorrang: es ist die Antwort des Upstreams,
@@ -119,12 +139,16 @@ def trace_from_response(
         if isinstance(hidden, dict):
             cost = _float_or_none(str(hidden.get("response_cost") or ""))
 
-    error_class = None
+    error_class: ErrorClass | None = None
     if response.status_code >= 400:
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            error_class = classify_error(exc)
+        error_marker = str(body.get("error", "")).lower()
+        if "quota" in error_marker:
+            error_class = "quota"
+        else:
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                error_class = classify_error(exc)
 
     return AttemptTrace(
         transport=TRANSPORT,
@@ -187,4 +211,76 @@ def call_litellm(
     )
 
 
-__all__ = ["TRANSPORT", "LiteLLMConfig", "call_litellm", "trace_from_response"]
+async def call_litellm_async(
+    *,
+    config: LiteLLMConfig,
+    model: str,
+    client: httpx.AsyncClient,
+    monotonic: Any,
+    correlation_id: str = "",
+    endpoint: str = "/v1/chat/completions",
+    payload: dict[str, Any] | None = None,
+    files: Any = None,
+    data: dict[str, Any] | None = None,
+) -> LiteLLMResponse:
+    """Execute one non-blocking LiteLLM attempt; policy remains in ``app.ai``.
+
+    Chat callers provide ``payload``. STT uses the same transport contract with
+    multipart ``files``/``data`` and the OpenAI-compatible transcription path.
+    The function never retries and never raises a network error.
+    """
+    headers: dict[str, str] = {}
+    if payload is not None:
+        headers["content-type"] = "application/json"
+    if config.api_key:
+        headers["authorization"] = f"Bearer {config.api_key}"
+    if correlation_id:
+        headers["x-kai-correlation-id"] = correlation_id
+
+    started = monotonic()
+    try:
+        if payload is not None:
+            response = await client.post(
+                f"{config.base_url.rstrip('/')}{endpoint}",
+                json={**payload, "model": model},
+                headers=headers,
+                timeout=config.timeout_s,
+            )
+        else:
+            response = await client.post(
+                f"{config.base_url.rstrip('/')}{endpoint}",
+                files=files,
+                data={**(data or {}), "model": model},
+                headers=headers,
+                timeout=config.timeout_s,
+            )
+    except Exception as exc:  # noqa: BLE001 - transport failure is evidence
+        return LiteLLMResponse(
+            trace=AttemptTrace(
+                transport=TRANSPORT,
+                requested_model=model,
+                latency_ms=(monotonic() - started) * 1000.0,
+                error_class=classify_error(exc),
+                detail={"exception": type(exc).__name__},
+            ),
+            body={},
+        )
+
+    return LiteLLMResponse(
+        trace=trace_from_response(
+            response,
+            requested_model=model,
+            latency_ms=(monotonic() - started) * 1000.0,
+        ),
+        body=_response_body(response),
+    )
+
+
+__all__ = [
+    "TRANSPORT",
+    "LiteLLMConfig",
+    "LiteLLMResponse",
+    "call_litellm",
+    "call_litellm_async",
+    "trace_from_response",
+]
