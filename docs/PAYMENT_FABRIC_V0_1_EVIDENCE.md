@@ -122,7 +122,7 @@ Mainline `claude/p7/reentry-ia-codex-cycle` @ `be092fab` (#861, 88 Dateien). Pi 
 | 13 | Audit/Truth-Chain | Payment-Journal-Tip erstmals attestiert und OTS-verankert (Truth-Ledger seq 124); Journalkette `ok` bis seq 58 | VERIFIED |
 | 14 | kleiner Testbetrag | 1.000 sat (Versuch 1), 2.000 sat (Versuch 2, Operator-Invoice) | VERIFIED |
 | 15 | genau EIN Send | je Intent genau ein `submitted` (attempt_no 1) | VERIFIED |
-| 16 | Settlement bestätigt | `settled` 16:51:30Z, `amount_settled 2000`, `fee_actual 9`, `proof_hash c468a741…`; lnd `SUCCEEDED value 2000 fee 9` | VERIFIED |
+| 16 | Settlement bestätigt | `settled` 16:51:30Z, `amount_settled 2000`, `fee_actual 9`, `proof_hash c468a741…`; lnd `SUCCEEDED value 2000 fee 9`; Empfang der 2.000 sat in Wallet of Satoshi vom Operator bestätigt (2026-09-07 19:10 CEST) | VERIFIED |
 | 17 | Reconcile | `ok`, `orphans 0` (16:51:44Z) | VERIFIED |
 | 18 | Persistenz | nach `restart kai-server` Intent weiter `SETTLED` | VERIFIED |
 | 19 | Neustart | Broker-Restart, `/health` 200 | VERIFIED |
