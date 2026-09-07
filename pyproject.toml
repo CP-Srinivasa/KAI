@@ -63,6 +63,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ADR 0017 / S5: LiteLLM ist TRANSPORT unterhalb von app/ai, keine zweite
+# Control-Plane. Deshalb eine eigene, optionale Gruppe: der Kern von KAI laeuft
+# ohne sie, und ein Release, das den Transport nicht mitbringt, faellt auf den
+# Direktpfad zurueck statt beim Import zu scheitern.
+#
+# EXAKT gepinnt, nicht `>=`. `deploy/systemd/kai-litellm.service` startet
+# /home/kai/current/.venv/bin/litellm aus dem unveraenderlichen Release-Baum;
+# eine Spanne wuerde bedeuten, dass zwei Releases mit demselben repo_sha
+# verschiedene Gateways starten koennen. Das waere genau die Provenienzluecke,
+# gegen die das Release-Modell gebaut ist.
+litellm = [
+    "litellm[proxy]==1.99.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",

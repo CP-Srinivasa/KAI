@@ -26,12 +26,15 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from app.observability.llm_telemetry import record_llm_call
+
+if TYPE_CHECKING:
+    from app.ai.models import AttemptTrace
 
 ErrorClass = Literal[
     "timeout",
@@ -97,6 +100,61 @@ def correlation_scope(correlation_id: str | None) -> Iterator[str]:
         _CORRELATION_ID.reset(token)
 
 
+#: Die Zuordnung EINER logischen Auswertung. Sie ist der einzige Schluessel,
+#: mit dem sich hinterher sagen laesst, welche DIRECT-Zeile und welche
+#: SHADOW-Zeile denselben Aufruf beschreiben.
+#:
+#: WARUM NICHT ``call_id``: die wird pro ZEILE vergeben, also fuer jeden
+#: physischen Versuch und fuer jede Seite eine eigene. Als Paarungsschluessel
+#: waere sie das Gegenteil dessen, was gebraucht wird.
+#:
+#: WARUM NICHT ``correlation_id`` allein: die haelt eine ganze Kette zusammen.
+#: Ein Aufrufer, der sie durchreicht (``text_intent`` tut das), haette darunter
+#: mehrere Auswertungen -- und zwei Auswertungen mit je einer DIRECT- und einer
+#: SHADOW-Seite saehen aus wie eine Auswertung mit zwei Duplikaten.
+_EVALUATION_ID: ContextVar[str | None] = ContextVar("kai_llm_evaluation_id", default=None)
+
+#: Route und Modus der laufenden Auswertung. Der Direktpfad wird von den
+#: Aufrufern instrumentiert, lange bevor es eine Control-Plane gab; er KENNT
+#: seine Route nicht. Ohne diese beiden Werte traegt seine Telemetriezeile
+#: keine Zuordnung, und die Auswertung wirft sie weg.
+_LOGICAL_ROUTE: ContextVar[str | None] = ContextVar("kai_llm_logical_route", default=None)
+_MODE: ContextVar[str | None] = ContextVar("kai_llm_mode", default=None)
+
+
+def current_evaluation_id() -> str | None:
+    """Auswertungs-Id des aktuellen Kontexts, falls einer laeuft."""
+    return _EVALUATION_ID.get()
+
+
+@contextmanager
+def evaluation_scope(
+    *, logical_route: str, mode: str, evaluation_id: str | None = None
+) -> Iterator[str]:
+    """Bindet EINE Auswertung an alles, was in diesem Block telemetriert wird.
+
+    Damit traegt auch die Zeile des Direktpfads Route, Modus und Auswertungs-Id,
+    ohne dass ein einziger Aufrufer geaendert werden muesste: sie stehen im
+    Kontext, und ``llm_call_scope`` liest sie dort ab.
+
+    Wie ``correlation_scope`` wird beim Verlassen immer zurueckgesetzt -- eine
+    inline erwartete Pipeline darf ihre Zuordnung nicht an den Aufrufer
+    weitervererben.
+    """
+    resolved = evaluation_id or f"eval_{uuid4().hex[:12]}"
+    marken = (
+        _EVALUATION_ID.set(resolved),
+        _LOGICAL_ROUTE.set(logical_route),
+        _MODE.set(mode),
+    )
+    try:
+        yield resolved
+    finally:
+        _MODE.reset(marken[2])
+        _LOGICAL_ROUTE.reset(marken[1])
+        _EVALUATION_ID.reset(marken[0])
+
+
 def http_status(exc: BaseException) -> int | None:
     """Best-effort HTTP status of *exc*, duck-typed across SDKs. Never raises.
 
@@ -156,6 +214,20 @@ def classify_error(exc: BaseException) -> ErrorClass:
     return "unknown"
 
 
+def is_retryable_error_class(error_class: ErrorClass | None, status: int | None = None) -> bool:
+    """Canonical retry decision for both exceptions and recorded attempts.
+
+    LiteLLM transports return :class:`~app.ai.models.AttemptTrace` instead of
+    raising.  Keeping this decision here prevents an exception policy and a
+    trace policy from drifting apart.
+    """
+    if error_class is None or error_class in _NON_RETRYABLE:
+        return False
+    if status is not None and 400 <= status < 500 and status not in _RETRYABLE_CLIENT_STATUS:
+        return False
+    return True
+
+
 def is_retryable_error(exc: BaseException) -> bool:
     """Retry predicate for the provider-level ``tenacity`` decorators.
 
@@ -163,12 +235,69 @@ def is_retryable_error(exc: BaseException) -> bool:
     retry cannot fix - those previously cost three attempts plus up to 15 s of
     backoff for nothing (NEO-F-006).
     """
-    if classify_error(exc) in _NON_RETRYABLE:
-        return False
-    status = http_status(exc)
-    if status is not None and 400 <= status < 500 and status not in _RETRYABLE_CLIENT_STATUS:
-        return False
-    return True
+    return is_retryable_error_class(classify_error(exc), http_status(exc))
+
+
+def record_attempt_trace(
+    attempt_trace: AttemptTrace,
+    *,
+    correlation_id: str,
+    evaluation_id: str | None = None,
+    purpose: Purpose,
+    logical_route: str,
+    mode: str,
+    role: str,
+    attempt_number: int,
+    budget_decision: str,
+    circuit_state: str,
+    execution_authority: bool,
+    schema_status: str | None,
+    outcome: Outcome,
+    fallback_from: str | None = None,
+    fallback_to: str | None = None,
+    path: Path | None = None,
+) -> None:
+    """Append one physical returned attempt to the canonical telemetry stream."""
+    raw_status = attempt_trace.detail.get("status_code")
+    status = raw_status if isinstance(raw_status, int) else None
+    record_llm_call(
+        provider=attempt_trace.actual_provider,
+        model=attempt_trace.actual_model,
+        ok=attempt_trace.ok,
+        latency_ms=attempt_trace.latency_ms,
+        role=role,
+        error_type=str(attempt_trace.detail.get("exception") or "") or None,
+        path=path,
+        correlation_id=correlation_id,
+        # Pro ZEILE neu -- deshalb taugt sie nicht als Paarungsschluessel.
+        call_id=f"llmc_{uuid4().hex[:8]}",
+        evaluation_id=evaluation_id if evaluation_id is not None else _EVALUATION_ID.get(),
+        purpose=purpose,
+        attempt=attempt_number,
+        error_class=attempt_trace.error_class,
+        http_status=status,
+        prompt_tokens=attempt_trace.input_tokens or 0,
+        completion_tokens=attempt_trace.output_tokens or 0,
+        outcome=outcome,
+        logical_route=logical_route,
+        mode=mode,
+        transport=attempt_trace.transport,
+        requested_model_alias=attempt_trace.requested_model,
+        actual_provider=attempt_trace.actual_provider or None,
+        actual_model=attempt_trace.actual_model or None,
+        identity_proven=attempt_trace.identity_proven,
+        retry_count=max(0, attempt_number - 1),
+        fallback_from=fallback_from,
+        fallback_to=fallback_to,
+        input_tokens=attempt_trace.input_tokens,
+        output_tokens=attempt_trace.output_tokens,
+        cost_usd=attempt_trace.cost_usd,
+        schema_status=schema_status,
+        budget_decision=budget_decision,
+        circuit_state=circuit_state,
+        execution_authority=execution_authority,
+        upstream_request_id=attempt_trace.request_id or None,
+    )
 
 
 @dataclass
@@ -280,6 +409,11 @@ async def llm_call_scope(
             prompt_tokens=scope.prompt_tokens,
             completion_tokens=scope.completion_tokens,
             outcome=scope.failure_outcome,
+            # Aus dem Kontext, nicht vom Aufrufer: der Direktpfad wurde
+            # instrumentiert, als es noch keine Routen gab.
+            evaluation_id=_EVALUATION_ID.get(),
+            logical_route=_LOGICAL_ROUTE.get(),
+            mode=_MODE.get(),
         )
         raise
     record_llm_call(
@@ -297,4 +431,7 @@ async def llm_call_scope(
         prompt_tokens=scope.prompt_tokens,
         completion_tokens=scope.completion_tokens,
         outcome=scope.success_outcome,
+        evaluation_id=_EVALUATION_ID.get(),
+        logical_route=_LOGICAL_ROUTE.get(),
+        mode=_MODE.get(),
     )

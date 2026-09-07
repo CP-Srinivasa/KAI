@@ -1,0 +1,28 @@
+# Repo-only template. Installation and activation are separate operator gates.
+# Provider/model selection stays transport-side; KAI route authority stays app/ai.
+model_list:
+  - model_name: kai-bulk
+    litellm_params:
+      model: os.environ/KAI_LITELLM_BULK_MODEL
+  - model_name: kai-standard
+    litellm_params:
+      model: os.environ/KAI_LITELLM_STANDARD_MODEL
+  - model_name: kai-reasoning
+    litellm_params:
+      model: os.environ/KAI_LITELLM_REASONING_MODEL
+  - model_name: kai-critical
+    litellm_params:
+      model: os.environ/KAI_LITELLM_CRITICAL_MODEL
+  - model_name: kai-stt
+    litellm_params:
+      model: os.environ/KAI_LITELLM_STT_MODEL
+
+litellm_settings:
+  # KAI/app/ai is the single bounded-retry authority.
+  num_retries: 0
+  request_timeout: 30
+  # KAI writes the canonical artifacts/llm_telemetry.jsonl stream.
+  telemetry: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
