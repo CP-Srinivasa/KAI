@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -463,10 +464,60 @@ def _check_semantic_canary(
         detail=(
             f"checkpoint={data.get('checkpoint_message_id')} "
             f"latest={data.get('latest_message_id')} gap={gap} "
-            f"threshold={max_age_seconds}s"
+            f"threshold={max_age_seconds}s {render_source_state(data)}"
         ),
         age_seconds=age,
     )
+
+
+#: Die Quelle hat gesendet, wir haengen hinterher — das ist UNSER Befund.
+SOURCE_STATE_BEHIND = "INGESTION_BEHIND"
+#: Wir sind auf dem Stand der Quelle. Wie alt dieser Stand ist, sagt das Alter
+#: daneben — nicht dieser Name.
+SOURCE_STATE_CURRENT = "SOURCE_CURRENT"
+#: Ohne Daten wird nicht geraten.
+SOURCE_STATE_UNKNOWN = "SOURCE_UNKNOWN"
+
+
+def source_state(data: Mapping[str, Any]) -> str:
+    """Liegt es an der Quelle oder an uns?
+
+    Bewusst OHNE Schweige-Schwelle. Ab wann ein Anbieter "zu lange" schweigt,
+    ist eine Bewertung ueber diesen Anbieter und keine Eigenschaft der Messung —
+    eine hier eingebaute Stundenzahl waere eine Behauptung, die wie ein Messwert
+    aussieht. Die Unterscheidung, die aus den Daten SELBST folgt, ist eine
+    andere und die wichtigere:
+
+        gap > 0   die Quelle hat gesendet, wir haben es nicht verarbeitet
+                  -> INGESTION_BEHIND, das ist unser Problem
+        gap == 0  wir sind auf dem Stand der Quelle
+                  -> SOURCE_CURRENT; wie alt dieser Stand ist, steht daneben
+
+    Damit laesst sich "seit dem 04.09. kam von der Quelle nichts" belegen, statt
+    "Telegram funktioniert vielleicht nicht" zu vermuten (Operator-Entscheidung
+    2026-09-08, nachdem der Premium-Kanal vier Tage schwieg und der
+    Betriebsbeweis den KAI-Pfad entlastet hatte).
+    """
+    gap = data.get("gap")
+    if not isinstance(gap, int):
+        return SOURCE_STATE_UNKNOWN
+    return SOURCE_STATE_BEHIND if gap > 0 else SOURCE_STATE_CURRENT
+
+
+def render_source_state(data: Mapping[str, Any]) -> str:
+    """Der Zustand samt der Zahlen, die ihn belegen — fuer Meldungen."""
+    zustand = source_state(data)
+    alter = data.get("source_silence_age_s")
+    teile = [zustand]
+    if isinstance(alter, (int, float)):
+        teile.append(f"source_silence={alter / 3600:.1f}h")
+    quelle = data.get("last_source_message_at")
+    if isinstance(quelle, str) and quelle:
+        teile.append(f"last_source={quelle[:19]}")
+    ingest = data.get("last_ingested_message_at")
+    if isinstance(ingest, str) and ingest:
+        teile.append(f"last_ingested={ingest[:19]}")
+    return " ".join(teile)
 
 
 def _check_approval_hmac() -> CheckResult:
