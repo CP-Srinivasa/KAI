@@ -260,6 +260,33 @@ trap - EXIT
 # auch. Der venv bleibt schreibbar: `pip` legt beim Start Bytecode an, und ein
 # nur-lesbarer venv scheiterte daran. Gegen nachtraegliche Aenderung schuetzt
 # nicht das Dateirecht, sondern der Manifest-Abgleich unten und beim Start.
+# Ein venv ist NICHT verschiebbar. `pip` backt beim Installieren den absoluten
+# Pfad des Interpreters in die Shebang jeder Konsolen-Anwendung; `activate` und
+# `pyvenv.cfg` tragen ihn ebenfalls. Nach dem `mv` zeigt die Shebang auf das
+# Staging, das es nicht mehr gibt -- die Datei ist da, ist ausfuehrbar, und
+# `execve` scheitert am Interpreter. Die Fehlermeldung lautet dann "No such file
+# or directory" und nennt die Datei, die existiert.
+#
+# Warum trotzdem ueber ein Staging gebaut wird: der endgueltige Name haengt am
+# Dependency-Manifest, und das ist erst NACH der Installation bekannt. Der
+# Zielpfad laesst sich vorher nicht bilden. Also: bauen, benennen, reparieren.
+echo "   Pfade im venv auf den Zielort umschreiben" >&2
+for datei in "$TARGET/.venv/bin"/*; do
+    [ -f "$datei" ] || continue
+    grep -Iq . "$datei" 2>/dev/null || continue   # Binaerdateien auslassen
+    sed -i "s|$STAGE/.venv|$TARGET/.venv|g" "$datei"
+done
+sed -i "s|$STAGE/.venv|$TARGET/.venv|g" "$TARGET/.venv/pyvenv.cfg"
+
+# Fail-closed: bleibt irgendwo im ausfuehrbaren Teil ein Staging-Pfad stehen,
+# ist der Baum unbrauchbar, und das soll hier auffallen und nicht beim Start.
+REST="$(grep -rlI -- "$STAGE" "$TARGET/.venv/bin" "$TARGET/.venv/pyvenv.cfg" 2>/dev/null | head -5)"
+if [ -n "$REST" ]; then
+    echo "TRANSPORT_STAGING_PATH_LEFTOVER -- Pfade zeigen noch ins Staging:" >&2
+    echo "$REST" >&2
+    _verwerfen
+fi
+
 chmod a-w "$TARGET/transport.json" "$TARGET/requirements.lock" 2>/dev/null
 
 # Selbstkontrolle: der versiegelte Baum muss seinen eigenen Anspruch tragen.
