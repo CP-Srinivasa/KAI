@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts import health_check_pay as _hcpay
 from app.alerts import health_check_payments as _hcp
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
@@ -494,6 +495,10 @@ def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
 
 def _check_payment_reconciliation(adir: Path, *, now: datetime | None = None) -> list[HealthIssue]:
     return _hcp.check_payment_reconciliation(adir, now=now)
+
+
+def _check_pay_requests(adir: Path) -> list[HealthIssue]:
+    return _hcpay.check_pay_requests(adir)  # Waechter-Def hier: Stream-Vertrag G4
 
 
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
@@ -1495,9 +1500,8 @@ def run_health_check_report(
     report.data_sources_stale = stale
     report.issues.extend(_check_audit_stream_schemas(adir))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
-    report.issues.extend(
-        _check_payment_journal_chain(adir) + _check_payment_reconciliation(adir, now=now)
-    )
+    report.issues.extend(_check_payment_journal_chain(adir) + _check_pay_requests(adir))
+    report.issues.extend(_check_payment_reconciliation(adir, now=now))
     # Eingangsstrom #3 — bewusst NACH der Datei-Freshness und ohne Einfluss auf
     # ``data_sources_stale``: ein toter Eingang sagt nichts ueber die
     # Verlaesslichkeit der Probe (Lehre #701).

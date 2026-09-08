@@ -48,6 +48,7 @@ from app.api.routers import (
     metrics,
     node_blitz,
     operator,
+    pay,
     payments,
     premium_signals,
     query,
@@ -59,6 +60,7 @@ from app.api.routers import (
 )
 from app.core.lightning_settings import validate_lightning_boot
 from app.core.logging import configure_logging, get_logger
+from app.core.pay_settings import get_pay_settings, validate_pay_boot
 from app.core.payment_settings import get_payment_settings, validate_payment_boot
 from app.core.runtime_identity import (
     ARTIFACT_RELATIVE_PATH,
@@ -76,6 +78,7 @@ from app.observability.event_loop_lag import EventLoopLagSampler
 from app.observability.http_latency import install_http_latency_middleware
 from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
+from app.pay.wiring import build_pay_service, start_pay_poller, stop_pay_poller
 from app.payments.wiring import build_payment_service, recover_on_start
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
@@ -113,6 +116,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         payment_settings, settings.lightning, app_env=settings.env
     )
     recover_on_start(app.state.payment_service)
+    # KAI PAY v0.1 (D-CORE-006): die Produktschicht ueber dem versiegelten Kern.
+    # Der Guard laeuft NACH ``validate_payment_boot``, weil er dessen Allowlist
+    # liest — ein ``purpose``, den die Policy nicht kennt, laesst jede Forderung
+    # erst NACH dem Journal-Record scheitern. Default aus: ohne
+    # ``APP_PAY_ENABLED=true`` bleibt ``pay_service`` None und ``/pay/*`` 404.
+    pay_settings = get_pay_settings()
+    validate_pay_boot(pay_settings, payments=payment_settings)
+    app.state.pay_service = build_pay_service(pay_settings, payments=app.state.payment_service)
+    app.state.pay_poller_task = start_pay_poller(app.state.pay_service)
     app.state.session_factory = build_session_factory(settings.db)
 
     # Build analysis components for full-pipeline mode
@@ -320,6 +332,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _tps = getattr(app.state, "technical_paper_scheduler", None)
         if _tps is not None:
             _tps.stop()
+        # Der Pay-Poller wird ERWARTET, nicht nur abgebrochen: ein Task, dessen
+        # Cancellation niemand abwartet, laeuft in den 20-s-Stop-Timeout der
+        # Unit und faerbt einen sauberen Shutdown rot.
+        await stop_pay_poller(getattr(app.state, "pay_poller_task", None))
 
 
 def create_app() -> FastAPI:
@@ -443,6 +459,9 @@ def create_app() -> FastAPI:
     app.include_router(truth_oracle.router)
     app.include_router(ln_control.router)
     app.include_router(payments.router)
+    # Hinter derselben Bearer-/CF-Access-Grenze wie /payments — die oeffentliche
+    # Allowlist in app/security/auth.py ist exakt und kennt /pay nicht.
+    app.include_router(pay.router)
     app.include_router(node_blitz.router)
     app.include_router(metrics.router)
 

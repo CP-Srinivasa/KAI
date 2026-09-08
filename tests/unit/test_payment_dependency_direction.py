@@ -228,3 +228,36 @@ def test_lightning_does_not_import_payments_at_all_anymore() -> None:
             if imported.startswith("app.payments")
         ]
     assert not offenders, offenders
+
+
+def test_payments_never_imports_the_product_layer() -> None:
+    """``pay -> payments``, nie umgekehrt (KAI PAY v0.1, D-CORE-006).
+
+    Die Produktschicht darf den versiegelten Kern benutzen; der Kern darf sie
+    nicht kennen. Ein Import in dieser Richtung wuerde ``app/payments`` an
+    einen Lebenszyklus binden, der ausdruecklich schneller ist als seiner —
+    und aus "versiegelt" eine Absichtserklaerung machen.
+    """
+    offenders: list[str] = []
+    for path in _python_files(APP_ROOT / "payments"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [
+            f"{path.relative_to(APP_ROOT.parent).as_posix()} -> {imported}"
+            for imported in _all_imports(tree)
+            if imported == "app.pay" or imported.startswith("app.pay.")
+        ]
+    assert not offenders, offenders
+
+
+def test_the_product_layer_may_use_the_core() -> None:
+    """Die Gegenrichtung ist erlaubt — und sie wird auch benutzt.
+
+    Ohne diese Aussage waere der Test oben auch dann gruen, wenn ``app/pay``
+    den Kern gar nicht mehr aufruft, sondern eine eigene Geldwahrheit fuehrt.
+    """
+    used: set[str] = set()
+    for path in _python_files(APP_ROOT / "pay"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        used |= {i for i in _all_imports(tree) if i.startswith("app.payments")}
+    assert "app.payments.receivables" in used
+    assert "app.payments.service" in used
