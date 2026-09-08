@@ -250,11 +250,14 @@ async def test_gesunder_zyklus_bleibt_unbehelligt(tmp_path, monkeypatch):
             raise asyncio.CancelledError
         return {"scanned": 0, "processed": 0}
 
-    async def kopf_id(client, entity):
-        return 4242
+    # Seit der Staleness-Trennung (2026-09-08) liefert der Kopf-Abruf Id UND
+    # Sendezeitpunkt: ohne den zweiten Wert ist Anbieter-Stille von einem
+    # eigenen Defekt nicht zu unterscheiden.
+    async def kopf(client, entity):
+        return 4242, "2026-09-08T09:00:00+00:00"
 
     monkeypatch.setattr(w, "replay_missed_messages", schnelles_replay)
-    monkeypatch.setattr(w, "_latest_message_id", kopf_id)
+    monkeypatch.setattr(w, "_latest_message_head", kopf)
 
     with pytest.raises(asyncio.CancelledError):
         await w._poll_backstop_loop(
@@ -269,3 +272,4 @@ async def test_gesunder_zyklus_bleibt_unbehelligt(tmp_path, monkeypatch):
     assert geschrieben, "der gesunde Zyklus schreibt die Canary weiterhin"
     assert geschrieben[0]["checkpoint_message_id"] == 4242
     assert geschrieben[0]["latest_message_id"] == 4242
+    assert geschrieben[0]["last_source_message_at"] == "2026-09-08T09:00:00+00:00"

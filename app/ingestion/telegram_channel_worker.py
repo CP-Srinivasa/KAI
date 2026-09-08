@@ -568,6 +568,7 @@ def _write_semantic_canary(
     checkpoint_message_id: int,
     latest_message_id: int | None,
     replay_processed: int,
+    last_source_message_at: str | None = None,
 ) -> None:
     """Persist source-vs-checkpoint semantics for health probes.
 
@@ -588,6 +589,49 @@ def _write_semantic_canary(
         ),
         "replay_processed": int(replay_processed),
     }
+    # STALENESS-TRENNUNG (Operator-Entscheidung 2026-09-08). Drei Groessen, die
+    # ``gap`` allein nicht auseinanderhaelt:
+    #
+    #   last_source_message_at   wann hat die QUELLE zuletzt gesendet
+    #   last_ingested_message_at wann hat KAI zuletzt etwas verarbeitet
+    #   source_silence_age_s     wie lange schweigt die Quelle
+    #
+    # Damit laesst sich "seit dem 04.09. kam von der Quelle nichts" BEWEISEN,
+    # statt "Telegram funktioniert vielleicht nicht" zu vermuten. Fallen die
+    # beiden Zeitpunkte auseinander, liegt es an uns; fallen sie zusammen und
+    # altern gemeinsam, schweigt die Quelle.
+    #
+    # Beide Werte werden FORTGESCHRIEBEN, nicht neu erhoben: nach einem Neustart
+    # ist ``messages_since_boot`` wieder 0, und ein Zustand, den jeder Restart
+    # loescht, kann keine Stille ueber Tage belegen.
+    vorher: dict[str, Any] = {}
+    try:
+        vorher = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        vorher = {}
+
+    quelle_zeit = last_source_message_at or vorher.get("last_source_message_at")
+    if isinstance(quelle_zeit, str) and quelle_zeit:
+        payload["last_source_message_at"] = quelle_zeit
+        try:
+            alter = (
+                datetime.now(UTC) - datetime.fromisoformat(quelle_zeit).astimezone(UTC)
+            ).total_seconds()
+            payload["source_silence_age_s"] = max(0.0, round(alter, 1))
+        except (ValueError, TypeError):
+            payload["source_silence_age_s"] = None
+    else:
+        payload["last_source_message_at"] = None
+        payload["source_silence_age_s"] = None
+
+    # Verarbeitet wurde etwas, wenn ein Replay lief ODER der Checkpoint sich
+    # bewegt hat. Sonst gilt der zuletzt bekannte Zeitpunkt weiter.
+    bewegt = int(replay_processed) > 0 or (
+        int(checkpoint_message_id) > int(vorher.get("checkpoint_message_id") or 0)
+    )
+    payload["last_ingested_message_at"] = (
+        datetime.now(UTC).isoformat() if bewegt else vorher.get("last_ingested_message_at")
+    )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -600,6 +644,28 @@ async def _latest_message_id(client: Any, entity: Any) -> int | None:
         msg_id = getattr(msg, "id", None)
         return int(msg_id) if isinstance(msg_id, int) else None
     return None
+
+
+async def _latest_message_head(client: Any, entity: Any) -> tuple[int | None, str | None]:
+    """Kopf der Quelle: Id UND Sendezeitpunkt.
+
+    Die Id allein beantwortet "haben wir alles?", nicht "wann hat die Quelle
+    zuletzt gesendet?". Ohne die zweite Antwort ist Stille von einem Defekt auf
+    unserer Seite nicht zu unterscheiden — und genau diese Verwechslung stand am
+    2026-09-07 im Raum, als der Premium-Kanal seit dem 04.09. schwieg und
+    niemand belegen konnte, dass es NICHT an KAI lag.
+    """
+    async for msg in client.iter_messages(entity, limit=1):
+        msg_id = getattr(msg, "id", None)
+        datum = getattr(msg, "date", None)
+        iso: str | None = None
+        if datum is not None:
+            try:
+                iso = datum.astimezone(UTC).isoformat()
+            except (AttributeError, ValueError, TypeError):
+                iso = None
+        return (int(msg_id) if isinstance(msg_id, int) else None), iso
+    return None, None
 
 
 async def replay_missed_messages(
@@ -775,12 +841,13 @@ async def _poll_backstop_iteration(
     )
     updated_checkpoint = load_checkpoint(checkpoint_path)
     updated_last_seen = get_last_seen_id(updated_checkpoint, chat_id_marked)
-    latest_id = await _latest_message_id(client, entity)
+    latest_id, latest_at = await _latest_message_head(client, entity)
     _write_semantic_canary(
         chat_id=chat_id_marked,
         checkpoint_message_id=updated_last_seen,
         latest_message_id=latest_id,
         replay_processed=int(result.get("processed", 0)),
+        last_source_message_at=latest_at,
     )
     return int(result.get("processed", 0)), last_seen
 
@@ -1189,13 +1256,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 process_fn=_replay_handler,
             )
             _write_replay_marker(replay_result)
-            latest_id = await _latest_message_id(client, entity)
+            latest_id, latest_at = await _latest_message_head(client, entity)
             checkpoint_after_replay = load_checkpoint(checkpoint_path)
             _write_semantic_canary(
                 chat_id=chat_id_marked,
                 checkpoint_message_id=get_last_seen_id(checkpoint_after_replay, chat_id_marked),
                 latest_message_id=latest_id,
                 replay_processed=int(replay_result.get("processed", 0)),
+                last_source_message_at=latest_at,
             )
             # 2026-05-31: hand the replay handler + marked chat-id to the
             # poll-backstop so it pulls via the same checkpoint path.
