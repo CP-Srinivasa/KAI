@@ -3,6 +3,24 @@
 Append-only JSONL per call (canonical writer pattern: frozen record ->
 ``append_lock`` -> append), read back tolerantly. Consumed by the dashboard
 integrations surface and the B-002 re-entry capability check.
+
+**Kostenmessung (KAI COST CONTROL v0.1, D-CORE-007).** Die Kosten werden GENAU
+HIER berechnet, an der einzigen Stelle, durch die jede Telemetriezeile läuft.
+Vorher war ``cost_usd`` strukturell tot: gefüllt hat es nur der LiteLLM-Header,
+und LiteLLM ist aus — auf 14.886 Zeilen stand ``null``. Die Berechnung an jeden
+der sieben Aufrufer zu hängen hätte sieben Wahrheiten über denselben Preis
+ergeben.
+
+Getrennt gehalten, weil es zwei verschiedene Dinge sind:
+
+* ``cost_source="upstream"`` — der Anbieter hat den Betrag GENANNT. Das ist
+  eine Abrechnung.
+* ``cost_source="list_price:<version>"`` — aus Token und Listenpreis
+  GERECHNET. Das ist eine Schätzung, und die Tabellenversion steht dabei,
+  damit sie nachrechenbar bleibt.
+* ``cost_usd=None`` + ``cost_status="COST_UNKNOWN"`` + Grund — weder noch.
+  Niemals ``0.0``: eine Summe mit unsichtbaren Nullen sieht aus wie eine
+  Abrechnung und ist keine.
 """
 
 from __future__ import annotations
@@ -17,6 +35,59 @@ from app.core.file_lock import append_lock
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
+
+#: Der Anbieter hat den Betrag selbst genannt (heute nur der LiteLLM-Header).
+COST_SOURCE_UPSTREAM = "upstream"
+
+
+def _cost_fields(
+    *,
+    cost_usd: float | None,
+    model: str,
+    actual_model: str | None,
+    requested_model_alias: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> dict[str, Any]:
+    """Kosten, Herkunft und — wenn unbekannt — der Grund dafür.
+
+    Der Import von :mod:`app.ai.pricing` liegt bewusst IM Funktionsrumpf:
+    ``app.ai.audit`` importiert dieses Modul auf Modulebene, ein Gegenimport
+    oben wäre ein Zyklus. Der Kostenpfad darf die Telemetrie nicht
+    zerbrechlicher machen, als sie ohne ihn wäre.
+    """
+    if cost_usd is not None:
+        # Abrechnung schlägt Schätzung. Immer.
+        return {
+            "cost_usd": float(cost_usd),
+            "cost_known": True,
+            "cost_source": COST_SOURCE_UPSTREAM,
+            "cost_status": "OK",
+            "cost_reason": "",
+        }
+    try:
+        from app.ai.pricing import estimate_cost_usd, resolve_priced_model
+
+        preismodell = resolve_priced_model(
+            requested_model_alias=requested_model_alias or model,
+            actual_model=actual_model,
+        )
+        estimate = estimate_cost_usd(preismodell, input_tokens, output_tokens)
+    except Exception:  # noqa: BLE001 — Telemetrie darf den Aufruf nie mitreissen
+        return {
+            "cost_usd": None,
+            "cost_known": False,
+            "cost_source": None,
+            "cost_status": "COST_UNKNOWN",
+            "cost_reason": "pricing_unavailable",
+        }
+    return {
+        "cost_usd": estimate.usd,
+        "cost_known": estimate.usd is not None,
+        "cost_source": estimate.source or None,
+        "cost_status": estimate.status,
+        "cost_reason": estimate.reason,
+    }
 
 
 def record_llm_call(
@@ -64,6 +135,17 @@ def record_llm_call(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     cost_usd: float | None = None,
+    # --- v4 (2026-09-08, D-CORE-007): Kostenzuordnung ----------------------
+    # Additiv. Jeder bestehende Aufrufer bleibt gueltig; wer nichts uebergibt,
+    # bekommt den aus dem Purpose abgeleiteten use_case ueber app.ai.audit
+    # bzw. "unknown" -- nie eine Vermutung.
+    use_case: str | None = None,
+    escalation_reason: str = "",
+    #: Woher die Quelle des Inhalts stammt (Feed-/Kanalname). GETRENNT von
+    #: ``provider``: dort gehoert der bezahlte Anbieter hin und sonst nichts.
+    #: Der Strom trug beides im selben Feld ("CNBC" neben "openai"), und jede
+    #: Aggregation ohne Anbieter-Filter war dadurch falsch.
+    source: str | None = None,
     schema_status: str | None = None,
     budget_decision: str | None = None,
     circuit_state: str | None = None,
@@ -113,15 +195,35 @@ def record_llm_call(
         "output_tokens": (
             output_tokens if output_tokens is not None else (int(completion_tokens) or None)
         ),
-        # None is the canonical representation of UNKNOWN cost.
-        "cost_usd": cost_usd,
-        "cost_known": cost_usd is not None,
         "schema_status": schema_status,
         "budget_decision": budget_decision,
         "circuit_state": circuit_state,
         "execution_authority": execution_authority,
         "upstream_request_id": upstream_request_id,
+        # --- v4: Zuordnung ------------------------------------------------
+        "use_case": use_case or "unknown",
+        "escalation_reason": escalation_reason or "",
+        "source": source,
     }
+    gemessene_eingabe = row["input_tokens"]
+    gemessene_ausgabe = row["output_tokens"]
+    # Auch die Summe erbt UNKNOWN != 0: nur wenn BEIDE Seiten bekannt sind,
+    # gibt es eine Gesamtzahl. Sonst waere 0 eine Behauptung ueber Verbrauch.
+    row["total_tokens"] = (
+        int(gemessene_eingabe) + int(gemessene_ausgabe)
+        if gemessene_eingabe is not None and gemessene_ausgabe is not None
+        else None
+    )
+    row.update(
+        _cost_fields(
+            cost_usd=cost_usd,
+            model=model,
+            actual_model=actual_model,
+            requested_model_alias=requested_model_alias,
+            input_tokens=gemessene_eingabe,
+            output_tokens=gemessene_ausgabe,
+        )
+    )
     try:
         sink = path if path is not None else DEFAULT_TELEMETRY_PATH
         sink.parent.mkdir(parents=True, exist_ok=True)

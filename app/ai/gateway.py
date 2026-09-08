@@ -24,13 +24,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic, sleep
 
-from app.ai.audit import Purpose, record_attempt_trace
-from app.ai.budget import BudgetDecision, BudgetEntry, BudgetPolicy, BudgetState, decide
+from app.ai.audit import Purpose, escalation_scope, record_attempt_trace
+from app.ai.budget import (
+    BUDGET_EXEMPT_ROUTES,
+    BudgetDecision,
+    BudgetEntry,
+    BudgetExceeded,
+    BudgetPolicy,
+    BudgetState,
+    decide,
+)
 from app.ai.circuit import CircuitBook, CircuitKey, CircuitPolicy, circuit_key
 from app.ai.models import AttemptResult, AttemptTrace, InferenceResult
 from app.ai.modes import Mode, resolve_mode
 from app.ai.retry import RetryPolicy, retry_delay_s, should_retry
-from app.ai.routes import Route, route_for
+from app.ai.routes import Route, escalation_reason_for, route_for
 
 #: Ein Transportaufruf: führt EINEN Versuch aus und berichtet, was geschah.
 #: Er wirft nicht — ein Fehlschlag ist ein ``AttemptTrace`` mit ``error_class``.
@@ -326,12 +334,18 @@ async def execute_async[T](
     correlation_id: str = "",
     evaluation_id: str | None = None,
     telemetry_path: Path | None = None,
+    budget_blocked: str = "",
 ) -> AsyncGatewayOutcome[T]:
     """Async execution mechanics with the same KAI policy as :func:`execute`.
 
     Only LiteLLM receives this layer's bounded retry. Existing direct-provider
     fallback/retry semantics remain inside the direct callable, which is vital
     for the hard OFF rollback path.
+
+    Args:
+        budget_blocked: nicht-leer heisst, das Budget ist ausgeschöpft ODER die
+            Kostenlage ist unbekannt (``COST_UNKNOWN``). Der String ist der
+            Grund und landet in der Ausnahme. LEER = heutiges Verhalten.
     """
     route = route_for(purpose)
     mode = resolve_mode(route, per_route=per_route, ceiling=ceiling)
@@ -350,16 +364,99 @@ async def execute_async[T](
         estimated_request_cost_usd=estimated_request_cost_usd,
     )
     skipped: list[SkipReason] = []
+
+    # ── GEAENDERTES VERHALTEN (D-CORE-007, 2026-09-08) ─────────────────────
+    #
+    # Bis hierher stand an dieser Stelle: "Das Budget regiert die
+    # LiteLLM-AUSGABE, nicht den Altpfad. Ein erschoepftes Tagesbudget
+    # schaltet den Transport ab und laesst Analysis, Chat, Intent, STT und
+    # Consensus unveraendert direkt weiterlaufen."
+    #
+    # Diese Begruendung war richtig, solange LiteLLM der einzige Weg war, auf
+    # dem das Budget ueberhaupt etwas bewirken konnte -- und solange kein
+    # Aufrufer je ein Limit setzte, war sie folgenlos. Beides trifft nicht mehr
+    # zu: der Direktpfad IST der bezahlte Pfad (LiteLLM ist aus), und ein
+    # Budget, das genau den Pfad nicht erreicht, auf dem das Geld abfliesst,
+    # ist keine Kostenbremse, sondern ein Schalter fuer einen abgeschalteten
+    # Transport.
+    #
+    # Die alte Sorge bleibt gueltig und wird anders geloest, statt ignoriert:
+    # ein Budgetende darf nicht wie ein Ausfall aussehen. Deshalb (a) eine
+    # TYPISIERTE Ausnahme, die der Aufrufer als Budget erkennt und nicht als
+    # Anbieterfehler, und (b) `critical` (= `intent`, die Operator-Steuerung)
+    # laeuft weiter -- mit `critical_override` in der Telemetrie, damit die
+    # Ausnahme sichtbar bleibt statt gratis zu sein.
+    budget_stop = budget_blocked or ("budget_reject" if verdict == "reject" else "")
+    eskalation = ""
+    if budget_stop:
+        if route in BUDGET_EXEMPT_ROUTES:
+            eskalation = escalation_reason_for(route, budget_bypassed=True)
+        else:
+            skipped.append(SKIP_BUDGET_REJECT)
+            raise BudgetExceeded(
+                route=route,
+                state="LIMIT_REACHED" if budget_stop == "budget_reject" else "COST_UNKNOWN",
+                reason=budget_stop,
+            )
+
     litellm_attempts: list[AttemptResult[T]] = []
     direct_task: asyncio.Task[AttemptResult[T]] | None = None
     if mode == "shadow" and direct_call is not None:
         direct_task = asyncio.ensure_future(direct_call())
 
-    # Das Budget regiert die LiteLLM-AUSGABE, nicht den Altpfad. Ein erschoepftes
-    # Tagesbudget schaltet den Transport ab und laesst Analysis, Chat, Intent,
-    # STT und Consensus unveraendert direkt weiterlaufen. Waere das hier ein
-    # frueher `return`, haette die Kostenbremse mehr Macht ueber den Betrieb als
-    # der Modus-Schalter -- und ein Budgetende saehe aus wie ein Ausfall.
+    with escalation_scope(eskalation):
+        return await _execute_transports(
+            purpose=purpose,
+            route=route,
+            mode=mode,
+            alias=alias,
+            verdict=verdict,
+            detail=detail,
+            skipped=skipped,
+            book=book,
+            cpolicy=cpolicy,
+            direct_call=direct_call,
+            direct_task=direct_task,
+            litellm_call=litellm_call,
+            litellm_attempts=litellm_attempts,
+            retry_policy=retry_policy,
+            sleeper=sleeper,
+            jitter=jitter,
+            clock=clock,
+            correlation_id=correlation_id,
+            evaluation_id=evaluation_id,
+            telemetry_path=telemetry_path,
+        )
+
+
+async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustandsobjekt
+    *,
+    purpose: Purpose,
+    route: Route,
+    mode: Mode,
+    alias: str,
+    verdict: BudgetDecision,
+    detail: dict[str, object],
+    skipped: list[SkipReason],
+    book: CircuitBook,
+    cpolicy: CircuitPolicy,
+    direct_call: AsyncTransportCall[T] | None,
+    direct_task: asyncio.Task[AttemptResult[T]] | None,
+    litellm_call: AsyncTransportCall[T] | None,
+    litellm_attempts: list[AttemptResult[T]],
+    retry_policy: RetryPolicy | None,
+    sleeper: Callable[[float], Awaitable[None]],
+    jitter: Callable[[], float],
+    clock: Callable[[], float],
+    correlation_id: str,
+    evaluation_id: str | None,
+    telemetry_path: Path | None,
+) -> AsyncGatewayOutcome[T]:
+    """Transport-Mechanik von :func:`execute_async` — Politik ist oben entschieden.
+
+    Nur herausgezogen, damit die Budget-Entscheidung dort ganz zu lesen ist,
+    ohne dass die Schleife darunter um eine Einrückungsebene wandert.
+    """
     try:
         if verdict == "reject":
             skipped.append(SKIP_BUDGET_REJECT)

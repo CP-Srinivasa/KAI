@@ -17,47 +17,29 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+# Eine Zaehlebene, ein Definitionsort: die Primitive wohnen in app.ai.spend.
+from app.ai.spend import dedupe_chain_levels, is_ai_row, row_ts
 from app.observability.llm_telemetry import (
     DEFAULT_TELEMETRY_PATH,
     _percentile,  # identical nearest-rank definition; re-implementing it would drift
 )
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
+#: Rueckwaertskompatible Namen. Die Definitionen wohnen seit D-CORE-007 in
+#: ``app.ai.spend``, damit Gesundheit und Budget nicht zwei Meinungen ueber
+#: dieselbe Grundgesamtheit haben.
+_is_ai_row = is_ai_row
+_row_ts = row_ts
+
 CHAIN_SOURCE = "app/analysis/factory.py"
+
+#: Steht in jeder Kostenantwort. Ein Betrag ohne diesen Satz waere eine
+#: Abrechnung; er ist keine.
+_COST_NOTE = "estimates from list prices; billing amounts are separate"
 
 _DEGRADED_AT_PCT = 10.0
 _DOWN_AT_PCT = 50.0
 _DOWN_AT_CONSECUTIVE_FAILURES = 3
-
-
-def _is_ai_row(row: dict[str, Any]) -> bool:
-    provider = row.get("provider")
-    return (
-        isinstance(provider, str)
-        and bool(provider)
-        and (
-            provider in {"openai", "anthropic", "gemini", "grok"}
-            or (
-                row.get("actual_provider") == provider
-                and row.get("purpose") in {"analysis", "chat", "intent", "stt", "consensus"}
-            )
-        )
-    )
-
-
-def _row_ts(row: dict[str, Any]) -> datetime | None:
-    try:
-        ts = datetime.fromisoformat(str(row.get("ts", "")))
-        return ts if ts.tzinfo is not None else None
-    except ValueError:
-        return None
-
-
-def _chain_position(row: dict[str, Any]) -> int:
-    try:
-        return int(row.get("chain_position", -1))
-    except (TypeError, ValueError):
-        return -1
 
 
 def _load_rows(path: Path, window_hours: float) -> list[dict[str, Any]]:
@@ -84,16 +66,7 @@ def _load_rows(path: Path, window_hours: float) -> list[dict[str, Any]]:
         rows.append(row)
     rows.sort(key=lambda r: str(r.get("ts", "")))
 
-    attempt_cids = {
-        row.get("correlation_id")
-        for row in rows
-        if _chain_position(row) >= 0 and row.get("correlation_id")
-    }
-    return [
-        row
-        for row in rows
-        if not (_chain_position(row) == -1 and row.get("correlation_id") in attempt_cids)
-    ]
+    return dedupe_chain_levels(rows)
 
 
 def _classify_state(calls: int, failures: int, consecutive_failures: int) -> str:
@@ -165,6 +138,54 @@ def _provider_block(
     }
 
 
+def cost_block(path: Path | None = None) -> dict[str, Any]:
+    """Kostenlage fuer ``/health/ai`` — Schaetzung, und sie sagt es selbst.
+
+    Zwei Fenster (heute UTC, laufender Monat UTC) statt eines Rollfensters:
+    ein Tagesbudget wird um Mitternacht zurueckgesetzt, nicht 24 Stunden nach
+    dem letzten Aufruf. Ein Rollfenster haette den Zustand nie zurueckgesetzt.
+
+    ``*_known`` im Namen ist kein Schmuck: die Summe ist eine UNTERGRENZE,
+    solange ``unknown_cost_calls_* > 0``. Beide Zahlen stehen deshalb
+    nebeneinander und werden nirgends getrennt ausgewiesen.
+
+    Kein Probe-Call, kein neuer Strom, kein Dashboard — derselbe Vertrag wie
+    der Rest dieser Datei.
+    """
+    from app.ai.pricing import PRICE_TABLE_VERSION
+    from app.ai.spend import current_budget_status
+
+    try:
+        status, heute, monat = current_budget_status(path=path)
+    except Exception:  # noqa: BLE001 - eine Gesundheitsanzeige stirbt nicht an Kosten
+        return {
+            "status": "COST_UNKNOWN",
+            "reason": "spend_unreadable",
+            "price_table_version": PRICE_TABLE_VERSION,
+            "note": _COST_NOTE,
+        }
+    return {
+        "today_usd_known": round(heute.known_cost_usd, 6),
+        "month_usd_known": round(monat.known_cost_usd, 6),
+        "unknown_cost_calls_today": heute.unknown_calls,
+        "unknown_cost_calls_month": monat.unknown_calls,
+        "calls_today": heute.calls,
+        "calls_month": monat.calls,
+        "daily_limit_usd": status.policy.daily_limit_usd,
+        "monthly_limit_usd": status.policy.monthly_limit_usd,
+        "warn_pct": status.warn_pct,
+        "unknown_max_calls_per_day": status.unknown_max_calls_per_day,
+        "status": status.state,
+        "reason": status.reason,
+        "blocks_routine": status.blocks_routine,
+        "top_provider": heute.top_provider or monat.top_provider,
+        "top_use_case": heute.top_use_case or monat.top_use_case,
+        "fully_accounted_today": heute.fully_accounted,
+        "price_table_version": PRICE_TABLE_VERSION,
+        "note": _COST_NOTE,
+    }
+
+
 def ai_health_snapshot(
     window_hours: float = 24.0,
     path: Path | None = None,
@@ -178,7 +199,9 @@ def ai_health_snapshot(
         settings: AppSettings; ``None`` loads them. Only read, never written.
 
     Returns:
-        ``{"ai": {"chain": ..., "window_hours": ..., "providers": [...]}}``
+        ``{"ai": {"chain": ..., "window_hours": ..., "providers": [...],
+        "cost": {...}}}`` — ``cost`` ist ADDITIV: ein bestehender Leser, der
+        den Schluessel nicht kennt, bleibt gueltig.
     """
     from app.analysis.factory import describe_primary_chain, describe_shadow_chain
 
@@ -251,6 +274,7 @@ def ai_health_snapshot(
                 "observed": {name: zustaende.get(name, "unavailable") for name in primary + shadow},
             },
             "window_hours": window_hours,
+            "cost": cost_block(path),
             "providers": bloecke,
         }
     }

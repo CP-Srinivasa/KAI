@@ -1,3 +1,55 @@
+## 2026-09-08 - KAI COST CONTROL v0.1: messen, zuordnen, begrenzen
+
+KAI wusste nicht, was es kostet. `cost_usd` stand auf **jeder** der 14.886 Telemetriezeilen auf `null`, weil das Feld
+ausschliesslich vom LiteLLM-Antwort-Header gefuellt wurde — und LiteLLM ist aus. Das Budget existierte als Vertrag
+(`app/ai/budget.py`, ADR 0017), hatte aber **null Produktionsaufrufer**: kein Limit wurde je gesetzt, kein Fensterzustand
+je gebaut. Kein neues Modul-Verzeichnis, kein zweiter Strom, keine zweite Control Plane — alles haengt an `app/ai/` und
+`artifacts/llm_telemetry.jsonl`. Doku `docs/KAI_COST_CONTROL_V0_1.md` (D-CORE-007).
+
+**METER.** Neue Preistabelle `app/ai/pricing.py` (versioniert, `source="list_price"`); `record_llm_call` rechnet die Kosten
+an der EINEN Stelle, durch die alle sieben Aufrufer laufen. Neue Felder: `cost_source` trennt **Abrechnung** (`upstream`)
+von **Schaetzung** (`list_price:<version>`), dazu `cost_status`/`cost_reason`, `total_tokens`, `use_case`,
+`escalation_reason`, `source`. **UNKNOWN ist nicht 0**: ein Aufruf ohne Usage-Block oder mit unbekanntem Modell traegt
+`null` und einen Grund, nie eine stille Null. Ein datierter Modellname wird NICHT auf sein Basismodell gebogen.
+
+**Zuordnung.** `use_case` kommt aus dem bestehenden ContextVar-Scope in `app/ai/audit.py`, gesetzt am Eintrittspunkt
+(`AnalysisPipeline.run` → `news_intelligence`, `app/intelligence` → `research`), sonst aus dem `purpose` abgeleitet,
+sonst `unknown` — nie geraten. Und der Attributionsfehler ist behoben: der Feedname (`CNBC`) gehoert in `source`,
+`provider` traegt den bezahlten Anbieter.
+
+**Retry-Zaehlung.** Die vier Direktprovider tragen `@retry(stop=stop_after_attempt(3))`, die Messung lag ausserhalb —
+bis zu drei bezahlte Requests ergaben eine Zeile mit `retry_count=0`. `before_sleep=note_retry_attempt` zaehlt jetzt mit;
+drei Versuche = eine Zeile mit `retry_count=2`. **Nur zaehlen, nicht entscheiden**: Versuchszahl bleibt in
+`app/ai/retry.py`, Praedikat in `app/ai/audit.py`.
+
+**LIMIT — und das ist der bewusste Verhaltenswechsel.** `app/ai/gateway.py` sagte ausdruecklich: „Das Budget regiert die
+LiteLLM-AUSGABE, nicht den Altpfad." Weil LiteLLM aus ist, haette ein erschoepftes Budget damit **nichts** angehalten.
+Die Bremse greift jetzt an beiden Stellen — im Gateway und im OFF-Zweig von `app/ai/runtime.py::invoke`, der im Betrieb
+der Normalfall ist. Zustaende OK | WARNING | LIMIT_REACHED | COST_UNKNOWN (`evaluate_status`); `WARNING` sperrt
+ausdruecklich nichts. Routine bekommt eine typisierte `BudgetExceeded` (Pipeline: Dokument bleibt unanalysiert MIT
+Vermerk; Telegram: „AI-Budget erreicht"), **`critical` (= `intent`) laeuft weiter** mit `escalation_reason="critical_override"` —
+wer die Operator-Steuerung sperrt, nimmt dem Menschen die Fernbedienung fuer genau den Zustand, den er beheben muss.
+Zu viele unbelegte Aufrufe pro Tag sind fail-closed (`COST_UNKNOWN` wirkt wie `LIMIT_REACHED`) — aber nur bei gesetztem Limit: ohne Budget gibt es keine Deckung, die fehlen koennte. Ohne gesetzte Limits
+aendert sich **nichts**; der Zustand wird trotzdem berechnet.
+
+**PROVE.** `GET /health/ai` traegt den additiven Block `cost` (heute/Monat getrennt, `*_known` neben
+`unknown_cost_calls_*`, Limits, Status, `top_provider`/`top_use_case`, `price_table_version` und den Satz
+„estimates from list prices; billing amounts are separate"). Kein Probe-Call, kein neues Dashboard.
+
+**Verschwendung entfernt.** (a) Die Schatten-Zweitmeinung lief auch dann, wenn der Relevanz-Gate den Primaeraufruf
+gespart hatte — jedes aussortierte Dokument kostete weiter einen `claude-sonnet-4-6`-Aufruf fuer einen Vergleich ohne
+Gegenstueck. (b) `APP_ANALYSIS_SHADOW_ENABLED` (Default `true`) in `describe_shadow_chain`, damit Factory UND
+`/health/ai` aus EINER Quelle lesen. (c) `KAI_TWITTER_INGEST_ENABLED` (Default `true`) in `paper_trading_cron.sh`.
+
+**Die zweite LLM-Schicht wird sichtbar.** `app/intelligence` (ADR 0015, QUARANTINE) rief `record_llm_call` nie — bei
+`KAI_LLM_PROVIDER=claude` lief taeglich ein bezahlter Anthropic-Aufruf, den keine Kostenzahl dieses Repos kannte.
+Instrumentiert an den beiden geteilten Ausgaengen; `NoOpProvider`/`Mock`/`Ollama` bewusst nicht (gratis, und sie wuerden
+die Unbekannt-Quote verderben).
+
+**Offen und im Code benannt:** ausser `claude-sonnet-4-6` ist kein Preis gegen eine Rechnung geprueft; bei
+`claude-sonnet-5` widersprechen sich Auftragswert (3.00/15.00) und `KAI_COST_SURFACE.md:86-91` (2.00/10.00) — die
+Abweichung steht im Tabelleneintrag, statt weggemittelt zu werden.
+
 ## 2026-09-08 - KAI PAY v0.1 USABLE / REAL-WORLD VERIFIED
 
 Abnahme am Geraet: Zahlung ueber die Seite /pay angefordert, 1.995 sat aus Wallet of Satoshi bezahlt, Seite zeigt

@@ -17,13 +17,26 @@ from typing import Any, Final
 
 import httpx
 
-from app.ai.audit import Purpose, classify_error, correlation_scope, evaluation_scope
+from app.ai.audit import (
+    Purpose,
+    classify_error,
+    correlation_scope,
+    escalation_scope,
+    evaluation_scope,
+)
+from app.ai.budget import (
+    BUDGET_EXEMPT_ROUTES,
+    BudgetExceeded,
+    BudgetPolicy,
+    BudgetState,
+    BudgetStatus,
+)
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
 from app.ai.models import AttemptResult, AttemptTrace
 from app.ai.modes import resolve_mode, unknown_route_keys
 from app.ai.retry import RetryPolicy
-from app.ai.routes import route_for
+from app.ai.routes import escalation_reason_for, route_for
 from app.core.logging import get_logger
 from app.integrations.litellm.provider import LiteLLMConfig, call_litellm_async
 
@@ -135,6 +148,52 @@ def _direct_trace(
     )
 
 
+def _budget_lage(telemetry_path: Path | None) -> BudgetStatus:
+    """Der Budgetzustand vor diesem Aufruf — fail-soft, nie eine Ausnahme.
+
+    Fehlschlaege beim Lesen des Stroms oder der Konfiguration duerfen den
+    Aufruf nicht sperren: eine Kostenbremse, die aus einem Lesefehler heraus
+    zuschlaegt, ist ein Ausfall mit Kostenbegruendung. Der Rueckfall ist der
+    unbegrenzte Zustand — also das Verhalten von vor D-CORE-007.
+    """
+    try:
+        from app.ai.spend import current_budget_status
+
+        status, _heute, _monat = current_budget_status(path=telemetry_path)
+    except Exception as exc:  # noqa: BLE001 - siehe Docstring
+        logger.warning("ai_budget_state_unavailable", error=str(exc))
+        leer = BudgetState(0.0, 0, 0)
+        return BudgetStatus(state="OK", daily=leer, monthly=leer, policy=BudgetPolicy())
+    return status
+
+
+def _eskalation(route: str, lage: BudgetStatus) -> str:
+    """Der Eskalationsgrund dieses Aufrufs — leer heisst: keine Eskalation."""
+    return escalation_reason_for(
+        route, budget_bypassed=lage.blocks_routine and route in BUDGET_EXEMPT_ROUTES
+    )
+
+
+def _budget_gate(route: str, lage: BudgetStatus) -> None:
+    """Sperrt Routinearbeit bei erreichtem Limit — ``critical`` nie.
+
+    Eine typisierte Ausnahme, kein leeres Ergebnis: der Aufrufer soll das
+    Dokument VERSCHIEBEN oder die Antwort ERSETZEN und das vermerken. Ein
+    stilles ``None`` waere von einem Anbieterausfall nicht zu unterscheiden.
+    """
+    if lage.allows(route):
+        return
+    logger.warning(
+        "ai_budget_blocked_call",
+        route=route,
+        state=lage.state,
+        reason=lage.reason,
+        booked_usd_today=round(lage.daily.booked_usd, 4),
+        unknown_calls_today=lage.daily.unknown_calls,
+    )
+    raise BudgetExceeded(route=route, state=lage.state, reason=lage.reason)
+
+
 async def invoke[T](
     *,
     purpose: Purpose,
@@ -162,12 +221,23 @@ async def invoke[T](
     if purpose == "consensus" and mode == "primary":
         mode = "shadow"
 
+    lage = _budget_lage(telemetry_path)
+
     # This branch deliberately adds no network client, task or retry around the
     # legacy path. It is the hard rollback invariant, not merely a mode label.
     if mode == "off":
-        # Kein `evaluation_scope`: OFF ist der Altpfad, unveraendert. Eine
-        # Auswertung, die es nicht gibt, bekommt auch keine Id.
-        with correlation_scope(correlation_id) as _:
+        # HIER liegt heute das Geld. OFF ist im Betrieb der Normalfall
+        # (`KAI_INFERENCE_ENABLED=false`), und dieser Zweig kehrt zurueck, ohne
+        # das Gateway je zu betreten. Ein Budget, das nur im Gateway greift,
+        # waere in genau dem Modus wirkungslos, in dem KAI laeuft -- also
+        # ueberall. Die Reihenfolge (erst Budget, dann Aufruf) ist dieselbe wie
+        # im Gateway; die Ausnahme ist dieselbe; `critical` bleibt dieselbe
+        # Ausnahme von der Ausnahme.
+        #
+        # Was dieser Zweig NICHT tut: einen Client bauen, eine Task starten,
+        # einen Retry legen. Die harte Rollback-Zusage bleibt unberuehrt.
+        _budget_gate(route, lage)
+        with correlation_scope(correlation_id) as _, escalation_scope(_eskalation(route, lage)):
             return RoutedValue(value=await direct_call(), transport="direct")
 
     with (
@@ -324,6 +394,14 @@ async def invoke[T](
                 litellm_call=run_litellm,
                 per_route=configured.route_modes,
                 ceiling=ceiling,
+                # Das Budget kommt jetzt AN. Bis 2026-09-08 uebergab diese
+                # Stelle weder Politik noch Zustand -- `execute_async` fiel auf
+                # `BudgetPolicy()` ohne Limits zurueck, und `decide()` antwortete
+                # ausnahmslos `allow`. Ein Budget ohne Aufrufer ist keine Bremse.
+                budget_policy=lage.policy,
+                daily=lage.daily,
+                monthly=lage.monthly,
+                budget_blocked=lage.reason if lage.blocks_routine else "",
                 retry_policy=RetryPolicy(
                     max_attempts=configured.max_attempts,
                     base_backoff_s=configured.backoff_base_seconds,
