@@ -472,7 +472,7 @@ def test_ein_nach_dem_versiegeln_gescheiterter_baum_bleibt_nicht_liegen() -> Non
     ab = next(i for i, z in enumerate(zeilen) if 'mv "$STAGE" "$TARGET"' in z) + 1
     danach = NEUZEILE.join(zeilen[ab:])
 
-    assert danach.count("_verwerfen") == 2, "beide Kontrollen verwerfen"
+    assert danach.count("_verwerfen") == 3, "alle drei Kontrollen verwerfen"
     assert "exit 1" not in danach, "kein blankes exit -- das liesse den Baum stehen"
     assert "exit 0" in danach, "der Erfolgsweg bleibt"
 
@@ -489,6 +489,100 @@ def test_die_suche_uebergeht_verworfene_baeume(tmp_path: Path) -> None:
     )
 
     assert _idempotenz_probe(tmp_path, "a" * 64) == ""
+
+
+def _umschreiben(stage: Path, target: Path) -> subprocess.CompletedProcess[str]:
+    """Den Reparatur-Block AUS dem Builder gegen einen echten Baum ausfuehren."""
+    zeilen = _text().splitlines()
+    ab = next(i for i, z in enumerate(zeilen) if z.startswith("for datei in"))
+    bis = next(i for i in range(ab, len(zeilen)) if z_ist_ende(zeilen[i]))
+    fragment = NEUZEILE.join(zeilen[ab : bis + 1])
+    kopf = f'STAGE="{stage.as_posix()}"' + NEUZEILE + f'TARGET="{target.as_posix()}"' + NEUZEILE
+    return _bash(kopf + fragment)
+
+
+def z_ist_ende(zeile: str) -> bool:
+    return zeile.startswith('sed -i "s|$STAGE/.venv|$TARGET/.venv|g" "$TARGET/.venv/pyvenv.cfg"')
+
+
+def _venv_attrappe(wurzel: Path, stage: Path) -> Path:
+    """Ein Baum, wie ihn pip hinterlaesst: Shebangs auf den STAGING-Pfad."""
+    binaer = wurzel / ".venv" / "bin"
+    binaer.mkdir(parents=True)
+    (binaer / "litellm").write_text(
+        f"#!{stage.as_posix()}/.venv/bin/python3" + NEUZEILE + "print(1)" + NEUZEILE,
+        encoding="utf-8",
+    )
+    (binaer / "activate").write_text(
+        f'VIRTUAL_ENV="{stage.as_posix()}/.venv"' + NEUZEILE, encoding="utf-8"
+    )
+    (binaer / "python3").write_bytes(bytes([0x7F, 0x45, 0x4C, 0x46, 0x02, 0x00, 0x00]))
+    (wurzel / ".venv" / "pyvenv.cfg").write_text(
+        f"home = {stage.as_posix()}/.venv/bin" + NEUZEILE,
+        encoding="utf-8",
+    )
+    return wurzel
+
+
+def test_die_shebang_zeigt_nach_dem_verschieben_auf_den_zielort(tmp_path: Path) -> None:
+    """Ein venv ist nicht verschiebbar -- das ist keine Randnotiz.
+
+    `pip` backt den absoluten Interpreterpfad in jede Konsolen-Anwendung. Nach
+    dem `mv` zeigt er ins Staging, das es nicht mehr gibt: die Datei ist da,
+    ist ausfuehrbar, und `execve` scheitert am Interpreter. Die Meldung lautet
+    dann "No such file or directory" und nennt die Datei, die existiert.
+
+    Gefunden hat das der erste echte Bau auf kai-pi5, nicht diese Suite.
+    """
+    stage = tmp_path / ".staging-4711"
+    ziel = _venv_attrappe(tmp_path / "1.99.0-abcd1234", stage)
+
+    fertig = _umschreiben(stage, ziel)
+
+    assert fertig.returncode == 0, fertig.stderr
+    shebang = (ziel / ".venv" / "bin" / "litellm").read_text(encoding="utf-8").splitlines()[0]
+    assert shebang == f"#!{ziel.as_posix()}/.venv/bin/python3", shebang
+    assert ".staging-" not in shebang
+
+
+def test_auch_activate_und_pyvenv_cfg_werden_mitgezogen(tmp_path: Path) -> None:
+    """Sie tragen denselben Pfad. Ein Baum, der nur halb umgeschrieben ist,
+    startet zwar -- und luegt ueber sich, sobald jemand hineinsieht."""
+    stage = tmp_path / ".staging-4711"
+    ziel = _venv_attrappe(tmp_path / "1.99.0-abcd1234", stage)
+
+    _umschreiben(stage, ziel)
+
+    for datei in (ziel / ".venv" / "bin" / "activate", ziel / ".venv" / "pyvenv.cfg"):
+        assert ".staging-" not in datei.read_text(encoding="utf-8"), datei.name
+
+
+def test_binaerdateien_bleiben_unangetastet(tmp_path: Path) -> None:
+    """`sed -i` ueber eine ELF-Datei beschaedigte sie stillschweigend."""
+    stage = tmp_path / ".staging-4711"
+    ziel = _venv_attrappe(tmp_path / "1.99.0-abcd1234", stage)
+    vorher = (ziel / ".venv" / "bin" / "python3").read_bytes()
+
+    _umschreiben(stage, ziel)
+
+    assert (ziel / ".venv" / "bin" / "python3").read_bytes() == vorher
+
+
+def test_ein_uebriggebliebener_staging_pfad_verwirft_den_baum() -> None:
+    """Fail-closed: das soll hier auffallen und nicht beim ersten Start."""
+    code = _code()
+    stelle = code.index("TRANSPORT_STAGING_PATH_LEFTOVER")
+    assert "_verwerfen" in code[stelle : stelle + 300]
+
+
+def test_umgeschrieben_wird_vor_der_selbstkontrolle() -> None:
+    """Danach waere der Baum schon als fertig gemeldet."""
+    code = _code()
+    # Nach dem `mv` gemessen: `pip freeze` kommt auch in der Idempotenz-Suche
+    # vor, und die steht weit vorher. Ein `index` ueber die ganze Datei
+    # verglichen mit der falschen Stelle.
+    danach = code[code.index('mv "$STAGE" "$TARGET"') :]
+    assert danach.index("Pfade im venv auf den Zielort") < danach.index("-m pip freeze")
 
 
 # ---------------------------------------------------------------------------
