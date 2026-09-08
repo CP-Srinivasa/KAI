@@ -33,7 +33,7 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 | [0015](0015-kai-local-intelligence-layer.md) | KAI Local Intelligence Layer (lokales LLM als auditierbare Shadow-Schicht) | ACCEPTED (2026-07-11) |
 | [0016](0016-sovereign-value-os-self-use.md) | Sovereign Value OS (Self-Use): Geldpfad-Härtung + Operator-Wallet unter ADR-0014 Schicht 4 | **ACCEPTED — SELF-USE ONLY / FORK-B BINDING (2026-09-01)** — beide Vorbedingungs-Verdikte terminal (seq 71 / seq 91), Q4 gebunden (seq 102); SSG-Pilot **ohne Bestandsschutz** |
 | [0017](0017-ai-control-plane-and-litellm-transport.md) | `app/ai` ist die AI-Control-Plane; LiteLLM ist Transport darunter | Accepted (2026-09-03, D-CORE-002) |
-| [0019](0019-litellm-transport-runtime.md) | Die LiteLLM-Runtime ist ein eigener Artefaktbaum, kein Teil des KAI-Release | **PROPOSED (2026-09-08)** — praezisiert ADR 0017 § Deployment |
+| [0019](0019-litellm-transport-runtime.md) | Die LiteLLM-Runtime ist ein eigener Artefaktbaum, kein Teil des KAI-Release | **ACCEPTED — BINDEND (2026-09-08)** — praezisiert ADR 0017 § Deployment; Bau des Transport-Baums frei, Dienststart weiterhin HOLD |
 
 **Hinweis:** „0006a/0006b" sind nur Index-Labels dieses Dokuments zur Unterscheidung — die Dateien selbst heißen beide `0006-*` und behalten ihre Namen.
 

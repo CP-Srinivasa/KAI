@@ -1,6 +1,9 @@
 # ADR 0019 — Die LiteLLM-Runtime ist ein eigener Artefaktbaum, kein Teil des KAI-Release
 
-- **Status:** **PROPOSED** — Entscheidung offen (Vorlage 2026-09-08)
+- **Status:** **ACCEPTED — BINDEND** (Operator-Entscheid 2026-09-08).
+  Freigegeben ist die **Architekturentscheidung**, nicht ihre Ausfuehrung: der
+  Transport-Baum darf gebaut werden, ein LiteLLM-Dienst darf weiterhin nicht
+  starten. Siehe „Status der Umsetzung" am Ende.
 - **Datum:** 2026-09-08
 - **Betroffen:** `deploy/systemd/kai-litellm.service`, `scripts/pi_make_release.sh`, `requirements.lock`, `pyproject.toml`, `/health`, der Backup-Vertrag in `deploy/bin/standby_to_usb.sh`
 - **Präzisiert:** [ADR 0017](0017-ai-control-plane-and-litellm-transport.md) § Deployment. Ersetzt nichts, hebt nichts auf.
@@ -272,6 +275,27 @@ Eigenschaften **nicht** anfasst. Ein Transport in einem eigenen Baum ist für
 - **Den Zeitpunkt.** Der operative Status bleibt unverändert, bis diese
   Ergänzung entschieden **und** umgesetzt ist.
 
+## Was vor der Annahme geprueft wurde
+
+Der Operator hat die Annahme davon abhaengig gemacht, dass die in § 8
+genannten Tests den Direktpfad **tatsaechlich** schuetzen — nicht, dass sie
+zitiert werden. Ein ADR, das Nachweise nennt, die es nicht gibt, waere genau
+die Zusage ohne Deckung, gegen die die halbe Arbeit dieses Sprints steht.
+
+Am 2026-09-08 gegen `958b9f59` geprueft: alle fuenf Belege existieren, laufen
+und sind gruen.
+
+| Beleg | Datei |
+|---|---|
+| `test_ein_ausgefallenes_gateway_nimmt_dem_altpfad_nicht_die_antwort` | `tests/unit/test_shadow_replay.py` |
+| `test_ein_transportfehler_wird_zur_spur_statt_zum_abbruch` | `tests/unit/test_shadow_replay.py` |
+| `test_auch_ein_kaputter_client_aufbau_bleibt_im_schatten` | `tests/unit/test_shadow_replay.py` |
+| `test_shadow_chat_liefert_die_direkte_antwort_trotz_abweichendem_litellm` | `tests/unit/test_s5_control_plane_invariants.py` |
+| fuenf `test_off_*`-Faelle, je Aufrufer einzeln | `tests/unit/test_s5_control_plane_invariants.py` |
+
+`9 passed`. Die Isolation, auf der die Fail-open-Haelfte dieses ADR beruht, ist
+damit belegt und nicht behauptet.
+
 ## Konsequenzen
 
 **Positiv:** Der Dependency-Vertrag des Kerns wird von dem des Transports
@@ -294,7 +318,8 @@ zurückzubauen — nur einen Baum, den man nicht anlegt.
 
 | | |
 |---|---|
-| ADR entschieden | **offen** |
+| ADR entschieden | **ACCEPTED 2026-09-08** |
+| Transport-Implementierung | **zulaessig** |
 | `pi_make_transport.sh` | nicht gebaut |
 | Unit auf Transport-Pfad umgestellt | nein |
 | `/health`-Block | nicht gebaut |
