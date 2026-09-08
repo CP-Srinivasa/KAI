@@ -28,47 +28,63 @@ Invoices are still unread: **NEEDS BILLING DATA**.
 ## Measured on the live Pi (2026-09-08, read-only)
 
 Source: `/home/kai/current/.env` (key names and set/empty only, never values) and
-`/home/kai/current/artifacts/llm_telemetry.jsonl` over a 30-day window. This is
-the part of "NEEDS BILLING DATA" that could be closed without invoice access:
+`/home/kai/current/artifacts/llm_telemetry.jsonl`, counted over the **v2 window**
+(2026-09-02 20:11 onwards, 5.62 days) and scaled to 30 days — see the next
+section for why a raw 30-day count is wrong here. This is the part of
+"NEEDS BILLING DATA" that could be closed without invoice access:
 **consumption is now measured, prices are applied only where authoritative.**
 
 ### Which AI providers actually run
 
-| Provider | Key on Pi | In chain | Calls / 30 d | Failures |
+| Provider | Key on Pi | In chain | Calls / 30 d (scaled) | Failures |
 |---|---|---|---|---|
-| OpenAI (`gpt-4o`) | set | primary | 4,723 | 0 |
-| Anthropic (`claude-sonnet-4-6`) | set | shadow | 2,650 | 4 |
+| OpenAI (`gpt-4o`) | set | primary | ~3,560 | 0 |
+| Anthropic (`claude-sonnet-4-6`) | set | shadow | ~2,300 | 4 |
 | Gemini | set | primary fallback | **0** | — |
 | Grok | set | **not** (`XAI_FALLBACK_ENABLED=false`) | **0** | — |
 
 Two keyed providers carry no traffic at all. Neither can be removed for savings
 — an unused key costs nothing — but neither belongs in a spend estimate either.
 
-### Token consumption, and why the estimate has a floor and a ceiling
+### Token consumption — and the mistake that produced the first version of this section
 
-`cost_usd` is null on **every** telemetry row, and token counts are present on
-only a minority of rows (OpenAI 1,310 of 4,723; Anthropic 420 of 2,650). So two
-numbers are reported, and the truth lies between them:
+The first version of this section counted a 30-day window and concluded from
+"only a minority of rows carry tokens" that telemetry was broken. That was
+wrong, and the error is worth keeping visible because the wrong answer read
+exactly like a measurement:
 
-| Provider / model | Rows with tokens | Input tokens | Output tokens |
-|---|---|---|---|
-| OpenAI `gpt-4o` (both model labels) | 1,310 / 4,723 | 2,843,552 | 414,005 |
-| Anthropic `claude-sonnet-4-6` | 420 / 2,650 | 1,434,130 | 361,098 |
+    schema v1: 13,074 rows, 2026-07-11 .. 2026-09-02 19:33  (8 fields, NO usage)
+    schema v2:  1,812 rows, 2026-09-02 20:11 .. now         (usage complete)
 
-**Anthropic, 30 days** — at the published `claude-sonnet-4-6` rate of
-$3.00 / $15.00 per million tokens (input / output):
+**The schema change sits in the middle of the 30-day window.** The "missing"
+tokens are 24 days of legacy rows, not a defect. Within v2, essentially every
+row carries usage: Anthropic 428/432, OpenAI 667/667.
 
-- measured floor (only the rows that carry tokens): **≈ $9.70**
-- extrapolated to all 2,650 calls (×6.31): **≈ $61**
+**How to count this stream correctly:**
 
-The floor is a fact; the extrapolation assumes the untokened rows resemble the
-tokened ones, which is unverified and probably biased upward (rows without a
-usage block are often failed or short attempts). **OpenAI is deliberately left
-unpriced** — no authoritative `gpt-4o` rate was available to this audit, and a
-guessed price would make the whole table untrustworthy.
+1. Filter to `schema_version == "v2"`.
+2. Take exactly ONE chain level — `chain_position == -1` (the outer row) OR
+   `>= 0` (the per-attempt rows), never both. They describe the same calls:
+   OpenAI shows 1,442,260 vs 1,499,219 input tokens for the same traffic.
+3. Restrict `provider` to {openai, anthropic, gemini, grok} — the stream also
+   carries source names such as CNBC or BeInCrypto in that field.
+4. Only then scale to a month.
 
-Either way the earlier "≈ $10 / month" figure in the Kostenbild v0 is too low:
-Anthropic alone reaches it on its measured floor, before OpenAI is counted.
+Measured over the v2 window (5.62 days, factor 5.34 to 30 days):
+
+| Provider / model | Calls / 30 d | Input / 30 d | Output / 30 d | Cost / 30 d |
+|---|---|---|---|---|
+| Anthropic `claude-sonnet-4-6` | ~2,300 | 7.82 M | 1.97 M | **≈ $53** at $3 / $15 per MTok |
+| OpenAI `gpt-4o` | ~3,560 | 7.71 M | 1.12 M | deliberately unpriced |
+
+The operator's invoice for 2026-08 reads **$47.67** for the Anthropic API — the
+estimate lands 11 % high, which is what a five-day sample scaled to a month
+should do. OpenAI stays unpriced: no authoritative `gpt-4o` rate was available
+to this audit, and a guessed price would make the whole table untrustworthy.
+
+`cost_usd` is still null on every row. Recording it (or at least usage tokens
+on every path) is what would turn this document from an estimate into an
+accounting.
 
 ### One priced lever, not applied
 
@@ -111,9 +127,11 @@ Realized savings remain unmeasured; **NEEDS BILLING DATA**.
 
 ## Maximum five actions
 
-1. Reconcile 30 days of bills against the measured call and token counts above.
+1. Reconcile the next invoice against the scaled counts above — the Anthropic
+   estimate currently lands 11 % high against the 2026-08 bill.
 2. Record ten real brief uses in `KAI_RESEARCH_TRIAL.md`.
-3. Record `cost_usd` (or at minimum usage tokens) on every telemetry row —
-   without it no later audit can do better than the floor/ceiling above.
+3. Record `cost_usd` on every telemetry row — usage tokens are already there
+   in v2; the price is the missing half, and without it every figure here
+   stays an extrapolation from a five-day sample.
 4. Reduce only demonstrated waste; preserve fallback, pricing and safety paths.
 5. Verify the reduction on the next bill, including operator time.
