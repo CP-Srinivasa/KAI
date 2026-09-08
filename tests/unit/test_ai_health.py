@@ -87,6 +87,55 @@ def test_chain_comes_from_the_factory_not_a_hardcoded_list(tmp_path: Path) -> No
     assert snap["ai"]["chain"]["source"] == "app/analysis/factory.py"
 
 
+def test_ein_schluessel_macht_keinen_verfuegbaren_provider(tmp_path: Path) -> None:
+    """Der Befund vom 2026-09-08, als das Anthropic-Auto-Aufladen ausging.
+
+    `chain.shadow` kommt aus der Factory, und die bildet die Kette
+    ausschliesslich aus der Key-Praesenz. Konto leer, Schluessel widerrufen,
+    Modell abgeschaltet -- in allen drei Faellen steht der Provider weiter in
+    der Kette. Wer nur die Kette liest, haelt ihn fuer einsatzbereit, waehrend
+    jeder Aufruf scheitert.
+    """
+    sink = tmp_path / "telemetry.jsonl"
+    _write(sink, [_row("anthropic", ok=False), _row("anthropic", ok=False)])
+
+    snap = ai_health_snapshot(path=sink, settings=_settings())
+
+    assert snap["ai"]["chain"]["shadow"] == ["anthropic"], "die Kette bleibt Konfiguration"
+    assert snap["ai"]["chain"]["derived_from"] == "credentials_only"
+    assert snap["ai"]["chain"]["observed"]["anthropic"] == "error"
+
+
+def test_unbeobachtet_ist_nicht_gesund(tmp_path: Path) -> None:
+    """Ohne Aufrufe im Fenster ist die richtige Antwort `unavailable`.
+
+    Ein `ok` waere hier eine Erfindung: niemand hat den Provider gefragt, also
+    weiss auch niemand, ob er antwortet. Das ist der Unterschied zwischen
+    "nichts Schlechtes gesehen" und "es laeuft".
+    """
+    snap = ai_health_snapshot(path=tmp_path / "leer.jsonl", settings=_settings())
+
+    for name in ("openai", "gemini", "anthropic"):
+        assert snap["ai"]["chain"]["observed"][name] == "unavailable", name
+
+
+def test_die_beobachtung_stammt_aus_denselben_bloecken(tmp_path: Path) -> None:
+    """Kein zweiter Wahrheitsstand: eine Quelle, zwei Lesarten.
+
+    Wuerde `observed` seinen Zustand selbst berechnen, koennten Kette und
+    Provider-Block auseinanderlaufen -- und zwei Stellen im selben Dokument
+    saehen denselben Provider verschieden.
+    """
+    sink = tmp_path / "telemetry.jsonl"
+    _write(sink, [_row("openai", ok=True), _row("anthropic", ok=False)])
+
+    snap = ai_health_snapshot(path=sink, settings=_settings())
+    bloecke = _providers(snap)
+
+    for name, zustand in snap["ai"]["chain"]["observed"].items():
+        assert zustand == bloecke[name]["state"], name
+
+
 def test_chain_includes_grok_only_when_flag_and_key_are_set(tmp_path: Path) -> None:
     with_flag = ai_health_snapshot(
         path=tmp_path / "none.jsonl", settings=_settings(xai="xk", xai_enabled=True)
