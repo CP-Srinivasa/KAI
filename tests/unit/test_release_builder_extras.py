@@ -227,10 +227,24 @@ def test_das_litellm_extra_ist_deklariert_und_exakt_gepinnt() -> None:
     assert not any("litellm" in d for d in manifest["project"]["dependencies"])
 
 
-def test_die_unit_startet_genau_das_binary_das_das_extra_liefert() -> None:
-    """Sonst waere das Extra im venv und die Unit trotzdem startunfaehig."""
+def test_die_unit_startet_nicht_aus_dem_release_venv() -> None:
+    """Die Annahme dieses Tests hat sich umgedreht, und das ist die Nachricht.
+
+    Er verlangte urspruenglich `/home/kai/current/.venv/bin/litellm` in der
+    Unit -- unter der Annahme, das Extra liege im Release-venv. ADR 0019 hat
+    das beendet: `litellm[proxy]` verlangt `openai<3.0.0`, der Kern faehrt
+    `openai==3.6.0`, und die beiden koennen nicht in denselben venv. Der Pfad,
+    den dieser Test forderte, benannte eine Datei, die es dort nicht geben
+    KANN.
+
+    Die Spec bleibt hier trotzdem richtig aufgehoben: sie steht in
+    `pyproject.toml`, und `pi_make_transport.sh` liest sie von dort. Ein Ort
+    fuer die Version, zwei Baeume fuer die Installation.
+    """
     unit = (REPO / "deploy" / "systemd" / "kai-litellm.service").read_text(encoding="utf-8")
-    assert "/home/kai/current/.venv/bin/litellm" in unit
+    assert "/home/kai/current/.venv/bin/litellm" not in unit
+    assert "pi_transport_exec.sh litellm" in unit
+
     manifest = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     extra = " ".join(manifest["project"]["optional-dependencies"]["litellm"])
     assert re.match(r"^litellm\[", extra), extra
