@@ -33,15 +33,27 @@ def _client(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+#: Eine 200 vom Gateway traegt IMMER `choices`. Die frueheren Fixtures liessen
+#: sie weg, weil die Uebersetzung nicht hineinsah -- seit der Leer-Erkennung ist
+#: eine Antwort ohne Auswahl aber genau das, was sie darstellt: unbrauchbar.
+#: Tests, die etwas anderes pruefen (Identitaet, Latenz), sollen daran nicht
+#: haengen bleiben; deshalb bringt der Helfer eine gueltige Auswahl mit.
+_AUSWAHL = [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]
+
+
 def _antwort(
     *,
     status: int = 200,
     body: dict | None = None,
     headers: dict | None = None,
+    auswahl: bool = True,
 ) -> httpx.Response:
+    inhalt = dict(body) if body is not None else {}
+    if auswahl and status < 400 and "choices" not in inhalt:
+        inhalt["choices"] = _AUSWAHL
     return httpx.Response(
         status_code=status,
-        json=body if body is not None else {},
+        json=inhalt,
         headers=headers or {},
         request=httpx.Request("POST", "http://127.0.0.1:4000/v1/chat/completions"),
     )
@@ -154,7 +166,14 @@ def test_ein_unlesbarer_koerper_kippt_die_uebersetzung_nicht() -> None:
         request=httpx.Request("POST", "http://127.0.0.1:4000/v1/chat/completions"),
     )
     trace = trace_from_response(response, requested_model="m", latency_ms=1.0)
-    assert trace.ok
+
+    # Die Uebersetzung kippt nicht -- das war und bleibt der Punkt. Was sich
+    # geaendert hat, ist das Urteil: eine 200 mit unlesbarem Koerper traegt
+    # keine Antwort, und sie galt frueher trotzdem als geglueckter Aufruf. Das
+    # war ein stiller leerer Erfolg, genau die Klasse, gegen die `empty` steht.
+    assert not trace.ok
+    assert trace.error_class == "empty"
+    assert trace.detail["empty_reason"] == "no_choices"
     assert trace.actual_model == ""
     assert trace.cost_usd is None
 
@@ -197,6 +216,128 @@ def test_ein_geglueckter_aufruf_misst_die_latenz() -> None:
     assert trace.ok
     assert trace.latency_ms == pytest.approx(100.0)
     assert trace.identity_proven
+
+
+# --------------------------------------------------------------------------
+# 200 ist keine Antwort. Der Befund vom 2026-09-08 auf kai-pi5.
+# --------------------------------------------------------------------------
+
+
+def test_eine_abgeschnittene_antwort_ist_kein_erfolg() -> None:
+    """Genau das kam vom ersten echten Gemini-Aufruf zurueck.
+
+    `max_tokens=20`, und Gemini 2.5 Flash verbrauchte alle 17 Ausgabe-Token
+    fuer internes Denken: `reasoning_tokens=17`, `text_tokens=0`,
+    `finish_reason=length`, `content: null` -- mit HTTP 200. Ohne eigene Klasse
+    waere das ein Versuch ohne `error_class`, also ein Erfolg, der nichts
+    enthaelt, und der Aufrufer haette eine leere Analyse fuer eine gueltige
+    gehalten.
+    """
+    trace = trace_from_response(
+        _antwort(
+            body={
+                "model": "gemini-2.5-flash",
+                "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 17,
+                    "completion_tokens_details": {"reasoning_tokens": 17, "text_tokens": 0},
+                },
+            }
+        ),
+        requested_model="kai-bulk",
+        latency_ms=1882.0,
+    )
+
+    assert not trace.ok
+    assert trace.error_class == "empty"
+    assert trace.detail["empty_reason"] == "empty_content_finish_length"
+    assert trace.detail["finish_reason"] == "length"
+
+
+def test_der_grund_unterscheidet_abgeschnitten_von_verstummt() -> None:
+    """Drei Leer-Faelle, drei naechste Schritte.
+
+    "Abgeschnitten" verlangt ein groesseres Budget, "gestoppt und trotzdem
+    leer" ist Modellverhalten, "keine Auswahl" ist eine kaputte Antwort. Ein
+    gemeinsames `empty` ohne Grund liesse alle drei gleich aussehen.
+    """
+    faelle = {
+        "length": "empty_content_finish_length",
+        "stop": "empty_content_finish_stop",
+        "content_filter": "empty_content_finish_content_filter",
+    }
+    for ende, erwartet in faelle.items():
+        trace = trace_from_response(
+            _antwort(body={"choices": [{"message": {"content": ""}, "finish_reason": ende}]}),
+            requested_model="m",
+            latency_ms=1.0,
+        )
+        assert trace.detail["empty_reason"] == erwartet, ende
+
+
+def test_ein_werkzeugaufruf_ohne_text_ist_eine_gueltige_antwort() -> None:
+    """Sonst waere jede Tool-Nutzung ein Fehler.
+
+    Die Gegenprobe zur Leer-Erkennung: eine Waechterin, die alles ohne Text
+    ablehnt, verbietet ein normales Antwortformat.
+    """
+    trace = trace_from_response(
+        _antwort(
+            body={
+                "choices": [
+                    {
+                        "message": {"content": None, "tool_calls": [{"id": "c1"}]},
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+        ),
+        requested_model="m",
+        latency_ms=1.0,
+    )
+
+    assert trace.ok
+    assert "empty_reason" not in trace.detail
+
+
+def test_reasoning_token_werden_sichtbar_gemacht() -> None:
+    """`completion_tokens` zaehlt sie mit, verliert aber die Zusammensetzung.
+
+    Auf kai-pi5 fielen fuer eine EIN-WORT-Antwort 21 bis 37 Reasoning-Token
+    an, abgerechnet wie Ausgabe. Wer nur die sichtbare Ausgabe sieht,
+    unterschaetzt die Kosten dieser Route um ein Vielfaches -- und genau diese
+    Route ist als die billige ausgewaehlt worden.
+    """
+    trace = trace_from_response(
+        _antwort(
+            body={
+                "choices": [{"message": {"content": "bereit"}, "finish_reason": "stop"}],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 29,
+                    "completion_tokens_details": {"reasoning_tokens": 28, "text_tokens": 1},
+                },
+            }
+        ),
+        requested_model="kai-bulk",
+        latency_ms=645.0,
+    )
+
+    assert trace.ok
+    assert trace.output_tokens == 29, "die Summe bleibt die Summe"
+    assert trace.detail["reasoning_tokens"] == 28
+
+
+def test_eine_leere_antwort_wird_nicht_wiederholt() -> None:
+    """Derselbe Aufruf mit demselben Budget liefert dieselbe Antwort.
+
+    Ein zweiter Versuch kostet Geld und Reasoning-Token und aendert nichts.
+    """
+    from app.ai.audit import is_retryable_error_class
+
+    assert not is_retryable_error_class("empty")
+    assert not is_retryable_error_class("empty", 200)
 
 
 # --------------------------------------------------------------------------

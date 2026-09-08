@@ -112,6 +112,69 @@ def _response_body(response: httpx.Response) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
+    """Traegt die 200 ueberhaupt Text? Und wenn nicht, warum nicht?
+
+    Am 2026-09-08 auf kai-pi5 gemessen: Gemini 2.5 Flash verbraucht das
+    Ausgabebudget zuerst fuer internes Denken. Bei `max_tokens=20` gingen alle
+    17 Ausgabe-Token dorthin -- `reasoning_tokens=17`, `text_tokens=0`,
+    `finish_reason=length`, `content: null` -- und die Antwort kam mit
+    HTTP 200 zurueck. Ohne diese Pruefung waere das ein Versuch ohne
+    `error_class`, also ein Erfolg, der nichts enthaelt.
+
+    Der Grund gehoert dazu, nicht nur das Urteil: "abgeschnitten" verlangt ein
+    groesseres Budget, "gestoppt und trotzdem leer" ist ein Modellverhalten,
+    und "keine Auswahl" ist eine kaputte Antwort. Drei verschiedene naechste
+    Schritte, die im Log unterscheidbar bleiben muessen.
+    """
+    auswahl = body.get("choices")
+    if not isinstance(auswahl, list) or not auswahl:
+        return True, "no_choices"
+    erste = auswahl[0]
+    if not isinstance(erste, dict):
+        return True, "no_choices"
+
+    nachricht = erste.get("message")
+    inhalt = nachricht.get("content") if isinstance(nachricht, dict) else None
+    if isinstance(inhalt, str) and inhalt.strip():
+        return False, ""
+
+    # Werkzeugaufrufe sind eine gueltige Antwort ohne Text.
+    if isinstance(nachricht, dict) and nachricht.get("tool_calls"):
+        return False, ""
+
+    grund = str(erste.get("finish_reason") or "unknown")
+    return True, f"empty_content_finish_{grund}"
+
+
+def _detail(status_code: int, body: dict[str, Any], leer_grund: str) -> dict[str, Any]:
+    """Was der Aufrufer spaeter braucht, um den Versuch zu verstehen.
+
+    `reasoning_tokens` steht hier, weil `completion_tokens` sie zwar
+    mitzaehlt und damit die Summe stimmt, die Zusammensetzung aber verliert:
+    fuer eine Ein-Wort-Antwort fielen auf kai-pi5 21-37 Reasoning-Token an,
+    abgerechnet wie Ausgabe. Wer nur die sichtbare Ausgabe sieht, unterschaetzt
+    die Kosten dieser Route um ein Vielfaches.
+    """
+    ergebnis: dict[str, Any] = {"status_code": status_code}
+    if leer_grund:
+        ergebnis["empty_reason"] = leer_grund
+
+    auswahl = body.get("choices")
+    if isinstance(auswahl, list) and auswahl and isinstance(auswahl[0], dict):
+        ende = auswahl[0].get("finish_reason")
+        if isinstance(ende, str) and ende:
+            ergebnis["finish_reason"] = ende
+
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        details = usage.get("completion_tokens_details")
+        denken = _usage_int(details, "reasoning_tokens")
+        if denken is not None:
+            ergebnis["reasoning_tokens"] = denken
+    return ergebnis
+
+
 def trace_from_response(
     response: httpx.Response,
     *,
@@ -140,6 +203,11 @@ def trace_from_response(
             cost = _float_or_none(str(hidden.get("response_cost") or ""))
 
     error_class: ErrorClass | None = None
+    leer_grund = ""
+    if response.status_code < 400:
+        ist_leer, leer_grund = _antwort_ist_leer(body)
+        if ist_leer:
+            error_class = "empty"
     if response.status_code >= 400:
         error_marker = str(body.get("error", "")).lower()
         if "quota" in error_marker:
@@ -161,7 +229,7 @@ def trace_from_response(
         cost_usd=cost,
         error_class=error_class,
         request_id=_first_header(headers, _REQUEST_ID_HEADERS),
-        detail={"status_code": response.status_code},
+        detail=_detail(response.status_code, body, leer_grund),
     )
 
 

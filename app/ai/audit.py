@@ -43,6 +43,14 @@ ErrorClass = Literal[
     "quota",
     "schema",
     "refusal",
+    # 200, und trotzdem nichts Brauchbares. Am 2026-09-08 auf kai-pi5 gemessen:
+    # Gemini 2.5 Flash verbraucht das Ausgabebudget zuerst fuer internes Denken.
+    # Bei `max_tokens=20` gingen alle 17 Ausgabe-Token dorthin, `text_tokens=0`,
+    # `finish_reason=length`, `content: null` -- und der Aufruf kam als Erfolg
+    # zurueck. Ohne eigene Klasse waere das ein leeres Ergebnis, das aussieht wie
+    # ein gueltiges, und der Unterschied zwischen "das Modell hat nichts gesagt"
+    # und "das Modell wurde abgeschnitten" ginge im Log verloren.
+    "empty",
     "transport",
     "server",
     "cancelled",
@@ -89,7 +97,10 @@ _PURPOSE_USE_CASE: dict[str, UseCase] = {
 # Classes for which a second attempt cannot possibly help. Everything else is
 # retryable - deliberately a deny-list, so unclassified errors keep the
 # pre-existing retry behaviour instead of silently losing it.
-_NON_RETRYABLE: frozenset[str] = frozenset({"auth", "quota", "schema", "cancelled"})
+# `empty` gehoert dazu: derselbe Aufruf mit demselben Token-Budget liefert
+# dieselbe abgeschnittene Antwort. Ein zweiter Versuch kostet Geld und
+# Reasoning-Token und aendert nichts.
+_NON_RETRYABLE: frozenset[str] = frozenset({"auth", "quota", "schema", "cancelled", "empty"})
 
 # 4xx codes that DO warrant a retry (the rest of 4xx is a client-side defect).
 _RETRYABLE_CLIENT_STATUS: frozenset[int] = frozenset({408, 409, 425, 429})

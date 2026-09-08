@@ -244,6 +244,60 @@ async def test_quota_marker_on_429_is_not_retried() -> None:
 
 
 async def test_schema_error_is_not_retried() -> None:
+    """Eine Antwort, die DA ist, aber nicht die erwartete Form hat.
+
+    Frueher stand hier `{"choices": []}`. Das ist aber kein Schema-Verstoss,
+    sondern gar keine Antwort -- und seit der Leer-Erkennung im Transport wird
+    es als `empty` gemeldet, mit dem `finish_reason` als Grund. Die Trennung ist
+    keine Wortklauberei: "leer" verlangt ein anderes Token-Budget oder einen
+    anderen Prompt, "schema" verlangt eine Aenderung am Parser. Wer beides
+    gleich nennt, schickt den naechsten Leser in die falsche Datei.
+
+    Der Fixture traegt jetzt eine echte Antwort, deren Feld der Parser nicht
+    findet -- der Fall, den dieser Test seit jeher meint.
+    """
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Klar, gerne!"}, "finish_reason": "stop"}]},
+            request=request,
+        )
+
+    def erwartet_json(body: dict[str, Any]) -> str:
+        # Der reale Fall: KAI liest strukturierte Daten AUS dem Text. Die
+        # Antwort ist vorhanden und nicht leer -- sie ist nur Prosa, wo ein
+        # JSON-Objekt stehen muesste.
+        return str(json.loads(body["choices"][0]["message"]["content"])["verdict"])
+
+    anfrage: LiteLLMRequest[str] = LiteLLMRequest(parser=erwartet_json, payload={"messages": []})
+
+    result = await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("fallback"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=anfrage,
+        settings=_settings("primary"),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+    assert result.value == "fallback"
+    assert calls == 1
+    assert result.outcome is not None
+    assert result.outcome.litellm_attempts[0].trace.error_class == "schema"
+
+
+async def test_eine_leere_antwort_wird_ebenfalls_nicht_wiederholt() -> None:
+    """Der Fall, der vorher als `schema` durchging -- jetzt mit eigenem Namen.
+
+    Wichtig ist nicht nur, dass nicht wiederholt wird, sondern dass der
+    Direktpfad das Ergebnis liefert: im Schatten darf ein leerer Transport den
+    Aufruf nicht mitnehmen.
+    """
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -261,10 +315,13 @@ async def test_schema_error_is_not_retried() -> None:
         client_factory=_factory(handler),
         sleeper=_no_sleep,
     )
+
     assert result.value == "fallback"
-    assert calls == 1
+    assert calls == 1, "kein zweiter Versuch"
     assert result.outcome is not None
-    assert result.outcome.litellm_attempts[0].trace.error_class == "schema"
+    trace = result.outcome.litellm_attempts[0].trace
+    assert trace.error_class == "empty"
+    assert trace.detail["empty_reason"] == "no_choices"
 
 
 async def _value(value: str) -> str:
