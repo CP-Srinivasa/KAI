@@ -67,6 +67,15 @@
       "decision_that_would_change": "Der Operator repariert das Journal (Tail-Recovery) BEVOR eine weitere Zahlung freigegeben wird, statt eine Zahlung auf einer Kette zu wiederholen, deren Aussage ueber den letzten Send nicht mehr gilt.",
       "monitoring": "alternative_watcher",
       "watcher": "_check_payment_journal_chain"
+    },
+    "requests.jsonl": {
+      "reader": "app/alerts/health_check_pay.py",
+      "failure_consequence": "Der Strom verknuepft die oeffentliche payment_id mit dem ref_hash, unter dem der Kern die Forderung im Geld-Journal fuehrt (ADR 0018 §5). Er traegt KEINE Geldwahrheit — Betrag, Zeitpunkt und Beweis stehen im hash-verketteten Journal. Faellt er aus, geht deshalb kein Satoshi verloren, aber die ZUORDNUNG: ein Eingang bliebe belegt, ohne dass noch jemand sagen koennte, wofuer er kam, welche Beschreibung der Kunde gesehen hat und an welche URL der Webhook gehen sollte. Ein offener Vorgang wuerde ausserdem nicht mehr gepollt und erst vom 15-Minuten-Reconciler bestaetigt.",
+      "failure_would_be_noticed_by": "_check_pay_requests in app/alerts/health_check.py (Implementierung: app/alerts/health_check_pay.py) prueft bei jedem Health-Check-Lauf Lesbarkeit und Schema jeder Zeile und meldet warning; zusaetzlich faellt eine verlorene Zuordnung sofort am Endpunkt auf, weil GET /pay/requests/{payment_id} mit 404 antwortet, obwohl der Kunde eine Invoice in der Hand haelt.",
+      "time_to_notice": "Beim naechsten Health-Check-Lauf (5-Minuten-Timer); eine verlorene Zuordnung schon beim naechsten Aufruf des betroffenen Vorgangs.",
+      "decision_that_would_change": "Der Operator repariert den Strom aus dem Geld-Journal heraus (die receivable-Records tragen ref_hash und order_ref), BEVOR weitere Forderungen ausgestellt werden — statt Kunden auf Belege warten zu lassen, deren Zuordnung nicht mehr existiert.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_pay_requests"
     }
   }
 }

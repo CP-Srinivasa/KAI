@@ -1,3 +1,36 @@
+## 2026-09-08 - KAI PAY v0.1: Zahlung anfordern, Eingang automatisch bestaetigen
+
+Erste Produktisierung ueber der versiegelten Payment Fabric (D-CORE-006). Ein Mensch oder ein Dienst fordert eine Zahlung an,
+bezahlt per Lightning, KAI bestaetigt den Eingang. Neues Paket `app/pay/`, Router `POST/GET /pay/requests`, `GET /pay/requests/{id}/receipt`,
+`GET /pay/health` — hinter derselben Bearer-/CF-Access-Grenze wie `/payments/*`. **Default AUS** (`APP_PAY_ENABLED`); ohne Flag antwortet
+jeder Pfad 404 `kai pay disabled` und kein Poller laeuft. Doku `docs/KAI_PAY_V0_1.md`.
+
+**Geldwahrheit bleibt im Kern — mechanisch, nicht als Vorsatz.** `app/pay` importiert `PaymentJournal` nicht und ruft nirgends
+`journal.append`; ob bezahlt wurde, wie viel und wann, kommt aus dem Rail-Lookup und dem hash-verketteten Geld-Journal. Der Store
+`artifacts/pay/requests.jsonl` traegt nur Verknuepfung und Anzeige (`payment_id` ↔ `ref_hash`, Beschreibung, Referenz, Webhook-Ziel,
+BOLT11 fuer den QR nach einem Reload) plus einen Zeiger `journal_seq`/`record_hash` auf den Record, der Betrag und Zeit beweist.
+Vier AST-Tests halten die Grenze fest, statt sie zu behaupten.
+
+**Ein Schreiber, zwei Takte.** Der Buchungsdurchgang stand als Rumpf einer Schleife in `reconcile_passes.receivables` und war damit nur
+fuer den 15-Minuten-Timer erreichbar; eine Seite, die einen Eingang zeitnah zeigen soll, haette daneben eine ZWEITE Buchung gebraucht.
+Er ist deshalb nach `app/payments/receivables.py::settle_receivable` extrahiert — ein Durchgang fuer GENAU EINEN `ref_hash`, den der
+Timer in einer Schleife faehrt und den KAI PAY fuer eine einzelne Forderung ruft. Zweimal `refresh` nach einer Zahlung, ein Neustart
+dazwischen, oder Timer und Seite nacheinander: es entsteht **genau ein** `receivable_settled`. Am Reconciler aendert sich nichts
+(Regressionstest `tests/unit/payments/test_receivable_seam.py`).
+
+**Statussprache nach aussen: vier Worte.** `WAITING | SETTLED | EXPIRED | FAILED`. `SETTLED` ist final. `EXPIRED` verlangt eine
+**Aussage des Rails** — antwortet er nicht, bleibt es `WAITING` mit `last_error` (fail-soft), denn "niemand hat gezahlt" ist eine
+Behauptung ueber Geld und die darf die Uhr allein nicht treffen. `FAILED` ist heute unerreichbar; die Abbildung steht trotzdem, damit
+ein Rail mit Storno-Zustand spaeter genau eine Landestelle hat.
+
+**Startguard fail-closed:** ist die Schicht an und `APP_PAY_PURPOSE` fehlt in `APP_PAYMENT_PURPOSES_ALLOWED`, startet `kai-server`
+nicht — sonst scheiterte jede Forderung erst NACH ihrem Journal-Record. **Operator-Schritt vor der Aktivierung:**
+`APP_PAYMENT_PURPOSES_ALLOWED` um `kai_pay` ergaenzen und `APP_PAY_WEBHOOK_SECRET` setzen (ohne Secret wird kein Callback gesendet).
+
+**Poller mit zwei Zeitgrenzen** (30 s je Nachfrage, 300 s je Runde) im Lifespan, Cancellation wird beim Shutdown ABGEWARTET —
+die Lehre aus 46 h und 65 h stiller Schleifen auf `kai-pi5` und dem 20-s-Stop-Timeout. Steht `kai-server`, bestaetigt weiterhin der
+Reconcile-Timer, nur langsamer. Neuer Strom mit Vertrag (`monitoring: alternative_watcher`, Sonde `_check_pay_requests`).
+
 ## 2026-09-07 - PAYMENT FABRIC v0.1 SEALED / MAINTENANCE ONLY (LIVE-Acceptance-Test bestanden)
 
 Finaler Acceptance-Test des einzigen Payment-Pfads nach dem Altpfad-Rueckbau (D-CORE-005): ein kontrollierter Send von

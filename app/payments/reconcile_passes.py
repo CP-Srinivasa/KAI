@@ -19,6 +19,7 @@ from app.payments.enums import PaymentStatus, RailOutcome
 from app.payments.journal import PaymentJournal
 from app.payments.journal_index import Receivable
 from app.payments.rail import PaymentRail, RailError, RailLookup, RailPaymentList
+from app.payments.receivables import settle_receivable
 from app.payments.status import RailEvidence, TransitionEvidence, transition
 
 S = PaymentStatus
@@ -256,30 +257,19 @@ def _orphan_keys_from(listing: RailPaymentList, journal: PaymentJournal) -> set[
 async def receivables(
     journal: PaymentJournal, rail: PaymentRail, *, counts: dict[str, int], now: datetime
 ) -> int:
-    """Offene Forderungen gegen den Node halten (Self-Use, ADR §1)."""
+    """Offene Forderungen gegen den Node halten (Self-Use, ADR §1).
+
+    Der Durchgang je Forderung steht seit KAI PAY v0.1 in
+    :func:`app.payments.receivables.settle_receivable` — hier laeuft nur noch
+    die Schleife darueber. Der Grund ist die Zusage aus D-CORE-006: es gibt
+    genau EINEN Schreiber von ``receivable_settled``, und die Produktschicht
+    ruft denselben Durchgang, statt einen zweiten zu bauen.
+    """
     open_ones: list[Receivable] = journal.index.open_receivables()
     for receivable in open_ones:
-        try:
-            status = await rail.invoice_status(receivable.ref_hash)
-        except RailError:
-            continue
-        if not status.settled:
-            continue
-        journal.append(
-            receivable.intent_id,
-            "receivable_settled",
-            {
-                "status": S.SETTLED.value,
-                "invoice_ref_hash": receivable.ref_hash,
-                "order_ref": receivable.order_ref,
-                "amount_settled_minor_units": (
-                    status.amount_paid.minor_units if status.amount_paid else 0
-                ),
-                "evidence_source": "rail_lookup",
-            },
-            ts=now,
-        )
-        _bump(counts, "RECEIVABLE_SETTLED")
+        outcome = await settle_receivable(journal, rail, receivable.ref_hash, now=now)
+        if outcome.recorded:
+            _bump(counts, "RECEIVABLE_SETTLED")
     return len(open_ones)
 
 

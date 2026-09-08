@@ -103,6 +103,13 @@ def _ln_money_path_inert(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
     #    Testmaterial in eine Datei schreiben, die im Backup der Geld-Journale
     #    steht — und dort hat nichts aus einem Test etwas zu suchen.
     monkeypatch.setenv("APP_PAYMENT_VAULT_PATH", str(tmp_path / "payments" / "intent_vault.jsonl"))
+    # 5. **Pay-Store-Redirect (KAI PAY v0.1, D-CORE-006).** Der Strom der
+    #    Produktschicht traegt kein Geld, aber er ist append-only und liegt im
+    #    Repo — ein Fixture-Eintrag darin waere Testmaterial in einem Artefakt,
+    #    das der Operator liest. ``APP_PAY_ENABLED`` bleibt bewusst UNGESETZT:
+    #    der Code-Default ist aus, und ein Test, der die Schicht braucht, sagt
+    #    das selbst (monkeypatch.setenv), statt sie ueberall vorzufinden.
+    monkeypatch.setenv("APP_PAY_STORE_PATH", str(tmp_path / "pay" / "requests.jsonl"))
     get_payment_settings.cache_clear()
     yield
     get_payment_settings.cache_clear()
