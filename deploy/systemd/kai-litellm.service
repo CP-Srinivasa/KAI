@@ -12,7 +12,14 @@ WorkingDirectory=/home/kai/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 # No LiteLLM retry here: bounded retry has one policy owner in app/ai.
-ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/.venv/bin/litellm --config /home/kai/current/config/litellm.yaml --host 127.0.0.1 --port 4000
+#
+# Das Binary kommt aus dem separaten Transport-Baum (ADR 0019), nicht aus
+# dem Release-venv: `litellm[proxy]` verlangt `openai<3.0.0`, der Kern faehrt
+# `openai==3.6.0`. Beide Identitaeten bleiben getrennt und werden getrennt
+# geprueft -- `runtime-exec --repo` attestiert den Release, das Skript
+# dahinter den Transport. Die Konfiguration bleibt beim Release: sie gehoert
+# zur Control-Plane, nicht zum Transport.
+ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/scripts/pi_transport_exec.sh litellm --config /home/kai/current/config/litellm.yaml --host 127.0.0.1 --port 4000
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=20s
