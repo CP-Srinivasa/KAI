@@ -97,6 +97,13 @@ export function Dashboard() {
   // (High-Conviction-HitRate minus Standard-Tier-HitRate).
   const ptl = data?.priority_tier_lift_pct ?? null;
   const pf = data?.paper_fills ?? null;
+  // Dieselbe Bedingung wie im Panel (ReentryGatePanel: status === "expired" oder
+  // Zieldatum in der Vergangenheit) — bewusst hier gespiegelt, weil das Dashboard
+  // ueber die PLATZIERUNG entscheidet, nicht ueber den Inhalt.
+  const reentryTargetDate = data?.reentry?.target_date ?? null;
+  const reentryArchived =
+    data?.reentry?.status === "expired" ||
+    (reentryTargetDate != null && new Date(reentryTargetDate) < new Date());
   // Nur noch fuer den Status-Pill im Command-Header. Das KAI-Live-Widget, das
   // diesen Zustand ebenfalls las, ist entfernt.
   const kai = useKaiState();
@@ -386,15 +393,31 @@ export function Dashboard() {
         </PanelErrorBoundary>
       </div>
 
-      {/* Re-Entry-Gate (TV-Pivot D-125 · Stichtag 2026-05-16) */}
-      <PanelErrorBoundary name="Re-Entry-Gate">
-        <ReentryGatePanel
-          quality={data}
-          qualityState={q.state}
-          qualityError={q.state === "error" ? q.error.message : null}
-          priorityGate={priorityGate}
-        />
-      </PanelErrorBoundary>
+      {/* Re-Entry-Gate (TV-Pivot D-125). 2026-09-08: Ein ABGELAUFENES Ziel stand
+          hier in voller Kartengroesse direkt unter der KPI-Reihe — 115 Tage nach
+          Stichtag las sich das wie der aktive Systemzustand. Die Panel-Logik war
+          bereits richtig (sie erkennt den Ablauf und klappt die toten Balken ein);
+          falsch war nur die Hierarchie. Archiviertes wandert deshalb ans
+          Seitenende, und der Prime-Platz sagt stattdessen, dass kein Gate gilt. */}
+      {reentryArchived ? (
+        <div className="border-line-subtle text-fg-muted flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs">
+          <span className="text-fg font-semibold">Kein aktives Re-Entry-Gate</span>
+          <span>
+            Das letzte Ziel ({reentryTargetDate}) liegt in der Vergangenheit. Solange kein neues
+            gesetzt ist, gibt es hier keinen Freigabezustand zu lesen — die Historie steht am
+            Seitenende.
+          </span>
+        </div>
+      ) : (
+        <PanelErrorBoundary name="Re-Entry-Gate">
+          <ReentryGatePanel
+            quality={data}
+            qualityState={q.state}
+            qualityError={q.state === "error" ? q.error.message : null}
+            priorityGate={priorityGate}
+          />
+        </PanelErrorBoundary>
+      )}
 
       {/* REGIME-R1 (2026-05-09): Markt-Regime read-only-Beobachter (BTC + ETH).
           Read-only-Phase, kein TradingLoop-Block — Operator-Validierung über 14 Tage. */}
@@ -515,6 +538,20 @@ export function Dashboard() {
 
       {/* Roadmap-Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
       <PreparedSection />
+
+      {/* Historie: das abgelaufene Re-Entry-Ziel bleibt als Evidenz erhalten,
+          aber am Seitenende statt in Prime-Position. Das Panel klappt die toten
+          Balken selbst ein (ExpiredCollapse). */}
+      {reentryArchived && (
+        <PanelErrorBoundary name="Re-Entry-Gate (Historie)">
+          <ReentryGatePanel
+            quality={data}
+            qualityState={q.state}
+            qualityError={q.state === "error" ? q.error.message : null}
+            priorityGate={priorityGate}
+          />
+        </PanelErrorBoundary>
+      )}
       </div>
 
       <DashboardFooter />
