@@ -280,6 +280,14 @@ def test_ein_symlink_wird_aufgeloest_und_der_echte_baum_geprueft(tmp_path: Path)
     ziel = wurzel / "litellm" / "1.99.0-abcd1234"
     echt.rename(ziel)
     (wurzel / "litellm" / "current").symlink_to(ziel, target_is_directory=True)
+
+    # Der Builder schreibt den AUFGELOESTEN Binaerpfad ins Manifest, nie einen
+    # ueber `current`. Ein Manifest, das ueber den Zeiger auf sich selbst
+    # verweist, wird zu Recht als fremd abgewiesen -- das Fixture muss dem
+    # echten Baum entsprechen, sonst prueft der Test seine eigene Bastelei.
+    manifest = json.loads((ziel / "transport.json").read_text(encoding="utf-8"))
+    manifest["binary_path"] = (ziel / ".venv" / "bin" / "litellm").as_posix()
+    _schreibe(ziel / "transport.json", json.dumps(manifest))
     skript = _skript_mit_wurzel(tmp_path, wurzel)
 
     fertig = _lauf(skript, "litellm")
