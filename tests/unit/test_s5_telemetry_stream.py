@@ -132,10 +132,25 @@ async def test_die_pflichtfelder_stehen_in_jeder_zeile(tmp_path: Path) -> None:
     assert zeile["identity_proven"] is True
 
 
-async def test_unbekannte_kosten_werden_null_nicht_nullkomma(tmp_path: Path) -> None:
-    """0.0 waere eine Behauptung ueber Geld, das niemand gezaehlt hat."""
+async def test_ohne_transportkosten_greift_der_listenpreis(tmp_path: Path) -> None:
+    """Seit D-CORE-007: kein Transport-Preis, aber Tokens + bepreistes Modell → Schaetzung
+    aus der Preistabelle, als solche gekennzeichnet — nie eine erfundene Null."""
     pfad = tmp_path / "llm_telemetry.jsonl"
     await _lauf(pfad, mode="shadow", traces=[_ok(cost=None)])
+
+    (zeile,) = _zeilen(pfad)
+    assert zeile["cost_usd"] is not None and zeile["cost_usd"] > 0
+    assert zeile["cost_known"] is True
+    assert str(zeile["cost_source"]).startswith("list_price")
+
+
+async def test_unbekannte_kosten_werden_null_nicht_nullkomma(tmp_path: Path) -> None:
+    """0.0 waere eine Behauptung ueber Geld, das niemand gezaehlt hat: ohne Transport-Preis
+    UND ohne Eintrag in der Preistabelle bleibt es COST_UNKNOWN."""
+    pfad = tmp_path / "llm_telemetry.jsonl"
+    trace = _ok(cost=None)
+    trace = trace.__class__(**{**trace.__dict__, "actual_model": "modell-ohne-preis"})
+    await _lauf(pfad, mode="shadow", traces=[trace])
 
     (zeile,) = _zeilen(pfad)
     assert zeile["cost_usd"] is None

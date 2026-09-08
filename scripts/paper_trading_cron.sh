@@ -258,14 +258,24 @@ n=$(printf '%s' "$tv_out" | grep -oE '[0-9]+ signals processed' | head -1 | awk 
 [[ -n "$n" ]] && write_log "tv4-bridge: $n signals processed"
 
 # X/Twitter every 6th run (~hourly).
+# KAI_TWITTER_INGEST_ENABLED=false schaltet den Schritt ab, ohne die Zaehlung
+# anzuhalten: der Zaehler laeuft weiter, damit ein spaeteres Wiedereinschalten
+# nicht sofort einen Nachholstoss ausloest. Default true = unveraendertes
+# Verhalten. Env kommt aus der systemd-Unit (EnvironmentFile=.env), das Skript
+# liest .env nicht selbst -- deshalb hier ein Default statt eines Pflichtwerts.
+TWITTER_INGEST_ENABLED="${KAI_TWITTER_INGEST_ENABLED:-true}"
 twitter_marker="$ROOT/artifacts/.twitter_counter"
 counter=$(read_counter "$twitter_marker")
 counter=$((counter + 1))
 if (( counter >= 6 )); then
     counter=0
-    write_log "twitter fetch starting"
-    "$PYTHON" -m app.cli.main pipeline twitter --top-n 5 >/dev/null 2>&1 || true
-    write_log "twitter done"
+    if [[ "$TWITTER_INGEST_ENABLED" == "true" || "$TWITTER_INGEST_ENABLED" == "1" ]]; then
+        write_log "twitter fetch starting"
+        "$PYTHON" -m app.cli.main pipeline twitter --top-n 5 >/dev/null 2>&1 || true
+        write_log "twitter done"
+    else
+        write_log "twitter skipped: KAI_TWITTER_INGEST_ENABLED=$TWITTER_INGEST_ENABLED"
+    fi
 fi
 write_counter "$counter" "$twitter_marker"
 

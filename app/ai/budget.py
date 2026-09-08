@@ -148,12 +148,189 @@ def headroom_usd(state: BudgetState, limit: float | None) -> float | None:
     return max(0.0, limit - state.booked_usd)
 
 
+# ── Zustand und Durchsetzung (KAI COST CONTROL v0.1, D-CORE-007) ───────────
+
+#: ``OK``            im Rahmen
+#: ``WARNING``       über der Warnschwelle, sperrt NICHTS
+#: ``LIMIT_REACHED`` belegbar am oder über dem Limit
+#: ``COST_UNKNOWN``  zu viele unbelegte Aufrufe — Routine wird wie
+#:                   ``LIMIT_REACHED`` behandelt, ohne dass eine Summe es belegt
+BudgetStatusState = Literal["OK", "WARNING", "LIMIT_REACHED", "COST_UNKNOWN"]
+
+#: Routen, die ein Limit NICHT stoppt. ``critical`` ist die Absichtsübersetzung
+#: des Operators (``intent``, ``app/ai/routes.py:86-96``): wer sie sperrt,
+#: nimmt dem Menschen die Fernbedienung für genau den Zustand, den er gerade
+#: beheben muss. Diese Ausnahme ist bewusst NICHT konfigurierbar.
+BUDGET_EXEMPT_ROUTES: frozenset[str] = frozenset({"critical"})
+
+
+# N818: kein `...Error`-Suffix. Der Name benennt einen ZUSTAND (das Budget
+# ist ueberschritten), keinen Defekt -- und Aufrufer sollen ihn genau so
+# behandeln: verschieben statt reparieren. Ein `Error` im Namen haette die
+# Meldung an derselben Stelle einsortiert wie einen Anbieterausfall.
+class BudgetExceeded(RuntimeError):  # noqa: N818
+    """Dieser Aufruf wird nicht bezahlt — typisiert, damit Aufrufer ihn erkennen.
+
+    Bewusst eine Ausnahme und kein stiller ``None``-Rückgabewert: ein
+    übersprungener Aufruf, der wie ein leeres Ergebnis aussieht, wäre von
+    einem Anbieterausfall nicht zu unterscheiden. Der Aufrufer soll
+    VERSCHIEBEN oder ÜBERSPRINGEN und das sichtbar vermerken — nicht abstürzen.
+    """
+
+    def __init__(self, *, route: str, state: BudgetStatusState, reason: str) -> None:
+        super().__init__(f"ai_budget_exceeded: route={route} state={state} reason={reason}")
+        self.route = route
+        self.state = state
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class BudgetStatus:
+    """Wo das Budget steht — und ob Routinearbeit noch laufen darf."""
+
+    state: BudgetStatusState
+    daily: BudgetState
+    monthly: BudgetState
+    policy: BudgetPolicy
+    warn_pct: float = 80.0
+    unknown_max_calls_per_day: int = 50
+    reason: str = ""
+    #: Ist ueberhaupt ein Limit gesetzt? Ohne Limit gibt es nichts, worauf
+    #: fail-closed geschlossen werden koennte -- siehe :attr:`blocks_routine`.
+    limits_configured: bool = False
+
+    @property
+    def blocks_routine(self) -> bool:
+        """Wird Routinearbeit gesperrt? ``WARNING`` sperrt ausdrücklich nicht.
+
+        ``COST_UNKNOWN`` sperrt **nur, wenn ein Limit gesetzt ist**. Das ist
+        keine Aufweichung, sondern die Bedingung, unter der fail-closed
+        ueberhaupt Sinn ergibt: ohne Budget gibt es keine Deckung, die fehlen
+        koennte. Ohne diese Einschraenkung wuerde ein Betrieb, der NIE ein
+        Limit gesetzt hat, ab dem 51. unbelegten Aufruf eines Tages stehen
+        bleiben -- eine Stilllegung aus der Voreinstellung heraus, ausgeloest
+        von einem Messproblem statt von Kosten. Genau das hat die Testsuite
+        hier gefangen (``test_voice_transcriber_records_stt_call``).
+
+        Der Zustand wird trotzdem BERECHNET und in ``/health/ai`` ausgewiesen:
+        Sichtbarkeit braucht keine Erlaubnis, Sperren schon.
+        """
+        if self.state == "LIMIT_REACHED":
+            return True
+        return self.state == "COST_UNKNOWN" and self.limits_configured
+
+    def allows(self, route: str) -> bool:
+        """Darf ein Aufruf dieser Route laufen?"""
+        return not self.blocks_routine or route in BUDGET_EXEMPT_ROUTES
+
+
+def _at_or_over(state: BudgetState, limit: float | None) -> bool:
+    return limit is not None and state.booked_usd >= limit
+
+
+def _over_warn(state: BudgetState, limit: float | None, warn_pct: float) -> bool:
+    return limit is not None and limit > 0 and state.booked_usd >= limit * (warn_pct / 100.0)
+
+
+def evaluate_status(
+    *,
+    daily: BudgetState,
+    monthly: BudgetState,
+    policy: BudgetPolicy,
+    warn_pct: float = 80.0,
+    unknown_max_calls_per_day: int = 50,
+) -> BudgetStatus:
+    """Der Zustand des Budgets — auch ohne gesetzte Limits berechnet.
+
+    Reihenfolge mit Absicht:
+
+    1. **Belegtes Limit erreicht** schlägt alles. Eine Zahl, die über dem
+       Limit liegt, ist der stärkste Beleg, den es gibt.
+    2. **Zu viele unbelegte Aufrufe** ergeben ``COST_UNKNOWN`` — und
+       :attr:`BudgetStatus.blocks_routine` behandelt das wie ein erreichtes
+       Limit. Nicht weil die Kosten hoch WÄREN, sondern weil niemand weiss, ob
+       sie es sind. Das ist der einzige fail-closed Zweig hier.
+    3. **Warnschwelle** nur, wenn überhaupt ein Limit gesetzt ist. Ohne Limit
+       gibt es keinen Prozentsatz, vor dem gewarnt werden könnte.
+    """
+    begrenzt = policy.daily_limit_usd is not None or policy.monthly_limit_usd is not None
+    if _at_or_over(daily, policy.daily_limit_usd):
+        return BudgetStatus(
+            state="LIMIT_REACHED",
+            daily=daily,
+            monthly=monthly,
+            policy=policy,
+            warn_pct=warn_pct,
+            unknown_max_calls_per_day=unknown_max_calls_per_day,
+            limits_configured=begrenzt,
+            reason="daily_limit_reached",
+        )
+    if _at_or_over(monthly, policy.monthly_limit_usd):
+        return BudgetStatus(
+            state="LIMIT_REACHED",
+            daily=daily,
+            monthly=monthly,
+            policy=policy,
+            warn_pct=warn_pct,
+            unknown_max_calls_per_day=unknown_max_calls_per_day,
+            limits_configured=begrenzt,
+            reason="monthly_limit_reached",
+        )
+    if daily.unknown_calls > unknown_max_calls_per_day:
+        return BudgetStatus(
+            state="COST_UNKNOWN",
+            daily=daily,
+            monthly=monthly,
+            policy=policy,
+            warn_pct=warn_pct,
+            unknown_max_calls_per_day=unknown_max_calls_per_day,
+            limits_configured=begrenzt,
+            reason=(f"unknown_cost_calls_today={daily.unknown_calls}>{unknown_max_calls_per_day}"),
+        )
+    if _over_warn(daily, policy.daily_limit_usd, warn_pct):
+        return BudgetStatus(
+            state="WARNING",
+            daily=daily,
+            monthly=monthly,
+            policy=policy,
+            warn_pct=warn_pct,
+            unknown_max_calls_per_day=unknown_max_calls_per_day,
+            limits_configured=begrenzt,
+            reason="daily_warn_threshold",
+        )
+    if _over_warn(monthly, policy.monthly_limit_usd, warn_pct):
+        return BudgetStatus(
+            state="WARNING",
+            daily=daily,
+            monthly=monthly,
+            policy=policy,
+            warn_pct=warn_pct,
+            unknown_max_calls_per_day=unknown_max_calls_per_day,
+            limits_configured=begrenzt,
+            reason="monthly_warn_threshold",
+        )
+    return BudgetStatus(
+        state="OK",
+        daily=daily,
+        monthly=monthly,
+        policy=policy,
+        warn_pct=warn_pct,
+        unknown_max_calls_per_day=unknown_max_calls_per_day,
+        limits_configured=begrenzt,
+    )
+
+
 __all__ = [
+    "BUDGET_EXEMPT_ROUTES",
     "BudgetDecision",
     "BudgetEntry",
+    "BudgetExceeded",
     "BudgetPolicy",
     "BudgetState",
+    "BudgetStatus",
+    "BudgetStatusState",
     "accumulate",
     "decide",
+    "evaluate_status",
     "headroom_usd",
 ]

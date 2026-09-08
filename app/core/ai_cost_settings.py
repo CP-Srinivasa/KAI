@@ -1,0 +1,145 @@
+"""Grenzen für das AI-Budget — eigene Datei, mit Grund.
+
+Nicht in ``app/core/settings.py``: die Datei steht bei 1.883 Zeilen exakt auf
+ihrer God-File-Ratchet-Baseline (``scripts/godfile_baseline.json``) und hat
+null Zeilen Spielraum. Sie hier hineinzuschreiben hiesse, an anderer Stelle
+derselben Datei etwas herauszuschneiden, das mit Kosten nichts zu tun hat —
+eine Änderung, die niemand im Review beurteilen kann. Dasselbe Muster wie
+``app/core/pay_settings.py`` neben ``app/core/payment_settings.py``: eine
+Frage, eine Datei.
+
+**Voreinstellung ist das heutige Verhalten.** Ohne gesetzte Limits sperrt
+nichts. Der Zustand wird trotzdem berechnet und ausgewiesen — Sichtbarkeit
+braucht keine Erlaubnis, Sperren schon.
+
+**Eine Ausnahme von der Fail-Open-Regel:** unbekannte Kosten. Wer nicht weiss,
+was er ausgibt, hat kein gedecktes Budget. Ab
+``budget_unknown_max_calls_per_day`` unbelegten Aufrufen an einem Tag gilt das
+Routine-Budget als erreicht, obwohl keine Summe es belegt. Das ist bewusst
+fail-closed: die Alternative wäre, unbegrenzt weiterzulaufen, solange die
+Messung kaputt ist — genau die Bauart, die den ersten Budget-Anlauf wertlos
+gemacht hat.
+"""
+
+from __future__ import annotations
+
+import os
+
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Präfix der Env-Variablen für Verbrauchsgrenzen je Auftraggeber:
+#: ``APP_AI_BUDGET_USECASE_NEWS_INTELLIGENCE_USD=2.50``.
+USECASE_LIMIT_PREFIX = "APP_AI_BUDGET_USECASE_"
+USECASE_LIMIT_SUFFIX = "_USD"
+
+
+class AICostSettings(BaseSettings):
+    """``APP_AI_*`` — Kostengrenzen des AI-Gateways, keine zweite Control-Plane."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_AI_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    #: ``None`` heisst: dieses Fenster begrenzt nichts (heutiges Verhalten).
+    budget_daily_usd: float | None = Field(default=None, ge=0.0)
+    budget_monthly_usd: float | None = Field(default=None, ge=0.0)
+
+    #: Ab wie viel Prozent des Limits gewarnt wird. Eine Warnung SPERRT NICHTS
+    #: — sie ist der einzige Zustand, in dem ein Operator noch handeln kann,
+    #: bevor die Pipeline stehen bleibt.
+    budget_warn_pct: float = Field(default=80.0, ge=0.0, le=100.0)
+
+    #: Obergrenze für Aufrufe OHNE belegbare Kosten pro Tag. Siehe Modul-Docstring.
+    budget_unknown_max_calls_per_day: int = Field(default=50, ge=0)
+
+    #: Schattenanalyse überhaupt bauen? ``True`` = unverändertes Verhalten.
+    #: Der Name ist bewusst ``APP_ANALYSIS_*`` und nicht ``APP_AI_*``: der
+    #: Schalter gehört zur Analyse-Kette, nicht zum Budget. Er wohnt hier, weil
+    #: ``describe_shadow_chain`` UND ``app/ai/health.py`` ihn aus DERSELBEN
+    #: Quelle lesen müssen — zwei Leser mit zwei Env-Zugriffen wären zwei
+    #: Meinungen darüber, ob der Schatten läuft.
+    shadow_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("APP_ANALYSIS_SHADOW_ENABLED", "shadow_enabled"),
+    )
+
+    #: Auftraggeber → Tageslimit in USD, aus ``APP_AI_BUDGET_USECASE_<NAME>_USD``.
+    #: Einmal beim Bau gelesen, nicht pro Aufruf: ``os.environ`` je LLM-Aufruf
+    #: abzufragen wäre dieselbe Sorte versteckter Kosten, die dieses Modul misst.
+    budget_usecase_usd: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _collect_usecase_limits(self) -> AICostSettings:
+        if self.budget_usecase_usd:
+            return self
+        gefunden: dict[str, float] = {}
+        for key, value in os.environ.items():
+            if not key.startswith(USECASE_LIMIT_PREFIX) or not key.endswith(USECASE_LIMIT_SUFFIX):
+                continue
+            name = key[len(USECASE_LIMIT_PREFIX) : -len(USECASE_LIMIT_SUFFIX)].lower()
+            if not name:
+                continue
+            try:
+                betrag = float(value)
+            except (TypeError, ValueError):
+                # Ein unlesbares Limit wird NICHT als 0 gelesen. Null waere die
+                # haerteste denkbare Sperre aus einem Tippfehler heraus.
+                continue
+            if betrag >= 0.0:
+                gefunden[name] = betrag
+        object.__setattr__(self, "budget_usecase_usd", gefunden)
+        return self
+
+    @property
+    def any_limit_set(self) -> bool:
+        """Begrenzt überhaupt etwas? Ohne das gibt es keine Warnschwelle."""
+        return (
+            self.budget_daily_usd is not None
+            or self.budget_monthly_usd is not None
+            or bool(self.budget_usecase_usd)
+        )
+
+
+_CACHE: dict[str, AICostSettings] = {}
+
+
+def get_ai_cost_settings() -> AICostSettings:
+    """Die Kostengrenzen — EINMAL gelesen, nicht pro Aufruf.
+
+    ``BaseSettings()`` liest ``.env`` von der Platte. Das je LLM-Aufruf zu tun
+    wäre blockierendes Datei-I/O im Event-Loop; dieselbe Begründung wie
+    ``app.ai.runtime.environment_settings``.
+    """
+    zwischenspeicher = _CACHE.get("current")
+    if zwischenspeicher is not None:
+        return zwischenspeicher
+    try:
+        gelesen = AICostSettings()
+    except Exception:  # noqa: BLE001 — eine kaputte Env darf nicht sperren
+        gelesen = AICostSettings.model_construct(
+            budget_daily_usd=None,
+            budget_monthly_usd=None,
+            budget_warn_pct=80.0,
+            budget_unknown_max_calls_per_day=50,
+            shadow_enabled=True,
+            budget_usecase_usd={},
+        )
+    _CACHE["current"] = gelesen
+    return gelesen
+
+
+def reset_ai_cost_settings() -> None:
+    """Zwischenspeicher leeren (Tests, Neustart nach Env-Wechsel)."""
+    _CACHE.clear()
+
+
+__all__ = [
+    "USECASE_LIMIT_PREFIX",
+    "USECASE_LIMIT_SUFFIX",
+    "AICostSettings",
+    "get_ai_cost_settings",
+    "reset_ai_cost_settings",
+]

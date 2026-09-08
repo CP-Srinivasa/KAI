@@ -147,7 +147,21 @@ def describe_primary_chain(settings: Any) -> list[str]:
 
 
 def describe_shadow_chain(settings: Any) -> list[str]:
-    """Provider names the shadow analyst would use, in preference order."""
+    """Provider names the shadow analyst would use, in preference order.
+
+    ``APP_ANALYSIS_SHADOW_ENABLED=false`` liefert eine LEERE Kette. Der
+    Schalter sitzt HIER und nicht in :func:`create_shadow_provider`, weil
+    ``app/ai/health.py`` dieselbe Funktion befragt, um die Kette in
+    ``/health/ai`` auszuweisen. Saesse er nur im Konstruktor, wuerde die
+    Gesundheitsanzeige eine Schattenkette melden, die nicht laeuft — eine
+    zweite Wahrheit ueber genau die Frage, ob gerade doppelt bezahlt wird.
+
+    Voreinstellung ``true``: kein Verhaltenswechsel ohne bewusste Env-Aenderung.
+    """
+    from app.core.ai_cost_settings import get_ai_cost_settings
+
+    if not get_ai_cost_settings().shadow_enabled:
+        return []
     providers = settings.providers
     if getattr(providers, "anthropic_api_key", None):
         return ["anthropic"]

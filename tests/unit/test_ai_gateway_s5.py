@@ -358,7 +358,17 @@ async def test_unknown_retry_cost_makes_total_unknown_and_attempts_share_correla
     assert len(rows) == 2
     assert {row["correlation_id"] for row in rows} == {"corr-s5"}
     assert [row["attempt"] for row in rows] == [1, 2]
-    assert rows[0]["cost_usd"] is None and rows[0]["cost_known"] is False
+    # D-CORE-007: die ABRECHNUNG des Anbieters fehlt weiterhin -- der 500er
+    # trug keinen Kosten-Header, und `AttemptTrace.cost_usd` bleibt `None`
+    # (siehe `total_cost_usd` oben). Die Telemetriezeile traegt jetzt eine
+    # SCHAETZUNG aus der Preistabelle, weil Modell und Token bekannt sind, und
+    # weist ihre Herkunft aus. Beides nebeneinander ist der Punkt: eine
+    # Schaetzung ersetzt keine Rechnung, aber sie ist besser als `null`.
+    assert rows[0]["cost_source"].startswith("list_price:")
+    assert rows[0]["cost_status"] == "OK"
+    assert rows[0]["cost_usd"] > 0
+    assert rows[1]["cost_source"] == "upstream"
+    assert rows[1]["cost_usd"] == pytest.approx(0.2)
     assert rows[1]["actual_provider"] == "openai"
     assert rows[1]["actual_model"] == "gpt-4o-mini"
     assert rows[1]["identity_proven"] is True

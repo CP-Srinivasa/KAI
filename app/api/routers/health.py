@@ -124,10 +124,42 @@ class AIProviderHealth(BaseModel):
     consecutive_failures: int = 0
 
 
+class AICostBlock(BaseModel):
+    """Kostenlage des AI-Pfads — Schätzung aus Listenpreisen, keine Abrechnung.
+
+    ``*_known`` ist wörtlich gemeint: die Summe ist eine UNTERGRENZE, solange
+    ``unknown_cost_calls_*`` grösser als null ist. Die beiden Zahlen gehören
+    zusammen; wer nur die Summe liest, liest sie falsch.
+    """
+
+    today_usd_known: float | None = None
+    month_usd_known: float | None = None
+    unknown_cost_calls_today: int | None = None
+    unknown_cost_calls_month: int | None = None
+    calls_today: int | None = None
+    calls_month: int | None = None
+    daily_limit_usd: float | None = None
+    monthly_limit_usd: float | None = None
+    warn_pct: float | None = None
+    unknown_max_calls_per_day: int | None = None
+    status: str
+    reason: str = ""
+    blocks_routine: bool = False
+    top_provider: str | None = None
+    top_use_case: str | None = None
+    fully_accounted_today: bool | None = None
+    price_table_version: str
+    note: str
+
+
 class AIHealthResponse(BaseModel):
     chain: AIChain
     window_hours: float
     providers: list[AIProviderHealth]
+    # Additiv mit Default: ein bestehender Client bricht daran nicht, und
+    # ``AIHealthResponse(**snapshot["ai"])`` nimmt den neuen Schluessel
+    # automatisch mit.
+    cost: AICostBlock | None = None
 
 
 _RUNTIME_FIELDS = (

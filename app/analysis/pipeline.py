@@ -59,7 +59,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.ai.audit import classify_error, correlation_scope, current_correlation_id, http_status
+from app.ai.audit import (
+    classify_error,
+    correlation_scope,
+    current_correlation_id,
+    http_status,
+    use_case_scope,
+)
+from app.ai.budget import BudgetExceeded
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.crypto_relevance import crypto_relevance_verdict
 from app.analysis.input_contract import (
@@ -211,6 +218,29 @@ def _resolve_runtime_model_name(
         return None
     model = getattr(provider, "model", None)
     return model if isinstance(model, str) and model else None
+
+
+def _telemetry_provider(
+    resolved: str, provider: BaseAnalysisProvider | None, source: str | None
+) -> str:
+    """Der Anbieter — nie der Quellenname.
+
+    Der Telemetriestrom trug im Feld ``provider`` auch Feednamen (``CNBC``,
+    ``BeInCrypto``); ``app/ai/health.py`` und ``app/ai/spend.py`` müssen sie
+    deshalb bis heute wegfiltern, sonst zählt jede Aggregation Feeds als
+    Anbieter mit. Eine Zeile, die die Quelle im Anbieterfeld trägt, ist für
+    jede Kostenzuordnung verloren: sie hat keinen Preis, kein Modell und
+    keinen Vertrag.
+
+    Diese Wache stellt die Zuordnung wieder her, statt sie nur zu filtern.
+    Fällt der aufgelöste Name mit dem Quellennamen zusammen, gewinnt der
+    Anbieter — und die Quelle geht in ihr eigenes Feld ``source``.
+    """
+    quelle = (source or "").strip().lower()
+    if quelle and resolved.strip().lower() == quelle:
+        eigen = getattr(provider, "provider_name", "") if provider is not None else ""
+        return eigen or "unknown"
+    return resolved
 
 
 def _resolve_runtime_provider_name(
@@ -544,7 +574,7 @@ class AnalysisPipeline:
         return any(isinstance(name, str) and name.strip().lower() == shadow_name for name in chain)
 
     async def _timed_primary_analyze(
-        self, *, title: str, text: str, context: dict[str, Any] | None
+        self, *, title: str, text: str, context: dict[str, Any] | None, source: str | None = None
     ) -> LLMAnalysisOutput:
         """Primary analyze with B-002 telemetry (Audit F-5): latency + ok/fail."""
         from time import monotonic
@@ -552,7 +582,11 @@ class AnalysisPipeline:
         from app.observability.llm_telemetry import record_llm_call
 
         assert self._provider is not None
-        name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
+        name = _telemetry_provider(
+            _resolve_runtime_provider_name(self._provider) or self._provider.provider_name,
+            self._provider,
+            source,
+        )
         started = monotonic()
         # chain_position=-1 marks the OUTER row that spans the whole chain. It
         # is kept verbatim for the v1 dashboard reader; the per-attempt rows
@@ -572,10 +606,11 @@ class AnalysisPipeline:
                 chain_position=-1,
                 error_class=classify_error(exc),
                 http_status=http_status(exc),
+                source=source,
             )
             raise
         record_llm_call(
-            provider=output.provider_used or name,
+            provider=_telemetry_provider(output.provider_used or name, self._provider, source),
             model=getattr(self._provider, "model", ""),
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
@@ -585,6 +620,7 @@ class AnalysisPipeline:
             chain_position=-1,
             prompt_tokens=output.prompt_tokens,
             completion_tokens=output.completion_tokens,
+            source=source,
         )
         return output
 
@@ -598,9 +634,11 @@ class AnalysisPipeline:
         if self._shadow_provider is None:
             return None, None, None
 
-        shadow_provider_name = (
+        shadow_provider_name = _telemetry_provider(
             _resolve_runtime_provider_name(self._shadow_provider)
-            or self._shadow_provider.provider_name
+            or self._shadow_provider.provider_name,
+            self._shadow_provider,
+            doc.source_name,
         )
         from time import monotonic
 
@@ -624,6 +662,7 @@ class AnalysisPipeline:
                 chain_position=-1,
                 prompt_tokens=output.prompt_tokens,
                 completion_tokens=output.completion_tokens,
+                source=doc.source_name,
             )
         except Exception as exc:
             record_llm_call(
@@ -638,6 +677,7 @@ class AnalysisPipeline:
                 chain_position=-1,
                 error_class=classify_error(exc),
                 http_status=http_status(exc),
+                source=doc.source_name,
             )
             error = str(exc)
             logger.warning(
@@ -661,7 +701,15 @@ class AnalysisPipeline:
         reset on exit and, because run_batch dispatches through tasks, cannot
         bleed between concurrently analysed documents.
         """
-        with correlation_scope(correlation_id or f"doc_{doc.id}"):
+        # Der Auftraggeber wird HIER gesetzt, am Eintritt der Analyse -- nicht
+        # in jedem der sechs `run_*_pipeline`-Aufrufer und schon gar nicht im
+        # Provider. Jede Doc-Analyse dieses Repos laeuft durch diese Methode;
+        # eine zweite Setzstelle waere eine zweite Wahrheit darueber, wer
+        # bezahlt hat.
+        with (
+            correlation_scope(correlation_id or f"doc_{doc.id}"),
+            use_case_scope("news_intelligence"),
+        ):
             return await self._run(doc)
 
     async def _run(self, doc: CanonicalDocument) -> PipelineResult:
@@ -712,6 +760,15 @@ class AnalysisPipeline:
 
         trusted_author = self._is_trusted_social_author(doc)
         fallback_reason: str | None = None
+        # Hat ein RELEVANZ-Gate entschieden, dieses Dokument nicht zu bezahlen?
+        #
+        # Das ist NICHT dasselbe wie "es gibt keinen Primaerprovider": dort
+        # existiert der Primaeraufruf gar nicht, der Schatten ist der einzige
+        # Analyst, und ihn zu unterdruecken wuerde eine gueltige Konfiguration
+        # (nur ein Anthropic-Key) still stilllegen. Hier dagegen WURDE ein
+        # bezahlter Aufruf bewusst gespart -- und diese Entscheidung gilt fuer
+        # beide Seiten, sonst spart der Gate nichts.
+        gate_declined_document = False
         if self._provider is None:
             fallback_reason = "LLM provider unavailable."
         elif not self._run_llm:
@@ -747,6 +804,7 @@ class AnalysisPipeline:
                 f"pre_llm_relevance={pre_llm_relevance:.3f} "
                 f"< {_MIN_RULE_RELEVANCE_FOR_LLM:.2f}"
             )
+            gate_declined_document = True
             logger.info(
                 "low_relevance_gate_skipped_llm",
                 doc_id=str(doc.id),
@@ -763,6 +821,7 @@ class AnalysisPipeline:
             if not crypto_relevant:
                 if self._crypto_gate_mode == "enforce":
                     fallback_reason = f"crypto_relevance_gate: {crypto_reason}"
+                    gate_declined_document = True
                     logger.info(
                         "crypto_relevance_gate_skipped_llm",
                         doc_id=str(doc.id),
@@ -786,16 +845,34 @@ class AnalysisPipeline:
                 entity_mentions,
                 fallback_reason=fallback_reason,
             )
+            # W2 (D-CORE-007): KEIN Schattenaufruf, wenn ein RELEVANZ-Gate den
+            # Primaeraufruf gespart hat. Bis hierher lief die Zweitmeinung auch
+            # fuer Dokumente, die der Gate ausdruecklich als nicht
+            # analysewuerdig aussortiert hatte -- jedes davon kostete weiterhin
+            # einen bezahlten Anthropic-Aufruf, und zwar fuer einen Vergleich,
+            # der kein Gegenstueck hat: eine Schattenanalyse ohne
+            # Primaeranalyse vergleicht nichts.
+            #
+            # In ALLEN uebrigen Faellen (kein Provider konfiguriert, LLM
+            # abgeschaltet, Stub-Dokument) laeuft der Schatten unveraendert
+            # weiter -- dort ist er die einzige Analyse, die es gibt.
             if self._shadow_provider is not None:
-                (
-                    shadow_llm_output,
-                    shadow_provider_name,
-                    shadow_error,
-                ) = await self._run_shadow_analysis(
-                    doc,
-                    text=text,
-                    context=context,
-                )
+                if gate_declined_document:
+                    logger.info(
+                        "shadow_skipped_relevance_gate",
+                        doc_id=str(doc.id),
+                        fallback_reason=fallback_reason,
+                    )
+                else:
+                    (
+                        shadow_llm_output,
+                        shadow_provider_name,
+                        shadow_error,
+                    ) = await self._run_shadow_analysis(
+                        doc,
+                        text=text,
+                        context=context,
+                    )
         elif self._provider is not None:
             try:
                 primary_task = asyncio.create_task(
@@ -803,6 +880,7 @@ class AnalysisPipeline:
                         title=doc.title,
                         text=text,
                         context=context,
+                        source=doc.source_name,
                     )
                 )
 
@@ -894,6 +972,25 @@ class AnalysisPipeline:
                     spam_probability=primary_output.spam_probability,
                     directional_confidence=primary_output.directional_confidence,
                     event_timing=primary_output.event_timing,
+                )
+            except BudgetExceeded as exc:
+                # Kein Absturz und kein Anbieterfehler: das Dokument bleibt
+                # unanalysiert MIT Vermerk und kann spaeter erneut anstehen.
+                # Waere das ein generischer Fehler, saehe ein erreichtes Budget
+                # im Betrieb aus wie ein Ausfall von OpenAI.
+                logger.warning(
+                    "analysis_skipped_ai_budget",
+                    doc_id=str(doc.id),
+                    route=exc.route,
+                    state=exc.state,
+                    reason=exc.reason,
+                )
+                analysis_result = self._build_fallback_analysis(
+                    doc,
+                    text,
+                    keyword_hits,
+                    entity_mentions,
+                    fallback_reason=f"ai_budget_exceeded: {exc.state} ({exc.reason})",
                 )
             except Exception as exc:
                 logger.warning(

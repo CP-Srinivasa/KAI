@@ -15,7 +15,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from app.ai.audit import is_retryable_error
+from app.ai.audit import is_retryable_error, note_retry_attempt
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
 
@@ -57,6 +57,13 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
         # NEO-F-006: without a filter tenacity retried 401/400/ValidationError too,
         # costing three attempts plus up to 15 s backoff for a hopeless call.
         retry=retry_if_exception(is_retryable_error),
+        # NUR ZAEHLEN, nicht entscheiden (D-CORE-007): `before_sleep` feuert
+        # zwischen den Versuchen, also zweimal bei drei Versuchen. Damit traegt
+        # die EINE Telemetriezeile dieses Aufrufs `retry_count=2` statt 0 --
+        # bis zu drei bezahlte Requests waren bisher als ein Versuch gebucht.
+        # Die Entscheidung ueber die Wiederholung bleibt, wo sie ist:
+        # `is_retryable_error` (Praedikat) und app/ai/retry.py (Versuchszahl).
+        before_sleep=note_retry_attempt,
         reraise=True,
     )
     async def analyze(

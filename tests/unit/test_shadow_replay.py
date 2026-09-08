@@ -205,15 +205,19 @@ async def test_identitaet_und_kosten_stammen_aus_der_antwort(tmp_path: Path) -> 
     assert schatten["input_tokens"] == 118 and schatten["output_tokens"] == 37
 
 
-async def test_ein_gateway_ohne_preis_meldet_unbekannt_nicht_null(tmp_path: Path) -> None:
+async def test_ein_gateway_ohne_transportpreis_schaetzt_aus_der_preistabelle(
+    tmp_path: Path,
+) -> None:
     pfad = tmp_path / "llm_telemetry.jsonl"
 
     await erzeuge_evidenz(pfad, faelle=(Fall("ohne", (erfolg(kosten=None),)),))
 
     (schatten,) = _shadow(pfad)
-    assert schatten["cost_usd"] is None
-    assert schatten["cost_known"] is False
-    assert schatten["cost_usd"] != 0
+    # Seit D-CORE-007 schaetzt die Telemetrie aus Tokens x Preistabelle, wenn der
+    # Transport keinen Preis meldet — gekennzeichnet, nie eine erfundene Null.
+    assert schatten["cost_usd"] is not None and schatten["cost_usd"] > 0
+    assert schatten["cost_known"] is True
+    assert str(schatten["cost_source"]).startswith("list_price")
 
 
 # ---------------------------------------------------------------------------

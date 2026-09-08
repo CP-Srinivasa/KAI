@@ -63,4 +63,47 @@ def is_route(value: object) -> bool:
     return isinstance(value, str) and value in ROUTES
 
 
-__all__ = ["ROUTES", "Route", "is_route", "route_for"]
+#: Die günstigste Stufe. Alles darüber ist eine bewusste Entscheidung, teurer
+#: zu fahren — und genau das soll in der Telemetrie stehen, statt sich aus
+#: Modellnamen rückschliessen zu lassen.
+CHEAPEST_ROUTE: Final[Route] = "bulk"
+
+#: Routen, die eine TEURERE Stufe verlangen als den Normalfall.
+#:
+#: Bewusst OHNE ``standard`` und ohne ``stt``, obwohl beide formal über
+#: :data:`CHEAPEST_ROUTE` liegen. ``standard`` ist der Normalfall — stünde es
+#: hier, trüge nahezu jede Zeile einen Eskalationsgrund, und ein Feld, das
+#: immer gesetzt ist, sagt nichts mehr. ``stt`` ist eine andere MODALITÄT
+#: (Sprache zu Text), keine höhere Qualitätsstufe; es als Eskalation zu
+#: buchen wäre eine Kostenaussage, die es nicht gibt.
+_ESCALATED: Final[frozenset[str]] = frozenset({"reasoning", "critical"})
+
+
+def escalation_reason_for(route: str, *, budget_bypassed: bool = False) -> str:
+    """Warum dieser Aufruf teurer läuft als nötig — leer heisst: tut er nicht.
+
+    Zwei Gründe, und sie sind nicht dasselbe:
+
+    * ``critical_override`` — das Budget war erschöpft und der Aufruf lief
+      TROTZDEM, weil ``critical`` nicht gesperrt wird. Das ist die teuerste
+      Sorte Eskalation und muss einzeln auffindbar sein.
+    * ``route_<name>`` — die Route verlangt regulär eine teurere Stufe
+      (``reasoning``, ``critical``). Kein Vorwurf, nur eine Zuordnung: ohne
+      sie liesse sich hinterher nicht sagen, welcher Anteil der Rechnung aus
+      Anspruch und welcher aus Masse entstand.
+
+    ``standard`` und ``stt`` sind KEINE Eskalation — siehe :data:`_ESCALATED`.
+    """
+    if budget_bypassed:
+        return "critical_override"
+    return f"route_{route}" if route in _ESCALATED else ""
+
+
+__all__ = [
+    "CHEAPEST_ROUTE",
+    "ROUTES",
+    "Route",
+    "escalation_reason_for",
+    "is_route",
+    "route_for",
+]

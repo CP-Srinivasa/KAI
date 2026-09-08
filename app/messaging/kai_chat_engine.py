@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.ai.audit import llm_call_scope
+from app.ai.budget import BudgetExceeded
 from app.ai.runtime import LiteLLMRequest, invoke
 from app.core.settings import get_settings
 from app.execution.portfolio_read import build_portfolio_snapshot
@@ -278,6 +279,23 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
         )
         source: ChatSource = "litellm" if routed.transport == "litellm" else "gpt4o"
         return ChatReply(reply=routed.value, intent="smalltalk", source=source)
+    except BudgetExceeded as exc:
+        # Ein erreichtes Budget ist KEIN Ausfall und darf nicht so klingen.
+        # Der Operator soll wissen, dass er ein Limit gesetzt hat -- und dass
+        # der Bot ansonsten arbeitsfaehig ist. Die Intent-Erkennung
+        # (Route `critical`) laeuft weiter, Smalltalk kostet nichts mehr.
+        logger.warning("[kai-chat] ai budget reached: %s", exc.reason)
+        if language == "de":
+            return ChatReply(
+                reply="AI-Budget erreicht. Steuerbefehle gehen weiter, Smalltalk pausiert.",
+                intent="smalltalk",
+                source="fallback",
+            )
+        return ChatReply(
+            reply="AI budget reached. Commands still work, smalltalk is paused.",
+            intent="smalltalk",
+            source="fallback",
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-chat] gpt-4o call failed: %s", exc)
         if language == "de":

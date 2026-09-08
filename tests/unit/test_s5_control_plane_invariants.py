@@ -303,14 +303,34 @@ async def test_consensus_wird_auch_bei_globaler_primary_decke_geklemmt() -> None
 
 
 # ---------------------------------------------------------------------------
-# Budget begrenzt Ausgaben, nicht den Betrieb.
+# Budget begrenzt Ausgaben -- und seit D-CORE-007 auch den bezahlten Pfad.
+#
+# ABGELOESTE INVARIANTE (bis 2026-09-08):
+#   `test_ein_erschoepftes_budget_legt_den_direktpfad_nicht_still` verlangte,
+#   dass ein erschoepftes Budget NUR den LiteLLM-Transport abschaltet und
+#   Analysis/Chat/Intent/STT/Consensus unveraendert direkt weiterlaufen laesst.
+#   Begruendung damals: "sonst haette die Kostenbremse mehr Macht ueber KAI als
+#   der Modus-Schalter, und ein Budgetende saehe aus wie ein Ausfall."
+#
+# WARUM SIE FIEL: sie war unter der Annahme richtig, dass LiteLLM der bezahlte
+# Weg ist. Der ist er nicht -- er ist AUS. Bezahlt wird auf dem Direktpfad.
+# Eine Bremse, die genau den Pfad ausspart, auf dem das Geld abfliesst, bremst
+# nichts; sie schaltet einen bereits abgeschalteten Transport ab.
+#
+# WAS VON DER ALTEN SORGE BLEIBT: beide Haelften, und beide sind unten geprueft.
+#   1. Ein Budgetende darf nicht wie ein Ausfall aussehen -> TYPISIERTE
+#      `BudgetExceeded`, die Aufrufer deferieren laesst (Pipeline: Dokument
+#      bleibt unanalysiert MIT Vermerk; Telegram: kurze Antwort).
+#   2. Die Kostenbremse darf KAI nicht unbedienbar machen -> `critical`
+#      (= `intent`, die Operator-Steuerung) laeuft weiter, und diese Ausnahme
+#      ist nicht konfigurierbar.
 # ---------------------------------------------------------------------------
 
 
-async def test_ein_erschoepftes_budget_legt_den_direktpfad_nicht_still() -> None:
-    """Sonst haette die Kostenbremse mehr Macht ueber KAI als der Modus-Schalter."""
-    from app.ai.budget import BudgetPolicy, BudgetState
-    from app.ai.gateway import SKIP_BUDGET_REJECT, execute_async
+async def test_ein_erschoepftes_budget_haelt_den_bezahlten_direktpfad_an() -> None:
+    """Routine wird gesperrt -- typisiert, damit es nicht nach Ausfall aussieht."""
+    from app.ai.budget import BudgetExceeded, BudgetPolicy, BudgetState
+    from app.ai.gateway import execute_async
     from app.ai.models import AttemptResult
 
     beruehrt: list[str] = []
@@ -323,21 +343,50 @@ async def test_ein_erschoepftes_budget_legt_den_direktpfad_nicht_still() -> None
         beruehrt.append("litellm")
         return AttemptResult(trace=_trace(), value="litellm")
 
+    with pytest.raises(BudgetExceeded) as fehler:
+        await execute_async(
+            purpose="chat",
+            alias="kai-standard",
+            direct_call=direct,
+            litellm_call=lite,
+            per_route={"standard": "shadow"},
+            ceiling="shadow",
+            budget_policy=BudgetPolicy(daily_limit_usd=1.0, monthly_limit_usd=10.0),
+            daily=BudgetState(booked_usd=99.0, known_calls=1, unknown_calls=0),
+            monthly=BudgetState(booked_usd=99.0, known_calls=1, unknown_calls=0),
+        )
+    assert fehler.value.route == "standard"
+    assert fehler.value.state == "LIMIT_REACHED"
+    # Der Kern: KEIN Transport wurde beruehrt, also kein Geld ausgegeben.
+    assert beruehrt == [], "weder LiteLLM noch Direktpfad duerfen gelaufen sein"
+
+
+async def test_die_operator_steuerung_bleibt_auch_ohne_budget_bedienbar() -> None:
+    """`critical` (= `intent`) ist die Ausnahme, und sie ist nicht abschaltbar."""
+    from app.ai.budget import BUDGET_EXEMPT_ROUTES, BudgetPolicy, BudgetState
+    from app.ai.gateway import SKIP_BUDGET_REJECT, execute_async
+    from app.ai.models import AttemptResult
+
+    beruehrt: list[str] = []
+
+    async def direct() -> AttemptResult[str]:
+        beruehrt.append("direct")
+        return AttemptResult(trace=AttemptTrace("direct", "gpt-4o", 1.0), value="direkt")
+
     outcome = await execute_async(
-        purpose="chat",
-        alias="kai-standard",
+        purpose="intent",
+        alias="kai-critical",
         direct_call=direct,
-        litellm_call=lite,
-        per_route={"standard": "shadow"},
-        ceiling="shadow",
+        litellm_call=None,
         budget_policy=BudgetPolicy(daily_limit_usd=1.0, monthly_limit_usd=10.0),
         daily=BudgetState(booked_usd=99.0, known_calls=1, unknown_calls=0),
         monthly=BudgetState(booked_usd=99.0, known_calls=1, unknown_calls=0),
     )
     assert outcome.gateway.budget == "reject"
     assert SKIP_BUDGET_REJECT in outcome.gateway.skipped
-    assert beruehrt == ["direct"], "LiteLLM aus, Altpfad weiter"
+    assert beruehrt == ["direct"], "die Fernbedienung des Operators bleibt bedienbar"
     assert outcome.authoritative_value == "direkt"
+    assert BUDGET_EXEMPT_ROUTES == frozenset({"critical"})
 
 
 # ---------------------------------------------------------------------------

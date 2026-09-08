@@ -52,6 +52,40 @@ ErrorClass = Literal[
 Purpose = Literal["analysis", "chat", "intent", "stt", "consensus"]
 Outcome = Literal["success", "fallthrough", "exhausted", "skipped"]
 
+#: WOFÜR das Geld ausgegeben wurde — die Auftraggeber-Sicht.
+#:
+#: Abgrenzung zu :data:`Purpose`, damit hier kein zweites Routing-SSOT
+#: entsteht: ``Purpose`` sagt, WELCHE OBERFLÄCHE ruft (Analyse, Chat, Intent,
+#: STT, Consensus) und bestimmt über ``app.ai.routes`` die Route.
+#: ``UseCase`` sagt, WELCHE ARBEIT bezahlt wird. Beide fallen heute meist
+#: zusammen — aber genau in dem Moment, in dem ``analysis`` mehr als einen
+#: Auftraggeber hat (News-Ingest UND Premium-Signale), ist die Grenze ohne
+#: dieses Feld nicht mehr rekonstruierbar, und die Kostenzuordnung wäre für
+#: immer verloren. Deshalb steht es jetzt da und nicht später.
+UseCase = Literal[
+    "research",
+    "news_intelligence",
+    "premium_signals",
+    "trading_paper",
+    "monitoring",
+    "operator_manual",
+    "unknown",
+]
+
+#: Rückfall-Zuordnung, wenn kein Aufrufer einen ``use_case`` gesetzt hat.
+#: Sie ist eine ABLEITUNG aus dem Purpose, keine zweite Tabelle: solange
+#: ``analysis`` genau einen Auftraggeber hat, IST der Purpose die Zuordnung.
+#: Sobald das nicht mehr stimmt, überschreibt der Eintrittspunkt sie über
+#: :func:`use_case_scope` — und der Rückfall wird nie stillschweigend falsch,
+#: weil ein nicht zugeordneter Aufruf ``unknown`` trägt statt einer Vermutung.
+_PURPOSE_USE_CASE: dict[str, UseCase] = {
+    "analysis": "news_intelligence",
+    "chat": "operator_manual",
+    "intent": "operator_manual",
+    "stt": "operator_manual",
+    "consensus": "trading_paper",
+}
+
 # Classes for which a second attempt cannot possibly help. Everything else is
 # retryable - deliberately a deny-list, so unclassified errors keep the
 # pre-existing retry behaviour instead of silently losing it.
@@ -122,9 +156,136 @@ _LOGICAL_ROUTE: ContextVar[str | None] = ContextVar("kai_llm_logical_route", def
 _MODE: ContextVar[str | None] = ContextVar("kai_llm_mode", default=None)
 
 
+#: Der Auftraggeber der laufenden Arbeit. Er steht NEBEN Route und Modus im
+#: SELBEN Scope-Mechanismus -- bewusst kein eigener Korrelationsbegriff und
+#: kein zweiter Strom: wer eine dritte Art von Zuordnung einführt, hat in drei
+#: Monaten drei Wahrheiten darüber, wer wofür bezahlt hat.
+_USE_CASE: ContextVar[str | None] = ContextVar("kai_llm_use_case", default=None)
+
+#: Warum dieser Aufruf teurer laufen darf als die günstigste Stufe. LEER ist
+#: der Normalfall und heisst: keine Eskalation. Ein leerer String statt
+#: ``None``, weil "nicht eskaliert" eine AUSSAGE ist und kein fehlender Wert.
+_ESCALATION_REASON: ContextVar[str] = ContextVar("kai_llm_escalation_reason", default="")
+
+
+class _AttemptCounter:
+    """Physische Versuche EINES logischen Aufrufs — veränderlich mit Absicht.
+
+    Ein ``ContextVar[int]`` würde hier nicht tragen: der Zähler wird TIEF im
+    Tenacity-Dekorator hochgezählt und weit AUSSEN gelesen. Ein ``set()`` im
+    Inneren wäre für den äusseren Leser je nach Task-Grenze unsichtbar. Ein
+    veränderliches Objekt, das der äussere Scope anlegt, wird von innen
+    beschrieben und von aussen gelesen — genau die Richtung, die gebraucht wird.
+    """
+
+    __slots__ = ("retries",)
+
+    def __init__(self) -> None:
+        self.retries = 0
+
+
+_ATTEMPT_COUNTER: ContextVar[_AttemptCounter | None] = ContextVar(
+    "kai_llm_attempt_counter", default=None
+)
+
+
 def current_evaluation_id() -> str | None:
     """Auswertungs-Id des aktuellen Kontexts, falls einer laeuft."""
     return _EVALUATION_ID.get()
+
+
+def current_use_case() -> str | None:
+    """Der gesetzte Auftraggeber, oder ``None``, wenn keiner gesetzt wurde."""
+    return _USE_CASE.get()
+
+
+def resolve_use_case(purpose: str | None) -> UseCase:
+    """Der Auftraggeber dieser Zeile: gesetzter Scope, sonst Ableitung, sonst ``unknown``.
+
+    Nie ein Rateversuch: was weder gesetzt noch aus einem bekannten Purpose
+    ableitbar ist, heisst ``unknown`` und ist damit in der Auswertung
+    auffindbar, statt einem beliebigen Topf zugeschlagen zu werden.
+    """
+    gesetzt = _USE_CASE.get()
+    if gesetzt:
+        return gesetzt  # type: ignore[return-value]
+    if purpose:
+        abgeleitet = _PURPOSE_USE_CASE.get(str(purpose))
+        if abgeleitet is not None:
+            return abgeleitet
+    return "unknown"
+
+
+@contextmanager
+def use_case_scope(use_case: UseCase) -> Iterator[UseCase]:
+    """Bindet den Auftraggeber an alles, was in diesem Block telemetriert wird.
+
+    Am Eintrittspunkt gesetzt, nicht am Provider: der Provider weiss, WOMIT er
+    fährt, aber nie, FÜR WEN. Wird beim Verlassen immer zurückgesetzt.
+    """
+    token = _USE_CASE.set(use_case)
+    try:
+        yield use_case
+    finally:
+        _USE_CASE.reset(token)
+
+
+def current_escalation_reason() -> str:
+    """Warum dieser Aufruf über der günstigsten Stufe läuft. Leer = gar nicht."""
+    return _ESCALATION_REASON.get()
+
+
+@contextmanager
+def escalation_scope(reason: str) -> Iterator[str]:
+    """Markiert einen Block als bewusst teurer — z. B. ``critical_override``."""
+    token = _ESCALATION_REASON.set(reason or "")
+    try:
+        yield reason
+    finally:
+        _ESCALATION_REASON.reset(token)
+
+
+@contextmanager
+def attempt_counter_scope() -> Iterator[_AttemptCounter]:
+    """Zählt die Wiederholungen, die INNERHALB dieses Blocks stattfinden.
+
+    Der Defekt, den das schliesst: die vier Direktprovider tragen je einen
+    ``@retry(stop=stop_after_attempt(3))``, und die Messung liegt AUSSERHALB
+    dieses Dekorators. Bis zu drei bezahlte Requests ergaben genau eine
+    Telemetriezeile mit ``retry_count=0`` — die einzige strukturelle Quelle,
+    die eine Rechnung über die Telemetrie treiben kann.
+
+    Dieser Zähler ÄNDERT NICHTS an der Wiederholung selbst. Die Entscheidung,
+    ob wiederholt wird, bleibt vollständig in ``app.ai.retry`` bzw. im
+    Tenacity-Prädikat :func:`is_retryable_error`. Hier wird nur gezählt.
+    """
+    counter = _AttemptCounter()
+    token = _ATTEMPT_COUNTER.set(counter)
+    try:
+        yield counter
+    finally:
+        _ATTEMPT_COUNTER.reset(token)
+
+
+def note_retry_attempt(retry_state: object = None) -> None:
+    """Tenacity-``before_sleep``-Hook: eine Wiederholung ist beschlossen.
+
+    ``before_sleep`` feuert ZWISCHEN Versuchen, nicht vor dem ersten. Drei
+    Versuche ergeben deshalb zwei Aufrufe und ``retry_count == 2`` — dieselbe
+    Zählweise wie ``record_attempt_trace`` (``attempt_number - 1``).
+
+    Ohne laufenden :func:`attempt_counter_scope` passiert nichts. Telemetrie
+    darf den Aufruf nie mitreissen, auch nicht über einen Zähler.
+    """
+    counter = _ATTEMPT_COUNTER.get()
+    if counter is not None:
+        counter.retries += 1
+
+
+def current_retry_count() -> int:
+    """Wiederholungen im laufenden Zähl-Scope; ``0`` ohne Scope."""
+    counter = _ATTEMPT_COUNTER.get()
+    return counter.retries if counter is not None else 0
 
 
 @contextmanager
@@ -292,6 +453,8 @@ def record_attempt_trace(
         input_tokens=attempt_trace.input_tokens,
         output_tokens=attempt_trace.output_tokens,
         cost_usd=attempt_trace.cost_usd,
+        use_case=resolve_use_case(purpose),
+        escalation_reason=_ESCALATION_REASON.get(),
         schema_status=schema_status,
         budget_decision=budget_decision,
         circuit_state=circuit_state,
@@ -388,6 +551,11 @@ async def llm_call_scope(
         failure_outcome=failure_outcome,
     )
     started = monotonic()
+    # Die Wiederholungen des Providers passieren INNERHALB dieses Blocks
+    # (Tenacity sitzt auf ``analyze``, die Messung darum herum). Ohne diesen
+    # Zähler tragen bis zu drei bezahlte Requests eine Zeile mit ``retry_count=0``.
+    counter = _AttemptCounter()
+    counter_token = _ATTEMPT_COUNTER.set(counter)
     try:
         yield scope
     except BaseException as exc:
@@ -414,8 +582,14 @@ async def llm_call_scope(
             evaluation_id=_EVALUATION_ID.get(),
             logical_route=_LOGICAL_ROUTE.get(),
             mode=_MODE.get(),
+            use_case=resolve_use_case(scope.purpose),
+            escalation_reason=_ESCALATION_REASON.get(),
+            retry_count=counter.retries,
         )
         raise
+    finally:
+        # Nach der Zeile, nicht davor: die Zeile liest den Zähler noch.
+        _ATTEMPT_COUNTER.reset(counter_token)
     record_llm_call(
         provider=scope.provider,
         model=scope.model,
@@ -434,4 +608,7 @@ async def llm_call_scope(
         evaluation_id=_EVALUATION_ID.get(),
         logical_route=_LOGICAL_ROUTE.get(),
         mode=_MODE.get(),
+        use_case=resolve_use_case(scope.purpose),
+        escalation_reason=_ESCALATION_REASON.get(),
+        retry_count=counter.retries,
     )

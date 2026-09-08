@@ -29,7 +29,61 @@ _JSON_INSTRUCTION = (
 )
 
 
+#: Seam-Name -> echter, BEZAHLTER Anbieter. Nur wer hier steht, erzeugt eine
+#: Telemetriezeile.
+#:
+#: ``NoOpProvider`` fehlt hier ABSICHTLICH: er ruft nichts an, kostet nichts
+#: und baut ``LLMResult`` ohnehin selbst, ohne ``_ok``/``_fail``. Ihn zu
+#: zaehlen wuerde die Aufrufzahl aufblaehen und, schlimmer, die Quote der
+#: unbelegten Kosten verderben -- an der haengt seit D-CORE-007 ein
+#: fail-closed Budgetzustand. ``mock`` und ``ollama`` fehlen aus demselben
+#: Grund: lokal bzw. Fixture, also gratis.
+_PAID_SEAM_PROVIDERS: dict[str, str] = {"claude": "anthropic"}
+
+
+def _record(provider: str, model: str, ok: bool, started: float, reason: str | None) -> None:
+    """Eine Telemetriezeile fuer die bezahlten Aufrufe dieser Schicht.
+
+    Der Defekt, den das schliesst: ``app/intelligence`` ist eine zweite,
+    vollstaendig separate LLM-Schicht. Sie schreibt in einen eigenen Strom
+    (``artifacts/intelligence_audit.jsonl``), hat ``record_llm_call`` nie
+    gerufen und war fuer ``/health/ai`` wie fuer jedes Budget unsichtbar. Bei
+    ``KAI_LLM_PROVIDER=claude`` lief damit taeglich ein bezahlter
+    Anthropic-Aufruf, den keine Kostenzahl dieses Repos kannte.
+
+    Instrumentiert wird an den beiden GETEILTEN Ausgaengen ``_ok``/``_fail``,
+    nicht in jeder Provider-Klasse: zwei Stellen statt vier, und eine neue
+    Provider-Klasse ist automatisch mit erfasst.
+
+    ``purpose="analysis"`` bleibt im geschlossenen Vokabular von
+    ``app.ai.audit.Purpose`` -- ein neuer Wert dort wuerde die Routen-Tabelle
+    unvollstaendig machen. Die eigentliche Zuordnung traegt ``use_case``.
+    """
+    echter_anbieter = _PAID_SEAM_PROVIDERS.get(provider)
+    if echter_anbieter is None:
+        return
+    try:
+        from app.observability.llm_telemetry import record_llm_call
+
+        record_llm_call(
+            provider=echter_anbieter,
+            model=model,
+            ok=ok,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+            role="primary",
+            error_type=reason,
+            purpose="analysis",
+            chain_position=-1,
+            use_case="research",
+            outcome="success" if ok else "exhausted",
+            source=f"intelligence:{provider}",
+        )
+    except Exception:  # noqa: BLE001 - Telemetrie darf den Seam nie mitreissen
+        pass
+
+
 def _fail(provider: str, model: str, started: float, reason: str) -> LLMResult:
+    _record(provider, model, ok=False, started=started, reason=reason)
     return LLMResult(
         ok=False,
         data=None,
@@ -54,6 +108,7 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
 
 
 def _ok(provider: str, model: str, started: float, data: dict[str, Any]) -> LLMResult:
+    _record(provider, model, ok=True, started=started, reason=None)
     confidence = data.get("confidence")
     return LLMResult(
         ok=True,
