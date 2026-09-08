@@ -19,7 +19,29 @@ import {
 import { allocationDonutData, concentrationTone } from "@/lib/executiveSnapshot";
 import { cn } from "@/lib/utils";
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" }) {
+function Metric({
+  label,
+  value,
+  tone,
+  unavailable = false,
+}: {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg";
+  /** true = die Quelle antwortet nicht. Ein stummer Strich sieht aus wie "0" oder
+   *  "nichts los"; fehlende Kapitalzahlen muessen als FEHLEND lesbar sein. */
+  unavailable?: boolean;
+}) {
+  if (unavailable) {
+    return (
+      <div>
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle">{label}</div>
+        <div className="text-fg-subtle font-mono text-lg font-semibold" title="Quelle nicht erreichbar">
+          n/v
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <div className="text-2xs uppercase tracking-wider text-fg-subtle">{label}</div>
@@ -52,6 +74,19 @@ export function ExecutiveSnapshot() {
   const donut = allocationDonutData(diversification?.asset_distribution);
   const openCount = portfolio?.position_count ?? null;
 
+  // Je Quelle getrennt: welche fehlt, und laesst sie sich erneut holen?
+  const degraded = [
+    pf.state === "error" ? "Portfolio" : null,
+    ex.state === "error" ? "Exposure" : null,
+    dv.state === "error" ? "Allocation" : null,
+  ].filter((x): x is string => x !== null);
+  const allDown = pf.state === "error" && ex.state === "error" && dv.state === "error";
+  const reloadDegraded = () => {
+    if (pf.state === "error") pf.reload();
+    if (ex.state === "error") ex.reload();
+    if (dv.state === "error") dv.reload();
+  };
+
   return (
     <Card padded>
       <CardHeader
@@ -59,24 +94,57 @@ export function ExecutiveSnapshot() {
         subtitle="Lage auf einen Blick — Kapital, Klumpenrisiko, Allocation, Ausführungs-Zustand."
       />
 
-      {pf.state === "error" && ex.state === "error" ? (
-        <div className="py-3 text-xs text-neg">
-          Snapshot-Endpoints unerreichbar — Lage nicht bestimmbar.
+      {/* 2026-09-08: Vorher hing die einzige Fehlermeldung an
+          `pf.state === "error" && ex.state === "error"` — BEIDE mussten fallen.
+          Bei Teilausfall zeigte der wichtigste Block der Seite stumme Striche,
+          was sich wie "keine Positionen" liest statt wie "nicht bestimmbar".
+          Jetzt traegt der Block immer eine Aussage, und jede Zone kennt ihren
+          eigenen Zustand. */}
+      {degraded.length > 0 && (
+        <div className="border-fg-subtle/25 text-fg-muted mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <span className="text-fg font-semibold">Lage unvollständig</span>
+          <span>
+            {degraded.join(" · ")} {degraded.length === 1 ? "antwortet" : "antworten"} nicht — die
+            fehlenden Felder stehen auf n/v, nicht auf null.
+          </span>
+          <button
+            type="button"
+            onClick={reloadDegraded}
+            className="border-fg-subtle/30 text-fg-muted hover:text-fg hover:border-fg-subtle/60 ml-auto rounded-md border px-2 py-0.5 transition-colors"
+          >
+            Erneut laden
+          </button>
+        </div>
+      )}
+
+      {allDown ? (
+        <div className="text-fg-muted py-3 text-xs">
+          Keine der drei Snapshot-Quellen antwortet — die Lage ist derzeit nicht bestimmbar.
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-12 md:gap-3">
           {/* Kapital-Zahlen */}
           <div className="grid grid-cols-2 gap-3 md:col-span-5">
-            <Metric label="Equity" value={portfolio ? fmt(portfolio.total_equity_usd) : "—"} />
-            <Metric label="Cash" value={portfolio ? fmt(portfolio.cash_usd) : "—"} />
+            <Metric
+              label="Equity"
+              value={portfolio ? fmt(portfolio.total_equity_usd) : "—"}
+              unavailable={pf.state === "error"}
+            />
+            <Metric
+              label="Cash"
+              value={portfolio ? fmt(portfolio.cash_usd) : "—"}
+              unavailable={pf.state === "error"}
+            />
             <Metric
               label="Realized PnL"
               value={portfolio ? fmt(portfolio.realized_pnl_usd) : "—"}
               tone={portfolio ? (portfolio.realized_pnl_usd >= 0 ? "pos" : "neg") : undefined}
+              unavailable={pf.state === "error"}
             />
             <Metric
               label="Offene Positionen"
               value={openCount == null ? "—" : String(openCount)}
+              unavailable={pf.state === "error"}
             />
             <div className="col-span-2 flex flex-wrap gap-1.5 pt-1">
               {exposure && (
