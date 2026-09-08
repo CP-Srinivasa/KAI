@@ -109,7 +109,7 @@ async def get_watchlists(watchlist_type: str = "assets") -> dict[str, list[str]]
 
 
 async def get_research_brief(
-    watchlist: str, watchlist_type: str = "assets", limit: int = 100
+    watchlist: str, watchlist_type: str = "assets", limit: int = 100, window_hours: int = 24
 ) -> str:
     """Generate a research brief for a specific watchlist."""
     settings = get_settings()
@@ -118,17 +118,21 @@ async def get_research_brief(
 
     watchlist_items = registry.get_watchlist(watchlist, item_type=resolved_type)
 
+    # Scan and report share one window. Scanning "the newest N" instead would
+    # hand the watchlist filter a batch that is largely outside the reported
+    # window, and capping before the freshness filter would spend the budget on
+    # documents the brief discards anyway — an empty brief despite fresh data.
+    window_start = datetime.now(UTC) - timedelta(hours=window_hours)
     session_factory = build_session_factory(settings.db)
     async with session_factory.begin() as session:
         repo = DocumentRepository(session)
-        docs = await repo.list(is_analyzed=True, limit=limit * 5)
+        docs = await repo.list(is_analyzed=True, published_after=window_start, limit=limit * 5)
 
     if watchlist_items:
         docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
 
-    docs = docs[:limit]
     builder = ResearchBriefBuilder(cluster_name=watchlist)
-    brief = builder.build(docs)
+    brief = builder.build(docs, window_hours=window_hours, limit=limit)
     return brief.to_markdown()
 
 

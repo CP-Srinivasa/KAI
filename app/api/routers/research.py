@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -35,6 +36,7 @@ async def get_research_brief(
         str, Query(description="assets, persons, topics, sources")
     ] = "assets",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    window_hours: Annotated[int, Query(ge=1, le=720)] = 24,
     repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> ResearchBrief:
@@ -61,7 +63,10 @@ async def get_research_brief(
             ),
         )
 
-    documents = await repo.list(is_analyzed=True, limit=limit * 5)
+    # Scan and report share one window: a scan of "the newest N" would hand the
+    # watchlist filter a batch that is largely outside the reported window.
+    window_start = datetime.now(UTC) - timedelta(hours=window_hours)
+    documents = await repo.list(is_analyzed=True, published_after=window_start, limit=limit * 5)
     filtered_documents = registry.filter_documents(
         documents,
         watchlist_name,
@@ -69,7 +74,9 @@ async def get_research_brief(
     )
 
     builder = ResearchBriefBuilder(cluster_name=watchlist_name)
-    return builder.build(filtered_documents[:limit])
+    # Filter freshness before applying the output cap; stale high-priority
+    # documents must not displace current documents in the candidate batch.
+    return builder.build(filtered_documents, window_hours=window_hours, limit=limit)
 
 
 @router.get(

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,12 @@ class ResearchBrief(BaseModel):
     title: str
     summary: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    newest_source_timestamp: datetime | None = None
+    oldest_source_timestamp: datetime | None = None
+    data_state: Literal["current", "no_current_data"] = "no_current_data"
+    source_timestamp_policy: str = "published_at; timezone-naive SQLite values interpreted as UTC"
     document_count: int
     average_priority: float
     overall_sentiment: str
@@ -57,6 +63,11 @@ class ResearchBrief(BaseModel):
         lines = [
             f"# {self.title}",
             f"**Generated:** {self.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            f"**Report window:** {self.window_start} to {self.window_end}",
+            f"**Data state:** {self.data_state}",
+            f"**Source timestamps:** {self.oldest_source_timestamp}"
+            f" to {self.newest_source_timestamp}",
+            f"**Timestamp policy:** {self.source_timestamp_policy}",
             "",
             "## Summary",
             self.summary,
@@ -134,14 +145,48 @@ class ResearchBriefBuilder:
     def __init__(self, cluster_name: str) -> None:
         self.cluster_name = cluster_name
 
-    def build(self, documents: list[CanonicalDocument]) -> ResearchBrief:
-        valid_docs = [document for document in documents if document.is_analyzed]
+    def build(
+        self,
+        documents: list[CanonicalDocument],
+        *,
+        window_hours: int = 24,
+        now: datetime | None = None,
+        limit: int | None = None,
+    ) -> ResearchBrief:
+        generated_at = now or datetime.now(UTC)
+        if generated_at.tzinfo is None or not 1 <= window_hours <= 720:
+            raise ValueError("An aware clock and window_hours between 1 and 720 are required")
+        generated_at = generated_at.astimezone(UTC)
+        start = generated_at - timedelta(hours=window_hours)
+        # SQLite drops timezone information on read. Interpret stored naive
+        # publication times as UTC explicitly; never substitute fetched_at.
+        documents = [
+            d.model_copy(update={"published_at": d.published_at.replace(tzinfo=UTC)})
+            if d.published_at is not None and d.published_at.tzinfo is None
+            else d
+            for d in documents
+        ]
+        valid_docs = [
+            document
+            for document in documents
+            if document.is_analyzed
+            and document.published_at is not None
+            and document.published_at.tzinfo is not None
+            and start <= document.published_at <= generated_at
+        ]
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be positive")
+            valid_docs = valid_docs[:limit]
 
         if not valid_docs:
             return ResearchBrief(
                 cluster_name=self.cluster_name,
                 title=f"Research Brief: {self.cluster_name}",
-                summary="No analyzed documents available for this brief.",
+                summary="No current analyzed documents in the report window.",
+                generated_at=generated_at,
+                window_start=start,
+                window_end=generated_at,
                 document_count=0,
                 average_priority=0.0,
                 overall_sentiment=SentimentLabel.NEUTRAL.value,
@@ -185,6 +230,12 @@ class ResearchBriefBuilder:
         return ResearchBrief(
             cluster_name=self.cluster_name,
             title=f"Research Brief: {self.cluster_name}",
+            generated_at=generated_at,
+            window_start=start,
+            window_end=generated_at,
+            newest_source_timestamp=max(b.published_at for b in briefs if b.published_at),
+            oldest_source_timestamp=min(b.published_at for b in briefs if b.published_at),
+            data_state="current",
             summary=self._build_summary(
                 document_count=len(briefs),
                 average_priority=average_priority,

@@ -8,7 +8,7 @@ a deliberate constraint, not a shortcut: a probe call would cost money, add a
 failure domain to a health endpoint, and still only prove that one synthetic
 request worked. Real traffic is the better evidence.
 
-No-Fake-Doktrin: ``state`` is ``unknown`` at n=0 — never ``ok``.
+No recent calls means unavailable evidence, never proven provider failure or health.
 """
 
 from __future__ import annotations
@@ -30,9 +30,25 @@ _DOWN_AT_PCT = 50.0
 _DOWN_AT_CONSECUTIVE_FAILURES = 3
 
 
+def _is_ai_row(row: dict[str, Any]) -> bool:
+    provider = row.get("provider")
+    return (
+        isinstance(provider, str)
+        and bool(provider)
+        and (
+            provider in {"openai", "anthropic", "gemini", "grok"}
+            or (
+                row.get("actual_provider") == provider
+                and row.get("purpose") in {"analysis", "chat", "intent", "stt", "consensus"}
+            )
+        )
+    )
+
+
 def _row_ts(row: dict[str, Any]) -> datetime | None:
     try:
-        return datetime.fromisoformat(str(row.get("ts", "")))
+        ts = datetime.fromisoformat(str(row.get("ts", "")))
+        return ts if ts.tzinfo is not None else None
     except ValueError:
         return None
 
@@ -54,13 +70,16 @@ def _load_rows(path: Path, window_hours: float) -> list[dict[str, Any]]:
     """
     if not path.exists():
         return []
-    cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=window_hours)
     rows: list[dict[str, Any]] = []
     for row in iter_jsonl_tolerant(path):
         if not isinstance(row, dict):
             continue
+        if not _is_ai_row(row):
+            continue
         ts = _row_ts(row)
-        if ts is None or ts < cutoff:
+        if ts is None or not cutoff <= ts <= now:
             continue
         rows.append(row)
     rows.sort(key=lambda r: str(r.get("ts", "")))
@@ -79,7 +98,7 @@ def _load_rows(path: Path, window_hours: float) -> list[dict[str, Any]]:
 
 def _classify_state(calls: int, failures: int, consecutive_failures: int) -> str:
     if calls == 0:
-        return "unknown"
+        return "unavailable"
     if consecutive_failures >= _DOWN_AT_CONSECUTIVE_FAILURES:
         return "down"
     rate = 100.0 * failures / calls
@@ -90,7 +109,9 @@ def _classify_state(calls: int, failures: int, consecutive_failures: int) -> str
     return "ok"
 
 
-def _provider_block(name: str, rows: list[dict[str, Any]], *, configured: bool) -> dict[str, Any]:
+def _provider_block(
+    name: str, rows: list[dict[str, Any]], *, configured: bool, enabled: bool
+) -> dict[str, Any]:
     calls = len(rows)
     failures = sum(1 for row in rows if not row.get("ok", False))
 
@@ -117,10 +138,22 @@ def _provider_block(name: str, rows: list[dict[str, Any]], *, configured: bool) 
             break
         consecutive_failures += 1
 
+    observed = _classify_state(calls, failures, consecutive_failures)
+    if not configured:
+        state, reason = "not_configured", "not_in_factory_configuration"
+    elif not enabled:
+        state, reason = "disabled", "not_in_enabled_chain"
+    elif not calls:
+        state, reason = "unavailable", "no_recent_calls"
+    else:
+        state = "error" if observed in {"down", "degraded"} else "ok"
+        reason = "recent_calls_" + observed
     return {
         "name": name,
         "configured": configured,
-        "state": _classify_state(calls, failures, consecutive_failures),
+        "state": state,
+        "status_reason": reason,
+        "observed_state": observed,
         "calls": calls,
         "failures": failures,
         "failure_rate_pct": round(100.0 * failures / calls, 2) if calls else None,
@@ -157,14 +190,23 @@ def ai_health_snapshot(
     primary = describe_primary_chain(settings)
     shadow = describe_shadow_chain(settings)
     configured = set(primary) | set(shadow)
+    credentials = {
+        name: bool(getattr(settings.providers, key, ""))
+        for name, key in {
+            "openai": "openai_api_key",
+            "anthropic": "anthropic_api_key",
+            "gemini": "gemini_api_key",
+            "grok": "xai_api_key",
+        }.items()
+    }
 
     sink = path if path is not None else DEFAULT_TELEMETRY_PATH
     rows = _load_rows(sink, window_hours)
 
-    by_provider: dict[str, list[dict[str, Any]]] = {name: [] for name in primary + shadow}
+    by_provider: dict[str, list[dict[str, Any]]] = {name: [] for name in credentials}
     for row in rows:
         provider = row.get("provider")
-        if not isinstance(provider, str) or not provider:
+        if not isinstance(provider, str):
             continue
         by_provider.setdefault(provider, []).append(row)
 
@@ -177,7 +219,14 @@ def ai_health_snapshot(
             "chain": {"primary": primary, "shadow": shadow, "source": CHAIN_SOURCE},
             "window_hours": window_hours,
             "providers": [
-                _provider_block(name, by_provider[name], configured=name in configured)
+                _provider_block(
+                    name,
+                    # A chain name without its own credential entry and without
+                    # traffic has no bucket: /health/ai must not 500 over that.
+                    by_provider.get(name, []),
+                    configured=credentials.get(name, name in configured),
+                    enabled=name in configured,
+                )
                 for name in ordered
             ],
         }

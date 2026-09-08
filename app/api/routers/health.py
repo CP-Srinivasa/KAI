@@ -98,7 +98,7 @@ class TimerHealthResponse(BaseModel):
 
 # NEO-P-005: provider health is a SEPARATE model on a SEPARATE path.
 # HealthResponse stays untouched so no liveness consumer breaks.
-AIProviderState = Literal["ok", "degraded", "down", "unknown"]
+AIProviderState = Literal["ok", "disabled", "not_configured", "unavailable", "error"]
 
 
 class AIChain(BaseModel):
@@ -110,8 +110,10 @@ class AIChain(BaseModel):
 class AIProviderHealth(BaseModel):
     name: str
     configured: bool
-    # "unknown" at n=0 — never "ok" without evidence (No-Fake-Doktrin).
+    # Configuration and absent evidence are distinct from observed failures.
     state: AIProviderState
+    status_reason: str
+    observed_state: str
     calls: int
     failures: int
     failure_rate_pct: float | None = None
