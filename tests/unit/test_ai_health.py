@@ -107,10 +107,10 @@ def test_shadow_falls_back_to_gemini_without_anthropic(tmp_path: Path) -> None:
 # ── state classification ─────────────────────────────────────────────────────
 
 
-def test_empty_stream_is_unknown_never_ok(tmp_path: Path) -> None:
+def test_empty_stream_is_unavailable_never_ok(tmp_path: Path) -> None:
     snap = ai_health_snapshot(path=tmp_path / "missing.jsonl", settings=_settings())
     blocks = _providers(snap)
-    assert blocks["openai"]["state"] == "unknown"
+    assert blocks["openai"]["state"] == "unavailable"
     assert blocks["openai"]["calls"] == 0
     assert blocks["openai"]["failure_rate_pct"] is None
     assert blocks["openai"]["latency_p50_ms"] is None
@@ -140,7 +140,7 @@ def test_state_degraded_between_ten_and_fifty_percent(tmp_path: Path) -> None:
 
     block = _providers(ai_health_snapshot(path=path, settings=_settings()))["openai"]
     assert block["failure_rate_pct"] == 10.0
-    assert block["state"] == "degraded"
+    assert block["state"] == "error"
 
 
 def test_state_down_above_fifty_percent(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ def test_state_down_above_fifty_percent(tmp_path: Path) -> None:
         ],
     )
     block = _providers(ai_health_snapshot(path=path, settings=_settings()))["openai"]
-    assert block["state"] == "down"
+    assert block["state"] == "error"
 
 
 def test_state_down_on_three_consecutive_failures_even_at_low_rate(tmp_path: Path) -> None:
@@ -166,7 +166,7 @@ def test_state_down_on_three_consecutive_failures_even_at_low_rate(tmp_path: Pat
     block = _providers(ai_health_snapshot(path=path, settings=_settings()))["openai"]
     assert block["consecutive_failures"] == 3
     assert block["failure_rate_pct"] < 10.0
-    assert block["state"] == "down"
+    assert block["state"] == "error"
     assert block["last_error_class"] == "auth"
 
 
@@ -302,3 +302,36 @@ def test_plain_health_endpoint_is_unchanged(health_client: TestClient) -> None:
     body = health_client.get("/health").json()
     assert body["status"] == "ok"
     assert "providers" not in body and "chain" not in body
+
+
+def test_source_telemetry_cannot_poison_ai_health(tmp_path: Path) -> None:
+    path = tmp_path / "telemetry.jsonl"
+    # A source sharing a correlation id must not suppress a legacy AI wrapper.
+    _write(
+        path,
+        [_row("CNBC", False), _row("Defillama", True), _row("openai", True, chain_position=-1)],
+    )
+    blocks = _providers(ai_health_snapshot(path=path, settings=_settings()))
+    assert "CNBC" not in blocks and "Defillama" not in blocks
+    assert blocks["openai"]["calls"] == 1
+
+
+def test_configured_idle_disabled_and_missing_credentials_are_distinct(tmp_path: Path) -> None:
+    blocks = _providers(
+        ai_health_snapshot(path=tmp_path / "missing", settings=_settings(anthropic="", xai="key"))
+    )
+    assert blocks["gemini"]["state"] == "unavailable"
+    assert blocks["gemini"]["status_reason"] == "no_recent_calls"
+    assert blocks["gemini"]["last_error_class"] is None
+    assert blocks["grok"]["state"] == "disabled"
+    assert blocks["anthropic"]["state"] == "not_configured"
+
+
+def test_future_and_naive_rows_cannot_establish_health(tmp_path: Path) -> None:
+    path = tmp_path / "telemetry.jsonl"
+    naive = _row("openai", True)
+    naive["ts"] = datetime.now().isoformat()
+    _write(path, [naive, _row("openai", True, minutes_ago=-10)])
+    block = _providers(ai_health_snapshot(path=path, settings=_settings()))["openai"]
+    assert block["calls"] == 0
+    assert block["state"] == "unavailable"

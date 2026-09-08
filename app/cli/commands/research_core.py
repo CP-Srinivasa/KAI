@@ -29,6 +29,7 @@ def research_brief(
     watchlist: str = typer.Argument(..., help="Watchlist name"),
     watchlist_type: str = typer.Option("assets", "--type", help="Watchlist type"),
     limit: int = typer.Option(100, "--limit", help="Max documents"),
+    window_hours: int = typer.Option(24, "--window-hours", min=1, max=720),
 ) -> None:
     """Generate a research brief for a watchlist."""
 
@@ -37,15 +38,16 @@ def research_brief(
         registry = WatchlistRegistry.from_monitor_dir(Path(settings.monitor_dir))
         resolved_type = parse_watchlist_type(watchlist_type)
         watchlist_items = registry.get_watchlist(watchlist, item_type=resolved_type)
+        if not watchlist_items:
+            raise typer.BadParameter("Watchlist is empty or does not exist.")
         session_factory = build_session_factory(settings.db)
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit * 5)
         if watchlist_items:
             docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
-        docs = docs[:limit]
         builder = ResearchBriefBuilder(cluster_name=watchlist)
-        brief = builder.build(docs)
+        brief = builder.build(docs, window_hours=window_hours, limit=limit)
         return brief.to_markdown()
 
     console.print(asyncio.run(_run()))

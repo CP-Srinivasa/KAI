@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -62,6 +64,7 @@ persons:
                 url="https://example.com/gensler",
                 title="Gensler warns on crypto regulation",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=9,
                 impact_score=0.8,
                 summary="Regulatory pressure remains elevated.",
@@ -73,6 +76,7 @@ persons:
                 url="https://example.com/vitalik",
                 title="Vitalik discusses scaling",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=7,
                 impact_score=0.6,
                 summary="Ethereum roadmap update.",
@@ -103,6 +107,39 @@ persons:
     assert data["top_actionable_signals"][0]["priority_score"] == 9
     assert repo.calls == [{"is_analyzed": True, "limit": 25}]
 
+    # The same API must stop presenting yesterday's old source as current.
+    repo._documents[0].published_at = datetime.now(UTC) - timedelta(hours=30)
+    empty = client.get(
+        "/research/brief",
+        params={
+            "watchlist": "regulation",
+            "watchlist_type": "persons",
+        },
+    ).json()
+    assert empty["data_state"] == "no_current_data"
+    assert empty["document_count"] == 0
+    historical = client.get(
+        "/research/brief",
+        params={
+            "watchlist": "regulation",
+            "watchlist_type": "persons",
+            "window_hours": 48,
+        },
+    ).json()
+    assert historical["document_count"] == 1
+    assert historical["newest_source_timestamp"] is not None
+    assert historical["window_start"] < historical["window_end"]
+    assert (
+        client.get(
+            "/research/brief",
+            params={
+                "watchlist": "regulation",
+                "window_hours": 0,
+            },
+        ).status_code
+        == 422
+    )
+
 
 def test_api_research_brief_returns_empty_brief_for_no_matches(
     research_app,
@@ -128,6 +165,7 @@ topics:
                 url="https://example.com/solana",
                 title="Solana validator growth",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=6,
                 summary="Validator count rises.",
                 topics=["layer1"],
@@ -149,7 +187,7 @@ topics:
     data = response.json()
     assert data["document_count"] == 0
     assert data["top_documents"] == []
-    assert data["summary"] == "No analyzed documents available for this brief."
+    assert data["summary"] == "No current analyzed documents in the report window."
 
 
 def test_api_research_brief_empty_watchlist(research_app, tmp_path) -> None:
@@ -236,6 +274,7 @@ crypto:
                 url="https://example.com/btc-rally",
                 title="Bitcoin rally continues",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=9,
                 relevance_score=0.9,
                 summary="Strong upward momentum.",
@@ -247,6 +286,7 @@ crypto:
                 url="https://example.com/low-pri",
                 title="Minor update",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=5,
                 sentiment_label=SentimentLabel.NEUTRAL,
             ),
@@ -287,6 +327,7 @@ crypto:
                 url="https://example.com/eth-update",
                 title="Ethereum network update",
                 is_analyzed=True,
+                published_at=datetime.now(UTC),
                 priority_score=7,  # below default min_priority=8
                 relevance_score=0.7,
                 tickers=["ETH"],

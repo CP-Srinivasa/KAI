@@ -35,6 +35,7 @@ async def get_research_brief(
         str, Query(description="assets, persons, topics, sources")
     ] = "assets",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    window_hours: Annotated[int, Query(ge=1, le=720)] = 24,
     repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> ResearchBrief:
@@ -69,7 +70,9 @@ async def get_research_brief(
     )
 
     builder = ResearchBriefBuilder(cluster_name=watchlist_name)
-    return builder.build(filtered_documents[:limit])
+    # Filter freshness before applying the output cap; stale high-priority
+    # documents must not displace current documents in the candidate batch.
+    return builder.build(filtered_documents, window_hours=window_hours, limit=limit)
 
 
 @router.get(
