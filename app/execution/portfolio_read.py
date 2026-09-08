@@ -610,7 +610,10 @@ async def build_portfolio_snapshot(
     # Epoche v2: Epochengrenze VOR dem DB-primary-Pfad bestimmen — ein
     # PortfolioStateRecord aus der Legacy-Ära (geschrieben vor dem attestierten
     # Reset) trägt invalidierten Zustand und darf nicht serviert werden.
-    epoch_info = last_epoch_reset_info(resolved_path)
+    # 2026-09-08: off-loop. Liest paper_execution_audit.jsonl vollstaendig
+    # (audit_replay.py holt die Datei per read_text() in einen String) — das lief
+    # bisher synchron im async-Request-Pfad.
+    epoch_info = await asyncio.to_thread(last_epoch_reset_info, resolved_path)
 
     # DB-primary: open a scoped session, query latest portfolio state
     if session_factory is not None:
@@ -631,7 +634,9 @@ async def build_portfolio_snapshot(
             logger.warning("[PORTFOLIO] DB-primary path failed, falling back to JSONL: %s", exc)
         # DB empty, pre-epoch or query failed → fall through to JSONL
     # today_utc derived from the snapshot's generation time → per-day fee tracking.
-    replay = _replay_paper_audit(resolved_path, today_utc=generated_at[:10])
+    replay = await asyncio.to_thread(
+        _replay_paper_audit, resolved_path, today_utc=generated_at[:10]
+    )
 
     if not replay.available:
         empty_exposure = _build_exposure_summary(())

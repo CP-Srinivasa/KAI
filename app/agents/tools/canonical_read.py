@@ -25,6 +25,7 @@ Tool categories:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
@@ -92,11 +93,22 @@ def get_canonical_read_tool_names() -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def _audit_stream_validation_summary(
+def _audit_stream_validation_summary_sync(
     path: Path,
     stream: AuditStreamName,
 ) -> dict[str, Any]:
     return summarize_audit_stream_result(load_audit_stream(path, stream))
+
+
+async def _audit_stream_validation_summary(
+    path: Path,
+    stream: AuditStreamName,
+) -> dict[str, Any]:
+    """Off-loop. Parst den Audit-Stream vollstaendig UND validiert je Zeile via
+    Pydantic (app/audit/stream_validation.py) — von den drei Paessen ueber
+    paper_execution_audit.jsonl ist das der teuerste. Lief bisher synchron im
+    async-Request-Pfad (2026-09-08)."""
+    return await asyncio.to_thread(_audit_stream_validation_summary_sync, path, stream)
 
 
 async def get_watchlists(watchlist_type: str = "assets") -> dict[str, list[str]]:
@@ -185,7 +197,7 @@ async def get_paper_portfolio_snapshot(
         timeout_seconds=timeout_seconds,
     )
     payload = snapshot.to_json_dict()
-    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+    payload["audit_stream_validation"] = await _audit_stream_validation_summary(
         resolved,
         "paper_execution_audit",
     )
@@ -213,7 +225,7 @@ async def get_paper_positions_summary(
         timeout_seconds=timeout_seconds,
     )
     payload = build_positions_summary(snapshot)
-    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+    payload["audit_stream_validation"] = await _audit_stream_validation_summary(
         resolved,
         "paper_execution_audit",
     )
@@ -241,7 +253,7 @@ async def get_paper_exposure_summary(
         timeout_seconds=timeout_seconds,
     )
     payload = build_exposure_summary(snapshot)
-    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+    payload["audit_stream_validation"] = await _audit_stream_validation_summary(
         resolved,
         "paper_execution_audit",
     )
@@ -1505,7 +1517,9 @@ async def get_alert_audit_summary(
         audit_dir,
         label="Alert audit directory",
     )
-    validation = _audit_stream_validation_summary(resolved / "alert_audit.jsonl", "alert_audit")
+    validation = await _audit_stream_validation_summary(
+        resolved / "alert_audit.jsonl", "alert_audit"
+    )
     audits = load_alert_audits(resolved)
     outcomes = load_outcome_annotations(resolved)
 
@@ -1568,7 +1582,7 @@ async def get_decision_journal_summary(
         label="Decision journal",
         allowed_suffixes=frozenset({".jsonl"}),
     )
-    validation = _audit_stream_validation_summary(resolved, "decision_journal")
+    validation = await _audit_stream_validation_summary(resolved, "decision_journal")
     entries = load_decision_journal(resolved)
     summary = build_decision_journal_summary(entries, journal_path=resolved)
     payload = summary.to_json_dict()
@@ -1604,5 +1618,12 @@ async def get_recent_trading_cycles(
         label="Loop audit",
         allowed_suffixes=frozenset({".jsonl"}),
     )
-    summary = build_recent_cycles_summary(audit_path=resolved, last_n=last_n)
+    # 2026-09-08: off-loop. build_recent_cycles_summary laedt trading_loop_audit.jsonl
+    # VOLLSTAENDIG (138.263 Zeilen), weil total_cycles/status_counts bewusst
+    # Voll-Historie-Aggregate sind — trading_loop_audit_io.py:33-37 begruendet, warum
+    # ein Default-Fenster dort die Kennzahlen still veraendern wuerde. Die Semantik
+    # bleibt deshalb unangetastet; nur der Event-Loop wird nicht mehr blockiert.
+    summary = await asyncio.to_thread(
+        build_recent_cycles_summary, audit_path=resolved, last_n=last_n
+    )
     return summary.to_json_dict()

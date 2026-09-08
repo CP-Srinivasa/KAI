@@ -49,6 +49,41 @@ LOOP_AUDIT_DEFAULT_PATH = "artifacts/trading_loop_audit.jsonl"
 # ---------------------------------------------------------------------------
 
 
+def _artifacts_root() -> Path:
+    """Aufgeloestes ``<workspace>/artifacts`` -- folgt einem Symlink bewusst.
+
+    Im Immutable-Release (``/home/kai/current`` -> ``/home/ubuntu/releases/<SHA>/``)
+    ist ``artifacts`` ein Symlink auf den beweglichen Datenbaum, weil der
+    Release-Baum unveraenderlich ist und Artefakte Laufzeitdaten sind.
+    """
+    return (WORKSPACE_ROOT / ARTIFACTS_SUBDIR).resolve()
+
+
+def _workspace_roots() -> tuple[Path, ...]:
+    """Erlaubte Wurzeln fuer aufgeloeste Pfade.
+
+    ``Path.resolve()`` folgt Symlinks. Seit dem Release-Cutover (2026-09-04)
+    zeigt ``<release>/artifacts`` aus dem Release HERAUS -- ein Vergleich gegen
+    ``WORKSPACE_ROOT`` allein verwarf danach jeden Artefakt-Pfad und liess jeden
+    Operator-Read in einem deterministischen 503 enden.
+
+    Zweite Wurzel ist deshalb das Symlink-ZIEL selbst -- ausdruecklich nicht
+    dessen Elternbaum. Die Sandbox bleibt damit genauso eng wie zuvor: Traversal
+    und fremde Symlinks landen weiterhin ausserhalb beider Wurzeln.
+    """
+    root = WORKSPACE_ROOT.resolve()
+    artifacts_target = _artifacts_root()
+    if artifacts_target.is_relative_to(root):
+        return (root,)
+    return (root, artifacts_target)
+
+
+def _require_within_workspace(resolved: Path, *, label: str, path_value: str | Path) -> Path:
+    if not any(resolved.is_relative_to(root) for root in _workspace_roots()):
+        raise ValueError(f"{label} must stay within workspace: {path_value}")
+    return resolved
+
+
 def resolve_workspace_path(
     path_value: str | Path,
     *,
@@ -58,10 +93,7 @@ def resolve_workspace_path(
 ) -> Path:
     candidate = Path(path_value)
     resolved = (candidate if candidate.is_absolute() else WORKSPACE_ROOT / candidate).resolve()
-    try:
-        resolved.relative_to(WORKSPACE_ROOT)
-    except ValueError as err:
-        raise ValueError(f"{label} must stay within workspace: {path_value}") from err
+    _require_within_workspace(resolved, label=label, path_value=path_value)
 
     if resolved.suffix.lower() not in allowed_suffixes:
         allowed = ", ".join(sorted(allowed_suffixes))
@@ -74,12 +106,14 @@ def resolve_workspace_path(
 
 
 def require_artifacts_subpath(resolved: Path, *, label: str) -> Path:
-    """Ensure resolved path is inside workspace/artifacts/ (I-95: write guard)."""
-    artifacts_root = WORKSPACE_ROOT / ARTIFACTS_SUBDIR
-    try:
-        resolved.relative_to(artifacts_root)
-    except ValueError as err:
-        raise ValueError(f"{label} must be within workspace/artifacts/: {resolved}") from err
+    """Ensure resolved path is inside workspace/artifacts/ (I-95: write guard).
+
+    ``resolved`` kommt aufgeloest herein; die Wurzel muss deshalb ebenfalls
+    aufgeloest werden, sonst schlaegt der Vergleich hinter dem artifacts-Symlink
+    fehl.
+    """
+    if not resolved.resolve().is_relative_to(_artifacts_root()):
+        raise ValueError(f"{label} must be within workspace/artifacts/: {resolved}")
     return resolved
 
 
@@ -91,10 +125,7 @@ def resolve_workspace_dir(
 ) -> Path:
     candidate = Path(path_value)
     resolved = (candidate if candidate.is_absolute() else WORKSPACE_ROOT / candidate).resolve()
-    try:
-        resolved.relative_to(WORKSPACE_ROOT)
-    except ValueError as err:
-        raise ValueError(f"{label} must stay within workspace: {path_value}") from err
+    _require_within_workspace(resolved, label=label, path_value=path_value)
 
     if resolved.exists() and not resolved.is_dir():
         raise ValueError(f"{label} must be a directory: {resolved}")
