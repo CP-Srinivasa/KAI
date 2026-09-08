@@ -214,20 +214,43 @@ def ai_health_snapshot(
     ordered = primary + [name for name in shadow if name not in primary]
     ordered += sorted(name for name in by_provider if name not in ordered)
 
+    bloecke = [
+        _provider_block(
+            name,
+            # A chain name without its own credential entry and without
+            # traffic has no bucket: /health/ai must not 500 over that.
+            by_provider.get(name, []),
+            configured=credentials.get(name, name in configured),
+            enabled=name in configured,
+        )
+        for name in ordered
+    ]
+    # Schluessel vorhanden ist nicht Provider verfuegbar.
+    #
+    # `primary` und `shadow` kommen aus der Factory, und die bildet sie
+    # ausschliesslich aus der Key-Praesenz. Ein Konto ohne Guthaben, ein
+    # widerrufener Schluessel, ein abgeschaltetes Modell -- in allen drei Faellen
+    # steht der Provider weiter in der Kette, und wer nur die Kette liest, haelt
+    # ihn fuer einsatzbereit. Genau das ist am 2026-09-08 aufgefallen, als das
+    # Anthropic-Auto-Aufladen abgeschaltet wurde: `chain.shadow=[anthropic]`
+    # haette unveraendert dagestanden, waehrend jeder Aufruf scheitert.
+    #
+    # `observed` beantwortet die andere Frage und erfindet dafuer nichts: es
+    # liest die Zustaende, die die Provider-Bloecke oben aus der Telemetrie
+    # gebildet haben. Eine Quelle, zwei Lesarten -- kein zweiter Wahrheitsstand.
+    # Ohne Aufrufe im Fenster steht dort `unavailable`, nicht `ok`: unbeobachtet
+    # ist nicht gesund.
+    zustaende = {block["name"]: block["state"] for block in bloecke}
     return {
         "ai": {
-            "chain": {"primary": primary, "shadow": shadow, "source": CHAIN_SOURCE},
+            "chain": {
+                "primary": primary,
+                "shadow": shadow,
+                "source": CHAIN_SOURCE,
+                "derived_from": "credentials_only",
+                "observed": {name: zustaende.get(name, "unavailable") for name in primary + shadow},
+            },
             "window_hours": window_hours,
-            "providers": [
-                _provider_block(
-                    name,
-                    # A chain name without its own credential entry and without
-                    # traffic has no bucket: /health/ai must not 500 over that.
-                    by_provider.get(name, []),
-                    configured=credentials.get(name, name in configured),
-                    enabled=name in configured,
-                )
-                for name in ordered
-            ],
+            "providers": bloecke,
         }
     }
