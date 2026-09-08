@@ -84,6 +84,48 @@ pi_unit_sync_diff() {
     done
 }
 
+#: Direktiven, die entscheiden, WELCHEN CODE eine Unit laedt. Ein Drop-In, das
+#: eine davon setzt, gewinnt still ueber die Unit-Datei -- und der Byte-Beweis
+#: oben sieht ihn nicht, weil er nur `.service` vergleicht.
+_PI_UNIT_SYNC_IDENTITAETS_DIREKTIVEN="ExecStart|ExecStartPre|ExecStartPost|WorkingDirectory|Environment|EnvironmentFile|User|Group"
+
+# Drop-Ins im Ziel, die eine Identitaets-Direktive setzen. Eine Zeile je Fund:
+#
+#     OVERRIDE <unit> <conf> <direktive>
+#
+# WARUM ES DIESE FUNKTION GIBT (2026-09-07)
+#
+# `pi_apply_systemd_units.sh` beweist Byte-Gleichheit der `.service`-Datei und
+# meldet danach "angewendet und bewiesen". `/etc/systemd/system/<unit>.d/*.conf`
+# kommt darin nicht vor -- systemd wertet es aber NACH der Unit aus, und
+# `ExecStart=` gefolgt von einem neuen `ExecStart=` ersetzt den Befehl
+# vollstaendig.
+#
+# Gemessen: `kai-server.service.d/graceful-shutdown.conf` (root, 23.06.) setzte
+# `ExecStart=` zurueck auf den CHECKOUT-venv. kai-server lief damit mit
+# Checkout-Interpreter und Release-Code, schrieb keinen Prozessmarker, und der
+# Deploy meldete trotzdem Byte-Gleichheit fuer alle fuenf Units. "Der
+# Dateiinhalt ist das Privileg" galt fuer die Unit, nicht fuer das Drop-In.
+#
+# NICHT jedes Drop-In ist ein Befund: `stop-timeout.conf` setzt nur
+# `TimeoutStopSec` und aendert nichts daran, welcher Code laeuft. Es hier zu
+# melden waere ein Dauerbefund, und die kosten mehr, als sie einbringen.
+pi_unit_sync_dropin_overrides() {
+    local dst="${1:-$_PI_UNIT_SYNC_DST_DEFAULT}"
+    local verzeichnis conf unit direktive
+
+    for verzeichnis in "$dst"/*.d; do
+        [[ -d "$verzeichnis" ]] || continue
+        unit="$(basename "$verzeichnis" .d)"
+        for conf in "$verzeichnis"/*.conf; do
+            [[ -f "$conf" ]] || continue
+            while IFS= read -r direktive; do
+                [[ -n "$direktive" ]] && echo "OVERRIDE $unit $(basename "$conf") $direktive"
+            done < <(grep -oE "^($_PI_UNIT_SYNC_IDENTITAETS_DIREKTIVEN)=" "$conf" 2>/dev/null                      | tr -d '=' | LC_ALL=C sort -u)
+        done
+    done
+}
+
 # Abgleich anwenden. Gibt eine Zeile je Aktion aus. Rückgabe:
 #     0  alles angewendet (oder nichts zu tun)
 #     10 mindestens eine Unit wurde wegen Writer-Freeze zurückgestellt ODER als
