@@ -3,6 +3,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { PanelError, PanelLoading } from "@/components/ui/PanelState";
 import { Funnel } from "@/components/viz/Funnel";
 import { EdgeTrendCard } from "@/components/panels/EdgeTrendCard";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
@@ -37,6 +38,18 @@ export function AIInsightsPage() {
         icon={<Sparkles size={18} />}
         right={<LiveDot {...liveDotProps(q, q.data?.generated_at)} staleAfterMs={75_000} />}
       />
+
+      {/* 2026-09-08: Die Seite kannte nur "ready". Bei einem Fehler stand hier
+          nichts als die Kopfzeile — kein Grund, kein Wiederholen, kein Hinweis,
+          dass ueberhaupt etwas fehlt. */}
+      {q.state === "loading" && <PanelLoading label="Qualitätsdaten laden …" />}
+      {q.state === "error" && (
+        <PanelError
+          error={q.error}
+          onRetry={q.reload}
+          title="Keine Qualitätsdaten — Aussagen zu Precision nicht möglich"
+        />
+      )}
 
       {q.state === "ready" && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">

@@ -12,6 +12,12 @@ export type ApiErrorKind =
   | "unauthorized"
   | "forbidden"
   | "not_found"
+  // 429 hat einen EIGENEN Kind, damit ihn niemand versehentlich als transient
+  // behandelt: der Brute-Force-Riegel in app/security/auth.py sperrt pro Client-IP
+  // fuer auth_rate_limit_window_seconds (300 s). Ein Retry dagegen verlaengert die
+  // Sperre, statt sie auszusitzen. "rate_limited" gehoert deshalb NIE in
+  // RETRYABLE_KINDS (useApi.ts / usePolling.ts).
+  | "rate_limited"
   | "server"
   | "bad_response";
 
@@ -19,13 +25,99 @@ export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status: number;
   readonly path: string;
+  /** Maschinenlesbarer Fehlercode des Backends, z. B. "portfolio_snapshot_unavailable". */
+  readonly code: string | null;
+  /** Request-ID aus dem Fehler-Payload — verbindet die Anzeige mit dem Server-Audit. */
+  readonly requestId: string | null;
 
-  constructor(kind: ApiErrorKind, status: number, path: string, message: string) {
+  constructor(
+    kind: ApiErrorKind,
+    status: number,
+    path: string,
+    message: string,
+    code: string | null = null,
+    requestId: string | null = null,
+  ) {
     super(message);
     this.kind = kind;
     this.status = status;
     this.path = path;
+    this.code = code;
+    this.requestId = requestId;
   }
+}
+
+type NormalisedDetail = { message: string; code: string | null; requestId: string | null };
+
+/** Macht aus einem FastAPI-`detail` verlaesslich lesbaren Text.
+ *
+ * `detail` kommt in drei real vorkommenden Formen:
+ *   1. String            — `HTTPException(detail="...")`
+ *   2. Objekt            — `_build_error_payload()` in app/api/routers/operator.py:182
+ *                          liefert `{error: {code, message, request_id, ...}}`
+ *   3. Array von Objekten — FastAPI-422-Validierungsfehler
+ *
+ * Vor dieser Normalisierung lief alles durch `String(detail)`. Fuer Form 2 und 3
+ * ergab das woertlich "[object Object]" — der Operator sah `server · [object Object]`,
+ * waehrend Code, Meldung und Request-ID im Payload danebenlagen. Der Fehler wurde
+ * damit auf der Anzeigeseite ein zweites Mal vernichtet (serverseitig wird er nur
+ * in die Antwort geschrieben, nicht geloggt).
+ */
+function normaliseErrorDetail(detail: unknown, fallback: string): NormalisedDetail {
+  if (typeof detail === "string" && detail.trim() !== "") {
+    return { message: detail, code: null, requestId: null };
+  }
+
+  if (Array.isArray(detail)) {
+    // FastAPI-422: [{loc: [...], msg: "...", type: "..."}]
+    const parts = detail
+      .map((entry) => {
+        if (entry && typeof entry === "object") {
+          const e = entry as { loc?: unknown; msg?: unknown };
+          const loc = Array.isArray(e.loc) ? e.loc.join(".") : "";
+          const msg = typeof e.msg === "string" ? e.msg : "";
+          return loc && msg ? `${loc}: ${msg}` : msg || loc;
+        }
+        return String(entry);
+      })
+      .filter(Boolean);
+    if (parts.length > 0) {
+      return { message: parts.join("; "), code: "validation_error", requestId: null };
+    }
+  }
+
+  if (detail && typeof detail === "object") {
+    const body = detail as { error?: unknown; message?: unknown; detail?: unknown };
+    const err = (body.error ?? body) as {
+      code?: unknown;
+      message?: unknown;
+      request_id?: unknown;
+    };
+    const code = typeof err.code === "string" ? err.code : null;
+    const requestId = typeof err.request_id === "string" ? err.request_id : null;
+    const message =
+      typeof err.message === "string" && err.message.trim() !== ""
+        ? err.message
+        : typeof body.message === "string"
+          ? body.message
+          : null;
+
+    if (message || code) {
+      return { message: message ?? code ?? fallback, code, requestId };
+    }
+
+    // Unbekannte Objektform: lieber gekuerztes JSON als "[object Object]".
+    try {
+      const asJson = JSON.stringify(detail);
+      if (asJson && asJson !== "{}") {
+        return { message: asJson.slice(0, 200), code: null, requestId: null };
+      }
+    } catch {
+      // zirkulaer o. ae. -> Fallback unten
+    }
+  }
+
+  return { message: fallback, code: null, requestId: null };
 }
 
 function buildHeaders(extra?: HeadersInit): HeadersInit {
@@ -48,21 +140,26 @@ async function parseOrThrow<T>(res: Response, path: string): Promise<T> {
     return (await res.text()) as unknown as T;
   }
 
-  let detail = res.statusText;
+  let parsed: NormalisedDetail = { message: res.statusText, code: null, requestId: null };
   try {
     const body = await res.json();
     if (body && typeof body === "object" && "detail" in body) {
-      detail = String((body as { detail: unknown }).detail);
+      parsed = normaliseErrorDetail((body as { detail: unknown }).detail, res.statusText);
+    } else {
+      parsed = normaliseErrorDetail(body, res.statusText);
     }
   } catch {
-    // keep statusText
+    // kein JSON-Body (z. B. Cloudflare-HTML-Fehlerseite) -> statusText behalten
   }
 
-  if (res.status === 401) throw new ApiError("unauthorized", 401, path, detail);
-  if (res.status === 403) throw new ApiError("forbidden", 403, path, detail);
-  if (res.status === 404) throw new ApiError("not_found", 404, path, detail);
-  if (res.status >= 500) throw new ApiError("server", res.status, path, detail);
-  throw new ApiError("bad_response", res.status, path, detail);
+  const { message, code, requestId } = parsed;
+  if (res.status === 401) throw new ApiError("unauthorized", 401, path, message, code, requestId);
+  if (res.status === 403) throw new ApiError("forbidden", 403, path, message, code, requestId);
+  if (res.status === 404) throw new ApiError("not_found", 404, path, message, code, requestId);
+  if (res.status === 429)
+    throw new ApiError("rate_limited", 429, path, message, code, requestId);
+  if (res.status >= 500) throw new ApiError("server", res.status, path, message, code, requestId);
+  throw new ApiError("bad_response", res.status, path, message, code, requestId);
 }
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {

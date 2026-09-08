@@ -3,6 +3,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { PanelError, PanelLoading } from "@/components/ui/PanelState";
 import { Gauge } from "@/components/viz/Gauge";
 import { useApi } from "@/lib/useApi";
 import { LiveDot } from "@/components/ui/LiveDot";
@@ -233,6 +234,18 @@ export function RiskPage() {
         </div>
       )}
 
+      {/* 2026-09-08: Die Seite kannte nur "ready" — bei einem Fehler blieb sie
+          komplett stumm und leer. Eine Risikoseite, die schweigt, liest sich wie
+          "kein Risiko". Sie muss ausdruecklich sagen, dass die Lage unbekannt ist. */}
+      {exposure.state === "loading" && <PanelLoading label="Exposure lädt …" />}
+      {exposure.state === "error" && (
+        <PanelError
+          error={exposure.error}
+          onRetry={exposure.reload}
+          title="Risikolage unbekannt — keine Exposure-Daten"
+        />
+      )}
+
       {/* Sekundäre Detail-Metriken */}
       {exposure.state === "ready" && (
         <Card padded>
@@ -269,6 +282,14 @@ export function RiskPage() {
             />
           </div>
         </Card>
+      )}
+
+      {readiness.state === "error" && (
+        <PanelError
+          error={readiness.error}
+          onRetry={readiness.reload}
+          title="Bereitschaft nicht abfragbar"
+        />
       )}
 
       {readiness.state === "ready" && (

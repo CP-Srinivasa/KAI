@@ -2,7 +2,6 @@
 // Phase 1 polls every 30s; future phases will switch to SSE via /events.
 
 import { useEffect, useState } from "react";
-import { createFallbackState } from "../kai/stateResolver";
 import type { KaiRuntimeState } from "../kai/types";
 
 type KaiStateState =
@@ -41,14 +40,19 @@ export function useKaiState(): KaiStateState {
         setStateValue({ state: "ready", data: body });
       } catch (err) {
         if (cancelled) return;
-        // Network / 5xx: genuinely treat as OFFLINE (fail-closed, not pretending IDLE).
-        const fallback = createFallbackState(
-          "OFFLINE",
-          err instanceof Error ? err.message : "kai state fetch failed",
-        );
+        // 2026-09-08: Frueher wurde hier ein OFFLINE-Zustand ERFUNDEN und als
+        // `state: "ready"` gesetzt. Der Header zeigte daraufhin `Live · OFFLINE`,
+        // als waere OFFLINE ein gemessener Laufzeitzustand des Knotens.
+        // Tatsaechlich ist nur der Request gescheitert — ueber den Knoten wissen
+        // wir dann NICHTS. Ein Fehler, der wie eine Messung aussieht, ist teurer
+        // als ein sichtbarer Ausfall. Der Header fuehrt fuer genau diesen Fall
+        // bereits "KAI · n/v" (fail-closed); konsistent zum 401/403-Zweig oben.
         setStateValue({
-          state: "ready",
-          data: fallback,
+          state: "error",
+          error: {
+            kind: "unavailable",
+            message: err instanceof Error ? err.message : "kai state fetch failed",
+          },
         });
       }
     }

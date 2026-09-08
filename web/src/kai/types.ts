@@ -126,17 +126,6 @@ export interface KaiAgentStatus {
   timestamp: string;
 }
 
-export interface KaiLiveWidgetProps {
-  runtimeState: KaiRuntimeState;
-  lastSignal?: KaiSignalCardData;
-  lastWarning?: KaiWarningCardData;
-  agentStatuses?: KaiAgentStatus[];
-  compact?: boolean;
-  language?: KaiLanguage;
-  onOpenAuditLog?: () => void;
-  onOpenDetails?: () => void;
-}
-
 // NEO-P-101-r2 audit-style event types — stays in JSONL for forensic replay.
 export type KaiAuditEventType =
   | "KAI_STATE_CHANGED"

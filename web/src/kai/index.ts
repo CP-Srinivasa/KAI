@@ -17,8 +17,6 @@ export {
   KAI_BRAND_FULL_NAME,
 } from "./constants";
 export { resolveKaiState, createFallbackState, failClosedState, isValidKaiState } from "./stateResolver";
-export { getKaiPhrase, getKaiExtraModePhrase, isPhraseSafe } from "./phraseEngine";
-export type { KaiPhraseMode } from "./phraseEngine";
 export { validateSignalForLivetrade, validateSignalInvariants } from "./riskGuards";
 export type { KaiGuardResult } from "./riskGuards";
 export {

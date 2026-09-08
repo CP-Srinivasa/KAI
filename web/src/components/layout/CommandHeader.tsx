@@ -82,7 +82,7 @@ export function CommandHeader({
           <StatusPill kind={kaiStateToStatus(kai.state)} label={`Live · ${kai.state}`} />
         )
       ) : kaiError ? (
-        <span title="KAI-Status-Endpoint nicht verfügbar (Auth/Zugriff). Kein live abgeleiteter Zustand — bewusst kein Handeln.">
+        <span title="KAI-Status-Endpoint nicht erreichbar (Auth, Netzwerk oder Serverfehler). Kein live abgeleiteter Zustand — bewusst kein Handeln, und ausdrücklich kein erfundenes OFFLINE.">
           <StatusPill kind="fail-closed" label="KAI · n/v" />
         </span>
       ) : (
