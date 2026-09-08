@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,12 +41,13 @@ def research_brief(
         watchlist_items = registry.get_watchlist(watchlist, item_type=resolved_type)
         if not watchlist_items:
             raise typer.BadParameter("Watchlist is empty or does not exist.")
+        # Scan and report share one window; see app/api/routers/research.py.
+        window_start = datetime.now(UTC) - timedelta(hours=window_hours)
         session_factory = build_session_factory(settings.db)
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
-            docs = await repo.list(is_analyzed=True, limit=limit * 5)
-        if watchlist_items:
-            docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
+            docs = await repo.list(is_analyzed=True, published_after=window_start, limit=limit * 5)
+        docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
         builder = ResearchBriefBuilder(cluster_name=watchlist)
         brief = builder.build(docs, window_hours=window_hours, limit=limit)
         return brief.to_markdown()

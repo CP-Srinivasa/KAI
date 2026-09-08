@@ -105,7 +105,15 @@ persons:
     assert data["top_documents"][0]["title"] == "Gensler warns on crypto regulation"
     assert data["top_entities"][0]["name"] == "Gary Gensler"
     assert data["top_actionable_signals"][0]["priority_score"] == 9
-    assert repo.calls == [{"is_analyzed": True, "limit": 25}]
+    # The scan is bounded by the same window the brief reports, so a stale
+    # document cannot occupy a candidate slot before the freshness filter runs.
+    assert len(repo.calls) == 1
+    assert repo.calls[0]["is_analyzed"] is True
+    assert repo.calls[0]["limit"] == 25
+    scan_start = repo.calls[0]["published_after"]
+    assert isinstance(scan_start, datetime)
+    scan_age = datetime.now(UTC) - scan_start
+    assert timedelta(hours=23, minutes=55) < scan_age < timedelta(hours=24, minutes=5)
 
     # The same API must stop presenting yesterday's old source as current.
     repo._documents[0].published_at = datetime.now(UTC) - timedelta(hours=30)

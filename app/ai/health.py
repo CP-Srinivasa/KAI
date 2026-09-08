@@ -221,7 +221,9 @@ def ai_health_snapshot(
             "providers": [
                 _provider_block(
                     name,
-                    by_provider[name],
+                    # A chain name without its own credential entry and without
+                    # traffic has no bucket: /health/ai must not 500 over that.
+                    by_provider.get(name, []),
                     configured=credentials.get(name, name in configured),
                     enabled=name in configured,
                 )

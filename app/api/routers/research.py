@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -62,7 +63,10 @@ async def get_research_brief(
             ),
         )
 
-    documents = await repo.list(is_analyzed=True, limit=limit * 5)
+    # Scan and report share one window: a scan of "the newest N" would hand the
+    # watchlist filter a batch that is largely outside the reported window.
+    window_start = datetime.now(UTC) - timedelta(hours=window_hours)
+    documents = await repo.list(is_analyzed=True, published_after=window_start, limit=limit * 5)
     filtered_documents = registry.filter_documents(
         documents,
         watchlist_name,

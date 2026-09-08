@@ -12,8 +12,10 @@ verification, corrections and any manual replacement research after failure.
 `MINUTES_SAVED = MANUAL_RESEARCH_MINUTES_ESTIMATE - KAI_WORKFLOW_MINUTES`;
 retain negative values. Empty/no_current_data output is not a successful brief.
 Missing inputs leave MINUTES_SAVED unknown. No fabricated baseline or monthly
-extrapolation. The API candidate scan is bounded to limit*5 documents; it does
-not claim exhaustive watchlist coverage. Naive stored source times use UTC,
+extrapolation. The candidate scan is bounded to the requested window AND to
+limit*5 documents inside it; a window wide enough to hold more than limit*5
+documents reports the newest of them, and `oldest_source_timestamp` shows the
+span actually covered. It does not claim exhaustive watchlist coverage. Naive stored source times use UTC,
 explicitly reported in source_timestamp_policy.
 
 | DATE | WATCHLIST | BRIEF_GENERATED | DOCUMENTS_USED | KAI_RUNTIME_SECONDS | MANUAL_RESEARCH_MINUTES_ESTIMATE | KAI_WORKFLOW_MINUTES | MINUTES_SAVED | USEFUL YES/NO | FAILURE_OR_MISSING_INFORMATION | OPTIONAL_NOTE |
