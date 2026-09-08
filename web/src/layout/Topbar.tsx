@@ -20,6 +20,7 @@ const CONTEXT: Record<Route, string> = {
   external: "nav.external",
   sources: "nav.sources",
   node: "nav.node",
+  pay: "nav.pay",
   agents: "nav.agents",
   roadmaps: "nav.roadmaps",
   system: "nav.system",

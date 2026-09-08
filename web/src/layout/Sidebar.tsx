@@ -15,6 +15,7 @@ import {
   Zap,
   Bot,
   Bitcoin,
+  QrCode,
   Database,
   Activity,
   Map,
@@ -46,6 +47,7 @@ const LIVE: Item[] = [
 // Souveränität (eigene Bitcoin/Lightning-Node, Truth-Layer)
 const SOVEREIGN: Item[] = [
   { id: "node", labelKey: "nav.node", icon: <Bitcoin size={16} /> },
+  { id: "pay", labelKey: "nav.pay", icon: <QrCode size={16} /> },
 ];
 
 // Kontroll-Ebene (Claude-Code-only Agenten)
