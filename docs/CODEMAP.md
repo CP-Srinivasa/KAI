@@ -120,6 +120,11 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - Settlement-Latenz misst `submitted → settled`, nicht die Node-Zeit: wie lange die Zahlung UNKLAR war. Bei n=0 ist sie `None`, nie `0.0`
 - Der Uhr-Sprung-Guard setzt Ablauf-Übergänge auch dann aus, wenn es KEINE vergleichbare Basislinie gibt (erster Lauf, Neustart — die monotone Uhr ist boot-relativ). `EXPIRED` ist terminal
 
+### KAI PAY v0.1 — Mini-Oberfläche (`web/`, Vertrag `/pay/*`)
+- `web/src/pages/Pay.tsx` → **die eine Seite** (Route `#pay`, Sidebar-Gruppe Souveränität): Formular (Betrag in sat, Beschreibung, Referenz) → `POST /pay/requests` → QR aus `lightning_uri` + kopierbares BOLT11 + Ablauf-Countdown → Status-Polling alle 3 s bis `SETTLED|EXPIRED|FAILED` → Receipt (`GET /pay/requests/{id}/receipt`) + Liste der letzten 10. `GET /pay/health` 404 (`kai pay disabled`) ⇒ Hinweisseite statt Formular; API-Fehler werden immer angezeigt, nie stiller Fehlzustand
+- `web/src/lib/api.ts::createPayRequest|fetchPayRequest|fetchPayRequests|fetchPayReceipt|fetchPayHealth` → die Fetcher (Same-Origin, kein Bearer — CF-Access-Header wie alle Dashboard-Endpunkte). `web/src/lib/pay.ts` = reine Logik (Status→Ton, Terminalität, Eingabe-Validierung, QR-Payload in GROSSBUCHSTABEN, Countdown), `web/src/lib/usePayRequestPolling.ts` = der Poller, der bei Endzustand aufhört. QR-Rendering: `web/src/components/panels/PayQr.tsx` über npm `qrcode` (einzige neue Abhängigkeit, landet im lazy `Pay`-Chunk)
+- ⚠ Vertragslücke: `GET /pay/requests/{id}` liefert **kein** `bolt11`/`lightning_uri` — die Seite hält Invoices nur für in dieser Sitzung erzeugte Requests im Speicher; ein aus der Liste geladener Request zeigt Status/Betrag, aber keinen QR
+
 ## Kern-Env-Flags (Definition; LIVE-Werte = Pi-`.env`, NICHT hier)
 - `EXECUTION_ENTRY_MODE` → `settings.execution.entry_mode` (`EntryMode`) — Master-Entry-Kill-Switch
 - `EXECUTION_PAPER_MIN_PRIORITY` — Paper-Fill-Prioritätsschwelle

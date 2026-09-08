@@ -11,6 +11,7 @@ export const ROUTES = [
   "external",
   "sources",
   "node",
+  "pay",
   "agents",
   "roadmaps",
   "system",

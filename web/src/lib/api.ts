@@ -2462,3 +2462,93 @@ export function fetchAutoAnnotateCohortReport(
     { signal },
   );
 }
+
+// -----------------------------------------------------------------------------
+// KAI PAY v0.1 — Zahlung anfordern (Vertrag `/pay/*`, Backend-PR feat/kai-pay-v01-api).
+// Same-Origin wie alle Dashboard-Endpunkte (CF-Access-Identity, kein Bearer im
+// Browser). `GET /pay/health` antwortet 404 `detail:"kai pay disabled"`, wenn
+// APP_PAY_ENABLED aus ist — die Seite zeigt dann einen Hinweis statt Formular.
+// -----------------------------------------------------------------------------
+
+export type PayRequestStatus = "WAITING" | "SETTLED" | "EXPIRED" | "FAILED";
+
+export type PayRequestCreate = {
+  amount_sat: number;
+  description: string;
+  reference?: string;
+  expiry_seconds?: number;
+};
+
+/** Antwort auf `POST /pay/requests` (201) — die EINZIGE Stelle, die bolt11 liefert. */
+export type PayRequestCreated = {
+  payment_id: string;
+  status: PayRequestStatus;
+  amount_sat: number;
+  description: string;
+  reference: string | null;
+  bolt11: string;
+  lightning_uri: string;
+  created_at: string;
+  expires_at: string;
+};
+
+/** `GET /pay/requests/{id}` und Listeneintrag von `GET /pay/requests?limit=N`. */
+export type PayRequest = {
+  payment_id: string;
+  status: PayRequestStatus;
+  amount_sat: number;
+  paid_amount_sat: number | null;
+  paid_at: string | null;
+  reference: string | null;
+  description: string;
+  created_at: string;
+  expires_at: string;
+  last_error: string | null;
+};
+
+export type PayReceipt = {
+  receipt_id: string;
+  payment_id: string;
+  amount_sat: number;
+  paid_amount_sat: number;
+  paid_at: string;
+  reference: string | null;
+  description: string;
+  rail: string;
+  audit: { journal_seq: number; record_hash: string };
+  created_at: string;
+};
+
+export type PayHealth = {
+  enabled: boolean;
+  open_requests: number;
+  settled_total: number;
+  last_settled_at: string | null;
+  poller_alive: boolean;
+};
+
+export function createPayRequest(
+  body: PayRequestCreate,
+  signal?: AbortSignal,
+): Promise<PayRequestCreated> {
+  return apiPost<PayRequestCreated>("/pay/requests", body, { signal });
+}
+
+export function fetchPayRequest(paymentId: string, signal?: AbortSignal): Promise<PayRequest> {
+  return apiGet<PayRequest>(`/pay/requests/${encodeURIComponent(paymentId)}`, { signal });
+}
+
+export function fetchPayRequests(limit = 10, signal?: AbortSignal): Promise<unknown> {
+  // Rohform: der Vertrag sagt "Liste (neueste zuerst)"; `normalizePayList`
+  // (lib/pay.ts) nimmt Array oder {items|requests:[…]} — kein stiller Absturz,
+  // wenn das Backend die Liste in ein Objekt hüllt.
+  return apiGet<unknown>(`/pay/requests?limit=${encodeURIComponent(String(limit))}`, { signal });
+}
+
+export function fetchPayReceipt(paymentId: string, signal?: AbortSignal): Promise<PayReceipt> {
+  return apiGet<PayReceipt>(`/pay/requests/${encodeURIComponent(paymentId)}/receipt`, { signal });
+}
+
+export function fetchPayHealth(signal?: AbortSignal): Promise<PayHealth> {
+  return apiGet<PayHealth>("/pay/health", { signal });
+}

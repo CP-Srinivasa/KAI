@@ -80,6 +80,7 @@ export default defineConfig((configEnv) => {
               "/sources": proxied,
               "/research": proxied,
               "/query": proxied,
+              "/pay": proxied,
             },
           },
         }
