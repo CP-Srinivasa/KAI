@@ -2013,9 +2013,9 @@ def build_trading_loop(
         settings,
     )
 
-    from app.storage.db.session import build_session_factory
+    from app.storage.db.session import get_shared_session_factory
 
-    session_factory = build_session_factory(settings.db)
+    session_factory = get_shared_session_factory(settings.db)
 
     return TradingLoop(
         risk_engine=risk_engine,
