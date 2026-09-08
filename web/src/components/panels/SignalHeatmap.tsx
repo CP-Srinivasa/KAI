@@ -64,7 +64,19 @@ export function SignalHeatmapPanel() {
       (x) => x.message_type === "signal" && x.signal,
     );
     const deduped = dedupeSignals(signals);
-    return { rows: aggregate(deduped), totalSignals: deduped.length };
+    // 2026-09-08: Kopfzahl und Tabelle zaehlten VERSCHIEDENE Grundgesamtheiten —
+    // `deduped.length` alle Envelopes, `aggregate()` ueberspringt jeden ohne
+    // `signal.symbol`. Damit war "50 Signale, 0 Zeilen" strukturell moeglich und
+    // fiel niemandem auf. Beide Zahlen kommen jetzt aus demselben Durchlauf, und
+    // die Differenz wird ausgewiesen statt verschwiegen.
+    const rows = aggregate(deduped);
+    const inRows = rows.reduce((sum, r) => sum + r.totalSignals, 0);
+    return {
+      rows,
+      totalSignals: deduped.length,
+      countedInRows: inRows,
+      withoutSymbol: deduped.length - inRows,
+    };
   }, [state]);
 
   return (
@@ -73,7 +85,11 @@ export function SignalHeatmapPanel() {
         title="Signal-Matrix"
         subtitle={
           view
-            ? `${view.rows.length} Symbole · ${view.totalSignals} Signale aus den letzten 50 Envelopes`
+            ? `${view.rows.length} Symbole · ${view.countedInRows} Signale in der Tabelle` +
+              (view.withoutSymbol > 0
+                ? ` · ${view.withoutSymbol} ohne Symbol, nicht zuordenbar`
+                : "") +
+              " · aus den letzten 50 Envelopes"
             : "Welche fachlichen Premium-Signale sind aktuell aktiv?"
         }
         right={
@@ -234,8 +250,12 @@ function HeatmapTable({
   onSelect: () => void;
 }) {
   return (
-    <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
+    // 2026-09-08: overflow-x + Mindestbreite. Vorher kollabierte die Symbolspalte
+    // auf schmalen Viewports auf 0 und `truncate` loeschte das Symbol — uebrig
+    // blieb die zusammengeklebte Kopfzeile "SymbolErk.Zul.Abgel.Prüf.Eingr.OffenZu"
+    // ueber einer scheinbar leeren Tabelle.
+    <div className="-mx-1 space-y-1 overflow-x-auto px-1">
+      <div className="min-w-[520px] grid grid-cols-[minmax(96px,1fr)_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
         <span>Symbol</span>
         <span className="text-center">Erk.</span>
         <span className="text-center">Zul.</span>
@@ -254,7 +274,7 @@ function HeatmapTable({
         <button
           key={r.symbol}
           onClick={onSelect}
-          className="w-full grid grid-cols-[1fr_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
+          className="w-full min-w-[520px] grid grid-cols-[minmax(96px,1fr)_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
           title={`${r.totalSignals} Signal${r.totalSignals === 1 ? "" : "e"} · Long ${r.long} · Short ${r.short} · letztes ${formatAbsolute(r.latestTs)}`}
         >
           <span className="font-mono font-semibold truncate">{r.symbol}</span>
