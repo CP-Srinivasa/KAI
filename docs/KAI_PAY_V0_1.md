@@ -268,3 +268,27 @@ Zuordnung ist aus dem Geld-Journal rekonstruierbar (jeder Receivable-Record trä
 * Der Basename `requests.jsonl` ist generisch; ein künftiger zweiter `requests.jsonl` an
   anderer Stelle würde vom Stream-Ratchet (der auf Basenames schlüsselt) stillschweigend
   als bekannt durchgewinkt. Beim nächsten Anfassen umbenennen.
+
+
+## 9. Abnahme-Ergebnis 2026-09-08 — USABLE / REAL-WORLD VERIFIED
+
+Ablauf exakt nach §7, Release `c70b103a` auf kai-pi5, `APP_PAYMENT_MODE=shadow`, Send-Gate (`APP_LN_PAY_ENABLED`) die ganze Zeit geschlossen, `APP_PAY_MAX_AMOUNT_SAT=10000`.
+
+| Schritt | Befund |
+|---|---|
+| Smoke ohne Geld | `/pay/health` `enabled=true, poller_alive=true`; Testrequest 1.000 sat mit 60 s Ablauf: `WAITING` mit echter BOLT11 vom Node → per Referenz auffindbar → `EXPIRED` nach Ablauf, `bolt11` danach `null` |
+| Browser | Operator öffnet `https://kai-trader.org/dashboard/#pay`, fordert an, QR erscheint |
+| Echte Zahlung | Wallet of Satoshi → KAI-Node; zwei Vorversuche (1.998 / 1.997 sat) blieben `WAITING`, weil die Gegen-Wallet Betrag **plus** Routing-Gebühr decken muss (Lehre vom 2026-09-04); dritter Versuch 1.995 sat bezahlt |
+| Seite | `✓ PAYMENT SETTLED` binnen des Poll-Intervalls, Request `pay_d2292e01edf7`, `paid_amount_sat 1995`, `paid_at 14:05:40 UTC` |
+| Kern-Journal | seq 62 `intent_created` (`rcv_a05b63c6da9e9160`) + seq 63 `receivable_settled` (`amount_settled 1995`, `order_ref pay_d2292e01edf7`, `evidence_source rail_lookup`, 14:05:40 UTC); Kette `ok` |
+| Audit-API | `GET /payments/audit?intent_id=rcv_a05b63c6da9e9160` → `['intent_created', 'receivable_settled']` |
+| Rail | `LightningRail.invoice_status` → `settled=True, amount_paid=1995, settled_at 14:05:39 UTC` |
+| Receipt | `rcpt_9ea8e47169b6`, `audit.journal_seq 63`, `audit.record_hash 9ea8e471…` |
+| Reconciler | `ok, orphans 0` (14:07:51 UTC) |
+| Neustart | `kai-server` neu gestartet → Request weiter `SETTLED`, `settled_total 1`, Poller lebt |
+| Keine Doppelbuchung | nach Neustart und zweitem Reconciler-Lauf (14:09:26 UTC) weiterhin **genau ein** `receivable_settled` für diesen `invoice_ref_hash` |
+| Gate | `APP_PAY_ENABLED=false`, Neustart → `/pay/health` 404; `/health/payment` ok, Journal seq 63; sechs Long-Runner aktiv, Journale ohne Fehler |
+
+**Bewertung (Operator):** USABLE / REAL-WORLD VERIFIED — eine wirklich benutzbare KAI-Zahlungsfunktion, noch kein fertiges Zahlungsprodukt für fremde Kunden.
+
+**Notizen ohne Handlungsdruck:** Poll-Intervall 20 s fühlbar, aber akzeptabel — erst nach Nutzungsbeweis auf 5–10 s oder eventbasiert (kein Umbau vorher). Die beiden offenen Vorversuche laufen nach 15 Minuten in `EXPIRED`. Nächste Nutzung: Flag an, Zahlung anfordern, fertig.

@@ -1,3 +1,9 @@
+## 2026-09-08 - KAI PAY v0.1 USABLE / REAL-WORLD VERIFIED
+
+Abnahme am Geraet: Zahlung ueber die Seite /pay angefordert, 1.995 sat aus Wallet of Satoshi bezahlt, Seite zeigt
+SETTLED, Kern-Journal traegt genau ein receivable_settled (auch nach Neustart und Reconcile), Rail und Receipt
+bestaetigen dieselbe Zahlung; Send-Gate blieb geschlossen, Flag danach wieder aus. Evidenz `docs/KAI_PAY_V0_1.md` §9.
+
 ## 2026-09-08 - KAI PAY v0.1: Zahlung anfordern, Eingang automatisch bestaetigen
 
 Erste Produktisierung ueber der versiegelten Payment Fabric (D-CORE-006). Ein Mensch oder ein Dienst fordert eine Zahlung an,
