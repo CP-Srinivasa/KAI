@@ -76,6 +76,7 @@ from app.messaging.text_intent import TextIntentProcessor
 from app.messaging.voice_transcriber import VoiceTranscriber
 from app.observability.event_loop_lag import EventLoopLagSampler
 from app.observability.http_latency import install_http_latency_middleware
+from app.observability.loop_stall_probe import LoopStallProbe, probe_enabled
 from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
 from app.pay.wiring import build_pay_service, start_pay_poller, stop_pay_poller
@@ -301,6 +302,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.event_loop_lag_sampler = EventLoopLagSampler()
     app.state.event_loop_lag_task = app.state.event_loop_lag_sampler.start()
 
+    # Diagnose-Sonde, default AUS. Der Lag-Sampler misst, DASS der Loop steht —
+    # er kann nicht sagen woran, weil er selbst im Loop laeuft und waehrend des
+    # Stalls nicht drankommt. Die Sonde beobachtet aus einem Thread und nimmt im
+    # Moment des Stalls einen Stack-Abzug. Nur ueber KAI_LOOP_STALL_PROBE=1.
+    app.state.loop_stall_probe = None
+    app.state.loop_stall_probe_task = None
+    if probe_enabled():
+        app.state.loop_stall_probe = LoopStallProbe()
+        app.state.loop_stall_probe_task = app.state.loop_stall_probe.start()
+
     try:
         yield
     finally:
@@ -314,6 +325,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await _lag_task
             except asyncio.CancelledError:
                 pass
+        _stall_probe = getattr(app.state, "loop_stall_probe", None)
+        if _stall_probe is not None:
+            _stall_probe.cancel()
+            _stall_task = getattr(app.state, "loop_stall_probe_task", None)
+            if _stall_task is not None:
+                try:
+                    await _stall_task
+                except asyncio.CancelledError:
+                    pass
         _poller = getattr(app.state, "telegram_poller", None)
         if _poller is not None:
             _poller.stop()
