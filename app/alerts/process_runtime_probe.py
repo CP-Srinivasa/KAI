@@ -18,7 +18,9 @@ Gibt den Alarmtext zurueck, nicht die ``HealthIssue`` — ``HealthIssue`` wohnt 
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 
 def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None:
@@ -296,6 +298,117 @@ def _active_release(state_root: Path) -> tuple[str, str]:
     return str(current), (manifest.release_tree_sha256 if manifest else "")
 
 
+#: Units, die im Repo LIEGEN, aber bewusst NICHT laufen sollen.
+#:
+#: Die Ableitung unten ist gut gedacht und an einer Stelle blind: sie liest die
+#: Unit-Dateien und schliesst daraus auf die Erwartung. Eine Datei im Repo ist
+#: aber nicht dasselbe wie eine Unit, die laufen SOLL. Fuer eine bewusst
+#: zurueckgestellte Komponente erzeugt sie damit einen Befund, den niemand
+#: aufloesen kann — und ein CRITICAL, den kein Operator schliessen kann,
+#: entwertet jeden CRITICAL neben sich.
+#:
+#: Jeder Eintrag traegt Datum, Grund und das EREIGNIS, das ihn beendet — kein
+#: Ablaufdatum. Ein Datum laeuft ab, ohne dass sich etwas geaendert haette;
+#: dann steht die Erwartung wieder da, waehrend der Grund fortbesteht.
+DEFERRED_UNITS: Final[dict[str, dict[str, str]]] = {
+    "kai-litellm.service": {
+        "decision_date": "2026-09-08",
+        "reason": (
+            "DEFERRED_UPSTREAM_DEPENDENCY_CONFLICT — litellm 1.99.0 verlangt "
+            "openai<3.0.0,>=2.20.0, das Lockfile pinnt openai==3.6.0. Auch "
+            "1.100.0 scheitert identisch; ohne Pin loest pip auf litellm-0.1.236 "
+            "auf. Ein Core-Downgrade von openai ist ausgeschlossen."
+        ),
+        "reopen_when": (
+            "die LiteLLM-Runtime-Adoption ausdruecklich wiedereroeffnet ist UND "
+            "ein vertraeglicher Abhaengigkeitsvertrag existiert UND Bau, "
+            "Installation und Start erneut operator-freigegeben sind"
+        ),
+    },
+}
+
+#: Zustaende, in denen eine zurueckgestellte Unit NICHT sein darf. Zurueckgestellt
+#: heisst "wird nicht erwartet" — ausdruecklich nicht "wird nicht beobachtet".
+#: Taucht sie doch auf, ist das die interessantere Abweichung: jemand hat sie
+#: installiert oder gestartet, ohne dass die Zurueckstellung aufgehoben wurde.
+STATE_DEFERRED_UNEXPECTED: Final = "DEFERRED_UNIT_UNEXPECTEDLY_PRESENT"
+
+
+def _systemctl(*args: str) -> str:
+    """``systemctl``-Ausgabe als getrimmter Text — leer, wenn nicht ermittelbar."""
+    import subprocess
+
+    try:
+        return subprocess.run(  # noqa: S603
+            ["systemctl", *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.strip()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ""
+
+
+def deferred_unit_violations(
+    deferred: dict[str, dict[str, str]] | None = None,
+    *,
+    probe: Callable[[str, str], str] | None = None,
+) -> tuple[str, ...]:
+    """Ist eine zurueckgestellte Unit entgegen der Entscheidung doch da?
+
+    Die Gegenprobe zur Ausnahme. Ohne sie waere aus "nicht erwartet" ein
+    "nicht ueberwacht" geworden, und genau dann faellt niemandem auf, wenn die
+    Komponente still doch anlaeuft — mit einem Abhaengigkeitskonflikt, dessen
+    wegen sie zurueckgestellt wurde.
+
+    Geprueft werden die Zustaende, die systemd selbst kennt: ``is-active`` und
+    ``is-enabled``. ``not-found`` und ``inactive``/``disabled`` sind der
+    erwartete Fall und ergeben KEINEN Befund.
+    """
+    eintraege = DEFERRED_UNITS if deferred is None else deferred
+    frage = probe or (lambda verb, unit: _systemctl(verb, unit))
+    befunde: list[str] = []
+    for unit in sorted(eintraege):
+        aktiv = frage("is-active", unit)
+        if aktiv in ("active", "activating", "reloading"):
+            befunde.append(f"{unit}: laeuft ({aktiv}), obwohl zurueckgestellt")
+        freigeschaltet = frage("is-enabled", unit)
+        if freigeschaltet in ("enabled", "enabled-runtime", "static", "alias"):
+            befunde.append(f"{unit}: ist {freigeschaltet}, obwohl zurueckgestellt")
+    return tuple(befunde)
+
+
+def deferred_unit_finding(
+    deferred: dict[str, dict[str, str]] | None = None,
+    *,
+    probe: Callable[[str, str], str] | None = None,
+) -> str:
+    """Die fertige Operator-Meldung — leer, wenn alles wie entschieden steht.
+
+    Die Gegenprobe zur Ausnahme, und der Grund, warum die Ausnahme ueberhaupt
+    vertretbar ist: eine Unit aus :data:`DEFERRED_UNITS` wird nicht ERWARTET,
+    beobachtet wird sie trotzdem. Taucht sie doch auf, ist das die
+    interessantere Abweichung als ihr Fehlen — jemand hat sie installiert oder
+    gestartet, ohne dass die Entscheidung aufgehoben wurde, und im Fall von
+    ``kai-litellm`` mit genau dem Abhaengigkeitskonflikt, dessen wegen sie
+    zurueckgestellt ist.
+
+    Der Text nennt beide Auswege, damit der Befund schliessbar ist: die
+    Zurueckstellung foermlich aufheben oder die Unit stoppen. Ein CRITICAL ohne
+    Ausweg ist das, was hier gerade abgeschafft wurde.
+    """
+    verstoesse = deferred_unit_violations(deferred, probe=probe)
+    if not verstoesse:
+        return ""
+    return (
+        "Zurueckgestellte Unit ist aktiv: "
+        + "; ".join(verstoesse)
+        + " — entweder die Zurueckstellung foermlich aufheben (DEFERRED_UNITS in "
+        "app/alerts/process_runtime_probe.py) oder die Unit stoppen und deaktivieren."
+    )
+
+
 def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
     """Die Units, die sich beim Start selbst bezeugen MUESSEN.
 
@@ -303,6 +416,10 @@ def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
     ``ExecStart`` fuehrt, hat den Attestierungsvertrag. Die Liste pflegt sich
     damit selbst — eine handgefuehrte Konstante waere die naechste Wachliste,
     die von ihrer Quelle abweicht.
+
+    Ausgenommen sind ausschliesslich die Eintraege aus :data:`DEFERRED_UNITS`.
+    Sie werden nicht erwartet — und durch :func:`deferred_unit_violations`
+    trotzdem beobachtet.
     """
     units_dir = repo_root / "deploy" / "systemd"
     out: list[str] = []
@@ -315,12 +432,16 @@ def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if "runtime-exec" in text:
+        if "runtime-exec" in text and path.name not in DEFERRED_UNITS:
             out.append(path.name)
     return tuple(out)
 
 
 __all__ = [
+    "DEFERRED_UNITS",
+    "STATE_DEFERRED_UNEXPECTED",
+    "deferred_unit_finding",
+    "deferred_unit_violations",
     "expected_attesting_units",
     "checkout_axis_active",
     "release_governs",
