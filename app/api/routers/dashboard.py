@@ -123,6 +123,11 @@ _churn_cache: dict[str, dict[str, Any]] = {}
 # one DB query over directional doc-ids — not hot-path safe without a cache.
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
 _SOURCE_MAP_TTL_S = 300.0
+# Nach einem Fehlschlag NICHT sofort wieder rechnen. Der except-Zweig unten liess
+# `at` frueher unberuehrt, wodurch der teure Block (Voll-Parse des Alert-Audits +
+# DB-Abfrage) bei JEDEM Aufruf neu lief statt alle 300 s — ein Retry-Sturm genau
+# dann, wenn die DB ohnehin klemmt.
+_SOURCE_MAP_ERROR_BACKOFF_S = 30.0
 _source_map_cache: dict[str, Any] = {"at": 0.0, "map": None}
 
 # Operator-Board LIVE-Sektion: compute_maturity scannt canonical_documents und
@@ -429,7 +434,7 @@ async def _load_source_by_doc() -> dict[str, str]:
         from sqlalchemy import select
 
         from app.core.settings import get_settings
-        from app.storage.db.session import build_session_factory
+        from app.storage.db.session import get_shared_session_factory
         from app.storage.models.document import CanonicalDocumentModel
 
         audits = (
@@ -446,7 +451,10 @@ async def _load_source_by_doc() -> dict[str, str]:
             _source_map_cache["at"] = now
             return {}
 
-        session_factory = build_session_factory(get_settings().db)
+        # Geteilt statt neu je Aufruf: build_session_factory() ruft
+        # create_async_engine() und legt damit jedes Mal einen eigenen Pool an,
+        # der nie disposed wird. Dieser Pfad laeuft pro Dashboard-Refresh.
+        session_factory = get_shared_session_factory(get_settings().db)
         async with session_factory.begin() as session:
             stmt = select(
                 CanonicalDocumentModel.id,
@@ -465,6 +473,11 @@ async def _load_source_by_doc() -> dict[str, str]:
         return source_map
     except Exception as exc:
         logger.warning("source_map_load_failed: %s", exc)
+        # Fehlversuch verzoegern, statt ihn sofort zu wiederholen. Ohne diese
+        # Zeile blieb `at` alt und der naechste Aufruf lief unmittelbar wieder in
+        # denselben teuren Pfad.
+        _source_map_cache["map"] = cached if cached is not None else {}
+        _source_map_cache["at"] = now - _SOURCE_MAP_TTL_S + _SOURCE_MAP_ERROR_BACKOFF_S
         return cached or {}
 
 
