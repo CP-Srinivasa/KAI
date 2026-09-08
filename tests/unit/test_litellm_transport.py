@@ -94,28 +94,152 @@ def test_ohne_anbieter_im_header_bleibt_die_identitaet_unbewiesen() -> None:
     assert not trace.model_substituted
 
 
-def test_das_modell_aus_dem_body_schlaegt_den_header() -> None:
-    """Der Body ist die Antwort des Upstreams, der Header nur die Weitergabe."""
-    trace = trace_from_response(
-        _antwort(
-            body={"model": "echt-4o"},
-            headers={"x-litellm-model": "durchgereicht", "x-litellm-model-provider": "openai"},
-        ),
-        requested_model="fast",
-        latency_ms=1.0,
-    )
-    assert trace.actual_model == "echt-4o"
+#: Die Header einer ECHTEN Antwort von LiteLLM 1.99.0, gemessen am 2026-09-08
+#: auf kai-pi5. Erfundene Fixtures haben genau den Fehler verdeckt, den diese
+#: Tests jetzt festhalten: der Body nennt den ALIAS, nicht das Modell.
+_ECHTE_HEADER = {
+    "x-litellm-call-id": "7fc1a1b1-636b-4c85-983f-27c2a35b248a",
+    "x-litellm-model-id": "46cc973e42201baf20ac0272b84d6afd675039133dfb8a8adbd11233b129bfd7",
+    "x-litellm-model-name": "gemini/gemini-2.5-flash",
+    "x-litellm-model-group": "kai-bulk",
+    "x-litellm-version": "1.99.0",
+    "x-litellm-response-cost": "0.0007412",
+    "x-litellm-response-cost-input": "1.2e-06",
+    "x-litellm-response-cost-output": "0.00074",
+    "x-litellm-response-cost-reasoning": "0.000715",
+    "x-litellm-attempted-retries": "0",
+}
 
 
-def test_fehlt_das_modell_im_body_zaehlt_der_header() -> None:
+def test_der_header_nennt_das_modell_der_body_nur_den_alias() -> None:
+    """Eine Korrektur, und der Anlass gehört dazu.
+
+    Die frühere Regel lautete "Body schlägt Header", begründet damit, der Body
+    sei die Antwort des Upstreams. Bei LiteLLM ist es umgekehrt: der Body trägt
+    ``"model": "kai-bulk"`` — den Alias, den KAI ANGEFRAGT hat —, und nur
+    ``x-litellm-model-name`` nennt, was geantwortet hat.
+
+    Damit schrieb die alte Regel den angefragten Namen als gemessene Identität
+    fort. Genau davor warnt ``identity_proven``, und trotzdem ist es hier
+    passiert — weil die Fixtures erfunden waren und der Body in ihnen das echte
+    Modell trug.
+    """
     trace = trace_from_response(
-        _antwort(headers={"x-litellm-model-id": "aus-dem-header", "x-litellm-provider": "gemini"}),
-        requested_model="fast",
-        latency_ms=1.0,
+        _antwort(body={"model": "kai-bulk"}, headers=_ECHTE_HEADER),
+        requested_model="kai-bulk",
+        latency_ms=645.0,
     )
-    assert trace.actual_model == "aus-dem-header"
+
+    assert trace.actual_model == "gemini/gemini-2.5-flash"
+    assert trace.detail["model_group"] == "kai-bulk"
+
+
+def test_ohne_provider_header_kommt_der_anbieter_aus_dem_modellnamen() -> None:
+    """LiteLLM 1.99.0 sendet gar keinen Provider-Header.
+
+    Weder ``x-litellm-model-provider`` noch ``x-litellm-provider`` stand in der
+    gemessenen Antwort. Ohne Anbieter bliebe ``identity_proven`` bei JEDEM
+    Aufruf falsch — und damit auch ``model_substituted``: der Schatten könnte
+    nie melden, dass ein anderes Modell geantwortet hat als angefordert.
+
+    Das Präfix ist keine Vermutung: es ist Teil des Namens, den der Upstream
+    selbst gemeldet hat.
+    """
+    trace = trace_from_response(
+        _antwort(body={"model": "kai-bulk"}, headers=_ECHTE_HEADER),
+        requested_model="kai-bulk",
+        latency_ms=645.0,
+    )
+
     assert trace.actual_provider == "gemini"
     assert trace.identity_proven
+    assert trace.model_substituted, "angefragt war der Alias kai-bulk"
+
+
+def test_ohne_praefix_wird_kein_anbieter_erfunden() -> None:
+    """Die Grenze der Ableitung: kein Trenner, kein Anbieter.
+
+    Lieber eine ausdrücklich unbewiesene Identität als eine geratene.
+    """
+    trace = trace_from_response(
+        _antwort(headers={"x-litellm-model-name": "irgendein-modell"}),
+        requested_model="m",
+        latency_ms=1.0,
+    )
+
+    assert trace.actual_model == "irgendein-modell"
+    assert trace.actual_provider == ""
+    assert not trace.identity_proven
+
+
+def test_der_modell_hash_gilt_nicht_als_modellname() -> None:
+    """``x-litellm-model-id`` ist ein 64-stelliger Hash.
+
+    Er stand früher in ``_MODEL_HEADERS`` und wäre als "das Modell" in die
+    Telemetrie gegangen — ein Bezeichner, der wie ein Name aussieht und keiner
+    ist. Nachschlagen lässt er sich nicht, und eine Preistabelle fände ihn nie.
+    """
+    trace = trace_from_response(
+        _antwort(body={"model": "kai-bulk"}, headers=_ECHTE_HEADER),
+        requested_model="kai-bulk",
+        latency_ms=1.0,
+    )
+
+    assert trace.actual_model == "gemini/gemini-2.5-flash"
+    assert trace.detail["model_id"].startswith("46cc973e")
+
+
+def test_fehlt_der_header_zaehlt_der_body() -> None:
+    """Ein Upstream, der sich im Body benennt, bleibt gültig."""
+    trace = trace_from_response(
+        _antwort(body={"model": "echt-4o"}, headers={"x-litellm-model-provider": "openai"}),
+        requested_model="fast",
+        latency_ms=1.0,
+    )
+
+    assert trace.actual_model == "echt-4o"
+    assert trace.actual_provider == "openai"
+    assert trace.identity_proven
+
+
+def test_die_kostenaufschluesselung_zeigt_den_denkanteil() -> None:
+    """96 Prozent der Kosten waren Reasoning — gemessen, nicht geschätzt.
+
+    Von 0,0007412 USD entfielen 0,000715 auf ``reasoning``. Wer nur die Summe
+    sieht, hält die Route für günstig; wer die Aufschlüsselung sieht, erkennt,
+    dass ein knapperes Denkbudget fast den ganzen Preis spart.
+    """
+    trace = trace_from_response(
+        _antwort(body={"model": "kai-bulk"}, headers=_ECHTE_HEADER),
+        requested_model="kai-bulk",
+        latency_ms=645.0,
+    )
+
+    assert trace.cost_usd == pytest.approx(0.0007412)
+    assert trace.detail["cost_reasoning_usd"] == pytest.approx(0.000715)
+    assert trace.detail["cost_input_usd"] == pytest.approx(1.2e-06)
+    anteil = trace.detail["cost_reasoning_usd"] / trace.cost_usd
+    assert anteil > 0.9, f"Denkanteil {anteil:.0%}"
+
+
+def test_eine_wiederholung_im_transport_faellt_auf() -> None:
+    """KAI ist die einzige Retry-Autorität (``num_retries: 0`` in der YAML).
+
+    Ein Wert ungleich 0 heißt, dass die Konfiguration nicht gegriffen hat — und
+    dass zwei Instanzen unabhängig voneinander wiederholen. Bei 0 steht nichts
+    im Detail: ein Feld, das immer da ist, wird nicht gelesen.
+    """
+    ruhig = trace_from_response(
+        _antwort(headers=_ECHTE_HEADER), requested_model="kai-bulk", latency_ms=1.0
+    )
+    assert "transport_retries" not in ruhig.detail
+
+    laut = trace_from_response(
+        _antwort(headers={**_ECHTE_HEADER, "x-litellm-attempted-retries": "2"}),
+        requested_model="kai-bulk",
+        latency_ms=1.0,
+    )
+    assert laut.detail["transport_retries"] == "2"
 
 
 # --------------------------------------------------------------------------

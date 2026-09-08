@@ -36,7 +36,20 @@ TRANSPORT = "litellm"
 #: die Namen sich zwischen Versionen unterscheiden — geraten wird nichts, es
 #: wird nur der erste GEFUNDENE genommen und sonst nichts eingetragen.
 _PROVIDER_HEADERS = ("x-litellm-model-provider", "x-litellm-provider")
-_MODEL_HEADERS = ("x-litellm-model", "x-litellm-model-id")
+#: Der Name des Modells, das TATSAECHLICH geantwortet hat. `x-litellm-model-id`
+#: steht hier bewusst NICHT: LiteLLM 1.99.0 setzt dort einen 64-stelligen Hash,
+#: und ein Hash in der Telemetrie sieht aus wie ein Modellname, ist aber keiner.
+#: Er wandert stattdessen ins Detail.
+_MODEL_HEADERS = ("x-litellm-model-name", "x-litellm-model")
+#: Der Alias, den KAI angefragt hat -- LiteLLMs "model group".
+_ALIAS_HEADERS = ("x-litellm-model-group",)
+#: Die Aufschluesselung der Kosten. Am 2026-09-08 auf kai-pi5 gemessen: von
+#: 0,0007412 USD entfielen 0,000715 auf `reasoning` -- 96 Prozent.
+_COST_SPLIT_HEADERS = {
+    "cost_input_usd": "x-litellm-response-cost-input",
+    "cost_output_usd": "x-litellm-response-cost-output",
+    "cost_reasoning_usd": "x-litellm-response-cost-reasoning",
+}
 _COST_HEADERS = ("x-litellm-response-cost", "x-litellm-cost")
 _REQUEST_ID_HEADERS = ("x-litellm-call-id", "x-request-id")
 
@@ -112,6 +125,25 @@ def _response_body(response: httpx.Response) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _provider_aus_modell(model_name: str) -> str:
+    """``gemini/gemini-2.5-flash`` -> ``gemini``.
+
+    LiteLLM 1.99.0 sendet KEINEN Provider-Header -- weder
+    ``x-litellm-model-provider`` noch ``x-litellm-provider`` stand in der
+    Antwort, die am 2026-09-08 auf kai-pi5 gemessen wurde. Ohne Anbieter bleibt
+    :attr:`AttemptTrace.identity_proven` bei JEDEM Aufruf falsch, und damit auch
+    ``model_substituted``: der Schatten koennte nie melden, dass ein anderes
+    Modell geantwortet hat als angefordert.
+
+    Das Praefix ist keine Vermutung. Es ist Teil des Namens, den der Upstream
+    selbst im Header gemeldet hat, und LiteLLMs eigene Schreibweise fuer
+    ``<provider>/<modell>``. Ohne Praefix wird nichts geraten -- dann bleibt der
+    Anbieter leer und die Identitaet ausdruecklich unbewiesen.
+    """
+    kopf, trenner, _ = model_name.partition("/")
+    return kopf if trenner and kopf else ""
+
+
 def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
     """Traegt die 200 ueberhaupt Text? Und wenn nicht, warum nicht?
 
@@ -147,7 +179,9 @@ def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
     return True, f"empty_content_finish_{grund}"
 
 
-def _detail(status_code: int, body: dict[str, Any], leer_grund: str) -> dict[str, Any]:
+def _detail(
+    status_code: int, body: dict[str, Any], leer_grund: str, headers: Any
+) -> dict[str, Any]:
     """Was der Aufrufer spaeter braucht, um den Versuch zu verstehen.
 
     `reasoning_tokens` steht hier, weil `completion_tokens` sie zwar
@@ -159,6 +193,22 @@ def _detail(status_code: int, body: dict[str, Any], leer_grund: str) -> dict[str
     ergebnis: dict[str, Any] = {"status_code": status_code}
     if leer_grund:
         ergebnis["empty_reason"] = leer_grund
+
+    alias = _first_header(headers, _ALIAS_HEADERS)
+    if alias:
+        ergebnis["model_group"] = alias
+    modell_id = _first_header(headers, ("x-litellm-model-id",))
+    if modell_id:
+        ergebnis["model_id"] = modell_id
+    for feld, kopf in _COST_SPLIT_HEADERS.items():
+        wert = _float_or_none(_first_header(headers, (kopf,)))
+        if wert is not None:
+            ergebnis[feld] = wert
+    versuche = _first_header(headers, ("x-litellm-attempted-retries",))
+    if versuche and versuche != "0":
+        # KAI ist die einzige Retry-Autoritaet (`num_retries: 0` in der YAML).
+        # Ein Wert ungleich 0 heisst, dass die Konfiguration nicht gegriffen hat.
+        ergebnis["transport_retries"] = versuche
 
     auswahl = body.get("choices")
     if isinstance(auswahl, list) and auswahl and isinstance(auswahl[0], dict):
@@ -192,10 +242,20 @@ def trace_from_response(
     body = _response_body(response)
 
     usage = body.get("usage")
-    # Das Modell aus dem BODY hat Vorrang: es ist die Antwort des Upstreams,
-    # der Header nur die Weitergabe des Gateways.
-    actual_model = str(body.get("model") or "") or _first_header(headers, _MODEL_HEADERS)
-    actual_provider = _first_header(headers, _PROVIDER_HEADERS)
+    # Der HEADER hat Vorrang, nicht der Body -- und das ist eine Korrektur.
+    #
+    # Die fruehere Regel lautete umgekehrt, mit der Begruendung, der Body sei die
+    # Antwort des Upstreams und der Header nur die Weitergabe des Gateways. Bei
+    # LiteLLM ist es genau andersherum, am 2026-09-08 auf kai-pi5 gemessen: der
+    # Body traegt `"model": "kai-bulk"` -- also den ALIAS, den KAI angefragt hat
+    # --, waehrend `x-litellm-model-name: gemini/gemini-2.5-flash` das Modell
+    # nennt, das wirklich geantwortet hat. Die alte Regel schrieb damit den
+    # angefragten Namen als gemessene Identitaet fort. Genau davor warnt
+    # `identity_proven` in app/ai/models.py, und trotzdem passierte es hier.
+    actual_model = _first_header(headers, _MODEL_HEADERS) or str(body.get("model") or "")
+    actual_provider = _first_header(headers, _PROVIDER_HEADERS) or _provider_aus_modell(
+        _first_header(headers, _MODEL_HEADERS)
+    )
     cost = _float_or_none(_first_header(headers, _COST_HEADERS))
     if cost is None:
         hidden = body.get("_hidden_params")
@@ -229,7 +289,7 @@ def trace_from_response(
         cost_usd=cost,
         error_class=error_class,
         request_id=_first_header(headers, _REQUEST_ID_HEADERS),
-        detail=_detail(response.status_code, body, leer_grund),
+        detail=_detail(response.status_code, body, leer_grund, headers),
     )
 
 
