@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Wrench, Info } from "lucide-react";
 import "@/styles/kai.tokens.css";
-import { KaiLiveWidget } from "@/components/kai/KaiLiveWidget";
 import { useKaiState } from "@/lib/useKaiState";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
@@ -98,6 +97,8 @@ export function Dashboard() {
   // (High-Conviction-HitRate minus Standard-Tier-HitRate).
   const ptl = data?.priority_tier_lift_pct ?? null;
   const pf = data?.paper_fills ?? null;
+  // Nur noch fuer den Status-Pill im Command-Header. Das KAI-Live-Widget, das
+  // diesen Zustand ebenfalls las, ist entfernt.
   const kai = useKaiState();
   // WP-4: Fokus-Modus. "problem" blendet die Detail-Panels aus; Lage (Command
   // Header, Executive Snapshot, Akute Punkte, Truth) bleibt immer sichtbar.
@@ -240,12 +241,11 @@ export function Dashboard() {
         <NOverviewPanel />
       </PanelErrorBoundary>
 
-      {/* KAI LIVE — Persona non grata. Hero-Strip per DALI-Audit 2026-05-03. */}
-      {kai.state === "ready" && (
-        <PanelErrorBoundary name="KaiLiveWidget">
-          <KaiLiveWidget runtimeState={kai.data} language="de" />
-        </PanelErrorBoundary>
-      )}
+      {/* 2026-09-08: KAI-Live-Widget entfernt (Operator-Entscheidung). Es trug die
+          Spruchmaschine, einen Timer alle 45-90 s ohne document.hidden-Guard sowie
+          Chat und Spracheingabe — keines davon in Gebrauch. Die Backend-Routen
+          /api/kai/chat und /api/kai/transcribe bleiben vorerst bestehen, damit der
+          Schnitt in einem Commit rueckgaengig zu machen ist. */}
 
       {/* Aktive KPI-Row — ausschließlich echte Zahlen aus /dashboard/api/quality */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 xl:gap-4">
