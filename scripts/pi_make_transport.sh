@@ -68,7 +68,13 @@ REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "kein Checkout: $REPO" >&2; ex
 # Aufgeloest wird VOR dem Anlegen: eine Wache, die ihren Ablehnungsgrund erst
 # erschafft, hinterliesse bei jedem Fehlversuch ein Verzeichnis genau dort, wo
 # keines hingehoert.
-TRANSPORTS="$(readlink -f "$TRANSPORTS")" || { echo "Pfad nicht aufloesbar: $TRANSPORTS" >&2; exit 1; }
+# `-m` statt `-f`: `-f` verlangt, dass alle Komponenten ausser der letzten
+# existieren -- und beim ERSTEN Bau existiert `$HOME/transport` nicht. Der
+# Lauf brach ab, bevor er etwas tat. `-m` loest trotzdem auf, Symlinks in
+# vorhandenen Komponenten eingeschlossen: `/home/kai` ist auf der Pi einer.
+WUNSCH="$TRANSPORTS"
+TRANSPORTS="$(readlink -m "$TRANSPORTS")" || { echo "Pfad nicht aufloesbar: $WUNSCH" >&2; exit 1; }
+[ -n "$TRANSPORTS" ] || { echo "Pfad nicht aufloesbar: $WUNSCH" >&2; exit 1; }
 case "$TRANSPORTS" in
     */releases|*/releases/*)
         echo "TRANSPORT_PATH_IN_RELEASE_ROTATION: $TRANSPORTS" >&2

@@ -99,7 +99,7 @@ def test_der_transport_wird_ohne_den_core_lock_installiert() -> None:
 def _pfad_wache(kandidat: Path) -> subprocess.CompletedProcess[str]:
     """Den Pfad-Block AUS dem Builder gegen einen echten Pfad ausfuehren."""
     zeilen = _text().splitlines()
-    ab = next(i for i, z in enumerate(zeilen) if z.startswith('TRANSPORTS="$(readlink -f'))
+    ab = next(i for i, z in enumerate(zeilen) if z.startswith('WUNSCH="$TRANSPORTS"'))
     bis = next(i for i in range(ab, len(zeilen)) if zeilen[i].strip().startswith("mkdir -p"))
     fragment = NEUZEILE.join(zeilen[ab : bis + 1])
     kopf = f'TRANSPORTS="{kandidat.as_posix()}"' + NEUZEILE
@@ -142,6 +142,11 @@ def test_die_wache_legt_den_verbotenen_pfad_nicht_an(tmp_path: Path) -> None:
 
     fertig = _pfad_wache(verboten)
 
+    # Der Marker gehoert dazu: die erste Fassung prueft nur den Rueckgabewert --
+    # und den lieferte auch ein `readlink -f`, das an einem fehlenden Elternteil
+    # scheiterte. Gruen aus dem falschen Grund, und genau dieser Grund brach dann
+    # den ersten echten Lauf auf der Pi ab, bevor er etwas tat.
+    assert "TRANSPORT_PATH_IN_RELEASE_ROTATION" in fertig.stderr, fertig.stderr
     assert fertig.returncode == 1
     assert not verboten.exists(), "die Wache hat angelegt, was sie ablehnt"
 
@@ -164,6 +169,21 @@ def test_ein_symlink_in_die_rotation_wird_aufgeloest(tmp_path: Path) -> None:
 
     assert fertig.returncode == 1, fertig.stdout
     assert "TRANSPORT_PATH_IN_RELEASE_ROTATION" in fertig.stderr
+
+
+def test_ein_noch_nicht_existierender_zielpfad_wird_aufgeloest(tmp_path: Path) -> None:
+    """Beim ERSTEN Bau gibt es `$HOME/transport` nicht.
+
+    `readlink -f` verlangt alle Komponenten ausser der letzten und scheiterte
+    genau dort -- der Lauf brach ab, bevor er etwas tat. Die Suite sah das
+    nicht, weil ihre Pfade vorher angelegt wurden.
+    """
+    neu = tmp_path / "gibt" / "es" / "noch" / "nicht"
+
+    fertig = _pfad_wache(neu)
+
+    assert fertig.returncode == 0, fertig.stderr
+    assert fertig.stdout.strip().endswith("nicht"), fertig.stdout
 
 
 def test_die_vorgabe_haengt_am_home_nicht_am_checkout() -> None:
