@@ -190,6 +190,165 @@ function NeoIcon({ size }: IconProps) {
   );
 }
 
+// 2026-09-08: Die Registry (app/api/routers/agents.py) fuehrt 11 Agenten, dieses
+// Modul kannte 6 Glyphen. Die uebrigen fuenf fielen auf ein farbloses <Bot> und
+// standen sichtbar neben den ausgestalteten Kacheln — Operator-Befund
+// ("haben keine Bilder und Symbole und passen nicht zum Gesamtbild").
+// Die folgenden fuenf schliessen die Luecke im bestehenden Stil:
+// viewBox 32x32, currentColor, strokeWidth ~1.6, aria-hidden.
+// Die Paritaet gegen die Registry haelt AgentIcon.test.tsx fest.
+
+// Finder: Peilkreis — konzentrische Ringe, Suchstrahl, Fadenkreuz.
+function KaiFinderIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <circle
+        cx="16"
+        cy="16"
+        r="6.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        opacity="0.7"
+      />
+      <circle cx="16" cy="16" r="2" fill="currentColor" />
+      <path d="M16 16 L24.5 9.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M16 2.5 L16 6 M16 26 L16 29.5 M2.5 16 L6 16 M26 16 L29.5 16"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <circle cx="22.5" cy="11.5" r="1.6" fill="currentColor" opacity="0.85" />
+    </svg>
+  );
+}
+
+// Einstein: Kern mit zwei gekreuzten Umlaufbahnen.
+function EinsteinIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <ellipse
+        cx="16"
+        cy="16"
+        rx="13"
+        ry="5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        transform="rotate(-28 16 16)"
+      />
+      <ellipse
+        cx="16"
+        cy="16"
+        rx="13"
+        ry="5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        transform="rotate(28 16 16)"
+        opacity="0.75"
+      />
+      <circle cx="16" cy="16" r="3.4" fill="currentColor" />
+      <circle cx="27" cy="11.4" r="1.7" fill="currentColor" opacity="0.9" />
+      <circle cx="5" cy="20.6" r="1.4" fill="currentColor" opacity="0.6" />
+    </svg>
+  );
+}
+
+// Xqu: Framing-Interrogator — X als Kreuzung, darueber das Fragezeichen.
+function XquIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <path
+        d="M4.5 27.5 L14 18"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        opacity="0.8"
+      />
+      <path
+        d="M4.5 18 L14 27.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        opacity="0.8"
+      />
+      <path
+        d="M12.6 10.2 a5.2 5.2 0 1 1 7.4 4.7 c-1.7 0.8 -2.4 1.9 -2.4 3.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+      />
+      <circle cx="17.6" cy="23.2" r="1.8" fill="currentColor" />
+      <path
+        d="M26 6 L29 9 M29 6 L26 9"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        opacity="0.65"
+      />
+    </svg>
+  );
+}
+
+// Red-Team: Schild mit Bruchlinie — die Gegenhypothese, die den Schutz aufbricht.
+function RedTeamIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <path
+        d="M16 3 L27 7.5 V16 c0 6.6 -4.6 10.9 -11 13 -6.4 -2.1 -11 -6.4 -11 -13 V7.5 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M17.8 8.5 L13.2 16.4 h4.4 L12.6 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 25.5 L28 6.5"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        opacity="0.55"
+      />
+    </svg>
+  );
+}
+
+// Data-Quality: Filtertrichter ueber Tropfen — was durchfaellt, wird geprueft.
+function DataQualityIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <path
+        d="M4.5 5.5 H27.5 L19 15.5 V25 L13 28 V15.5 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.5 9.5 H23.5"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        opacity="0.6"
+      />
+      <circle cx="9" cy="20" r="1.3" fill="currentColor" opacity="0.85" />
+      <circle cx="6" cy="24.5" r="1.1" fill="currentColor" opacity="0.6" />
+      <circle cx="10.5" cy="26" r="0.9" fill="currentColor" opacity="0.45" />
+    </svg>
+  );
+}
+
 const CUSTOM_ICON_SVG: Record<string, (props: IconProps) => JSX.Element> = {
   sentr: SentrIcon,
   watchdog: WatchdogIcon,
@@ -197,6 +356,11 @@ const CUSTOM_ICON_SVG: Record<string, (props: IconProps) => JSX.Element> = {
   dali: DaliIcon,
   satoshi: SatoshiIcon,
   neo: NeoIcon,
+  "kai-finder": KaiFinderIcon,
+  einstein: EinsteinIcon,
+  xqu: XquIcon,
+  "architecture-red-team": RedTeamIcon,
+  "data-quality-inspector": DataQualityIcon,
 };
 
 const AGENT_TONE: Record<string, string> = {
@@ -206,11 +370,20 @@ const AGENT_TONE: Record<string, string> = {
   dali: "text-accent",
   neo: "text-info",
   satoshi: "text-warn",
+  "kai-finder": "text-info",
+  einstein: "text-ai",
+  xqu: "text-accent",
+  "architecture-red-team": "text-warn",
+  "data-quality-inspector": "text-info",
 };
 
-// FALLBACK_LUCIDE wird seit S2 nicht mehr benoetigt - neo + satoshi haben jetzt
-// eigene SVG-Glyphen analog zu sentr/watchdog/architect/dali. Mapping bleibt
-// leer als Sicherheitsnetz fuer kuenftige Agenten ohne SVG.
+/** Slugs, fuer die dieses Modul eine eigene Glyphe fuehrt (Test-Oberflaeche). */
+export const AGENT_ICON_SLUGS: readonly string[] = Object.keys(CUSTOM_ICON_SVG);
+
+// FALLBACK_LUCIDE wird seit S2 nicht mehr benoetigt - jeder Agent der Registry
+// hat eine eigene SVG-Glyphe. Mapping bleibt leer als Sicherheitsnetz; der
+// Paritaetstest verhindert, dass ein neuer Agent hier stillschweigend auf dem
+// farblosen <Bot> landet.
 const FALLBACK_LUCIDE: Record<string, LucideIcon> = {};
 
 export function AgentIcon({
