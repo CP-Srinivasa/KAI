@@ -33,7 +33,7 @@ from app.alerts import health_check_payments as _hcp
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
-from app.alerts.process_runtime_probe import process_runtime_finding
+from app.alerts.process_runtime_probe import deferred_unit_finding, process_runtime_finding
 from app.alerts.youtube_transcript_coverage import (
     COVERAGE_WINDOW_HOURS,
     TRANSCRIPT_MIN_CHARS,
@@ -1439,6 +1439,10 @@ def _check_runtime_provenance(repo_root: Path) -> list[HealthIssue]:
                 component="process_runtime_marker",
                 message=message,
             )
+        )
+    if txt := deferred_unit_finding():  # zurueckgestellt != unbeobachtet
+        issues.append(
+            HealthIssue(severity="critical", component="deferred_unit_active", message=txt)
         )
     return issues
 

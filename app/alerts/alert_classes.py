@@ -112,6 +112,11 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # Operator nicht aufloesen kann, darf ihn nicht wiederholt erreichen.
     # P3 ist nicht ``is_notifiable``; genau das ist hier der Zweck.
     "youtube_transcript_blocked_external": AlertClass.P3,
+    # Eine bewusst zurueckgestellte Unit, die trotzdem laeuft, ist eine
+    # Abweichung von einer ausdruecklichen Entscheidung — und im Fall von
+    # kai-litellm laeuft sie mit dem Abhaengigkeitskonflikt, dessen wegen sie
+    # zurueckgestellt wurde. Das gehoert zum Operator, sofort.
+    "deferred_unit_active": AlertClass.P0,
     # G5-Eingangsvertraege: der Reject-Strom traegt den GRUND einer Ablehnung.
     # Faellt er aus, bleibt der Geldpfad fail-closed (deshalb nicht P0), aber
     # der Operator kann Caller-Fehler nicht mehr von Vertragsverletzung
