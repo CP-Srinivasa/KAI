@@ -337,7 +337,9 @@ def test_query_analyze_pending_without_openai_key_uses_fallback_analysis(monkeyp
 
     assert result.exit_code == 0
     assert "No API key found for provider 'openai'" in result.output
-    assert "Analysis complete! 1 success, 0 failed." in result.output
+    # Ohne Provider gibt es keinen bezahlten Aufruf -- und die Ausgabe sagt es
+    # jetzt (2026-09-09): "success" ist nicht "llm_call".
+    assert "Analysis complete! 1 success / 0 llm_call / 1 skipped, 0 failed." in result.output
     assert len(captured_results) == 1
     assert captured_results[0].recommended_priority is not None
     assert captured_results[0].affected_assets == ["BTC"]
@@ -541,7 +543,10 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
 
     assert analyze_result.exit_code == 0
     assert "Analyzing 2 documents" in analyze_result.output
-    assert "Analysis complete! 2 success, 0 failed." in analyze_result.output
+    # Beide Dokumente erreichten den (gemockten) Provider: success == llm_call.
+    assert "Analysis complete! 2 success / 2 llm_call / 0 skipped, 0 failed." in (
+        analyze_result.output
+    )
     assert {doc.id for doc in stored_docs} == saved_doc_ids
     assert saved_urls == {
         "https://example.com/article-1",

@@ -227,6 +227,10 @@ async def test_unknown_cost_volume_blocks_routine_at_the_call(
             "correlation_id": f"c{i}",
             "purpose": "analysis",
             "cost_usd": None,
+            # Die Messung LIEF und fand keinen Preis. Ohne dieses Feld waere
+            # die Zeile eine Altzeile und zaehlte bewusst nicht mit
+            # (app/ai/spend.py::is_unmetered_legacy_row).
+            "cost_status": "COST_UNKNOWN",
         }
         for i in range(3)
     ]

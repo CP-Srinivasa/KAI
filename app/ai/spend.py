@@ -30,6 +30,17 @@ bleiben erhalten. Das ist exakt die Regel, die ``app/ai/health.py`` seit
 NEO-P-005 anwendet; sie steht jetzt hier, damit Gesundheit und Budget nicht
 zwei Meinungen über dieselbe Grundgesamtheit haben.
 
+**Altzeilen sind nicht dasselbe wie unbelegte Aufrufe.** Der Strom traegt
+Zeilen aus der Zeit VOR der Kostenmessung (D-CORE-007, 2026-09-08); sie haben
+kein Feld ``cost_status``, weil es das damals nicht gab. Sie als ``unknown``
+zu zaehlen hiesse, die Vergangenheit gegen ein Tageslimit der Gegenwart zu
+rechnen: 373 Altzeilen eines Tages loesen ``COST_UNKNOWN`` aus, ohne dass ein
+einziger neuer Aufruf unbelegt waere -- fail-closed aus einem Archiv heraus.
+Deshalb zaehlt :attr:`SpendWindow.unmetered_legacy_calls` sie GETRENNT: sie
+bleiben sichtbar, sie erhoehen keine Summe, und sie zaehlen nicht gegen
+``APP_AI_BUDGET_UNKNOWN_MAX_CALLS_PER_DAY``. Unbelegt heisst ab jetzt: die
+Messung LIEF und konnte trotzdem keinen Preis nennen.
+
 Fail-soft: ein fehlender, leerer oder halb geschriebener Strom liefert einen
 Nullzustand, keine Ausnahme. Eine Kostenbremse, die beim Lesen stirbt, wäre
 ein Ausfall mit Kostenbegründung.
@@ -95,6 +106,20 @@ def is_ai_row(row: dict[str, Any]) -> bool:
     )
 
 
+def is_unmetered_legacy_row(row: dict[str, Any]) -> bool:
+    """Stammt diese Zeile aus der Zeit VOR der Kostenmessung?
+
+    Erkennungsmerkmal ist die ABWESENHEIT des Feldes ``cost_status``. Jede
+    Zeile, die :func:`app.observability.llm_telemetry.record_llm_call` seit
+    D-CORE-007 schreibt, traegt es -- auch dann, wenn kein Preis ermittelt
+    werden konnte (``"COST_UNKNOWN"``). Fehlt es, hat die Messung zu diesem
+    Aufruf nie stattgefunden; ihn als unbelegt zu zaehlen waere ein Vorwurf an
+    ein Archiv. Ein Zeitstempel-Schnitt waere die schlechtere Regel: er
+    braeuchte ein gepflegtes Datum und laege beim naechsten Neuaufsetzen falsch.
+    """
+    return "cost_status" not in row
+
+
 def dedupe_chain_levels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Genau EINE Zeile je physischem Aufruf — siehe Modul-Docstring."""
     versuchs_ids = {
@@ -139,6 +164,9 @@ class SpendWindow:
     calls: int = 0
     known_cost_usd: float = 0.0
     unknown_calls: int = 0
+    #: Aufrufe aus der Zeit VOR der Messung (kein ``cost_status`` in der Zeile).
+    #: Sichtbar, aber ohne Wirkung auf Summe und Schwelle -- siehe Modul-Docstring.
+    unmetered_legacy_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     by_provider: dict[str, SpendBucket] = field(default_factory=dict)
@@ -151,7 +179,7 @@ class SpendWindow:
 
     @property
     def known_calls(self) -> int:
-        return self.calls - self.unknown_calls
+        return self.calls - self.unknown_calls - self.unmetered_legacy_calls
 
     @property
     def total_tokens(self) -> int:
@@ -159,8 +187,13 @@ class SpendWindow:
 
     @property
     def fully_accounted(self) -> bool:
-        """Trägt ``known_cost_usd`` die ganze Wahrheit dieses Fensters?"""
-        return self.calls > 0 and self.unknown_calls == 0
+        """Trägt ``known_cost_usd`` die ganze Wahrheit dieses Fensters?
+
+        Altzeilen zaehlen hier mit: sie sperren nichts, aber sie sind
+        unbezifferte Aufrufe, und ein Fenster mit unbezifferten Aufrufen ist
+        nicht vollstaendig belegt.
+        """
+        return self.calls > 0 and self.unknown_calls == 0 and self.unmetered_legacy_calls == 0
 
     @property
     def top_provider(self) -> str | None:
@@ -286,6 +319,7 @@ def spend_window(
     calls = 0
     bekannt = 0.0
     unbekannt = 0
+    altzeilen = 0
     eingabe = 0
     ausgabe = 0
     nach_provider: dict[str, SpendBucket] = {}
@@ -309,7 +343,13 @@ def spend_window(
         calls += 1
         eingabe += zeilen_ein
         ausgabe += zeilen_aus
-        if zeilen_kosten is None:
+        # Eine Zeile ohne Preis ist entweder unbelegt (die Messung lief und
+        # fand keinen) oder eine Altzeile (die Messung lief nie). Nur die
+        # erste Sorte zaehlt gegen die Schwelle.
+        alt = zeilen_kosten is None and is_unmetered_legacy_row(row)
+        if alt:
+            altzeilen += 1
+        elif zeilen_kosten is None:
             unbekannt += 1
         else:
             bekannt += zeilen_kosten
@@ -320,7 +360,11 @@ def spend_window(
         _add(nach_provider, provider, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
         _add(nach_modell, modell, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
         _add(nach_use_case, use_case, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
-        positionen.append(BudgetEntry(route="standard", cost_usd=zeilen_kosten))
+        if not alt:
+            # Altzeilen gehen NICHT in den Budgetzustand: ``accumulate`` kennt
+            # nur "gebucht" und "unbekannt", und als unbekannt gezaehlt haetten
+            # sie genau die Sperre ausgeloest, die dieser Nachtrag verhindert.
+            positionen.append(BudgetEntry(route="standard", cost_usd=zeilen_kosten))
 
     return SpendWindow(
         window=window,
@@ -329,6 +373,7 @@ def spend_window(
         calls=calls,
         known_cost_usd=round(bekannt, 8),
         unknown_calls=unbekannt,
+        unmetered_legacy_calls=altzeilen,
         input_tokens=eingabe,
         output_tokens=ausgabe,
         by_provider=nach_provider,
@@ -384,6 +429,7 @@ __all__ = [
     "current_spend",
     "dedupe_chain_levels",
     "is_ai_row",
+    "is_unmetered_legacy_row",
     "load_rows",
     "reset_spend_cache",
     "row_ts",

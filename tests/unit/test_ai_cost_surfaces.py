@@ -1,7 +1,7 @@
 """Verschwendung, Zuordnung und Sichtbarkeit — die drei Nicht-Metering-Teile.
 
 Abgedeckt: Shadow-Skip nach dem Relevanz-Gate (W2), der Schatten-Schalter
-(Default true), die Anbieter-vs-Quelle-Zuordnung in der Pipeline, die
+(Default AUS seit 2026-09-09), die Anbieter-vs-Quelle-Zuordnung in der Pipeline, die
 Instrumentierung von ``app/intelligence`` und der Kostenblock in ``/health/ai``.
 """
 
@@ -138,7 +138,18 @@ def _settings_mit_keys() -> Any:
     )
 
 
-def test_shadow_flag_defaults_to_true_no_behaviour_change() -> None:
+def test_shadow_flag_defaults_to_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zweitmeinung AUS als Standard (Operator-Entscheidung 2026-09-09)."""
+    monkeypatch.delenv("APP_ANALYSIS_SHADOW_ENABLED", raising=False)
+    reset_ai_cost_settings()
+    assert get_ai_cost_settings().shadow_enabled is False
+    assert describe_shadow_chain(_settings_mit_keys()) == []
+
+
+def test_shadow_flag_true_switches_the_chain_back_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Der Schalter ist ein Schalter: ``true`` stellt das alte Verhalten her."""
+    monkeypatch.setenv("APP_ANALYSIS_SHADOW_ENABLED", "true")
+    reset_ai_cost_settings()
     assert get_ai_cost_settings().shadow_enabled is True
     assert describe_shadow_chain(_settings_mit_keys()) == ["anthropic"]
 
@@ -255,6 +266,7 @@ def test_health_cost_block_reports_the_split_between_known_and_unknown(
             "purpose": "analysis",
             "use_case": "news_intelligence",
             "cost_usd": 0.25,
+            "cost_status": "OK",
         },
         {
             "ts": jetzt,
@@ -266,6 +278,7 @@ def test_health_cost_block_reports_the_split_between_known_and_unknown(
             "purpose": "analysis",
             "use_case": "news_intelligence",
             "cost_usd": None,
+            "cost_status": "COST_UNKNOWN",
         },
     ]
     sink.write_text("\n".join(json.dumps(z) for z in zeilen) + "\n", encoding="utf-8")

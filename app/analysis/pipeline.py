@@ -64,6 +64,7 @@ from app.ai.audit import (
     correlation_scope,
     current_correlation_id,
     http_status,
+    resolve_use_case,
     use_case_scope,
 )
 from app.ai.budget import BudgetExceeded
@@ -386,6 +387,30 @@ def _fallback_market_scope(
     return top_scope
 
 
+def llm_usage_summary(results: list[PipelineResult], *, success: int | None = None) -> str:
+    """``"3 success / 1 llm_call / 2 skipped"`` — drei Fragen, drei Zahlen.
+
+    Der Defekt, den das sichtbar macht (2026-09-09): ``analyze pending``
+    meldete »47 success, 3 failed«, waehrend die Telemetrie zehn neue Zeilen
+    bekam. Beide Zahlen stimmten. ``success`` heisst "analysiert", nicht
+    "bezahlt": die Stub-, Relevanz- und Krypto-Gates beantworten ein Dokument
+    regelbasiert und OHNE LLM-Aufruf, und ein erreichtes Budget tut dasselbe.
+    Ohne diese Aufschluesselung sah eine funktionierende Kostenbremse aus wie
+    eine kaputte Messung.
+
+    Aendert an den Gates NICHTS — es zaehlt nur, was sie ohnehin entscheiden.
+
+    Args:
+        results: die Ergebnisse eines Laufs.
+        success: abweichende Erfolgszahl des Aufrufers (die CLI zaehlt erst
+            nach dem Speichern). ``None`` nimmt die Erfolge der Pipeline.
+    """
+    erfolge = success if success is not None else sum(1 for r in results if r.success)
+    aufrufe = sum(1 for r in results if r.llm_called)
+    uebersprungen = sum(1 for r in results if r.skip_reason)
+    return f"{erfolge} success / {aufrufe} llm_call / {uebersprungen} skipped"
+
+
 def _sync_flat_entities(document: CanonicalDocument, entity_mentions: list[EntityMention]) -> None:
     for mention in entity_mentions:
         name = mention.name.strip()
@@ -421,6 +446,14 @@ class PipelineResult:
     shadow_llm_output: LLMAnalysisOutput | None = None
     shadow_provider_name: str | None = None
     shadow_error: str | None = None
+    #: Wurde fuer dieses Dokument ueberhaupt ein bezahlter LLM-Aufruf
+    #: abgesetzt? ``success`` beantwortet diese Frage NICHT: ein Dokument,
+    #: das ein Gate ohne Aufruf regelbasiert beantwortet hat, ist ebenfalls
+    #: erfolgreich analysiert. Genau diese Vermengung liess "47 success"
+    #: neben 10 Telemetriezeilen stehen (2026-09-09).
+    llm_called: bool = False
+    #: Warum kein Aufruf stattfand — der Gate-Grund, sonst ``None``.
+    skip_reason: str | None = None
 
     @property
     def success(self) -> bool:
@@ -591,12 +624,23 @@ class AnalysisPipeline:
         # chain_position=-1 marks the OUTER row that spans the whole chain. It
         # is kept verbatim for the v1 dashboard reader; the per-attempt rows
         # (chain_position >= 0) come from EnsembleProvider.
+        #
+        # ``model`` traegt den MODELLNAMEN, nicht den Anbieternamen (2026-09-09).
+        # ``EnsembleProvider.model`` liefert den aktiven ANBIETER ("openai");
+        # diese Zeile schrieb ihn ins Modellfeld, die Preistabelle fand dafuer
+        # keinen Eintrag und jeder echte gpt-4o-Aufruf des Serverpfads landete
+        # als ``unknown_model`` -> ``COST_UNKNOWN``. ``_resolve_runtime_model_name``
+        # sucht stattdessen das Modell des Providers, der tatsaechlich lief, und
+        # gibt lieber ``None`` zurueck als eine Vermutung.
         try:
             output = await self._provider.analyze(title=title, text=text, context=context)
         except Exception as exc:
+            fehlmodell = _resolve_runtime_model_name(self._provider)
             record_llm_call(
                 provider=name,
-                model=getattr(self._provider, "model", ""),
+                model=fehlmodell or "",
+                actual_model=fehlmodell,
+                use_case=resolve_use_case("analysis"),
                 ok=False,
                 latency_ms=(monotonic() - started) * 1000.0,
                 role="primary",
@@ -609,9 +653,12 @@ class AnalysisPipeline:
                 source=source,
             )
             raise
+        laufmodell = _resolve_runtime_model_name(self._provider, output)
         record_llm_call(
             provider=_telemetry_provider(output.provider_used or name, self._provider, source),
-            model=getattr(self._provider, "model", ""),
+            model=laufmodell or "",
+            actual_model=laufmodell,
+            use_case=resolve_use_case("analysis"),
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
             role="primary",
@@ -651,9 +698,12 @@ class AnalysisPipeline:
                 text=text,
                 context=context,
             )
+            schattenmodell = _resolve_runtime_model_name(self._shadow_provider, output)
             record_llm_call(
                 provider=shadow_provider_name,
-                model=getattr(self._shadow_provider, "model", ""),
+                model=schattenmodell or "",
+                actual_model=schattenmodell,
+                use_case=resolve_use_case("analysis"),
                 ok=True,
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
@@ -667,7 +717,9 @@ class AnalysisPipeline:
         except Exception as exc:
             record_llm_call(
                 provider=shadow_provider_name,
-                model=getattr(self._shadow_provider, "model", ""),
+                model=_resolve_runtime_model_name(self._shadow_provider) or "",
+                actual_model=_resolve_runtime_model_name(self._shadow_provider),
+                use_case=resolve_use_case("analysis"),
                 ok=False,
                 latency_ms=(monotonic() - _started) * 1000.0,
                 role="shadow",
@@ -749,6 +801,10 @@ class AnalysisPipeline:
         shadow_error: str | None = None
         provider_name = "fallback"
         model_name: str | None = None
+        # Zaehlt, nicht entscheidet: die Gates bleiben unveraendert, sie
+        # werden nur sichtbar.
+        llm_called = False
+        skip_reason: str | None = None
         trace_metadata = _resolve_trace_metadata(self._provider)
         context: dict[str, Any] = {
             "tickers": self._keyword_engine.match_tickers(full_text),
@@ -838,6 +894,7 @@ class AnalysisPipeline:
                     )
 
         if fallback_reason is not None:
+            skip_reason = fallback_reason
             analysis_result = self._build_fallback_analysis(
                 doc,
                 text,
@@ -873,7 +930,10 @@ class AnalysisPipeline:
                         text=text,
                         context=context,
                     )
+                    # Der Schatten ist hier der einzige Analyst -- und er kostet.
+                    llm_called = True
         elif self._provider is not None:
+            llm_called = True
             try:
                 primary_task = asyncio.create_task(
                     self._timed_primary_analyze(
@@ -985,6 +1045,9 @@ class AnalysisPipeline:
                     state=exc.state,
                     reason=exc.reason,
                 )
+                # Kein bezahlter Aufruf: das Budget hat ihn vorher gestoppt.
+                llm_called = False
+                skip_reason = f"ai_budget_exceeded: {exc.state}"
                 analysis_result = self._build_fallback_analysis(
                     doc,
                     text,
@@ -1019,6 +1082,8 @@ class AnalysisPipeline:
             shadow_llm_output=shadow_llm_output,
             shadow_provider_name=shadow_provider_name,
             shadow_error=shadow_error,
+            llm_called=llm_called,
+            skip_reason=skip_reason,
         )
 
     def _build_fallback_analysis(
