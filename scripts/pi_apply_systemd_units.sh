@@ -109,9 +109,22 @@ if [ "${#dropin_funde[@]}" -gt 0 ]; then
         read -r _ d_unit d_conf d_direktive <<<"$zeile"
         echo "    $d_unit  <- $d_conf setzt $d_direktive" >&2
     done
-    echo "  Es wurde nichts angefasst. Entweder das Drop-In ins Repo aufnehmen" >&2
-    echo "  (dann traegt es der Abgleich mit) oder entfernen:" >&2
+    # Der Rat hier war bis 2026-09-09 falsch: er empfahl, das Drop-In "ins Repo
+    # aufzunehmen (dann traegt es der Abgleich mit)". Das tut er nicht. Die
+    # Quellschleife nimmt nur `*.service|*.timer|*.socket|*.target|*.path` und
+    # kopiert einzelne Dateien; ein `.d`-Verzeichnis im Repo wird nie kopiert und
+    # nie mitgezaehlt. Wer dem Rat folgte, legte Dateien an, lief erneut und
+    # bekam denselben Abbruch -- ohne zu verstehen, warum. Eine Meldung, die
+    # einen Weg nennt, den es nicht gibt, kostet mehr als gar keine.
+    echo "  Es wurde nichts angefasst. Es gibt genau zwei Wege:" >&2
+    echo "  (a) Den INHALT der Direktive in die kanonische Unit im Repo" >&2
+    echo "      uebernehmen, ausrollen, und das externe Drop-In erst DANACH" >&2
+    echo "      entfernen -- dann ist die Gleichwertigkeit bewiesen, bevor" >&2
+    echo "      etwas verschwindet." >&2
+    echo "  (b) Das Drop-In entfernen, wenn es nachweislich nichts beitraegt:" >&2
     echo "    sudo rm $DST/<unit>.d/<datei>.conf && sudo systemctl daemon-reload" >&2
+    echo "  Ein Drop-In-Verzeichnis im Repo hilft NICHT: der Abgleich kopiert" >&2
+    echo "  keine `.d`-Verzeichnisse und wertet nur $DST aus." >&2
     exit 4
 fi
 

@@ -18,6 +18,18 @@ WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHON=/home/kai/ai_analyst_trading_bot/.venv/bin/python
 Environment=PYTHONIOENCODING=utf-8
+# Operator-Entscheidung 2026-06-03: Canary auf `conservative` geflippt, um den
+# Shadow-Messkanal zu entgiften (NEO-P-002-r2, Schritt 1). `entry_mode` bleibt
+# davon unberuehrt und disabled.
+#
+# Der Wert stand bis 2026-09-09 nur in einem Drop-In unter
+# `/etc/systemd/system/kai-paper-trading.service.d/canary.conf`, also NEBEN der
+# Unit, die der Deploy-Abgleich vergleicht. Damit entschied eine Datei ueber das
+# Verhalten, die in keinem Byte-Beweis vorkam -- und der Abgleich verweigerte zu
+# Recht jede weitere Unit-Installation, solange sie dort lag. Hier steht sie
+# jetzt kanonisch; das Drop-In wird als eigener Operator-Schritt entfernt,
+# nachdem diese Zeile ausgerollt ist.
+Environment=PAPER_CRON_PROFILE=conservative
 ExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/paper_trading_cron.sh
 StandardOutput=journal
 StandardError=journal
