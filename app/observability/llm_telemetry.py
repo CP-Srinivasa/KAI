@@ -46,7 +46,10 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: Alte Zeilen bleiben, was sie sind: v2-Zeilen sind echte v2-Zeilen, und der
 #: Leser muss sie weiter annehmen. Additiv heisst, dass ein v2-Leser auch eine
 #: v5-Zeile verarbeiten kann -- nicht, dass sie dasselbe sind.
-SCHEMA_VERSION = "v5"
+#: v6 (2026-09-09): `truncated`. `finish_reason` stand schon in der Zeile, aber
+#: ein Leser musste wissen, dass "length" abgeschnitten bedeutet. Der Zustand
+#: gehoert benannt, nicht hergeleitet.
+SCHEMA_VERSION = "v6"
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
@@ -184,6 +187,15 @@ def record_llm_call(
     #: KAI ist die einzige Retry-Autoritaet. Ein Wert ungleich 0 heisst, dass
     #: der Transport zusaetzlich wiederholt hat.
     transport_retries: int | None = None,
+    # --- v6 (2026-09-09) --------------------------------------------------
+    #: `True` = abgeschnitten, `False` = vollstaendig, `None` = kein
+    #: `finish_reason` gemeldet, also unbekannt. Nicht `False` als Ersatz fuer
+    #: `None`: das behauptete eine Messung, die es nicht gab.
+    truncated: bool | None = None,
+    #: Der Deckel, gegen den diese Antwort gelaufen ist. Ohne ihn steht in der
+    #: Zeile, DASS abgeschnitten wurde, aber nicht wogegen -- und das ist die
+    #: naechste Frage. `None`, wenn der Aufrufer keinen gesetzt hat.
+    max_tokens: int | None = None,
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
     row: dict[str, Any] = {
@@ -243,6 +255,8 @@ def record_llm_call(
         "finish_reason": finish_reason,
         "empty_reason": empty_reason,
         "transport_retries": transport_retries,
+        "truncated": truncated,
+        "max_tokens": max_tokens,
     }
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]

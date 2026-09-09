@@ -144,6 +144,43 @@ def _provider_aus_modell(model_name: str) -> str:
     return kopf if trenner and kopf else ""
 
 
+def _max_tokens(payload: dict[str, Any] | None) -> int | None:
+    """Der Deckel, gegen den diese Antwort gelaufen ist -- oder `None`.
+
+    Er steht in der Nutzlast des Aufrufers, nicht in der Antwort. Ohne ihn
+    meldet die Zeile, DASS abgeschnitten wurde, aber nicht, wogegen -- und
+    genau das ist die naechste Frage.
+    """
+    if not isinstance(payload, dict):
+        return None
+    wert = payload.get("max_tokens")
+    if isinstance(wert, bool) or not isinstance(wert, int):
+        return None
+    return wert
+
+
+def ist_abgeschnitten(body: dict[str, Any]) -> bool:
+    """Hat das Modell aufgehoert, weil das Token-Budget alle war?
+
+    Oeffentlich und ausdruecklich: es gibt zwei Aufrufer. Der Transport nutzt es
+    als erste Linie, `app/analysis/ai_control_plane.py` als zweite fuer
+    Aufrufer, die nicht ueber den Gateway kommen. Zwei eigene Abfragen waeren
+    zwei Wahrheiten ueber denselben Satz, und die eine wuerde irgendwann
+    nachgezogen und die andere nicht.
+
+    `finish_reason == "length"` ist eine Eigenschaft der ANTWORT, kein Urteil
+    ueber ihr Schema. Deshalb setzt der Transport daraufhin auch keine
+    `error_class`: technisch war der Aufruf erfolgreich, semantisch ist das
+    Ergebnis unbrauchbar. Das sind zwei Aussagen, und `error_class` traegt nur
+    eine davon.
+    """
+    auswahl = body.get("choices")
+    if not isinstance(auswahl, list) or not auswahl:
+        return False
+    erste = auswahl[0]
+    return isinstance(erste, dict) and erste.get("finish_reason") == "length"
+
+
 def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
     """Traegt die 200 ueberhaupt Text? Und wenn nicht, warum nicht?
 
@@ -180,7 +217,11 @@ def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _detail(
-    status_code: int, body: dict[str, Any], leer_grund: str, headers: Any
+    status_code: int,
+    body: dict[str, Any],
+    leer_grund: str,
+    headers: Any,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Was der Aufrufer spaeter braucht, um den Versuch zu verstehen.
 
@@ -193,6 +234,11 @@ def _detail(
     ergebnis: dict[str, Any] = {"status_code": status_code}
     if leer_grund:
         ergebnis["empty_reason"] = leer_grund
+    if max_tokens is not None:
+        # Ohne diese Zahl steht im Journal, DASS ein Deckel gegriffen hat, aber
+        # nicht welcher -- und der naechste Schritt bei einer abgeschnittenen
+        # Antwort ist genau die Frage, wie hoch er stand.
+        ergebnis["max_tokens"] = max_tokens
 
     alias = _first_header(headers, _ALIAS_HEADERS)
     if alias:
@@ -240,6 +286,7 @@ def trace_from_response(
     *,
     requested_model: str,
     latency_ms: float,
+    max_tokens: int | None = None,
 ) -> AttemptTrace:
     """Eine Antwort in einen Versuch übersetzen — rein, ohne Netz.
 
@@ -299,7 +346,7 @@ def trace_from_response(
         cost_usd=cost,
         error_class=error_class,
         request_id=_first_header(headers, _REQUEST_ID_HEADERS),
-        detail=_detail(response.status_code, body, leer_grund, headers),
+        detail=_detail(response.status_code, body, leer_grund, headers, max_tokens),
     )
 
 
@@ -345,7 +392,10 @@ def call_litellm(
             detail={"exception": type(exc).__name__},
         )
     return trace_from_response(
-        response, requested_model=model, latency_ms=(monotonic() - started) * 1000.0
+        response,
+        requested_model=model,
+        latency_ms=(monotonic() - started) * 1000.0,
+        max_tokens=_max_tokens(payload),
     )
 
 
@@ -409,6 +459,7 @@ async def call_litellm_async(
             response,
             requested_model=model,
             latency_ms=(monotonic() - started) * 1000.0,
+            max_tokens=_max_tokens(payload),
         ),
         body=_response_body(response),
     )
@@ -416,6 +467,7 @@ async def call_litellm_async(
 
 __all__ = [
     "TRANSPORT",
+    "ist_abgeschnitten",
     "LiteLLMConfig",
     "LiteLLMResponse",
     "call_litellm",

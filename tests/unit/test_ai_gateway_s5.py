@@ -376,6 +376,63 @@ async def test_ohne_budget_steht_nichts_in_der_anfrage() -> None:
     assert "thinking" not in gesehen
 
 
+async def test_eine_abgeschnittene_antwort_erreicht_den_parser() -> None:
+    """Die Bedingung, an der die ganze Aufteilung haengt.
+
+    `app/ai/runtime.py` kehrt bei `not trace.ok` zurueck, BEVOR
+    `litellm.parser` laeuft. Wuerde der Transport eine Abschneidung als
+    `error_class` melden, waere die praezise Runtime-Diagnose aus #945 --
+    die Meldung, die `max_tokens` nennt -- im Betrieb nie erreichbar. Sie
+    kaeme nur noch im Unit-Test vor.
+
+    Deshalb bleibt `truncated` orthogonal zu `ok`, und deshalb wird das hier
+    AUSGEFUEHRT geprueft und nicht behauptet: der Parser muss aufgerufen
+    worden sein.
+    """
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gemini/gemini-3.6-flash",
+                "choices": [
+                    {"message": {"content": "Der groesste Risik"}, "finish_reason": "length"}
+                ],
+            },
+            request=request,
+        )
+
+    def parser(body: dict[str, Any]) -> str:
+        gesehen["aufgerufen"] = True
+        gesehen["finish_reason"] = body["choices"][0]["finish_reason"]
+        return str(body["choices"][0]["message"]["content"])
+
+    anfrage: LiteLLMRequest[str] = LiteLLMRequest(
+        parser=parser, payload={"messages": [], "max_tokens": 1024}
+    )
+
+    ergebnis = await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=anfrage,
+        settings=_settings("primary"),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert gesehen.get("aufgerufen"), "der Parser wurde uebersprungen — #945 waere tot"
+    assert gesehen["finish_reason"] == "length"
+
+    assert ergebnis.outcome is not None
+    trace = ergebnis.outcome.litellm_attempts[0].trace
+    assert trace.truncated is True
+    assert trace.ok, "Transport erfolgreich — das Urteil faellt die Runtime"
+    assert trace.detail["max_tokens"] == 1024
+
+
 async def _value(value: str) -> str:
     return value
 
