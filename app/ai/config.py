@@ -33,6 +33,25 @@ class InferenceSettings(BaseSettings):
             "stt": "kai-stt",
         }
     )
+    #: Logische Route -> Denkbudget in Token. LEER heisst: kein Parameter, also
+    #: unveraendertes Verhalten des Modells.
+    #:
+    #: Am 2026-09-08 auf kai-pi5 gemessen, `gemini/gemini-2.5-flash`, derselbe
+    #: Prompt:
+    #:
+    #:   ohne Parameter   381 Denk-Token, 15 Text-Token, 0,0009957 USD, 3632 ms
+    #:   Budget 128       104 Denk-Token, 45 Text-Token, 0,0003782 USD, 2354 ms
+    #:   Budget 0           0 Denk-Token, 42 Text-Token, 0,0001107 USD,  772 ms
+    #:
+    #: Der Faktor zwischen "denken" und "nicht denken" ist 9, bei fuenffacher
+    #: Geschwindigkeit -- und die Antwort wurde dabei laenger, nicht kuerzer.
+    #: Ob sie BESSER war, sagt diese Messung nicht; das ist der Grund, warum es
+    #: ein Regler ist und keine Vorgabe.
+    #:
+    #: Bewusst ein Token-Budget und keine Stufe: `reasoning_effort="low"` wurde
+    #: in derselben Messung durchgereicht und blieb wirkungslos (380 statt 381
+    #: Denk-Token). Wer es setzte, glaubte zu sparen und sparte nichts.
+    route_reasoning_budget: dict[str, int] = Field(default_factory=dict)
     litellm_base_url: str = Field(default="http://127.0.0.1:4000")
     litellm_api_key: str = Field(default="", repr=False)
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)

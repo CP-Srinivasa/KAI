@@ -194,6 +194,35 @@ def _budget_gate(route: str, lage: BudgetStatus) -> None:
     raise BudgetExceeded(route=route, state=lage.state, reason=lage.reason)
 
 
+def _mit_denkbudget(
+    payload: dict[str, Any] | None, configured: InferenceSettings, route: str
+) -> dict[str, Any] | None:
+    """Das Denkbudget der Route in die Nutzlast legen -- oder nichts tun.
+
+    Der teuerste Posten eines Aufrufs ist bei denkenden Modellen nicht die
+    Antwort, sondern der Weg dorthin: am 2026-09-08 gingen 96 Prozent der Kosten
+    eines `gemini/gemini-2.5-flash`-Aufrufs auf `reasoning`. Das ist ein Regler,
+    und ohne Eintrag wird er nicht angefasst -- der Aufrufer bestimmt seine
+    Nutzlast, diese Funktion ergaenzt nur, was die Route vorgibt.
+
+    `0` ist ein GUELTIGER Wert und der wirksamste: er schaltet das Denken ab.
+    Eine Pruefung auf Wahrheitswert statt auf `None` haette ausgerechnet die
+    Einstellung verschluckt, die den Faktor 9 bringt.
+
+    Eine bereits gesetzte Angabe des Aufrufers bleibt stehen. Er weiss mehr
+    ueber seinen Fall als eine Routen-Vorgabe, und ein stilles Ueberschreiben
+    waere eine zweite Autoritaet ueber dieselbe Zahl.
+    """
+    budget = configured.route_reasoning_budget.get(route)
+    if budget is None:
+        return payload
+    if payload is not None and "thinking" in payload:
+        return payload
+    ergaenzt = dict(payload or {})
+    ergaenzt["thinking"] = {"type": "enabled", "budget_tokens": max(0, budget)}
+    return ergaenzt
+
+
 async def invoke[T](
     *,
     purpose: Purpose,
@@ -362,7 +391,7 @@ async def invoke[T](
                     monotonic=clock,
                     correlation_id=active_correlation,
                     endpoint=litellm.endpoint,
-                    payload=litellm.payload,
+                    payload=_mit_denkbudget(litellm.payload, configured, route),
                     files=litellm.files,
                     data=litellm.data,
                 )
