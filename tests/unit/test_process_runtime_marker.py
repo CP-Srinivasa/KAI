@@ -833,3 +833,80 @@ def test_haltbarkeit_b_soll_und_ist_bleiben_getrennt() -> None:
     assert "checkout_sha=checkout_sha" in src
     assert 'expected_sha=str(deploy.get("repo_sha") or "")' in src
     assert "checkout_sha=expected_sha" not in src, "Soll und Ist wieder vertauscht"
+
+
+# --------------------------------------------------------------------------
+# Die Umgebung ueberlebt das Selbstbezeugen — sonst startet der Transport blind.
+# --------------------------------------------------------------------------
+
+
+def test_runtime_exec_reicht_die_anbieter_geheimnisse_unveraendert_weiter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``runtime-exec`` bezeugt, es filtert nicht.
+
+    Zwischen ``EnvironmentFile`` und dem Transportprozess liegt dieser Wrapper.
+    ``os.execv`` vererbt die Umgebung vollstaendig; ein Wechsel auf ``os.execve``
+    mit zusammengestellter Umgebung waere die stille Variante des Fehlers — der
+    Proxy startete, und erst der erste echte Aufruf fiele durch.
+
+    Darum wird hier NICHT injiziert: ``os.execv`` selbst wird ersetzt. Baut
+    jemand den Standardweg auf ``execve`` um, wird diese Attrappe nie gerufen
+    und der Test faellt, statt an der Injektion vorbeizulaufen.
+    """
+    geheim = {
+        "GEMINI_API_KEY": "probe-value-for-gemini",
+        "OPENAI_API_KEY": "probe-value-for-openai",
+        "LITELLM_MASTER_KEY": "probe-value-for-master",
+    }
+    for name, wert in geheim.items():
+        monkeypatch.setenv(name, wert)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    gesehen: list[dict[str, str]] = []
+
+    def fake_execv(path: str, argv: Sequence[str]) -> None:
+        # Die Umgebung, die der Dienst erben WUERDE.
+        gesehen.append(dict(os.environ))
+
+    monkeypatch.setattr(os, "execv", fake_execv)
+    monkeypatch.setattr(os, "chdir", lambda _pfad: None)
+
+    self_attest_and_exec(
+        _FrozenIdentity(NEW, LOCK, "2026-09-02T05:00:00+00:00"),
+        unit="kai-litellm.service",
+        repo_root=tmp_path,
+        argv=["/x/pi_transport_exec.sh", "litellm"],
+    )
+
+    assert gesehen, "os.execv wurde nicht gerufen — der Standardweg vererbt nicht mehr"
+    geerbt = gesehen[0]
+    for name, wert in geheim.items():
+        assert geerbt.get(name) == wert, f"{name} erreicht den Transport nicht unveraendert"
+    # Was nicht gesetzt war, wird nicht erfunden.
+    assert "XAI_API_KEY" not in geerbt
+
+
+def test_der_marker_traegt_kein_anbieter_geheimnis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der Marker liegt dauerhaft auf der Platte und geht in jedes Backup.
+
+    Er beschreibt Herkunft — Commit, PID, Startzeit. Ein Schluessel darin waere
+    ein Geheimnis in einem Artefakt, das absichtlich weitergereicht wird.
+    """
+    wert = "probe-value-for-gemini"
+    monkeypatch.setenv("GEMINI_API_KEY", wert)
+    monkeypatch.setattr(os, "execv", lambda _p, _a: None)
+    monkeypatch.setattr(os, "chdir", lambda _pfad: None)
+
+    self_attest_and_exec(
+        _FrozenIdentity(NEW, LOCK, "2026-09-02T05:00:00+00:00"),
+        unit="kai-litellm.service",
+        repo_root=tmp_path,
+        argv=["/x/pi_transport_exec.sh", "litellm"],
+    )
+
+    roh = marker_path("kai-litellm.service", root=tmp_path).read_text(encoding="utf-8")
+    assert wert not in roh
+    assert "GEMINI_API_KEY" not in roh

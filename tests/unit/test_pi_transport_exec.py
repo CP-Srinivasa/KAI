@@ -74,6 +74,7 @@ def _baum(
     shebang: str | None = None,
     binary_path: str | None = None,
     transport_name: str | None = None,
+    rumpf: str | None = None,
 ) -> Path:
     """Ein Baum, wie ihn ``pi_make_transport.sh`` hinterlaesst.
 
@@ -99,7 +100,10 @@ def _baum(
     ).hexdigest()
 
     bin_datei = binaer / name
-    _schreibe(bin_datei, (shebang or "#!/bin/sh") + NEUZEILE + 'echo "GESTARTET $*"' + NEUZEILE)
+    _schreibe(
+        bin_datei,
+        (shebang or "#!/bin/sh") + NEUZEILE + (rumpf or 'echo "GESTARTET $*"') + NEUZEILE,
+    )
     _ausfuehrbar(bin_datei)
 
     _schreibe(
@@ -117,10 +121,16 @@ def _baum(
     return baum
 
 
-def _lauf(skript: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _lauf(
+    skript: Path, *args: str, umgebung: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     assert _BASH is not None
     return subprocess.run(  # noqa: S603
-        [_BASH, str(skript), *args], capture_output=True, text=True, check=False
+        [_BASH, str(skript), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=umgebung,
     )
 
 
@@ -333,3 +343,144 @@ def test_das_skript_installiert_und_startet_nichts_anderes() -> None:
     quelle = SKRIPT.read_text(encoding="utf-8")
     for verboten in ("systemctl", "sudo", "daemon-reload", "pip install", "ln -s"):
         assert verboten not in quelle, verboten
+
+
+# ---------------------------------------------------------------------------
+# Die Geheimnisse der Anbieter — von der EnvironmentFile bis in den Transport.
+# ---------------------------------------------------------------------------
+#
+# Am 2026-09-09 lautete der Verdacht, `GEMINI_API_KEY` gehe auf dem Weg
+# systemd -> runtime-exec -> dieses Skript -> LiteLLM verloren. Er tat es nicht:
+# auf kai-pi5 lag der Schluessel byte-identisch im laufenden Prozess. Die
+# Fehlmessung entstand daneben, nicht in der Kette.
+#
+# Die Kette war also richtig und war nirgends festgehalten. Genau das schliesst
+# dieser Abschnitt: nicht Gemini, sondern die KLASSE. Das Skript exec't, und
+# `exec` vererbt die Umgebung vollstaendig — ein spaeter eingezogener
+# "Sanitizer" waere still, weil ein Proxy ohne Schluessel erst beim ersten
+# echten Aufruf auffaellt, nicht beim Start.
+
+#: Anbieter-Geheimnisse, die den Transportprozess erreichen muessen, plus der
+#: Proxy-Schluessel. Keine Gemini-Sonderlocke: wer eine Route auf einen neuen
+#: Anbieter stellt, traegt dessen Namen hier ein.
+_GEHEIMNISSE = (
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "XAI_API_KEY",
+    "LITELLM_MASTER_KEY",
+)
+
+#: Der Rumpf meldet ausschliesslich VORHANDENSEIN. Ein Test, der Werte ausgibt,
+#: schriebe sie ins CI-Protokoll und waere selbst das Leck, das er sucht.
+_MELDET_PRAESENZ = NEUZEILE.join(
+    f'if [ -n "${{{name}:-}}" ]; then echo "{name}=SET"; else echo "{name}=MISSING"; fi'
+    for name in _GEHEIMNISSE
+)
+
+#: Erkennbar, aber kein echtes Schluesselformat.
+_WERT = {name: f"probe-value-for-{name.lower()}" for name in _GEHEIMNISSE}
+
+
+def _umgebung_mit_geheimnissen() -> dict[str, str]:
+    umgebung = dict(os.environ)
+    umgebung.update(_WERT)
+    return umgebung
+
+
+def _umgebung_ohne_geheimnisse() -> dict[str, str]:
+    umgebung = dict(os.environ)
+    for name in _GEHEIMNISSE:
+        umgebung.pop(name, None)
+    return umgebung
+
+
+def test_die_anbieter_geheimnisse_erreichen_den_transportprozess(tmp_path: Path) -> None:
+    """Der Beweis, den der Verdacht vom 2026-09-09 verlangt hat — als Kontrolle."""
+    wurzel = tmp_path / "transport"
+    _baum(wurzel, rumpf=_MELDET_PRAESENZ)
+    skript = _skript_mit_wurzel(tmp_path, wurzel)
+
+    fertig = _lauf(skript, "litellm", umgebung=_umgebung_mit_geheimnissen())
+
+    assert fertig.returncode == 0, fertig.stderr
+    for name in _GEHEIMNISSE:
+        assert f"{name}=SET" in fertig.stdout, f"{name} erreicht den Transport nicht"
+
+
+def test_ein_fehlendes_geheimnis_wird_nicht_erfunden(tmp_path: Path) -> None:
+    """Kein Platzhalter, kein Leerstring, keine Vorgabe aus dem Skript.
+
+    Ein erfundener Wert waere schlimmer als ein fehlender: der Proxy startete,
+    und der Fehler zeigte sich erst als Anbieter-Ablehnung mitten im Betrieb.
+    """
+    wurzel = tmp_path / "transport"
+    _baum(wurzel, rumpf=_MELDET_PRAESENZ)
+    skript = _skript_mit_wurzel(tmp_path, wurzel)
+
+    fertig = _lauf(skript, "litellm", umgebung=_umgebung_ohne_geheimnisse())
+
+    assert fertig.returncode == 0, fertig.stderr
+    for name in _GEHEIMNISSE:
+        assert f"{name}=MISSING" in fertig.stdout, f"{name} wurde erfunden"
+
+
+def test_die_kontrolle_schlaegt_bei_einem_eingezogenen_sanitizer_fehl(tmp_path: Path) -> None:
+    """Gegenprobe: veraenderte Kulisse, sonst prueft der Nachweis oben nichts.
+
+    Hier bekommt das Skript genau die Zeile, die ein gut gemeinter Sanitizer
+    einzoege. Meldet die Sonde dann immer noch SET, misst sie nicht die
+    Weitergabe, sondern ihre eigene Umgebung.
+    """
+    wurzel = tmp_path / "transport"
+    _baum(wurzel, rumpf=_MELDET_PRAESENZ)
+    skript = _skript_mit_wurzel(tmp_path, wurzel)
+
+    quelle = skript.read_text(encoding="utf-8")
+    marke = 'exec "$BINARY" "$@"'
+    assert marke in quelle, "der exec steht nicht mehr, wo die Gegenprobe ihn ersetzt"
+    _schreibe(
+        skript,
+        quelle.replace(marke, "unset " + " ".join(_GEHEIMNISSE) + NEUZEILE + marke),
+    )
+
+    fertig = _lauf(skript, "litellm", umgebung=_umgebung_mit_geheimnissen())
+
+    assert fertig.returncode == 0, fertig.stderr
+    for name in _GEHEIMNISSE:
+        assert f"{name}=MISSING" in fertig.stdout, (
+            f"{name} ueberlebte ein `unset` — die Sonde misst nicht die Weitergabe"
+        )
+
+
+def test_kein_geheimnis_steht_im_protokoll_des_transports(tmp_path: Path) -> None:
+    """Das Skript schreibt Provenienz, nicht Umgebung.
+
+    Die Ausgabe landet per ``StandardError=append:`` in einer Logdatei, die
+    Backups und Diagnosen mitnehmen. Ein Wert darin waere dauerhaft.
+    """
+    wurzel = tmp_path / "transport"
+    _baum(wurzel, rumpf=_MELDET_PRAESENZ)
+    skript = _skript_mit_wurzel(tmp_path, wurzel)
+
+    fertig = _lauf(skript, "litellm", umgebung=_umgebung_mit_geheimnissen())
+
+    assert "TRANSPORT_VERIFIED" in fertig.stderr
+    for name, wert in _WERT.items():
+        assert wert not in fertig.stdout, name
+        assert wert not in fertig.stderr, name
+
+
+def test_das_skript_traegt_keinen_umgebungs_filter() -> None:
+    """Statischer Ratchet gegen die stille Variante des Fehlers.
+
+    Der ausfuehrbare Nachweis oben prueft das Verhalten. Diese Kontrolle
+    verhindert, dass jemand den Filter einzieht und den Nachweis gleich mit
+    anpasst, ohne dass die Absicht im Diff sichtbar wird.
+    """
+    quelle = SKRIPT.read_text(encoding="utf-8")
+    code = NEUZEILE.join(z for z in quelle.splitlines() if not z.lstrip().startswith("#"))
+
+    for verboten in ("env -i", "--ignore-environment", "unset ", "export "):
+        assert verboten not in code, f"das Skript greift in die Umgebung ein: {verboten!r}"
+    assert 'exec "$BINARY" "$@"' in code, "der exec muss die Umgebung vollstaendig vererben"
