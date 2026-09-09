@@ -94,3 +94,46 @@ describe("vite.config.ts — H6 Dev-Guard verdrahtet", () => {
     expect(JSON.stringify(cfg)).not.toContain("127.0.0.1");
   });
 });
+
+/**
+ * 2026-09-08: Der Proxy deckte `/api/*` und `/signals/*` nicht ab. Betroffene
+ * Panels waren lokal immer rot und in Produktion gruen — die gefaehrlichste
+ * Sorte Abweichung, weil sie die lokale Verifikation still entwertet.
+ *
+ * Der Test leitet die geforderten Praefixe aus den TATSAECHLICH aufgerufenen
+ * Pfaden in `lib/api.ts` ab, statt eine zweite Liste zu pflegen. Eine wiederholte
+ * Liste wuerde beim naechsten neuen Endpunkt genauso still veralten wie der
+ * Proxy selbst.
+ */
+describe("Vite-Proxy deckt alle benutzten Pfad-Praefixe ab", () => {
+  it("kennt jeden Praefix, den lib/api.ts anspricht", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const apiSrc = fs.readFileSync(path.join(here, "api.ts"), "utf-8");
+
+    // VOLLSTAENDIGE Pfade sammeln, nicht nur den ersten Abschnitt: der Proxy
+    // fuehrt teils zweistufige Praefixe ("/dashboard/api"), und ein auf
+    // "/dashboard" gekuerzter Vergleich meldete faelschlich eine Luecke.
+    const used = new Set<string>();
+    for (const m of apiSrc.matchAll(/api(?:Get|Post)(?:<[^>]*>)?\(\s*[`"'](\/[a-z0-9\-/]*)/gi)) {
+      used.add(m[1].toLowerCase().replace(/\/$/, ""));
+    }
+
+    // Gegenprobe gegen den eigenen Leerlauf: findet die Regex nichts mehr,
+    // waere dieser Test trivial gruen.
+    expect(used.size).toBeGreaterThanOrEqual(5);
+
+    process.env[BASE_VAR] = LOCAL_DEV_BASE;
+    process.env[OPT_IN_VAR] = "1";
+    const cfg = factory({ command: "serve", mode: "development" });
+    const proxied = Object.keys(cfg.server?.proxy ?? {});
+
+    const missing = [...used].filter(
+      (prefix) => !proxied.some((p) => prefix === p || prefix.startsWith(p + "/")),
+    );
+    expect(missing).toEqual([]);
+  });
+});

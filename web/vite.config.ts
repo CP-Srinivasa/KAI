@@ -72,10 +72,20 @@ export default defineConfig((configEnv) => {
           server: {
             host: true,
             port: 5173,
+            // 2026-09-08: `/api` und `/signals` fehlten hier. Betroffene Panels
+            // (PremiumRuntimeBanner, SignalHeatmap, useKaiState,
+            // DiversificationPanel, ExecutiveSnapshot, SignalPasteForm) waren
+            // lokal IMMER rot und in Produktion gruen — wer eine Aenderung am
+            // Fehler- oder Ladeverhalten lokal verifizierte, mass dort das
+            // Falsche. viteConfigGuard.test.ts leitet die geforderten Praefixe
+            // aus den tatsaechlich benutzten Pfaden in lib/api.ts ab, statt eine
+            // zweite Liste zu pflegen, die genauso still veralten wuerde.
             proxy: {
               "/health": proxied,
               "/dashboard/api": proxied,
               "/operator": proxied,
+              "/api": proxied,
+              "/signals": proxied,
               "/alerts": proxied,
               "/sources": proxied,
               "/research": proxied,

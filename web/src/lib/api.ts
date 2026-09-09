@@ -162,7 +162,30 @@ async function parseOrThrow<T>(res: Response, path: string): Promise<T> {
   throw new ApiError("bad_response", res.status, path, message, code, requestId);
 }
 
-export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
+// In-flight-Deduplizierung fuer GETs.
+//
+// 2026-09-08: Ein Dashboard-Mount feuert 29 Requests auf 22 distinkte Endpoints —
+// 7 davon sind Duplikate, weil mehrere Panels dieselbe Quelle brauchen
+// (/dashboard/api/quality 3x, /operator/portfolio-snapshot 3x,
+// /operator/exposure-summary 2x, /health 2x, /dashboard/api/lightning 2x).
+// Der SERVER dedupliziert bereits (SingleFlightCache), der Client nicht — die
+// Ersparnis verpuffte auf der Leitung, weil jeder Round-Trip trotzdem durch
+// Tunnel und Auth-Middleware ging. Der Browser deckelt zudem bei ~6 Verbindungen
+// pro Origin, also verzoegerten die Duplikate die uebrigen Panels aktiv.
+//
+// Bewusst NUR waehrend der Flugphase: kein Zeit-Cache, keine zweite Wahrheit
+// ueber dem Server-Zustand. Zwei Aufrufer, die im selben Moment dasselbe holen,
+// teilen sich eine Antwort — mehr nicht. Sobald sie da ist, ist der Eintrag weg.
+const _inflight = new Map<string, Promise<unknown>>();
+
+function _dedupeKey(path: string, init?: RequestInit): string | null {
+  // Nur der einfache Fall wird geteilt. Sobald ein Aufrufer eigene Header setzt,
+  // ist die Antwort moeglicherweise eine andere — dann kein Sharing.
+  if (init?.headers) return null;
+  return path;
+}
+
+async function _rawGet<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const res = await fetch(path, {
       ...init,
@@ -174,6 +197,33 @@ export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
     if (e instanceof ApiError) throw e;
     throw new ApiError("network", 0, path, (e as Error).message || "network error");
   }
+}
+
+export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
+  const key = _dedupeKey(path, init);
+  if (key === null) return _rawGet<T>(path, init);
+
+  const running = _inflight.get(key);
+  if (running !== undefined) {
+    // Das eigene AbortSignal gilt weiterhin fuer DIESEN Aufrufer: bricht er ab,
+    // bekommt er den Fehler, der geteilte Request laeuft fuer die anderen weiter.
+    // Ein `signal.abort()` darf nie die Antwort eines fremden Panels wegreissen.
+    if (init?.signal?.aborted) throw new ApiError("network", 0, path, "aborted");
+    return running as Promise<T>;
+  }
+
+  // Der geteilte Request laeuft OHNE fremdes Signal — sonst kappt der erste
+  // Abbrecher die Antwort aller Mitleser.
+  const shared = _rawGet<T>(path).finally(() => {
+    _inflight.delete(key);
+  });
+  _inflight.set(key, shared as Promise<unknown>);
+  return shared;
+}
+
+/** Nur fuer Tests: die Flugphase leeren, damit Faelle sich nicht vererben. */
+export function _resetInflightForTests(): void {
+  _inflight.clear();
 }
 
 export async function apiPost<T>(

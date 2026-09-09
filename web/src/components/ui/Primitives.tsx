@@ -1,4 +1,13 @@
-import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 /* ---------- Card / Panel ---------- */
@@ -265,11 +274,47 @@ export function InfoHint({
   triggerClassName?: string;
 }) {
   const sidePos = side === "left" ? "right-0" : "left-0";
+  // 2026-09-08: Der Tooltip stand PERMANENT im DOM und war nur per `opacity-0`
+  // versteckt. Damit lag er im Accessibility-Tree, in der Textauswahl und in
+  // jedem Kopiervorgang — der Erklaertext war buchstaeblich Teil des Fliesstexts
+  // ("die Erklaerungen laufen ineinander"). Zusaetzlich trug er `role="tooltip"`
+  // ohne `id`, und der Trigger hatte kein `aria-describedby`: Screenreader
+  // hoerten "Erklaerung: ADX" und nie den Inhalt.
+  const [open, setOpen] = useState(false);
+  const tooltipId = useId();
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open]);
+
   return (
-    <span className={cn("relative inline-flex items-center group", className)}>
+    <span
+      ref={wrapRef}
+      className={cn("relative inline-flex items-center", className)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
       <button
         type="button"
         aria-label={`Erklaerung: ${label}`}
+        aria-expanded={open}
+        aria-describedby={open ? tooltipId : undefined}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((v) => !v)}
         className={cn(
           "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full",
           "border border-info/40 bg-bg-2 text-info text-[9px] font-bold leading-none",
@@ -280,23 +325,23 @@ export function InfoHint({
       >
         i
       </button>
-      <span
-        role="tooltip"
-        className={cn(
-          "pointer-events-none absolute top-full mt-1.5 z-30 w-64 max-w-[80vw]",
-          sidePos,
-          "rounded-md border border-info/40 bg-bg-1 px-2.5 py-2",
-          "text-2xs leading-relaxed text-fg shadow-panel glow-info",
-          "opacity-0 translate-y-1 transition-all duration-150",
-          "group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto",
-          "group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto",
-        )}
-      >
-        <span className="block text-2xs font-semibold uppercase tracking-wider text-info mb-1">
-          {label}
+      {open && (
+        <span
+          id={tooltipId}
+          role="tooltip"
+          className={cn(
+            "absolute top-full mt-1.5 z-30 w-64 max-w-[80vw]",
+            sidePos,
+            "rounded-md border border-info/40 bg-bg-1 px-2.5 py-2",
+            "text-2xs leading-relaxed text-fg shadow-panel glow-info",
+          )}
+        >
+          <span className="block text-2xs font-semibold uppercase tracking-wider text-info mb-1">
+            {label}
+          </span>
+          <span className="block text-fg-muted">{hint}</span>
         </span>
-        <span className="block text-fg-muted">{hint}</span>
-      </span>
+      )}
     </span>
   );
 }
