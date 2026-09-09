@@ -17,7 +17,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.ai.audit import is_retryable_error, note_retry_attempt
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
-from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
+from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT, format_user_prompt
 
 _MAX_TEXT_CHARS = 10000
 
@@ -98,7 +98,7 @@ class GeminiAnalysisProvider(BaseAnalysisProvider):
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=LLMAnalysisOutput,
-            system_instruction=SYSTEM_PROMPT_V1,
+            system_instruction=ACTIVE_SYSTEM_PROMPT,
             temperature=0.1,
         )
 

@@ -49,7 +49,11 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: v6 (2026-09-09): `truncated`. `finish_reason` stand schon in der Zeile, aber
 #: ein Leser musste wissen, dass "length" abgeschnitten bedeutet. Der Zustand
 #: gehoert benannt, nicht hergeleitet.
-SCHEMA_VERSION = "v6"
+#: v7 (2026-09-09): die Provenienz des Analyse-SYSTEM-Prompts. Ohne sie waere
+#: ein Prompt-Versionswechsel nur nominell auditierbar -- V1- und V2-Laeufe
+#: liessen sich nur ueber den Zeitstempel des Umschaltmoments trennen, den
+#: niemand in der Datei sieht. Das ist Rekonstruktion, kein Audit.
+SCHEMA_VERSION = "v7"
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
@@ -196,6 +200,17 @@ def record_llm_call(
     #: Zeile, DASS abgeschnitten wurde, aber nicht wogegen -- und das ist die
     #: naechste Frage. `None`, wenn der Aufrufer keinen gesetzt hat.
     max_tokens: int | None = None,
+    # --- v7 (2026-09-09) --------------------------------------------------
+    #: Semantische Version des tatsaechlich verwendeten Analyse-SYSTEM-Prompts.
+    #: `None` heisst: dieser Aufruf hat keinen Analyse-System-Prompt benutzt
+    #: (etwa STT oder Chat) ODER die Zeile stammt aus der Zeit vor diesem Feld.
+    #: NIEMALS still auf "v1" defaulten -- eine historische Zeile rueckwirkend
+    #: zu etikettieren behauptete eine Messung, die es nicht gab.
+    analysis_system_prompt_version: str | None = None,
+    #: sha256 ueber den effektiv gesendeten SYSTEM-Prompt-Text. Deckt die
+    #: Nutzerhaelfte ausdruecklich NICHT ab: die entsteht pro Dokument und waere
+    #: in jeder Zeile eine andere.
+    analysis_system_prompt_hash: str | None = None,
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
     row: dict[str, Any] = {
@@ -257,6 +272,9 @@ def record_llm_call(
         "transport_retries": transport_retries,
         "truncated": truncated,
         "max_tokens": max_tokens,
+        # --- v7: Prompt-Provenienz ----------------------------------------
+        "analysis_system_prompt_version": analysis_system_prompt_version,
+        "analysis_system_prompt_hash": analysis_system_prompt_hash,
     }
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]
