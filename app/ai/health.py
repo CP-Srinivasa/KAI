@@ -17,6 +17,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+# Der Marker fuer lokale Abweisungen wohnt neben der Ausnahme, die ihn erzeugt.
+from app.ai.budget import LOCAL_REFUSAL_ERROR_TYPES
+
 # Eine Zaehlebene, ein Definitionsort: die Primitive wohnen in app.ai.spend.
 from app.ai.spend import dedupe_chain_levels, is_ai_row, row_ts
 from app.observability.llm_telemetry import (
@@ -82,14 +85,38 @@ def _classify_state(calls: int, failures: int, consecutive_failures: int) -> str
     return "ok"
 
 
+def _is_local_refusal(row: dict[str, Any]) -> bool:
+    """Wurde dieser Aufruf abgelehnt, bevor ein Provider kontaktiert wurde?
+
+    Am 2026-09-09 stand auf kai-pi5 ``openai: state=error,
+    status_reason=recent_calls_down`` — bei 308 erfolgreichen Aufrufen und null
+    Anbieterfehlern. Die fuenf "Fehler" waren Budget-Abweisungen: das
+    Tageslimit war um 12:04 UTC erreicht, jeder weitere Routineaufruf wurde
+    lokal verworfen (``http_status: null``, ``prompt_tokens: 0``, 200 ms). Das
+    Gateway hat davor gewarnt und die typisierte Ausnahme genau dafuer gebaut
+    (``app/ai/gateway.py`` "ein Budgetende darf nicht wie ein Ausfall
+    aussehen"); die Gesundheitsschicht las den Marker nur nicht.
+    """
+    error_type = row.get("error_type")
+    return isinstance(error_type, str) and error_type in LOCAL_REFUSAL_ERROR_TYPES
+
+
 def _provider_block(
     name: str, rows: list[dict[str, Any]], *, configured: bool, enabled: bool
 ) -> dict[str, Any]:
-    calls = len(rows)
-    failures = sum(1 for row in rows if not row.get("ok", False))
+    # Erreichbarkeit wird AUSSCHLIESSLICH aus echten Anbieterkontakten
+    # abgeleitet. Eine lokale Abweisung hat den Anbieter nie erreicht: sie
+    # gehoert weder in ``failures`` noch in die Latenzverteilung (eine
+    # 200-ms-Absage verschoebe p50 und p95 nach unten und liesse einen
+    # langsamen Anbieter schnell aussehen).
+    contacts = [row for row in rows if not _is_local_refusal(row)]
+    local_refusals = len(rows) - len(contacts)
+
+    calls = len(contacts)
+    failures = sum(1 for row in contacts if not row.get("ok", False))
 
     latencies: list[float] = []
-    for row in rows:
+    for row in contacts:
         try:
             latencies.append(float(row.get("latency_ms", 0.0)))
         except (TypeError, ValueError):
@@ -98,7 +125,7 @@ def _provider_block(
 
     last_ok_ts: str | None = None
     last_error_class: str | None = None
-    for row in rows:
+    for row in contacts:
         if row.get("ok", False):
             last_ok_ts = str(row.get("ts")) if row.get("ts") else last_ok_ts
         else:
@@ -106,7 +133,7 @@ def _provider_block(
             last_error_class = str(error_class) if error_class else last_error_class
 
     consecutive_failures = 0
-    for row in reversed(rows):
+    for row in reversed(contacts):
         if row.get("ok", False):
             break
         consecutive_failures += 1
@@ -117,7 +144,12 @@ def _provider_block(
     elif not enabled:
         state, reason = "disabled", "not_in_enabled_chain"
     elif not calls:
-        state, reason = "unavailable", "no_recent_calls"
+        # Ohne Kontakt gibt es keinen gemessenen Anbieterzustand. Der Grund
+        # dafuer ist aber nicht derselbe: "es rief niemand an" und "wir haben
+        # den Anruf selbst verweigert" sind zwei verschiedene Lagen, und nur
+        # die zweite ist von uns behebbar.
+        state = "unavailable"
+        reason = "no_provider_contact_local_refusal" if local_refusals else "no_recent_calls"
     else:
         state = "error" if observed in {"down", "degraded"} else "ok"
         reason = "recent_calls_" + observed
@@ -135,6 +167,10 @@ def _provider_block(
         "last_ok_ts": last_ok_ts,
         "last_error_class": last_error_class,
         "consecutive_failures": consecutive_failures,
+        # Nicht verschwiegen, nur nicht als Anbieterfehler gezaehlt: die
+        # Abweisungen bleiben sichtbar, damit niemand aus ``calls`` schliesst,
+        # es habe keine Arbeit gegeben.
+        "local_refusals": local_refusals,
     }
 
 
@@ -189,6 +225,27 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         "fully_accounted_today": heute.fully_accounted,
         "price_table_version": PRICE_TABLE_VERSION,
         "note": _COST_NOTE,
+    }
+
+
+def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Der Budgetzustand, getrennt vom Anbieterzustand und in dessen Sprache.
+
+    Beide Lagen sind operativ verschieden: ein Anbieterausfall wartet man ab
+    oder umgeht ihn ueber die Kette, ein erreichtes Limit ist eine
+    Operator-Entscheidung. Wer sie in einem Feld zusammenzieht, schickt den
+    Operator zum falschen Anbieter — genau das ist am 2026-09-09 passiert.
+    """
+    status = cost.get("status")
+    return {
+        "budget_state": str(status).lower() if isinstance(status, str) else "unknown",
+        "budget_status_reason": str(cost.get("reason") or ""),
+        "routine_calls_blocked": bool(cost.get("blocks_routine", False)),
+        # Wie viele Aufrufe die Abweisung im Fenster tatsaechlich getroffen hat.
+        # Ohne diese Zahl bliebe "limit_reached" eine Ansage ohne Wirkung.
+        "local_refusals_in_window": sum(
+            int(block.get("local_refusals", 0)) for block in provider_blocks
+        ),
     }
 
 
@@ -270,6 +327,10 @@ def ai_health_snapshot(
     # Ohne Aufrufe im Fenster steht dort `unavailable`, nicht `ok`: unbeobachtet
     # ist nicht gesund.
     zustaende = {block["name"]: block["state"] for block in bloecke}
+    # EINE Berechnung, zwei Lesarten: der Budgetblock projiziert den bereits
+    # berechneten Kostenblock, er rechnet nicht nach. Ein zweiter Rechenweg
+    # waere ein zweiter Wahrheitsstand ueber derselben Zahl.
+    kosten = cost_block(path)
     return {
         "ai": {
             "chain": {
@@ -280,7 +341,8 @@ def ai_health_snapshot(
                 "observed": {name: zustaende.get(name, "unavailable") for name in primary + shadow},
             },
             "window_hours": window_hours,
-            "cost": cost_block(path),
+            "cost": kosten,
+            "budget": _budget_block(kosten, bloecke),
             "providers": bloecke,
         }
     }

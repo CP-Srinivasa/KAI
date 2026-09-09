@@ -416,3 +416,309 @@ def test_future_and_naive_rows_cannot_establish_health(tmp_path: Path) -> None:
     block = _providers(ai_health_snapshot(path=path, settings=_settings()))["openai"]
     assert block["calls"] == 0
     assert block["state"] == "unavailable"
+
+
+# ── Budget-Abweisung ist kein Anbieterausfall ────────────────────────────────
+#
+# Am 2026-09-09 meldete kai-pi5 ``openai: state=error,
+# status_reason=recent_calls_down`` — bei 308 erfolgreichen Aufrufen und null
+# Anbieterfehlern. Die fuenf "Fehler" waren Budget-Abweisungen nach Erreichen
+# des Tageslimits um 12:04 UTC. Gemini stand auf ``down`` mit
+# ``failure_rate_pct=100.0``, nachdem sein einziger Aufruf im Fenster ebenfalls
+# eine Abweisung war — der Anbieter wurde in 24 h kein einziges Mal kontaktiert.
+
+
+def _budget_row(provider: str, *, minutes_ago: float = 1.0, nr: int = 0) -> dict[str, Any]:
+    """Eine Zeile, wie das Gateway sie bei ``BudgetExceeded`` schreibt.
+
+    Feldtreu zur Zeile vom Geraet: aeussere Kettenzeile (``chain_position=-1``)
+    ohne innere Gegenstuecke, kein HTTP-Status, keine Tokens, ~200 ms — der
+    Anbieter wurde nie erreicht.
+    """
+    return {
+        "schema_version": "v2",
+        "ts": (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat(),
+        "provider": provider,
+        "model": f"{provider}-model",
+        "role": "primary",
+        "ok": False,
+        "latency_ms": 203.087,
+        "error_type": "BudgetExceeded",
+        "error_class": "unknown",
+        "http_status": None,
+        # Eigene correlation_id je Zeile: die echte Abweisung hat keine inneren
+        # Versuchszeilen, ``dedupe_chain_levels`` darf sie nicht verwerfen.
+        "correlation_id": f"doc_budget_{provider}_{nr}",
+        "call_id": f"llmc_budget_{provider}_{nr}",
+        "purpose": "analysis",
+        "chain_position": -1,
+        "attempt": 1,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "outcome": "exhausted",
+    }
+
+
+def test_single_budget_refusal_is_not_a_provider_failure(tmp_path: Path) -> None:
+    sink = tmp_path / "t.jsonl"
+    _write(sink, [_row("openai", True, minutes_ago=5), _budget_row("openai", minutes_ago=1)])
+
+    openai = _providers(ai_health_snapshot(path=sink, settings=_settings()))["openai"]
+
+    assert openai["calls"] == 1
+    assert openai["failures"] == 0
+    assert openai["failure_rate_pct"] == 0.0
+    assert openai["consecutive_failures"] == 0
+    assert openai["observed_state"] == "ok"
+    assert openai["state"] == "ok"
+    assert openai["status_reason"] == "recent_calls_ok"
+    # Verschwiegen wird sie nicht.
+    assert openai["local_refusals"] == 1
+
+
+def test_three_consecutive_budget_refusals_do_not_trip_the_down_threshold(
+    tmp_path: Path,
+) -> None:
+    """Genau der Schwellenwert, an dem es auf dem Geraet umkippte."""
+    sink = tmp_path / "t.jsonl"
+    _write(
+        sink,
+        [_row("openai", True, minutes_ago=10)]
+        + [_budget_row("openai", minutes_ago=m, nr=m) for m in (3, 2, 1)],
+    )
+
+    openai = _providers(ai_health_snapshot(path=sink, settings=_settings()))["openai"]
+
+    assert openai["consecutive_failures"] == 0
+    assert openai["observed_state"] == "ok"
+    assert openai["state"] != "error"
+    assert openai["status_reason"] != "recent_calls_down"
+    assert openai["local_refusals"] == 3
+
+
+def test_success_and_budget_refusal_mixed_keeps_rate_and_latency_clean(
+    tmp_path: Path,
+) -> None:
+    sink = tmp_path / "t.jsonl"
+    _write(
+        sink,
+        [
+            _row("openai", True, minutes_ago=9, latency_ms=1000.0, correlation_id="r1"),
+            _row("openai", True, minutes_ago=8, latency_ms=1000.0, correlation_id="r2"),
+            _budget_row("openai", minutes_ago=2, nr=1),
+            _budget_row("openai", minutes_ago=1, nr=2),
+        ],
+    )
+
+    openai = _providers(ai_health_snapshot(path=sink, settings=_settings()))["openai"]
+
+    assert openai["calls"] == 2
+    assert openai["failures"] == 0
+    assert openai["failure_rate_pct"] == 0.0
+    # Die 203-ms-Absage darf die Latenzverteilung nicht nach unten ziehen:
+    # ein blockierter Anbieter saehe sonst schneller aus als ein arbeitender.
+    assert openai["latency_p50_ms"] == 1000.0
+    assert openai["latency_p95_ms"] == 1000.0
+    assert openai["local_refusals"] == 2
+
+
+def test_a_real_provider_failure_is_still_counted(tmp_path: Path) -> None:
+    """Die Gegenprobe: der Fix darf echte Ausfaelle nicht mitverstecken."""
+    sink = tmp_path / "t.jsonl"
+    _write(
+        sink,
+        [
+            _row("openai", False, minutes_ago=3, error_class="timeout", correlation_id="r1"),
+            _row("openai", False, minutes_ago=2, error_class="timeout", correlation_id="r2"),
+            _row("openai", False, minutes_ago=1, error_class="auth", correlation_id="r3"),
+        ],
+    )
+
+    openai = _providers(ai_health_snapshot(path=sink, settings=_settings()))["openai"]
+
+    assert openai["calls"] == 3
+    assert openai["failures"] == 3
+    assert openai["failure_rate_pct"] == 100.0
+    assert openai["consecutive_failures"] == 3
+    assert openai["observed_state"] == "down"
+    assert openai["state"] == "error"
+    assert openai["status_reason"] == "recent_calls_down"
+    assert openai["last_error_class"] == "auth"
+    assert openai["local_refusals"] == 0
+
+
+def test_budget_refusal_after_a_success_keeps_the_last_measured_state(
+    tmp_path: Path,
+) -> None:
+    """Der Anbieterzustand bleibt der letzte TATSAECHLICH gemessene."""
+    sink = tmp_path / "t.jsonl"
+    _write(
+        sink,
+        [
+            _row("openai", True, minutes_ago=30, correlation_id="r1"),
+            _budget_row("openai", minutes_ago=2, nr=1),
+        ],
+    )
+
+    openai = _providers(ai_health_snapshot(path=sink, settings=_settings()))["openai"]
+
+    assert openai["observed_state"] == "ok"
+    assert openai["last_ok_ts"] is not None
+    # Der Budget-Pfad setzt keine Anbieter-Fehlerklasse; "unknown" darf nicht
+    # als letzte bekannte Fehlerursache stehenbleiben.
+    assert openai["last_error_class"] is None
+
+
+def test_provider_without_any_real_contact_is_unavailable_not_down(
+    tmp_path: Path,
+) -> None:
+    """Gemini am 2026-09-09: ein Aufruf, eine Abweisung, kein Kontakt."""
+    sink = tmp_path / "t.jsonl"
+    _write(sink, [_row("openai", True, minutes_ago=5), _budget_row("gemini", minutes_ago=1)])
+
+    gemini = _providers(ai_health_snapshot(path=sink, settings=_settings()))["gemini"]
+
+    assert gemini["calls"] == 0
+    assert gemini["failures"] == 0
+    assert gemini["failure_rate_pct"] is None
+    assert gemini["observed_state"] == "unavailable"
+    assert gemini["state"] == "unavailable"
+    assert gemini["state"] != "error"
+    # "Es rief niemand an" und "wir haben selbst abgelehnt" sind zwei Lagen.
+    assert gemini["status_reason"] == "no_provider_contact_local_refusal"
+    assert gemini["local_refusals"] == 1
+
+
+def test_provider_with_no_rows_at_all_still_says_no_recent_calls(tmp_path: Path) -> None:
+    sink = tmp_path / "t.jsonl"
+    _write(sink, [_row("openai", True, minutes_ago=5)])
+
+    gemini = _providers(ai_health_snapshot(path=sink, settings=_settings()))["gemini"]
+
+    assert gemini["observed_state"] == "unavailable"
+    assert gemini["status_reason"] == "no_recent_calls"
+    assert gemini["local_refusals"] == 0
+
+
+def test_budget_block_reports_the_limit_separately_from_the_providers(
+    tmp_path: Path,
+) -> None:
+    sink = tmp_path / "t.jsonl"
+    _write(
+        sink,
+        [_budget_row("openai", minutes_ago=m, nr=m) for m in (3, 2, 1)]
+        + [_budget_row("gemini", minutes_ago=1, nr=9)],
+    )
+
+    snap = ai_health_snapshot(path=sink, settings=_settings())
+    budget = snap["ai"]["budget"]
+
+    assert set(budget) == {
+        "budget_state",
+        "budget_status_reason",
+        "routine_calls_blocked",
+        "local_refusals_in_window",
+    }
+    assert budget["local_refusals_in_window"] == 4
+    # Projektion, kein zweiter Rechenweg: derselbe Zustand wie im Kostenblock.
+    assert budget["budget_state"] == str(snap["ai"]["cost"]["status"]).lower()
+    assert budget["budget_status_reason"] == snap["ai"]["cost"]["reason"]
+    assert budget["routine_calls_blocked"] is bool(snap["ai"]["cost"]["blocks_routine"])
+
+
+def test_endpoint_carries_budget_block_and_local_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nicht deklariert heisst bei Pydantic: still weggeworfen.
+
+    ``ai_health`` baut die Antwort als ``AIHealthResponse(**snapshot["ai"])``.
+    Ein Schluessel, den das Modell nicht kennt, verschwindet ohne Fehler — der
+    Fix waere im Snapshot richtig und an der Leitung unsichtbar.
+    """
+    sink = tmp_path / "llm_telemetry.jsonl"
+    _write(
+        sink,
+        [
+            _row("openai", True, minutes_ago=5, correlation_id="r1"),
+            _budget_row("openai", minutes_ago=1, nr=1),
+        ],
+    )
+    monkeypatch.setattr("app.observability.llm_telemetry.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.health.DEFAULT_TELEMETRY_PATH", sink)
+
+    from app.core.settings import get_settings
+
+    app = FastAPI()
+    app.include_router(health_router)
+    # Ueber die Dependency, nicht ueber das Quellmodul: FastAPI haelt das
+    # Funktionsobjekt fest, ein spaeterer monkeypatch am Modul erreicht es nicht.
+    app.dependency_overrides[get_settings] = _settings
+    body = TestClient(app).get("/health/ai").json()
+
+    assert "budget" in body
+    assert set(body["budget"]) >= {
+        "budget_state",
+        "budget_status_reason",
+        "routine_calls_blocked",
+        "local_refusals_in_window",
+    }
+    assert body["budget"]["local_refusals_in_window"] == 1
+
+    openai = next(p for p in body["providers"] if p["name"] == "openai")
+    assert openai["local_refusals"] == 1
+    assert openai["failures"] == 0
+    assert openai["state"] == "ok"
+
+
+def test_budget_block_names_the_reached_limit_in_the_agreed_words(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Die exakten Felder, an denen der Operator die Lage erkennt.
+
+    Der Replay der echten kai-pi5-Daten am 2026-09-09 konnte diese Zuordnung
+    nicht belegen: lokal war kein Tageslimit gesetzt, der Kostenblock stand
+    deshalb auf ``ok``. Hier steht das Limit — und damit die Abbildung
+    ``LIMIT_REACHED -> limit_reached``.
+    """
+    from app.ai.spend import reset_spend_cache
+    from app.core.ai_cost_settings import reset_ai_cost_settings
+
+    sink = tmp_path / "t.jsonl"
+    teuer = {
+        "schema_version": "v2",
+        "ts": datetime.now(UTC).isoformat(),
+        "provider": "openai",
+        "model": "gpt-4o",
+        "actual_model": "gpt-4o",
+        "ok": True,
+        "latency_ms": 900.0,
+        "chain_position": 0,
+        "correlation_id": "spent",
+        "call_id": "llmc_spent",
+        "purpose": "analysis",
+        "use_case": "news_intelligence",
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "cost_usd": 5.0,
+    }
+    _write(sink, [teuer, _budget_row("openai", minutes_ago=1, nr=1)])
+    monkeypatch.setenv("APP_AI_BUDGET_DAILY_USD", "1.0")
+    reset_ai_cost_settings()
+    reset_spend_cache()
+    try:
+        snap = ai_health_snapshot(path=sink, settings=_settings())
+    finally:
+        reset_ai_cost_settings()
+        reset_spend_cache()
+
+    assert snap["ai"]["budget"] == {
+        "budget_state": "limit_reached",
+        "budget_status_reason": "daily_limit_reached",
+        "routine_calls_blocked": True,
+        "local_refusals_in_window": 1,
+    }
+    # Und der Anbieter bleibt davon unberuehrt: das Limit ist unsere Lage,
+    # nicht seine.
+    openai = _providers(snap)["openai"]
+    assert openai["state"] == "ok"
+    assert openai["failures"] == 0
