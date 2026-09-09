@@ -205,9 +205,19 @@ def _detail(
         if wert is not None:
             ergebnis[feld] = wert
     versuche = _first_header(headers, ("x-litellm-attempted-retries",))
-    if versuche and versuche != "0":
+    if versuche:
         # KAI ist die einzige Retry-Autoritaet (`num_retries: 0` in der YAML).
         # Ein Wert ungleich 0 heisst, dass die Konfiguration nicht gegriffen hat.
+        #
+        # Die 0 wird MITGESCHRIEBEN, und das ist der Punkt. Die erste Fassung
+        # liess sie weg -- "ein Feld, das immer da ist, wird nicht gelesen".
+        # Damit stand in der Zeile `None`, und `None` heisst hier ueberall
+        # UNBEKANNT. Eine gemessene Null als Unbekannt zu fuehren ist dieselbe
+        # Verwechslung wie eine unbekannte Kostenangabe als 0 zu fuehren, nur
+        # in die andere Richtung: wer spaeter fragt, ob der Transport
+        # wiederholt hat, kann "hat nicht" nicht mehr von "wurde nie gemessen"
+        # unterscheiden. Fehlt der Header, bleibt es `None` -- dann ist es
+        # wirklich unbekannt.
         ergebnis["transport_retries"] = versuche
 
     auswahl = body.get("choices")
