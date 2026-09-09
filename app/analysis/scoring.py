@@ -31,6 +31,42 @@ _W_QUALITY: float = 0.05
 _SPAM_CAP_THRESHOLD: float = 0.70
 _SPAM_PRIORITY_CAP: int = 3
 
+# --- Alert-Gate auf der KONTINUIERLICHEN Groesse -----------------------------
+#
+# ``priority`` entsteht aus ``round(raw * 9) + 1``. Eine Ganzzahl-Schwelle ist
+# damit in Wahrheit eine Schwelle auf ``raw``: ``priority >= p`` gilt genau dann,
+# wenn ``raw >= (p - 1.5) / 9``. Fuer p=7 ist das 0.61111.
+#
+# Diese Kante liegt zufaellig zwischen zwei tatsaechlich vorkommenden raw-Werten.
+# Gemessen an 460 echten Entscheidungen (230 Dokumente, zwei Modelle) liegen die
+# raw-Werte in Schritten von 0.005 — das LLM liefert seine Teil-Scores in
+# 0,1-Schritten, die gewichtete Summe erzeugt daraus ein grobes Raster. Direkt
+# an der Kante:
+#
+#     0.61000   1 Dokument   0.00111 UNTER der Kante  -> kein Alert
+#     0.61500   2 Dokumente  0.00389 UEBER der Kante  -> Alert
+#
+# 2,0 % aller Entscheidungen kippen bei einer Stoerung von nur +-0.005, 9,6 % bei
+# +-0.020. Eine Groesse, die das Modell in 0,1-Schritten schaetzt, entscheidet
+# also ueber Abstaende von 0,005.
+#
+# ``ALERT_GATE_RAW`` macht die Schwelle explizit und legt sie auf 0.615: dieselbe
+# Dokumentmenge wie heute (91/91 im Messsatz, null zusaetzlich, null verloren),
+# aber die Kipp-Zone schrumpft von 9 auf 7 Entscheidungen. Die gerundete
+# ``priority`` bleibt unveraendert — sie ist weiterhin die Zahl fuer Anzeige und
+# Sortierung, nur nicht mehr die Entscheidungsgrundlage.
+ALERT_GATE_RAW: float = 0.615
+
+
+def min_priority_as_raw_gate(min_priority: int) -> float:
+    """Die Ganzzahl-Schwelle als Schwelle auf ``raw`` — die Umkehrung der Rundung.
+
+    ``round(raw * 9) + 1 >= p``  <=>  ``raw >= (p - 1.5) / 9``.
+    Fuer Aufrufer, die eine eigene Schwelle fuehren und trotzdem kontinuierlich
+    entscheiden wollen.
+    """
+    return (min_priority - 1.5) / 9.0
+
 
 @dataclass(frozen=True)
 class PriorityScore:
@@ -90,15 +126,24 @@ def is_alert_worthy(
     min_priority: int = 7,
     *,
     spam_probability: float = 0.0,
+    gate_raw: float | None = None,
 ) -> bool:
-    """Return True if document meets the minimum priority threshold for alerts.
+    """Return True if document meets the alert threshold.
 
     spam_probability must be passed separately — it is not stored on AnalysisResult.
-    Spam is always excluded regardless of min_priority.
+    Spam is always excluded regardless of the threshold.
+
+    ``gate_raw`` entscheidet auf der kontinuierlichen Groesse statt auf der
+    gerundeten ``priority`` (siehe ALERT_GATE_RAW). Ohne den Parameter bleibt das
+    alte Verhalten unveraendert — Aufrufer, die weiter ganzzahlig denken, merken
+    nichts.
     """
     if spam_probability > _SPAM_CAP_THRESHOLD:
         return False
     score = compute_priority(result, spam_probability=spam_probability)
+    if gate_raw is not None:
+        # Kontinuierlich: die Entscheidung haengt nicht mehr an der Rundung.
+        return score.raw_score >= gate_raw
     return score.priority >= min_priority
 
 
