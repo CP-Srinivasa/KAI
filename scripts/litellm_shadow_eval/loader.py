@@ -11,7 +11,18 @@ from typing import Any
 
 from scripts.litellm_shadow_eval.models import EvidenceRecord, Side, ValidationIssue
 
-SUPPORTED_SCHEMA_VERSIONS = frozenset({"v1", "v2", "litellm-shadow-eval/v1"})
+#: Welche Zeilen dieser Leser annimmt.
+#:
+#: v3 bis v5 sind rein additive Erweiterungen von v2: jedes Feld, das der Leser
+#: braucht, steht unveraendert an derselben Stelle. Sie fehlten hier trotzdem,
+#: weil der Schreiber seinen Versionswert nie mitgezogen hat -- haette er es
+#: getan, waere jede neue Zeile als UNKNOWN_SCHEMA_VERSION verworfen worden,
+#: ausgerechnet in dem Werkzeug, das die SHADOW-Evidenz auswerten soll.
+#:
+#: Die Menge bleibt eine Aufzaehlung und wird kein Praefix-Vergleich: ein
+#: kuenftiges v6 soll hier ANKOMMEN, nicht stillschweigend durchrutschen. Wer
+#: das Format aendert, sieht dann diese Zeile und entscheidet bewusst.
+SUPPORTED_SCHEMA_VERSIONS = frozenset({"v1", "v2", "v3", "v4", "v5", "litellm-shadow-eval/v1"})
 _SECRET_MARKERS = ("api_key", "authorization", "secret", "token", "password", "audio")
 
 
