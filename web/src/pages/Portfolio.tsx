@@ -3,6 +3,7 @@ import { AlertCircle, RefreshCw, Play, Target, X, Briefcase, ChevronDown, Chevro
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
+import { PanelLoading } from "@/components/ui/PanelState";
 import { useApi } from "@/lib/useApi";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { liveDotProps } from "@/lib/freshness";
@@ -423,6 +424,12 @@ export function PortfolioPage() {
           Paper-Position öffnen, bevor der Operator den Trail/Portfolio liest. */}
       <PremiumRuntimeBanner />
 
+      {/* 2026-09-09: Die Seite kannte nur "ready" und "error". Waehrend
+          /operator/portfolio-snapshot laedt (drei Vollpaesse ueber ein 5,2-MB-
+          Audit plus Marktdaten-Fan-out — auf der Pi mehrere Sekunden), rendern
+          Kapital, Ergebnis, Einstieg und Quelle schlicht nichts. Fuer den
+          Operator ist das ununterscheidbar von "kein Kapital vorhanden". */}
+      {snap.state === "loading" && <PanelLoading label="Portfolio-Snapshot lädt …" />}
       {snap.state === "error" && <ErrorCard kind={snap.error.kind} message={snap.error.message} path="/operator/portfolio-snapshot" />}
 
       {/* DALI-P1: Equity-Decomposition als Bucket-Modell.

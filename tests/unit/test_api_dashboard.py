@@ -549,7 +549,18 @@ def test_priority_gate_endpoint_exposes_reject_semantics(tmp_path: Path) -> None
     }
 
 
-def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path: Path) -> None:
+def test_priority_gate_does_not_claim_underperformance_without_evidence(
+    tmp_path: Path,
+) -> None:
+    """2026-09-09: n=8 gegen n=8 ohne Konfidenzintervalle traegt kein Urteil.
+
+    Der Test hiess vorher ``..._marks_negative_priority_lift_as_underperforming``
+    und schrieb die reine Vorzeichen-Regel fest. Live fuehrte genau die dazu,
+    dass -8,14 pp bei ueberlappenden Wilson-CIs (60,6-77,4 gegen 65,1-86,8) als
+    ``critical`` und "High-P trifft AKTIV SCHLECHTER" auf dem Dashboard stand.
+    Die Unterperformance wird weiterhin erkannt — aber nur mit disjunkten CIs,
+    siehe den Test darunter.
+    """
     recent = datetime.now(UTC).isoformat()
     (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
     (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
@@ -583,7 +594,51 @@ def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path:
     assert r.status_code == 200
     priority_quality = r.json()["priority_quality"]
     assert priority_quality["high_priority_lift_pct"] == -12.5
+    assert priority_quality["current_quality_verdict"] == "priority_inconclusive"
+    assert priority_quality["significant"] is False
+    # Die Zahl bleibt sichtbar und die Einordnung ehrlich — sie wird nur nicht
+    # mehr als belegte Unterperformance ausgegeben.
+    assert priority_quality["warning"]
+
+
+def test_priority_gate_flags_underperformance_when_intervals_are_disjoint(
+    tmp_path: Path,
+) -> None:
+    """Mit disjunkten Wilson-CIs ist die Unterperformance ein echter Befund."""
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"started_at": recent, "status": "priority_rejected"}) + "\n",
+        encoding="utf-8",
+    )
+
+    async def fake_hold_report() -> dict[str, object]:
+        return {
+            "signal_quality_validation": {
+                "priority_tier_lift_pct": -40.0,
+                "priority_tier_high_conviction_resolved": 120,
+                "priority_tier_high_conviction_ci_low_pct": 31.0,
+                "priority_tier_high_conviction_ci_high_pct": 49.0,
+                "priority_tier_standard_resolved": 120,
+                "priority_tier_standard_ci_low_pct": 72.0,
+                "priority_tier_standard_ci_high_pct": 86.0,
+            }
+        }
+
+    app = _make_app()
+    with (
+        _patch_artifacts(tmp_path),
+        patch.object(dashboard_mod, "_live_hold_report", fake_hold_report),
+    ):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    priority_quality = r.json()["priority_quality"]
     assert priority_quality["current_quality_verdict"] == "priority_underperforming"
+    assert priority_quality["significant"] is True
     assert priority_quality["warning"]
 
 

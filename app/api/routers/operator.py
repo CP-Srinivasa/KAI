@@ -505,7 +505,13 @@ router = APIRouter(
 # ergonomic aliases for operator/MCP/CLI consumers. Per-purpose loaders
 # (review-journal / resolution-summary) were documented historically but never
 # implemented; until a real distinct aggregator exists these stay honest aliases.
-# The dashboard only consumes /status, /readiness, /decision-pack.
+# 2026-09-09: Hier stand "The dashboard only consumes /status, /readiness,
+# /decision-pack" — das stimmt nicht mehr. Die Uebersicht ruft keinen dieser
+# Aliase auf; sie haengen an Risk.tsx:36, Signals.tsx:52 und System.tsx:40.
+# Der Satz kostete bei der Ladezeit-Analyse eine falsche Spur: gesucht wurde
+# ein dreifacher Report-Bau in der Uebersicht, der Kostentraeger war aber
+# /operator/portfolio-snapshot (3x) plus /operator/exposure-summary (2x).
+# Wer die Konsumenten aendert, aktualisiert diesen Absatz mit.
 @router.get("/status")
 async def get_operator_status(request: Request, response: Response) -> dict[str, object]:
     """Canonical operator read surface (read-only). Shared daily-summary payload."""
@@ -598,14 +604,21 @@ async def get_operator_alert_audit(
     request: Request,
     response: Response,
     audit_dir: str = "artifacts",
+    limit: int | None = None,
 ) -> dict[str, object]:
-    """Canonical operator alert audit summary surface (read-only)."""
+    """Canonical operator alert audit summary surface (read-only).
+
+    ``limit`` caps the returned rows to the newest N; the totals stay over the
+    full population. Uncapped this endpoint shipped 5,4 MB every 30 s for a view
+    that renders 50 rows.
+    """
     return await _resolve_read_payload(
         request,
         response,
         error_code="alert_audit_unavailable",
         loader=lambda: mcp_server.get_alert_audit_summary(
             audit_dir=audit_dir,
+            limit=limit,
         ),
     )
 

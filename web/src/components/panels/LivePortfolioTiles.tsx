@@ -2,9 +2,9 @@
 import type { ReactNode } from "react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
+import { useSharedPortfolioSnapshot } from "@/state/PortfolioSnapshotProvider";
+import { exposureFromSnapshot } from "@/lib/exposureFromSnapshot";
 import {
-  fetchPortfolioSnapshot,
-  fetchExposureSummary,
   fetchRecentCycles,
   type PaperPosition,
 } from "@/lib/api";
@@ -102,7 +102,9 @@ export function epochWarning(epochId: string | undefined | null): string | null 
 
 function PortfolioTile() {
   const { fmt } = useCurrency();
-  const q = useApi(fetchPortfolioSnapshot, 30_000);
+  // 2026-09-09: geteilter Snapshot statt eigener Abfrage — siehe
+  // PortfolioSnapshotProvider.
+  const q = useSharedPortfolioSnapshot();
   // Short-aware: der Cash-Saldo enthält Short-Erlöse (Verbindlichkeit). netPosition
   // = Long-MW − Short-MW = (Equity − Cash); macht „Cash + Netto = Equity" sichtbar.
   const snap = q.state === "ready" ? q.data : null;
@@ -195,7 +197,28 @@ function PortfolioTile() {
 
 function RiskMeterTile() {
   const { fmt } = useCurrency();
-  const q = useApi(fetchExposureSummary, 30_000);
+  // 2026-09-09: /operator/exposure-summary baut serverseitig denselben Snapshot
+  // und liefert nur dessen exposure_summary-Block zurueck. Aus dem geteilten
+  // Snapshot ableiten statt ein zweites Mal berechnen zu lassen.
+  const snap = useSharedPortfolioSnapshot();
+  const q =
+    snap.state === "ready"
+      ? (() => {
+          const derived = exposureFromSnapshot(snap.data);
+          return derived
+            ? ({ ...snap, data: derived } as typeof snap & { data: typeof derived })
+            : ({
+                state: "error" as const,
+                data: null,
+                error: {
+                  kind: "bad_response",
+                  message: "Snapshot ohne exposure_summary — Risikolage nicht ableitbar",
+                  status: 0,
+                },
+                reload: snap.reload,
+              });
+        })()
+      : snap;
   const data = q.state === "ready" ? q.data : null;
   const biasPct =
     data && data.gross_exposure_usd > 0
@@ -272,7 +295,9 @@ export function computeAllocation(positions: PaperPosition[]): {
 }
 
 function AllocationTile() {
-  const q = useApi(fetchPortfolioSnapshot, 30_000);
+  // 2026-09-09: geteilter Snapshot statt eigener Abfrage — siehe
+  // PortfolioSnapshotProvider.
+  const q = useSharedPortfolioSnapshot();
   const positions: PaperPosition[] = q.state === "ready" ? q.data.positions : [];
   const { items: priced, total } = computeAllocation(positions);
   return (

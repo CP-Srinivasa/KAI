@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { DEFAULT_REQUEST_TIMEOUT_MS } from "./usePolling";
 
 export type AsyncState<T> =
   | { state: "loading"; data: null; error: null; reload: () => void }
@@ -14,7 +15,7 @@ export type UseApiRetry = { maxAttempts: number; baseMs: number };
 
 // Transient errors worth a fast retry; auth/not-found/bad-response are terminal
 // (a retry would just repeat the same failure).
-const RETRYABLE_KINDS = new Set(["network", "server"]);
+const RETRYABLE_KINDS = new Set(["network", "server", "timeout"]);
 
 // Generischer Polling-Hook für async-Fetcher. Jeder aktive Dashboard-Bereich nutzt
 // diesen Hook, damit Lade-, Fehler- und Refresh-Verhalten überall identisch sind.
@@ -23,6 +24,7 @@ export function useApi<T>(
   refreshMs: number | null = 30_000,
   deps: readonly unknown[] = [],
   retry?: UseApiRetry,
+  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
 ): AsyncState<T> {
   const [state, setState] = useState<AsyncState<T>>({
     state: "loading",
@@ -42,15 +44,38 @@ export function useApi<T>(
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
+      let timedOut = false;
+      let timeoutId: number | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          timedOut = true;
+          ctrl.abort();
+          reject(new Error("request timeout"));
+        }, timeoutMs);
+      });
       try {
-        const data = await fetcher(ctrl.signal);
+        const data = await Promise.race([fetcher(ctrl.signal), deadline]);
+        window.clearTimeout(timeoutId);
         if (cancelled) return;
         attempt = 0;
         setState({ state: "ready", data, error: null, reload, fetchedAt: Date.now() });
       } catch (e) {
+        window.clearTimeout(timeoutId);
         if (cancelled) return;
-        const errInfo =
-          e instanceof ApiError
+        // Ein Abbruch durch unmount/reload/naechsten Tick ist KEIN Fehler. Ohne
+        // diesen Guard meldete apiGet den AbortError als kind "network" —
+        // retrybar — und jeder Tick brach den Retry des Vorgaengers ab: eine
+        // selbstverstaerkende Schleife auf genau den langsamen Endpunkten.
+        // Eine Zeitueberschreitung laeuft ueber denselben Controller, ist aber
+        // sehr wohl ein Fehler.
+        if (ctrl.signal.aborted && !timedOut) return;
+        const errInfo = timedOut
+          ? {
+              kind: "timeout",
+              message: `Keine Antwort innerhalb von ${Math.round(timeoutMs / 1000)} s`,
+              status: 0,
+            }
+          : e instanceof ApiError
             ? { kind: e.kind, message: e.message, status: e.status }
             : { kind: "unknown", message: (e as Error).message, status: 0 };
         setState({ state: "error", data: null, error: errInfo, reload });
@@ -81,7 +106,7 @@ export function useApi<T>(
       if (retryTimer != null) window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshMs, retry?.maxAttempts, retry?.baseMs, ...deps]);
+  }, [refreshMs, retry?.maxAttempts, retry?.baseMs, timeoutMs, ...deps]);
 
   return state;
 }

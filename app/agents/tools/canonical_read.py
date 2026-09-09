@@ -721,6 +721,26 @@ def _summarize_tradingview_webhook_auth_24h(
     }
 
 
+async def _warp_status_offloop() -> dict[str, object]:
+    """Run the blocking WARP probe off the event loop.
+
+    2026-09-09: ``_summarize_warp_status`` was awaited-in-name-only — it is a
+    synchronous function calling ``subprocess.run`` (3 s timeout, Windows) and
+    ``socket.gethostbyname_ex``. The latter blocks in glibc for up to
+    ``timeout x attempts`` (5 s x 2 by default) when the resolver does not
+    answer. Called straight from ``get_daily_operator_summary`` on a
+    single-worker uvicorn (event_hub.py:5, D-159), that stall was not local to
+    one request — it held the whole process, which is a plausible contributor to
+    /health taking 12,44 s for a 322-byte response.
+
+    The probe is referenced by global name, which Python resolves at call time —
+    a monkeypatched replacement is picked up.
+    """
+    import asyncio
+
+    return await asyncio.to_thread(_summarize_warp_status)
+
+
 def _summarize_warp_status() -> dict[str, object]:
     # Cloudflare WARP detection. WARP routes the laptop's traffic through CF
     # in a way that breaks the kai-trader.org/dashboard CF-Access email-OTP
@@ -1438,7 +1458,7 @@ async def get_daily_operator_summary(
     # summary as degraded — ingest going dark is an operational warning,
     # not a data-integrity failure.
     tg_channel_ingest = _summarize_telegram_channel_ingest(now=now_utc)
-    warp_status = _summarize_warp_status()
+    warp_status = await _warp_status_offloop()
     # Operator-Envelope activity watchdog. Surfaces silent gaps in the
     # operator-curated envelope stream (e.g. 7-day blackout 2026-04-21..04-28).
     operator_envelope = _summarize_operator_envelope_activity(now=now_utc)
@@ -1500,6 +1520,7 @@ async def get_daily_operator_summary(
 
 async def get_alert_audit_summary(
     audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
+    limit: int | None = None,
 ) -> dict[str, object]:
     """Return a read-only summary of dispatched alert audit records.
 
@@ -1508,6 +1529,13 @@ async def get_alert_audit_summary(
     (``resolved_at``, ``resolved_after_seconds``, ``outcome``) from the
     operator-annotated alert_outcomes.jsonl.
     execution_enabled and write_back_allowed are always False.
+
+    ``limit`` caps the returned ``alerts`` list to the newest N entries. The
+    aggregates (``total_alerts``, ``total_resolved``, ``audit_stream_validation``)
+    always cover the full population, so a capped response never misreports the
+    totals. Measured 2026-09-09: the uncapped payload was 5.376.687 bytes every
+    30 s, of which the dashboard used the last 50 rows. Default stays None so
+    CLI and MCP consumers are unaffected.
     """
     from datetime import datetime
 
@@ -1554,6 +1582,9 @@ async def get_alert_audit_summary(
                 row["resolved_after_seconds"] = sec
         enriched.append(row)
 
+    truncated = limit is not None and limit >= 0 and len(enriched) > limit
+    returned = enriched[-limit:] if truncated else enriched
+
     return {
         "report_type": "alert_audit_summary",
         "execution_enabled": False,
@@ -1561,7 +1592,10 @@ async def get_alert_audit_summary(
         "total_alerts": len(audits),
         "total_resolved": len(outcome_by_doc),
         "audit_stream_validation": validation,
-        "alerts": enriched,
+        # Explizit, damit ein gekappter Payload nicht als Vollmenge gelesen wird.
+        "returned_alerts": len(returned),
+        "alerts_truncated": truncated,
+        "alerts": returned,
     }
 
 

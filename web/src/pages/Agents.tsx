@@ -60,7 +60,13 @@ export function AgentsPage() {
     <div className="p-4 sm:p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title="Agenten"
-        sub="SENTR · Watchdog · Architect · DALI · Satoshi · Neo — alle ausschließlich von Claude Code ausgeführt"
+        // 2026-09-09: Die Liste war handgepflegt und nannte sechs Agenten,
+        // waehrend darunter elf Karten rendern. Aus den Daten ableiten.
+        sub={
+          list.state === "ready"
+            ? `${list.data.agents.length} Agenten — alle ausschließlich von Claude Code ausgeführt`
+            : "Alle Agenten ausschließlich von Claude Code ausgeführt"
+        }
         tone="ai"
         icon={<Bot size={18} />}
         // DALI-v2 S1: divider=false - Lichtkante landet auf der ersten

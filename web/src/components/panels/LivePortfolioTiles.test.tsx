@@ -19,13 +19,18 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 import { LivePortfolioTiles } from "./LivePortfolioTiles";
 import { CurrencyProvider } from "@/state/CurrencyProvider";
+import { PortfolioSnapshotProvider } from "@/state/PortfolioSnapshotProvider";
 
 // Tiles format money via useCurrency() → render inside the provider. Force USD
 // so the $-grouping assertions are deterministic regardless of test-env locale.
+// 2026-09-09: Die Kacheln beziehen den Snapshot seit dem Provider-Umbau aus dem
+// gemeinsamen Kontext statt jede fuer sich zu laden — der Test montiert ihn mit.
 function renderTiles() {
   return render(
     <CurrencyProvider>
-      <LivePortfolioTiles />
+      <PortfolioSnapshotProvider>
+        <LivePortfolioTiles />
+      </PortfolioSnapshotProvider>
     </CurrencyProvider>,
   );
 }
@@ -43,6 +48,25 @@ const flatPortfolio = {
   total_fees_usd: 0,
   position_count: 0,
   positions: [],
+  available: true,
+  error: null,
+  // 2026-09-09: Das Backend liefert diesen Block seit jeher im Snapshot mit
+  // (portfolio_read.py:220). Die Kacheln leiten die Exposure jetzt daraus ab,
+  // statt /operator/exposure-summary ein zweites Mal denselben Snapshot bauen
+  // zu lassen — die Fixture muss den echten Payload abbilden.
+  exposure_summary: {
+    report_type: "paper_exposure_summary",
+    priced_position_count: 0,
+    stale_position_count: 0,
+    unavailable_price_count: 0,
+    gross_exposure_usd: 0,
+    net_exposure_usd: 0,
+    largest_position_symbol: null,
+    largest_position_weight_pct: null,
+    mark_to_market_status: "ok",
+    execution_enabled: false,
+    write_back_allowed: false,
+  },
 };
 
 // A net-short book: cash is inflated by short-sale proceeds (a liability), so
@@ -57,6 +81,14 @@ const shortBookPortfolio = {
     { symbol: "BTC/USDT", position_side: "short", market_value_usd: 9785 },
     { symbol: "AAVE/USDT", position_side: "long", market_value_usd: 4035 },
   ],
+  exposure_summary: {
+    ...flatPortfolio.exposure_summary,
+    priced_position_count: 2,
+    gross_exposure_usd: 13820,
+    net_exposure_usd: -5750,
+    largest_position_symbol: "BTC/USDT",
+    largest_position_weight_pct: 70.8,
+  },
 };
 
 const flatExposure = {

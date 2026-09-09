@@ -674,6 +674,9 @@ def _shadow_attribution_24h() -> dict[str, Any]:
 def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     """Build quality-bar metrics from the hold report and audit artifacts."""
     quality = report.get("signal_quality_validation", {})
+    # Einmal urteilen, mehrfach lesen — der Contract-Block unten fragt das
+    # Ergebnis an vier Stellen ab.
+    _priority_verdict = _precision_metrics.classify_priority_tier_lift(quality)
     hit_rate = report.get("alert_hit_rate_evidence", {})
     paper = report.get("paper_trading_evidence", {})
     gate = report.get("hold_gate_evaluation", {})
@@ -910,19 +913,15 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
                 int(quality.get("priority_tier_high_conviction_resolved") or 0)
                 + int(quality.get("priority_tier_standard_resolved") or 0)
             ),
-            confidence_interval=None,
+            confidence_interval=_priority_verdict["confidence_interval"],
             is_decision_relevant=True,
-            quality_status=(
-                "critical"
-                if isinstance(quality.get("priority_tier_lift_pct"), (int, float))
-                and float(quality.get("priority_tier_lift_pct")) < 0
-                else "warning"
-            ),
-            warning=(
-                "High-priority is not outperforming standard priority; do not present it as a "
-                "validated quality label."
-            ),
-            explanation="P10 hit-rate minus P7-P9 hit-rate.",
+            # 2026-09-09: urteilte allein nach dem Vorzeichen und meldete
+            # -8,14 pp als critical, obwohl die Wilson-CIs der beiden Tiers
+            # (60,6-77,4 gegen 65,1-86,8) auf ganzer Breite ueberlappen. Jetzt
+            # entscheidet die Disjunktheit, nicht das Vorzeichen.
+            quality_status=_priority_verdict["quality_status"],
+            warning=_priority_verdict.get("warning"),
+            explanation=("P10 hit-rate minus P7-P9 hit-rate. " + _priority_verdict["explanation"]),
         ),
         "market_regime": _metric_contract(
             value="read_only",
@@ -1682,28 +1681,19 @@ async def dashboard_priority_gate_api() -> JSONResponse:
     try:
         report = await _live_hold_report()
         quality = report.get("signal_quality_validation", {})
-        lift = quality.get("priority_tier_lift_pct")
-        high_n = quality.get("priority_tier_high_conviction_resolved")
-        standard_n = quality.get("priority_tier_standard_resolved")
-        if not isinstance(lift, (int, float)):
-            verdict = "insufficient_data"
-        elif float(lift) < 0:
-            verdict = "priority_underperforming"
-        elif high_n and standard_n:
-            verdict = "priority_validated"
-        else:
-            verdict = "priority_unproven"
+        # 2026-09-09: ein negativer Lift allein ist kein Befund, solange die
+        # Wilson-CIs der beiden Tiers ueberlappen — siehe
+        # classify_priority_tier_lift.
+        assessment = _precision_metrics.classify_priority_tier_lift(quality)
         payload["priority_quality"] = {
-            "high_priority_lift_pct": lift,
-            "high_priority_resolved": high_n,
-            "standard_resolved": standard_n,
-            "current_quality_verdict": verdict,
-            "warning": (
-                "Priority gate is blocking conservatively, but High-P is not a validated "
-                "quality label in the current evidence window."
-                if verdict in {"priority_underperforming", "priority_unproven", "insufficient_data"}
-                else None
-            ),
+            "high_priority_lift_pct": assessment["lift_pct"],
+            "high_priority_resolved": assessment["high_priority_resolved"],
+            "standard_resolved": assessment["standard_resolved"],
+            "current_quality_verdict": assessment["verdict"],
+            "significant": assessment["significant"],
+            "confidence_interval": assessment["confidence_interval"],
+            "explanation": assessment["explanation"],
+            "warning": assessment.get("warning"),
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("priority_quality_load_failed: %s", exc)
