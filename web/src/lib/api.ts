@@ -701,7 +701,20 @@ export type DashboardQuality = {
   reentry?: {
     target_date: string;
     today: string;
-    status: "active" | "expired" | "no_active_target" | "requires_re_evaluation" | "unverified" | string;
+    // 2026-09-09: "active_target" | "no_current_authorization". Die Altwerte
+    // bleiben im Typ, weil ein aelteres Backend sie noch senden kann.
+    status:
+      | "active_target"
+      | "no_current_authorization"
+      | "active"
+      | "expired"
+      | "no_active_target"
+      | "requires_re_evaluation"
+      | "unverified"
+      | string;
+    reason?: "target_lapsed" | "target_unparseable" | null;
+    /** Konstruktionsbedingt immer false — dieser Report ist Evidenz, nie Freigabe. */
+    grants_execution_authorization?: boolean;
     days_delta: number | null;
     warning: string | null;
     target_source?: string;

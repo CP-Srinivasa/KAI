@@ -81,8 +81,11 @@ describe("deriveTruthChips", () => {
   it("marks expired re-entry, historical paper, 0 trusted, read-only regime", () => {
     const chips = deriveTruthChips(quality(), regime, gate());
     const byKey = Object.fromEntries(chips.map((c) => [c.key, c]));
-    expect(byKey.reentry.value).toBe("abgelaufen");
-    expect(byKey.reentry.tone).toBe("warn");
+    // 2026-09-09: "abgelaufen"/warn -> "keine Freigabe"/info. Der Zustand ist
+    // keine Ablauf-Meldung, sondern das Fehlen eines definierten Gates; und er
+    // ist eine offene Entscheidung, kein Dauer-Alarm.
+    expect(byKey.reentry.value).toBe("keine Freigabe");
+    expect(byKey.reentry.tone).toBe("info");
     expect(byKey.paper.value).toContain("144 hist");
     expect(byKey.paper.value).toContain("0 / 24h");
     expect(byKey.source.value).toBe("0/3 trusted");
@@ -91,20 +94,24 @@ describe("deriveTruthChips", () => {
     expect(byKey.signal.value).toBe("Lift n/a");
   });
 
-  it("renders an unconfigured re-entry target as neutral (not an expired warning)", () => {
+  it("renders a lapsed re-entry target as a missing authorization, not as pending config", () => {
     const q = quality({
       reentry: {
         target_date: "2026-05-16",
         today: "2026-06-22",
         status: "no_active_target",
         days_delta: -37,
-        warning: "Kein aktives Re-Entry-Target gesetzt — Konfiguration ausstehend.",
+        warning: "Keine aktuelle Re-Entry-Freigabe.",
         target_source: "default_historical",
       },
     });
     const byKey = Object.fromEntries(deriveTruthChips(q, regime, gate()).map((c) => [c.key, c]));
-    expect(byKey.reentry.value).toBe("nicht gesetzt");
-    expect(byKey.reentry.tone).toBe("muted");
+    // Altwert "no_active_target" (aelteres Backend) muss denselben ehrlichen
+    // Chip ergeben wie der neue Wert — sonst sieht eine alte Version harmloser
+    // aus als eine neue.
+    expect(byKey.reentry.value).toBe("keine Freigabe");
+    expect(byKey.reentry.tone).toBe("info");
+    expect(byKey.reentry.hint.toLowerCase()).not.toContain("kein fehler");
   });
 
   it("sorts critical tones before healthy/read-only", () => {
@@ -353,5 +360,34 @@ describe("signalQualityChip (Tier-Lift-konsistent statt Low-P-Sackgasse)", () =>
     const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "signal")!;
     expect(chip.value).toBe("Lift n/a");
     expect(chip.tone).toBe("warn");
+  });
+});
+
+// 2026-09-09 (Operator-Entscheid): Ein abgelaufenes Re-Entry-Ziel ohne
+// definierten Nachfolger ist keine ausstehende Konfiguration, sondern eine
+// fehlende Freigabe. Der Chip stand auf tone "muted" mit dem Text "kein Fehler"
+// — visuell fast unsichtbar und inhaltlich eine Entwarnung, die es nicht gibt.
+describe("Re-Entry-Chip benennt die fehlende Freigabe", () => {
+  it("zeigt no_current_authorization sichtbar und ohne Entwarnung", () => {
+    const chips = deriveTruthChips(
+      { reentry: { status: "no_current_authorization" } } as never,
+      null,
+      null,
+    );
+    const chip = chips.find((c) => c.key === "reentry");
+    expect(chip).toBeDefined();
+    expect(chip!.tone).not.toBe("muted");
+    expect(chip!.hint.toLowerCase()).not.toContain("kein fehler");
+    expect(chip!.hint.toLowerCase()).toContain("freigabe");
+  });
+
+  it("liest ein laufendes Ziel nicht als Freigabe", () => {
+    const chips = deriveTruthChips(
+      { reentry: { status: "active_target" } } as never,
+      null,
+      null,
+    );
+    const chip = chips.find((c) => c.key === "reentry");
+    expect(chip!.value).not.toMatch(/freigegeben|frei/i);
   });
 });

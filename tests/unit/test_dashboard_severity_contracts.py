@@ -4,9 +4,14 @@ Two of the brief's items turned out to be ALREADY CORRECT when measured against
 the live system. They are pinned here so that stays true, because both are the
 kind of thing that silently regresses:
 
-  §28  an elapsed, unreplaced re-entry target (2026-05-16, now 108 days past) is
-       classified ``no_active_target`` and explicitly de-alarmed in the backend —
-       not "expired/error".
+  §28  an elapsed, unreplaced re-entry target (2026-05-16) is not an
+       infrastructure alarm. REVIDIERT am 2026-09-09 (Operator-Entscheid): es ist
+       aber auch kein neutraler "Konfiguration ausstehend"-Zustand. Es ist das
+       Fehlen einer Freigabe, und es heisst jetzt so:
+       ``no_current_authorization``. §28 bleibt gueltig in dem, was es meinte —
+       kein Alarm, kein Systemdefekt. Was faellt, ist die Entwarnung: "kein
+       Fehler" stand da, wo "keine Freigabe" hingehoert. Siehe
+       tests/unit/test_reentry_no_current_authorization.py.
   §8   with zero trusted sources, no source is punished. All 12 scored sources
        carry ``priority_modifier`` 0 on the live Pi report, and the eligibility
        consumer receives an empty modifier map. Fail-closed means neutral here,
@@ -32,27 +37,45 @@ def _reentry(target_date: str):
     return _reentry_status(target_date=target_date)
 
 
-def test_an_elapsed_target_is_archived_not_an_error() -> None:
+def test_an_elapsed_target_is_not_an_infrastructure_error() -> None:
+    """§28 in dem, was es meinte: kein Defekt, kein Alarm.
+
+    Was 2026-09-09 faellt, ist nur die Entwarnung im Text — nicht die
+    Einstufung als Nicht-Alarm.
+    """
     state = _reentry("2026-05-16")
-    assert state["status"] == "no_active_target"
     assert state["days_delta"] < 0
-    # It must not read as a fault the operator has to fix right now.
     assert "expired" not in state["status"]
     assert "error" not in state["status"]
+
+
+def test_an_elapsed_target_names_the_missing_authorization() -> None:
+    """Und §28 deckt NICHT, den fehlenden Freigabezustand zu verschweigen."""
+    state = _reentry("2026-05-16")
+    assert state["status"] == "no_current_authorization"
+    assert state["grants_execution_authorization"] is False
     warning = (state.get("warning") or "").lower()
-    assert "kein fehler" in warning
+    assert "kein fehler" not in warning, (
+        "Die Entwarnung ist der Fehler: ein abgelaufenes Gate ohne Nachfolger "
+        "ist keine ausstehende Konfiguration, sondern eine fehlende Freigabe."
+    )
 
 
-def test_a_future_target_is_active() -> None:
-    """NEGATIVE CONTROL: the archived branch must not swallow a live target."""
+def test_a_future_target_is_a_running_target_not_a_clearance() -> None:
+    """NEGATIVE CONTROL: der abgelaufene Zweig darf kein laufendes Ziel schlucken."""
     state = _reentry("2099-12-01")
-    assert state["status"] == "active"
+    assert state["status"] == "active_target"
     assert state["days_delta"] > 0
     assert state["warning"] is None
+    # Auch ein laufendes Sammelziel ist keine Ausfuehrungsfreigabe.
+    assert state["grants_execution_authorization"] is False
 
 
-def test_an_unparseable_target_asks_for_re_evaluation_rather_than_passing() -> None:
-    assert _reentry("not-a-date")["status"] == "requires_re_evaluation"
+def test_an_unparseable_target_does_not_pass_either() -> None:
+    state = _reentry("not-a-date")
+    assert state["status"] == "no_current_authorization"
+    assert state["reason"] == "target_unparseable"
+    assert state["grants_execution_authorization"] is False
 
 
 # --------------------------------------------------------------------------

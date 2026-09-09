@@ -204,9 +204,11 @@ def test_quality_api_returns_metrics(
     assert data["gate_status"] == "hold_remains_active"
     assert "resolved_directional_below_200" in data["blocking_reasons"]
     assert data["dashboard_truth_contract_version"] == 2
-    # A past target reads as neutral "no_active_target" (config pending), NOT an
-    # alarming "expired" — the operator simply has not set a new target yet.
-    assert data["reentry"]["status"] == "no_active_target"
+    # 2026-09-09 (Operator-Entscheid): ein abgelaufenes Ziel ohne definierten
+    # Nachfolger ist keine ausstehende Konfiguration, sondern eine fehlende
+    # Freigabe — und heisst jetzt so.
+    assert data["reentry"]["status"] == "no_current_authorization"
+    assert data["reentry"]["grants_execution_authorization"] is False
     assert data["reentry"]["target_date"] == "2026-05-16"
     assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
         "lifetime",
@@ -688,25 +690,33 @@ def test_regime_endpoint_marks_read_only_and_exposes_snapshot_age(
 
 
 def test_reentry_status_config_and_failsafe_semantics() -> None:
-    # Future date → active, real positive delta.
+    # Zukunftsdatum → laufendes Sammelziel, echtes positives Delta. "active_target",
+    # nicht "active": ein laufendes Ziel ist keine Ausfuehrungsfreigabe.
     future = dashboard_mod._reentry_status(target_date="2099-12-31")
-    assert future["status"] == "active"
+    assert future["status"] == "active_target"
     assert future["days_delta"] > 0
     assert future["target_source"] == "explicit"
-    # Past date → no_active_target (config pending), NOT an alarming "expired"
-    # and NOT clamped to 0/today. days_delta stays the true negative value.
+    assert future["grants_execution_authorization"] is False
+    # Vergangenes Datum → keine aktuelle Freigabe. days_delta bleibt der echte
+    # negative Wert, wird NICHT auf 0/heute geklemmt.
     past = dashboard_mod._reentry_status(target_date="2020-01-01")
-    assert past["status"] == "no_active_target"
+    assert past["status"] == "no_current_authorization"
+    assert past["reason"] == "target_lapsed"
     assert past["days_delta"] < 0
-    # Empty/invalid → fail-safe requires_re_evaluation, no crash, no invented target.
+    # Leer/ungueltig → derselbe Freigabe-Zustand, anderer Grund. Kein Absturz,
+    # kein erfundenes Ziel.
     empty = dashboard_mod._reentry_status(target_date="")
-    assert empty["status"] == "requires_re_evaluation"
+    assert empty["status"] == "no_current_authorization"
+    assert empty["reason"] == "target_unparseable"
     assert empty["days_delta"] is None
-    # Default (from settings) → 2026-05-16 lies in the past → neutral no_active_target.
+    # Default aus den Settings → 2026-05-16 liegt in der Vergangenheit.
     default = dashboard_mod._reentry_status()
     assert default["target_date"] == "2026-05-16"
-    assert default["status"] == "no_active_target"
+    assert default["status"] == "no_current_authorization"
     assert default["target_source"] in {"config", "default_historical"}
+    # Kein Aufruf dieser Funktion darf je eine Freigabe behaupten (FS-4).
+    for state in (future, past, empty, default):
+        assert state["grants_execution_authorization"] is False
 
 
 def test_source_reliability_flags_small_n_as_provisional(artifacts_dir: Path) -> None:
