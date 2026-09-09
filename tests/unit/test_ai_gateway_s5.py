@@ -21,11 +21,13 @@ def _settings(
     *,
     purpose_route: str = "standard",
     max_attempts: int = 3,
+    reasoning_budget: dict[str, int] | None = None,
 ) -> InferenceSettings:
     return InferenceSettings(
         enabled=True,
         mode_ceiling=mode,
         route_modes={purpose_route: mode},
+        route_reasoning_budget=reasoning_budget or {},
         max_attempts=max_attempts,
         backoff_base_seconds=0.0,
         backoff_max_seconds=0.0,
@@ -322,6 +324,56 @@ async def test_eine_leere_antwort_wird_ebenfalls_nicht_wiederholt() -> None:
     trace = result.outcome.litellm_attempts[0].trace
     assert trace.error_class == "empty"
     assert trace.detail["empty_reason"] == "no_choices"
+
+
+async def test_das_denkbudget_erreicht_wirklich_die_anfrage() -> None:
+    """Der Helfer allein beweist nichts -- er muss verdrahtet sein.
+
+    Diese Woche ist mehrfach ein Test gruen gewesen, der den Text eines
+    Bausteins geprueft hat statt sein Verhalten im Betrieb. Hier wird deshalb
+    der KOERPER der abgehenden Anfrage gelesen, nicht die Funktion, die ihn
+    ergaenzt.
+    """
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.update(json.loads(request.content))
+        return _response(request)
+
+    await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=_chat_request(),
+        settings=_settings("primary", reasoning_budget={"standard": 0}),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert gesehen["thinking"] == {"type": "enabled", "budget_tokens": 0}
+
+
+async def test_ohne_budget_steht_nichts_in_der_anfrage() -> None:
+    """Die Gegenprobe: sonst zeigt der Test nur, dass irgendetwas gesetzt wird."""
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.update(json.loads(request.content))
+        return _response(request)
+
+    await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=_chat_request(),
+        settings=_settings("primary"),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert "thinking" not in gesehen
 
 
 async def _value(value: str) -> str:
