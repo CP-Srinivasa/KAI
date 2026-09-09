@@ -169,6 +169,12 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         "month_usd_known": round(monat.known_cost_usd, 6),
         "unknown_cost_calls_today": heute.unknown_calls,
         "unknown_cost_calls_month": monat.unknown_calls,
+        # Zeilen aus der Zeit VOR der Messung. Eigenes Feld, weil sie eine
+        # andere Frage beantworten als ``unknown_cost_calls_*``: dort hat die
+        # Messung versagt, hier hat sie nie stattgefunden. Sie loesen kein
+        # COST_UNKNOWN aus (app/ai/spend.py::is_unmetered_legacy_row).
+        "unmetered_legacy_calls_today": heute.unmetered_legacy_calls,
+        "unmetered_legacy_calls_month": monat.unmetered_legacy_calls,
         "calls_today": heute.calls,
         "calls_month": monat.calls,
         "daily_limit_usd": status.policy.daily_limit_usd,

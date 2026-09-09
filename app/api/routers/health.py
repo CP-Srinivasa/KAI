@@ -136,6 +136,10 @@ class AICostBlock(BaseModel):
     month_usd_known: float | None = None
     unknown_cost_calls_today: int | None = None
     unknown_cost_calls_month: int | None = None
+    #: Aufrufe aus der Zeit VOR der Messung (Zeile ohne ``cost_status``).
+    #: Getrennt ausgewiesen, weil sie kein ``COST_UNKNOWN`` ausloesen.
+    unmetered_legacy_calls_today: int | None = None
+    unmetered_legacy_calls_month: int | None = None
     calls_today: int | None = None
     calls_month: int | None = None
     daily_limit_usd: float | None = None

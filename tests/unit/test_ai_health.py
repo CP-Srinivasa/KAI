@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,23 @@ from fastapi.testclient import TestClient
 
 from app.ai.health import ai_health_snapshot
 from app.api.routers.health import router as health_router
+
+
+@pytest.fixture(autouse=True)
+def _schattenkette_sichtbar(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Diese Datei prueft die KETTENBESCHREIBUNG, nicht den Schatten-Default.
+
+    Seit 2026-09-09 ist die Zweitmeinung standardmaessig aus; ohne diesen
+    Schalter waere ``chain.shadow`` in jedem Test hier leer und die Aussage
+    ("Kette ist Konfiguration, nicht Verfuegbarkeit") ginge verloren. Der Test
+    des Defaults selbst schaltet ihn wieder ab.
+    """
+    from app.core.ai_cost_settings import reset_ai_cost_settings
+
+    monkeypatch.setenv("APP_ANALYSIS_SHADOW_ENABLED", "true")
+    reset_ai_cost_settings()
+    yield
+    reset_ai_cost_settings()
 
 
 def _settings(
@@ -80,11 +98,25 @@ def _providers(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # ── chain description ────────────────────────────────────────────────────────
 
 
-def test_chain_comes_from_the_factory_not_a_hardcoded_list(tmp_path: Path) -> None:
+def test_chain_comes_from_the_factory_not_a_hardcoded_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.ai_cost_settings import reset_ai_cost_settings
+
+    monkeypatch.delenv("APP_ANALYSIS_SHADOW_ENABLED", raising=False)
+    reset_ai_cost_settings()
     snap = ai_health_snapshot(path=tmp_path / "none.jsonl", settings=_settings())
     assert snap["ai"]["chain"]["primary"] == ["openai", "gemini"]
-    assert snap["ai"]["chain"]["shadow"] == ["anthropic"]
+    # Zweitmeinung AUS als Standard (2026-09-09): was die Factory nicht baut,
+    # meldet /health/ai auch nicht.
+    assert snap["ai"]["chain"]["shadow"] == []
     assert snap["ai"]["chain"]["source"] == "app/analysis/factory.py"
+
+    monkeypatch.setenv("APP_ANALYSIS_SHADOW_ENABLED", "true")
+    reset_ai_cost_settings()
+    wieder_an = ai_health_snapshot(path=tmp_path / "none.jsonl", settings=_settings())
+    assert wieder_an["ai"]["chain"]["shadow"] == ["anthropic"]
+    reset_ai_cost_settings()
 
 
 def test_ein_schluessel_macht_keinen_verfuegbaren_provider(tmp_path: Path) -> None:

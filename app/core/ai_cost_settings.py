@@ -55,14 +55,29 @@ class AICostSettings(BaseSettings):
     #: Obergrenze für Aufrufe OHNE belegbare Kosten pro Tag. Siehe Modul-Docstring.
     budget_unknown_max_calls_per_day: int = Field(default=50, ge=0)
 
-    #: Schattenanalyse überhaupt bauen? ``True`` = unverändertes Verhalten.
-    #: Der Name ist bewusst ``APP_ANALYSIS_*`` und nicht ``APP_AI_*``: der
-    #: Schalter gehört zur Analyse-Kette, nicht zum Budget. Er wohnt hier, weil
-    #: ``describe_shadow_chain`` UND ``app/ai/health.py`` ihn aus DERSELBEN
-    #: Quelle lesen müssen — zwei Leser mit zwei Env-Zugriffen wären zwei
-    #: Meinungen darüber, ob der Schatten läuft.
+    #: Schattenanalyse überhaupt bauen? **Voreinstellung seit 2026-09-09:
+    #: AUS** (Operator-Entscheidung, D-CORE-007 Nachtrag). Die Zweitmeinung lief
+    #: als Dauerbetrieb auf JEDEM analysierten Dokument und verdoppelte damit
+    #: die Analysekosten für einen Vergleich, den niemand auswertete.
+    #:
+    #: Sie ist nicht abgeschafft, sondern soll EREIGNISGESTEUERT laufen. Die
+    #: vier Anlässe, benannt und heute NICHT gebaut (bewusst: ein halber
+    #: Auslöser wäre wieder ein Dauerbetrieb mit anderem Namen):
+    #:
+    #: 1. das Primärmodell ist unsicher (niedrige ``confidence_score``) oder
+    #:    liefert fehlerhaft/leer,
+    #: 2. die Quellen widersprechen sich,
+    #: 3. High-Impact-Dokument (grosse Marktwirkung),
+    #: 4. der Operator fordert eine Zweitmeinung an.
+    #:
+    #: ``APP_ANALYSIS_SHADOW_ENABLED=true`` schaltet die Kette unverändert
+    #: wieder ein. Der Name ist bewusst ``APP_ANALYSIS_*`` und nicht
+    #: ``APP_AI_*``: der Schalter gehört zur Analyse-Kette, nicht zum Budget.
+    #: Er wohnt hier, weil ``describe_shadow_chain`` UND ``app/ai/health.py``
+    #: ihn aus DERSELBEN Quelle lesen müssen — zwei Leser mit zwei
+    #: Env-Zugriffen wären zwei Meinungen darüber, ob der Schatten läuft.
     shadow_enabled: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("APP_ANALYSIS_SHADOW_ENABLED", "shadow_enabled"),
     )
 
@@ -124,7 +139,7 @@ def get_ai_cost_settings() -> AICostSettings:
             budget_monthly_usd=None,
             budget_warn_pct=80.0,
             budget_unknown_max_calls_per_day=50,
-            shadow_enabled=True,
+            shadow_enabled=False,
             budget_usecase_usd={},
         )
     _CACHE["current"] = gelesen

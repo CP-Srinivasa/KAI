@@ -156,7 +156,10 @@ def describe_shadow_chain(settings: Any) -> list[str]:
     Gesundheitsanzeige eine Schattenkette melden, die nicht laeuft — eine
     zweite Wahrheit ueber genau die Frage, ob gerade doppelt bezahlt wird.
 
-    Voreinstellung ``true``: kein Verhaltenswechsel ohne bewusste Env-Aenderung.
+    Voreinstellung seit 2026-09-09: ``false`` (D-CORE-007 Nachtrag). Der
+    Dauerbetrieb der Zweitmeinung ist abgeschaltet; ``true`` schaltet die
+    Kette unveraendert wieder ein. Die Begruendung und die vier vorgesehenen
+    Anlaesse stehen bei ``AICostSettings.shadow_enabled``.
     """
     from app.core.ai_cost_settings import get_ai_cost_settings
 

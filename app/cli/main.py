@@ -706,7 +706,7 @@ def analyze_pending(
         market_adapter = create_market_data_adapter(provider="coingecko")
         from pathlib import Path as _Path
 
-        from app.analysis.pipeline import load_trusted_social_handles
+        from app.analysis.pipeline import llm_usage_summary, load_trusted_social_handles
 
         pipeline = AnalysisPipeline(
             keyword_engine,
@@ -778,7 +778,7 @@ def analyze_pending(
 
         console.print(
             f"[bold green]Analysis complete![/bold green] "
-            f"{success_count} success, {error_count} failed."
+            f"{llm_usage_summary(results, success=success_count)}, {error_count} failed."
         )
 
         if not no_alerts and success_count > 0:

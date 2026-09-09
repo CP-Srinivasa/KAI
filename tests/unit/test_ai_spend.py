@@ -43,6 +43,9 @@ def _row(**kwargs: object) -> dict:
         "input_tokens": 1000,
         "output_tokens": 100,
         "cost_usd": 0.0035,
+        # Ohne dieses Feld waere die Zeile eine ALTZEILE (vor der Messung) --
+        # siehe app/ai/spend.py::is_unmetered_legacy_row.
+        "cost_status": "OK",
     }
     basis.update(kwargs)
     return basis
@@ -108,8 +111,8 @@ def test_unknown_cost_is_counted_and_never_summed_as_zero(tmp_path: Path) -> Non
         sink,
         [
             _row(cost_usd=0.10, correlation_id="c1"),
-            _row(cost_usd=None, correlation_id="c2"),
-            _row(cost_usd=None, correlation_id="c3"),
+            _row(cost_usd=None, cost_status="COST_UNKNOWN", correlation_id="c2"),
+            _row(cost_usd=None, cost_status="COST_UNKNOWN", correlation_id="c3"),
         ],
     )
     fenster = spend_window("today", path=sink)
@@ -201,3 +204,77 @@ def test_status_is_computed_even_without_limits() -> None:
     )
     assert status.state == "OK"
     assert status.blocks_routine is False
+
+
+# ── Altzeilen sind keine unbelegten Aufrufe ────────────────────────────────
+
+
+def _altzeile(index: int) -> dict:
+    """Eine Zeile aus der Zeit vor der Messung: KEIN ``cost_status``."""
+    zeile = _row(cost_usd=None, correlation_id=f"alt-{index}")
+    zeile.pop("cost_status")
+    return zeile
+
+
+def test_legacy_rows_are_counted_separately_and_do_not_trigger_cost_unknown(
+    tmp_path: Path,
+) -> None:
+    """373 Altzeilen, kein einziger neuer unbelegter Aufruf → Status OK.
+
+    Der gemessene Fall (2026-09-09): der Strom trug 373 Zeilen ohne
+    Kostenfelder aus der Zeit vor D-CORE-007. Als ``unknown`` gezaehlt haetten
+    sie ``COST_UNKNOWN`` ausgeloest, ohne dass ein aktueller Aufruf unbelegt
+    gewesen waere.
+    """
+    from app.ai.spend import current_budget_status
+
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_altzeile(i) for i in range(373)] + [_row(correlation_id="neu")])
+
+    fenster = spend_window("today", path=sink)
+    assert fenster.calls == 374
+    assert fenster.unmetered_legacy_calls == 373
+    assert fenster.unknown_calls == 0
+    assert fenster.known_calls == 1
+    # Unbezifferte Aufrufe bleiben unbeziffert: die Summe ist eine Untergrenze.
+    assert fenster.fully_accounted is False
+    # Der Budgetzustand sieht nur die gemessene Zeile.
+    assert fenster.budget_state().total_calls == 1
+
+    status, _, _ = current_budget_status(path=sink)
+    assert status.state == "OK"
+    assert status.blocks_routine is False
+
+
+def test_fifty_one_new_unknown_calls_still_trigger_cost_unknown(tmp_path: Path) -> None:
+    """Die Schwelle bleibt bei 50 — nur die Grundgesamtheit wurde ehrlich."""
+    from app.ai.spend import current_budget_status
+
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [_altzeile(i) for i in range(373)]
+        + [
+            _row(cost_usd=None, cost_status="COST_UNKNOWN", correlation_id=f"neu-{i}")
+            for i in range(51)
+        ],
+    )
+    fenster = spend_window("today", path=sink)
+    assert fenster.unmetered_legacy_calls == 373
+    assert fenster.unknown_calls == 51
+
+    status, _, _ = current_budget_status(path=sink)
+    assert status.state == "COST_UNKNOWN"
+    assert status.unknown_max_calls_per_day == 50
+
+
+def test_health_cost_block_shows_legacy_rows_as_their_own_field(tmp_path: Path) -> None:
+    from app.ai.health import cost_block
+
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_altzeile(0), _altzeile(1), _row(correlation_id="neu")])
+    block = cost_block(path=sink)
+    assert block["unmetered_legacy_calls_today"] == 2
+    assert block["unknown_cost_calls_today"] == 0
+    assert block["calls_today"] == 3
+    assert block["status"] == "OK"
