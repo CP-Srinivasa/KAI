@@ -76,7 +76,7 @@ from app.analysis.input_contract import (
     append_analysis_input_rejection,
 )
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
-from app.analysis.prompts import ACTIVE_PROMPT_SHA256, ACTIVE_PROMPT_VERSION
+from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT_SHA256, ACTIVE_SYSTEM_PROMPT_VERSION
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel, SourceType
@@ -648,8 +648,8 @@ class AnalysisPipeline:
                 error_type=type(exc).__name__,
                 correlation_id=current_correlation_id(),
                 purpose="analysis",
-                analysis_system_prompt_version=ACTIVE_PROMPT_VERSION,
-                analysis_system_prompt_hash=ACTIVE_PROMPT_SHA256,
+                analysis_system_prompt_version=ACTIVE_SYSTEM_PROMPT_VERSION,
+                analysis_system_prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256,
                 chain_position=-1,
                 error_class=classify_error(exc),
                 http_status=http_status(exc),
@@ -667,8 +667,8 @@ class AnalysisPipeline:
             role="primary",
             correlation_id=current_correlation_id(),
             purpose="analysis",
-            analysis_system_prompt_version=ACTIVE_PROMPT_VERSION,
-            analysis_system_prompt_hash=ACTIVE_PROMPT_SHA256,
+            analysis_system_prompt_version=ACTIVE_SYSTEM_PROMPT_VERSION,
+            analysis_system_prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256,
             chain_position=-1,
             prompt_tokens=output.prompt_tokens,
             completion_tokens=output.completion_tokens,
@@ -714,8 +714,8 @@ class AnalysisPipeline:
                 role="shadow",
                 correlation_id=current_correlation_id(),
                 purpose="analysis",
-                analysis_system_prompt_version=ACTIVE_PROMPT_VERSION,
-                analysis_system_prompt_hash=ACTIVE_PROMPT_SHA256,
+                analysis_system_prompt_version=ACTIVE_SYSTEM_PROMPT_VERSION,
+                analysis_system_prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256,
                 chain_position=-1,
                 prompt_tokens=output.prompt_tokens,
                 completion_tokens=output.completion_tokens,
@@ -733,8 +733,8 @@ class AnalysisPipeline:
                 error_type=type(exc).__name__,
                 correlation_id=current_correlation_id(),
                 purpose="analysis",
-                analysis_system_prompt_version=ACTIVE_PROMPT_VERSION,
-                analysis_system_prompt_hash=ACTIVE_PROMPT_SHA256,
+                analysis_system_prompt_version=ACTIVE_SYSTEM_PROMPT_VERSION,
+                analysis_system_prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256,
                 chain_position=-1,
                 error_class=classify_error(exc),
                 http_status=http_status(exc),

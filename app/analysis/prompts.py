@@ -117,7 +117,7 @@ Avoid extreme values unless clearly justified by the content.
 #: die Umstellung auf eine neue Fassung eine Zeile hier und kein Suchlauf durch
 #: fuenf Aufrufstellen -- und die Provenienz unten beschreibt danach ohne Zutun
 #: den neuen Text.
-ACTIVE_PROMPT_VERSION = "v1"
+ACTIVE_SYSTEM_PROMPT_VERSION = "v1"
 ACTIVE_SYSTEM_PROMPT = SYSTEM_PROMPT_V1
 
 #: ABGELEITET, nicht hinterlegt. Eine notierte Pruefsumme waere wieder nur ein
@@ -129,7 +129,7 @@ ACTIVE_SYSTEM_PROMPT = SYSTEM_PROMPT_V1
 #: entsteht pro Dokument in `format_user_prompt` und ist in jeder Zeile ein
 #: anderer; ein Hash darueber waere als Provenienz wertlos. Die Feldnamen in
 #: der Telemetrie tragen `system` deshalb ausdruecklich.
-ACTIVE_PROMPT_SHA256 = hashlib.sha256(ACTIVE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+ACTIVE_SYSTEM_PROMPT_SHA256 = hashlib.sha256(ACTIVE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
 
 
 USER_PROMPT_V1 = """\

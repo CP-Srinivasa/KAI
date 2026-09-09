@@ -27,9 +27,9 @@ from typing import Any
 from scripts.litellm_shadow_eval.loader import SUPPORTED_SCHEMA_VERSIONS
 
 from app.analysis.prompts import (
-    ACTIVE_PROMPT_SHA256,
-    ACTIVE_PROMPT_VERSION,
     ACTIVE_SYSTEM_PROMPT,
+    ACTIVE_SYSTEM_PROMPT_SHA256,
+    ACTIVE_SYSTEM_PROMPT_VERSION,
     SYSTEM_PROMPT_V1,
 )
 from app.observability.llm_telemetry import SCHEMA_VERSION, record_llm_call
@@ -57,8 +57,11 @@ def test_der_hash_gehoert_zum_aktiven_prompt() -> None:
     Eine notierte Prüfsumme wäre wieder nur ein Literal, das jemand nachziehen
     müsste. Dieser Test hält fest, dass sie es nicht ist.
     """
-    assert ACTIVE_PROMPT_SHA256 == hashlib.sha256(ACTIVE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
-    assert len(ACTIVE_PROMPT_SHA256) == 64
+    assert (
+        ACTIVE_SYSTEM_PROMPT_SHA256
+        == hashlib.sha256(ACTIVE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+    )
+    assert len(ACTIVE_SYSTEM_PROMPT_SHA256) == 64
 
 
 def test_der_aktive_prompt_ist_eine_benannte_fassung() -> None:
@@ -68,12 +71,12 @@ def test_der_aktive_prompt_ist_eine_benannte_fassung() -> None:
     Umstellung eine Zeile — und dieser Test sagt dann, welche gilt.
     """
     assert ACTIVE_SYSTEM_PROMPT is SYSTEM_PROMPT_V1
-    assert ACTIVE_PROMPT_VERSION == "v1"
+    assert ACTIVE_SYSTEM_PROMPT_VERSION == "v1"
 
 
 def test_die_version_ist_nicht_leer_und_kein_platzhalter() -> None:
-    assert ACTIVE_PROMPT_VERSION.strip()
-    assert ACTIVE_PROMPT_VERSION.lower() not in {"unknown", "none", "tbd", ""}
+    assert ACTIVE_SYSTEM_PROMPT_VERSION.strip()
+    assert ACTIVE_SYSTEM_PROMPT_VERSION.lower() not in {"unknown", "none", "tbd", ""}
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +144,12 @@ def test_die_provenienz_steht_in_der_zeile(tmp_path: Path) -> None:
     zeile = _zeile(
         tmp_path,
         purpose="analysis",
-        analysis_system_prompt_version=ACTIVE_PROMPT_VERSION,
-        analysis_system_prompt_hash=ACTIVE_PROMPT_SHA256,
+        analysis_system_prompt_version=ACTIVE_SYSTEM_PROMPT_VERSION,
+        analysis_system_prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256,
     )
 
     assert zeile["analysis_system_prompt_version"] == "v1"
-    assert zeile["analysis_system_prompt_hash"] == ACTIVE_PROMPT_SHA256
+    assert zeile["analysis_system_prompt_hash"] == ACTIVE_SYSTEM_PROMPT_SHA256
     assert zeile["schema_version"] == "v7"
 
 

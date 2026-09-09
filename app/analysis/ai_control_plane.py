@@ -9,9 +9,9 @@ from app.ai.config import InferenceSettings
 from app.ai.runtime import LiteLLMRequest, invoke
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import (
-    ACTIVE_PROMPT_SHA256,
-    ACTIVE_PROMPT_VERSION,
     ACTIVE_SYSTEM_PROMPT,
+    ACTIVE_SYSTEM_PROMPT_SHA256,
+    ACTIVE_SYSTEM_PROMPT_VERSION,
     format_user_prompt,
 )
 
@@ -76,7 +76,9 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
                     output.completion_tokens = completion_tokens
             return output
 
-        with analysis_prompt_scope(version=ACTIVE_PROMPT_VERSION, prompt_hash=ACTIVE_PROMPT_SHA256):
+        with analysis_prompt_scope(
+            version=ACTIVE_SYSTEM_PROMPT_VERSION, prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256
+        ):
             routed = await invoke(
                 purpose="analysis",
                 direct_call=lambda: self._direct.analyze(title=title, text=text, context=context),
