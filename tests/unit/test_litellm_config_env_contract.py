@@ -34,8 +34,9 @@ def test_der_pruefer_findet_ueberhaupt_verweise() -> None:
     """Ein Wächter, der nichts sieht, ist von einem grünen nicht zu unterscheiden."""
     verlangt = _verlangte_variablen()
 
-    assert len(verlangt) >= 6, f"nur {len(verlangt)} os.environ-Verweise: {sorted(verlangt)}"
+    assert len(verlangt) >= 7, f"nur {len(verlangt)} os.environ-Verweise: {sorted(verlangt)}"
     assert "LITELLM_MASTER_KEY" in verlangt
+    assert "KAI_LITELLM_DEEPSEEK_MODEL" in verlangt
 
 
 def test_jede_verlangte_variable_steht_in_der_vorlage() -> None:
@@ -73,3 +74,28 @@ def test_die_control_plane_bleibt_in_der_vorlage_fail_closed() -> None:
     assert "KAI_INFERENCE_ENABLED=false" in vorlage
     assert "KAI_INFERENCE_MODE_CEILING=off" in vorlage
     assert "KAI_INFERENCE_MODE_CEILING=primary" not in vorlage
+
+
+def test_deepseek_bleibt_eine_zusaetzliche_transport_probe() -> None:
+    """Der Alias darf Gemini nicht ersetzen und keine app/ai-Route erfinden."""
+    config = CONFIG.read_text(encoding="utf-8")
+    control_plane = (REPO / "app" / "ai" / "config.py").read_text(encoding="utf-8")
+
+    assert "model_name: kai-deepseek" in config
+    assert "model: os.environ/KAI_LITELLM_DEEPSEEK_MODEL" in config
+    assert "model_name: kai-standard" in config
+    assert "kai-deepseek" not in control_plane
+    assert "KAI_LITELLM_DEEPSEEK_MODEL" not in control_plane
+
+
+def test_deepseek_vertrag_enthaelt_keinen_schluessel() -> None:
+    """Nur Name und Modelle sind dokumentiert; der Schlüssel bleibt leer."""
+    vorlage = VORLAGE.read_text(encoding="utf-8")
+
+    assert "DEEPSEEK_API_KEY=" in vorlage
+    assert "DEEPSEEK_MODEL=deepseek-v4-flash" in vorlage
+    assert "#   KAI_LITELLM_DEEPSEEK_MODEL=deepseek/deepseek-v4-flash" in vorlage
+    assert "KAI_LITELLM_DEEPSEEK_MODEL=" in vorlage
+    for zeile in vorlage.splitlines():
+        if zeile.startswith("DEEPSEEK_API_KEY="):
+            assert zeile == "DEEPSEEK_API_KEY="
