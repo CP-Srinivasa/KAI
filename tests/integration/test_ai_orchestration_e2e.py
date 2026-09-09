@@ -28,7 +28,7 @@ from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
-from app.observability.llm_telemetry import llm_telemetry_summary
+from app.observability.llm_telemetry import SCHEMA_VERSION, llm_telemetry_summary
 
 _CORRELATION_ID = "req_e2e_0001"
 
@@ -182,7 +182,12 @@ async def test_rate_limited_primary_falls_through_to_gemini(telemetry: Path) -> 
     assert attempts[1]["prompt_tokens"] == 512
     assert attempts[1]["completion_tokens"] == 96
 
-    assert all(r["schema_version"] == "v2" and r["purpose"] == "analysis" for r in rows)
+    # Gegen die Konstante, nicht gegen einen abgeschriebenen Wert. Genau dieser
+    # Assert hat den Schema-Bump in der CI gestoppt -- und genau so ist der
+    # Stempel ueberhaupt erst auf "v2" stehengeblieben, waehrend die Zeile
+    # v3-, v4- und v5-Felder dazubekam: der Wert stand an mehreren Orten,
+    # und keiner davon wusste vom anderen.
+    assert all(r["schema_version"] == SCHEMA_VERSION and r["purpose"] == "analysis" for r in rows)
 
     # --- Secret-leak gate ---
     blob = json.dumps(rows)

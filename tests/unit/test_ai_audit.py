@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from app.ai.audit import classify_error, http_status, is_retryable_error, llm_call_scope
-from app.observability.llm_telemetry import llm_telemetry_summary
+from app.observability.llm_telemetry import SCHEMA_VERSION, llm_telemetry_summary
 
 
 class _StatusError(Exception):
@@ -158,7 +158,10 @@ async def test_scope_writes_exactly_one_row_on_success(tmp_path: Path) -> None:
     rows = _rows(p)
     assert len(rows) == 1
     row = rows[0]
-    assert row["schema_version"] == "v2"
+    # Gegen die Konstante, nicht gegen einen abgeschriebenen Wert: genau so ist
+    # der Stempel auf "v2" stehengeblieben, waehrend die Zeile v3-, v4- und
+    # v5-Felder dazubekam.
+    assert row["schema_version"] == SCHEMA_VERSION
     assert row["ok"] is True
     assert row["provider"] == "openai" and row["model"] == "gpt-4o"
     assert row["purpose"] == "analysis"

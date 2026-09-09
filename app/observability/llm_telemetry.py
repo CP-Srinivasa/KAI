@@ -34,6 +34,20 @@ from uuid import uuid4
 from app.core.file_lock import append_lock
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
+#: Was eine Zeile ueber ihr eigenes Format sagt.
+#:
+#: Der Wert stand auf "v2", waehrend die Zeile laengst v3- (evaluation_id),
+#: v4- (use_case, escalation_reason, source) und v5-Felder (reasoning_tokens,
+#: cost_reasoning_usd, finish_reason, empty_reason, transport_retries) trug.
+#: Jede Erweiterung war additiv und hat den Wert nicht mitgezogen -- die Zeile
+#: beschrieb sich also selbst falsch, und wer auf die Version sah, suchte die
+#: neuen Felder gar nicht erst.
+#:
+#: Alte Zeilen bleiben, was sie sind: v2-Zeilen sind echte v2-Zeilen, und der
+#: Leser muss sie weiter annehmen. Additiv heisst, dass ein v2-Leser auch eine
+#: v5-Zeile verarbeiten kann -- nicht, dass sie dasselbe sind.
+SCHEMA_VERSION = "v5"
+
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
 #: Der Anbieter hat den Betrag selbst genannt (heute nur der LiteLLM-Header).
@@ -173,7 +187,7 @@ def record_llm_call(
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
     row: dict[str, Any] = {
-        "schema_version": "v2",
+        "schema_version": SCHEMA_VERSION,
         "ts": datetime.now(UTC).isoformat(),
         "provider": provider,
         "model": model,
