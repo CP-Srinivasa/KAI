@@ -410,6 +410,36 @@ def is_retryable_error(exc: BaseException) -> bool:
     return is_retryable_error_class(classify_error(exc), http_status(exc))
 
 
+def _ganzzahl(wert: object) -> int | None:
+    """Nur echte Zahlen, kein `bool`, keine Zeichenketten-Raterei.
+
+    `transport_retries` kommt als Header-Zeichenkette an, `reasoning_tokens` als
+    `int`. Beides soll als Zahl in der Zeile stehen -- oder gar nicht.
+    """
+    if isinstance(wert, bool):
+        return None
+    if isinstance(wert, int):
+        return wert
+    if isinstance(wert, str):
+        try:
+            return int(wert)
+        except ValueError:
+            return None
+    return None
+
+
+def _gleitkomma(wert: object) -> float | None:
+    if isinstance(wert, bool):
+        return None
+    if isinstance(wert, int | float):
+        return float(wert)
+    return None
+
+
+def _text_oder_none(wert: object) -> str | None:
+    return wert if isinstance(wert, str) and wert else None
+
+
 def record_attempt_trace(
     attempt_trace: AttemptTrace,
     *,
@@ -432,6 +462,13 @@ def record_attempt_trace(
     """Append one physical returned attempt to the canonical telemetry stream."""
     raw_status = attempt_trace.detail.get("status_code")
     status = raw_status if isinstance(raw_status, int) else None
+    # `detail` traegt, was der Transport ueber den Aufruf weiss. Bis zum
+    # 2026-09-09 endete es hier: der Schreiber pickte Felder einzeln heraus und
+    # liess den Rest fallen. Die Zeile trug damit Kosten und Modell, aber nicht
+    # die Aufschluesselung, aus der man sie versteht -- und `error_class="empty"`
+    # ohne den Grund, obwohl die Unterscheidung zwischen "abgeschnitten" und
+    # "verstummt" der ganze Zweck dieser Klasse ist.
+    detail = attempt_trace.detail
     record_llm_call(
         provider=attempt_trace.actual_provider,
         model=attempt_trace.actual_model,
@@ -467,6 +504,11 @@ def record_attempt_trace(
         use_case=resolve_use_case(purpose),
         escalation_reason=_ESCALATION_REASON.get(),
         schema_status=schema_status,
+        reasoning_tokens=_ganzzahl(detail.get("reasoning_tokens")),
+        cost_reasoning_usd=_gleitkomma(detail.get("cost_reasoning_usd")),
+        finish_reason=_text_oder_none(detail.get("finish_reason")),
+        empty_reason=_text_oder_none(detail.get("empty_reason")),
+        transport_retries=_ganzzahl(detail.get("transport_retries")),
         budget_decision=budget_decision,
         circuit_state=circuit_state,
         execution_authority=execution_authority,
