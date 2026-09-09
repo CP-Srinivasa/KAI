@@ -229,10 +229,21 @@ def test_eine_wiederholung_im_transport_faellt_auf() -> None:
     dass zwei Instanzen unabhängig voneinander wiederholen. Bei 0 steht nichts
     im Detail: ein Feld, das immer da ist, wird nicht gelesen.
     """
+    # Die gemessene Null wird MITGESCHRIEBEN. Sie wegzulassen hiesse, sie als
+    # `None` zu fuehren -- und `None` heisst in dieser Zeile ueberall
+    # UNBEKANNT. "Hat nicht wiederholt" waere dann nicht mehr von "wurde nie
+    # gemessen" zu unterscheiden.
     ruhig = trace_from_response(
         _antwort(headers=_ECHTE_HEADER), requested_model="kai-bulk", latency_ms=1.0
     )
-    assert "transport_retries" not in ruhig.detail
+    assert ruhig.detail["transport_retries"] == "0"
+
+    ohne_header = trace_from_response(
+        _antwort(headers={"x-litellm-model-name": "gemini/gemini-2.5-flash"}),
+        requested_model="kai-bulk",
+        latency_ms=1.0,
+    )
+    assert "transport_retries" not in ohne_header.detail, "ohne Header ist es wirklich unbekannt"
 
     laut = trace_from_response(
         _antwort(headers={**_ECHTE_HEADER, "x-litellm-attempted-retries": "2"}),
