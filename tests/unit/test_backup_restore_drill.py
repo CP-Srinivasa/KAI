@@ -312,7 +312,21 @@ def test_restore_drill_wrong_passphrase_writes_fail_proof(tmp_path: Path) -> Non
     assert result.returncode == 4
     proof = _latest_proof(tmp_path)
     assert proof["status"] == "FAIL"
-    assert proof["reason"] == "decrypt failed"
+    # Der GRUND ist nicht deterministisch, der Ausgang schon.
+    #
+    # `openssl enc -d -aes-256-cbc` prueft beim Entschluesseln nur das
+    # PKCS#7-Padding. Mit einer falschen Passphrase entsteht Muell, dessen
+    # letztes Byte mit rund 1/256 zufaellig ein gueltiges Padding ergibt --
+    # gemessen am 2026-09-09: 2 von 600 falschen Passphrasen kamen durch.
+    # Dann liefert openssl 0, und der Drill faellt eine Stufe spaeter beim
+    # `tar -tzf` mit "unpack failed". Beide Wege enden mit Exit 4 und einem
+    # FAIL-Beweis; das Archiv wird in keinem Fall wiederhergestellt.
+    #
+    # Die frueherer Zusicherung auf genau "decrypt failed" war deshalb bei
+    # etwa jedem 300. Lauf rot -- unabhaengig von Last, und damit
+    # ununterscheidbar von einem echten Defekt fuer jeden, der zufaellig
+    # daneben stand.
+    assert proof["reason"] in {"decrypt failed", "unpack failed"}, proof["reason"]
 
 
 # ── STAB-05D: Ledger-Identitaet und Shadow-Schutz ────────────────────────────
