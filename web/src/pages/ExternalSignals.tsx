@@ -30,6 +30,9 @@ import {
   SectionLabel,
 } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
+import { PanelLoading } from "@/components/ui/PanelState";
+import { formatAbsolute, formatRelative } from "@/lib/time";
+import { windowCounts, lastReceivedAt, TRIAGE_WINDOW_DAYS } from "@/lib/envelopeTriage";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { cn } from "@/lib/utils";
 import {
@@ -318,31 +321,6 @@ function PasteStepper({ activeIdx, failedIdx = -1, className }: PasteStepperProp
       })}
     </div>
   );
-}
-
-// DALI-T7: Triage-Strip — Counts aus records, gefiltert auf heute (UTC).
-function todayCounts(records: EnvelopeRecord[]) {
-  const today = new Date();
-  const start = Date.UTC(
-    today.getUTCFullYear(),
-    today.getUTCMonth(),
-    today.getUTCDate(),
-  );
-  let accepted = 0;
-  let duplicate = 0;
-  let needs = 0;
-  let rejected = 0;
-  for (const rec of records) {
-    if (!rec.timestamp_utc) continue;
-    const ts = Date.parse(rec.timestamp_utc);
-    if (Number.isNaN(ts) || ts < start) continue;
-    if (rec.status === "ok" || rec.stage === "accepted") accepted++;
-    else if (rec.status === "duplicate") duplicate++;
-    else if (rec.status === "rejected" || rec.status === "blocked") rejected++;
-    else if (rec.stage === "voice_confirm_gate" || rec.status === "draft_pending")
-      needs++;
-  }
-  return { accepted, duplicate, needs, rejected };
 }
 
 type SignalPasteFormProps = {
@@ -1172,38 +1150,68 @@ function AuditLogPanel({ state }: AuditPanelProps) {
 
 // DALI-T7: Triage-Strip — 4 Hero-Kpis "heute" — visueller Anker für den
 // Operator, sofort erkennbar wie viel heute lief und wie es geendet ist.
-function TriageStrip({ records }: { records: EnvelopeRecord[] }) {
-  const counts = useMemo(() => todayCounts(records), [records]);
+function TriageStrip({
+  records,
+  loading,
+}: {
+  records: EnvelopeRecord[];
+  loading: boolean;
+}) {
+  const counts = useMemo(() => windowCounts(records), [records]);
+  const last = useMemo(() => lastReceivedAt(records), [records]);
+
+  // 2026-09-09: Waehrend des Ladens ist records=[] — vier Nullen, die sich
+  // nicht von echten Nullen unterscheiden liessen.
+  if (loading) {
+    return <PanelLoading label="Triage lädt …" />;
+  }
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <Kpi
-        label="Heute gespeichert"
-        value={counts.accepted}
-        sub="geparst, nicht automatisch ausgeführt"
-        tone="info"
-        size="lg"
-      />
-      <Kpi
-        label="Heute Duplikate"
-        value={counts.duplicate}
-        sub="bereits empfangen"
-        tone="warn"
-        size="lg"
-      />
-      <Kpi
-        label="Ergänzung nötig"
-        value={counts.needs}
-        sub="wartet auf Operator"
-        tone="info"
-        size="lg"
-      />
-      <Kpi
-        label="Heute abgelehnt"
-        value={counts.rejected}
-        sub="siehe Fehler"
-        tone="neg"
-        size="lg"
-      />
+    <div className="space-y-3">
+      {/* Die ehrlichere Hauptzahl: "Heute: 0" stand hier seit dem
+          Quellen-Stopp am 31.07. dauerhaft und las sich wie ein Defekt. */}
+      <div className="text-xs text-fg-subtle">
+        {last ? (
+          <>
+            Zuletzt empfangen: <span className="font-mono text-fg">{formatAbsolute(last)}</span>{" "}
+            <span>({formatRelative(last)})</span>
+            {" · "}
+            <span>Zahlen unten: letzte {TRIAGE_WINDOW_DAYS} Tage</span>
+          </>
+        ) : (
+          <>Noch kein Envelope empfangen — die Zahlen unten sind echte Nullen, kein Fehler.</>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Kpi
+          label={`Gespeichert (${TRIAGE_WINDOW_DAYS} T)`}
+          value={counts.accepted}
+          sub="geparst, nicht automatisch ausgeführt"
+          tone="info"
+          size="lg"
+        />
+        <Kpi
+          label={`Duplikate (${TRIAGE_WINDOW_DAYS} T)`}
+          value={counts.duplicate}
+          sub="bereits empfangen"
+          tone="warn"
+          size="lg"
+        />
+        <Kpi
+          label="Ergänzung nötig"
+          value={counts.needs}
+          sub="wartet auf Operator"
+          tone="info"
+          size="lg"
+        />
+        <Kpi
+          label={`Abgelehnt (${TRIAGE_WINDOW_DAYS} T)`}
+          value={counts.rejected}
+          sub="siehe Fehler"
+          tone="neg"
+          size="lg"
+        />
+      </div>
     </div>
   );
 }
@@ -1231,7 +1239,7 @@ export function ExternalSignalsPage() {
           sichtbar, bevor der Operator angenommene Signale fehlinterpretiert. */}
       <PremiumRuntimeBanner />
 
-      <TriageStrip records={records} />
+      <TriageStrip records={records} loading={auditState.state === "loading"} />
 
       <SignalPasteForm onPasted={auditState.reload} />
       <AuditLogPanel state={auditState} />

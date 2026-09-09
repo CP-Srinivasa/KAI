@@ -23,7 +23,126 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-__all__ = ["precision_metric_contracts"]
+__all__ = ["classify_priority_tier_lift", "precision_metric_contracts"]
+
+
+def _num(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def classify_priority_tier_lift(quality: dict[str, Any]) -> dict[str, Any]:
+    """Judge the P10-vs-P7-P9 lift against its Wilson intervals, not its sign.
+
+    2026-09-09: the surface called a negative lift ``critical`` and told the
+    operator that high priority performs "AKTIV SCHLECHTER". On that day the
+    tiers measured 69,64 % (n=112, CI 60,59-77,39) against 77,78 % (n=54, CI
+    65,06-86,80) — a lift of -8,14 pp whose intervals overlap over their whole
+    width. The difference was noise, and the intervals proving it were already
+    computed in ``hold_metrics`` and sitting unused in the same dict.
+
+    A tier difference counts only when the two Wilson intervals are disjoint —
+    the same bar the per-source precision table already applies. Without
+    intervals nothing is claimed: an unmeasurable difference is not a finding.
+
+    The lift itself is always passed through. This narrows what may be
+    *asserted*, it does not hide the number.
+    """
+    lift = _num(quality.get("priority_tier_lift_pct"))
+    high_n = quality.get("priority_tier_high_conviction_resolved")
+    standard_n = quality.get("priority_tier_standard_resolved")
+
+    # Die beiden Gruppen, deren Differenz der Lift IST. Direktive 2026-08-08
+    # (kein Aggregat ohne Zerlegung): -8,14 pp ist ohne die zugrundeliegenden
+    # Raten, Stichprobengroessen und Intervalle nicht beurteilbar — genau daran
+    # ist die alte Vorzeichen-Regel gescheitert.
+    by_tier: dict[str, Any] = {
+        "high_conviction": {
+            "hit_rate_pct": _num(quality.get("priority_tier_high_conviction_hit_rate_pct")),
+            "resolved": high_n,
+            "ci_low_pct": _num(quality.get("priority_tier_high_conviction_ci_low_pct")),
+            "ci_high_pct": _num(quality.get("priority_tier_high_conviction_ci_high_pct")),
+        },
+        "standard": {
+            "hit_rate_pct": _num(quality.get("priority_tier_standard_hit_rate_pct")),
+            "resolved": standard_n,
+            "ci_low_pct": _num(quality.get("priority_tier_standard_ci_low_pct")),
+            "ci_high_pct": _num(quality.get("priority_tier_standard_ci_high_pct")),
+        },
+    }
+
+    if lift is None:
+        return {
+            "verdict": "insufficient_data",
+            "quality_status": "warning",
+            "significant": False,
+            "lift_pct": None,
+            "high_priority_resolved": high_n,
+            "standard_resolved": standard_n,
+            "by_tier": by_tier,
+            "confidence_interval": None,
+            "explanation": (
+                "No resolved directional alerts in both tiers — the lift is not computable."
+            ),
+        }
+
+    high_lo = _num(quality.get("priority_tier_high_conviction_ci_low_pct"))
+    high_hi = _num(quality.get("priority_tier_high_conviction_ci_high_pct"))
+    std_lo = _num(quality.get("priority_tier_standard_ci_low_pct"))
+    std_hi = _num(quality.get("priority_tier_standard_ci_high_pct"))
+    # Einzeln geprueft statt ``None not in (...)``: der Tuple-Test schmaelert die
+    # Typen nicht, und ein Vergleich gegen None waere hier ein Laufzeitfehler.
+    if high_lo is None or high_hi is None or std_lo is None or std_hi is None:
+        have_ci = False
+        significant = False
+    else:
+        have_ci = True
+        # Disjunkte 95-%-Wilson-Intervalle, in beide Richtungen.
+        significant = high_hi < std_lo or high_lo > std_hi
+
+    if not significant:
+        explanation = (
+            f"High-P {high_lo:.1f}-{high_hi:.1f} % overlaps standard {std_lo:.1f}-{std_hi:.1f} % "
+            "(95 % Wilson) — the tiers are not distinguishable at this sample size."
+            if have_ci
+            else "No confidence intervals available — the difference cannot be qualified."
+        )
+        return {
+            "verdict": "priority_inconclusive",
+            "quality_status": "warning",
+            "significant": False,
+            "lift_pct": lift,
+            "high_priority_resolved": high_n,
+            "standard_resolved": standard_n,
+            "by_tier": by_tier,
+            "confidence_interval": [high_lo, high_hi] if have_ci else None,
+            "explanation": explanation,
+            "warning": (
+                "High priority is not a validated quality label — but it is not proven worse "
+                "either. Do not act on the sign of this number alone."
+            ),
+        }
+
+    underperforming = lift < 0
+    return {
+        "verdict": "priority_underperforming" if underperforming else "priority_validated",
+        "quality_status": "critical" if underperforming else "ok",
+        "significant": True,
+        "lift_pct": lift,
+        "high_priority_resolved": high_n,
+        "standard_resolved": standard_n,
+        "by_tier": by_tier,
+        "confidence_interval": [high_lo, high_hi],
+        "explanation": (
+            f"High-P {high_lo:.1f}-{high_hi:.1f} % and standard {std_lo:.1f}-{std_hi:.1f} % "
+            "are disjoint at 95 % Wilson — the difference is carried by the evidence."
+        ),
+        "warning": (
+            "High priority resolves WORSE than standard priority and the intervals are disjoint. "
+            "Investigate the inverted ranking; do not present high-P as a quality label."
+            if underperforming
+            else None
+        ),
+    }
 
 
 def precision_metric_contracts(

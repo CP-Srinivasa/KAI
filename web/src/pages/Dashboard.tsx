@@ -12,6 +12,7 @@ import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
+import { PortfolioSnapshotProvider } from "@/state/PortfolioSnapshotProvider";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
 import { CommandHeader } from "@/components/layout/CommandHeader";
@@ -112,6 +113,11 @@ export function Dashboard() {
   const [focus, setFocus] = useState<"alles" | "problem">("alles");
 
   return (
+    // 2026-09-09: EIN Portfolio-Snapshot fuer Executive-Snapshot und
+    // Portfolio-Kacheln. Vorher holten sie ihn dreimal und die daraus
+    // ableitbare Exposure noch zweimal extra — fuenf serverseitige Neubauten
+    // desselben Snapshots alle 30 s, je drei Vollpaesse ueber ein 5,2-MB-Audit.
+    <PortfolioSnapshotProvider>
     <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
       {/* WP-1.1: sticky Command Header — verdichtete, nie wegscrollende Lage-Leiste. */}
       <PanelErrorBoundary name="Command-Header">
@@ -556,6 +562,7 @@ export function Dashboard() {
 
       <DashboardFooter />
     </div>
+    </PortfolioSnapshotProvider>
   );
 }
 

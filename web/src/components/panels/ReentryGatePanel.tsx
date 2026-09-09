@@ -15,6 +15,15 @@ import { getMetricContract, getMetricWarning } from "@/lib/labels";
 // Quelle: /dashboard/api/quality (active_resolved_count, paper_fills_with_pnl)
 //       + /dashboard/api/provenance (verdict, overall precision).
 
+// Die Kriterien des ABGELAUFENEN Gates aus D-125. Sie stehen hier, um den
+// bisherigen Fortschritt als Evidenz zeigen zu koennen — sie sind KEIN
+// aktuelles Freigabekriterium.
+//
+// Operator-Entscheid 2026-09-09: ein neues Gate wird in einem eigenen
+// Entscheidungsstrang bewusst festgelegt. Diese Zahlen duerfen dabei nicht
+// automatisch wiederbelebt werden, nur weil sie einmal zu D-125 gehoerten.
+// Wer hier ein Zieldatum setzt, ohne die Kriterien neu zu begruenden, stellt
+// den alten Vertrag stillschweigend wieder her.
 const REENTRY_DATE_ISO = "2026-05-16";
 const ALERTS_TARGET = 200;
 const FILLS_TARGET = 10;
@@ -68,7 +77,15 @@ function ReentryGatePanelImpl({
   const { fmt } = useCurrency();
   const targetDate = quality?.reentry?.target_date ?? REENTRY_DATE_ISO;
   const daysLeft = useMemo(() => daysUntil(targetDate), [targetDate]);
-  const targetExpired = quality?.reentry?.status === "expired" || daysLeft < 0;
+  // 2026-09-09: verglich gegen "expired" — einen Wert, den der Server seit
+  // laengerem nicht mehr sendet; nur der daysLeft-Fallback hielt die Anzeige
+  // aufrecht. Jetzt gegen den tatsaechlichen Zustand, Altwerte einbezogen.
+  const reentryStatus = quality?.reentry?.status;
+  const targetExpired =
+    reentryStatus === "no_current_authorization" ||
+    reentryStatus === "no_active_target" ||
+    reentryStatus === "expired" ||
+    daysLeft < 0;
 
   const computed = useMemo(() => {
     if (qualityState !== "ready" || quality == null) return null;
@@ -491,9 +508,12 @@ function bannerProps(
   targetDate: string,
 ): { title: string; detail: string; className: string } {
   if (targetExpired) {
+    // 2026-09-09: "archiviert" las sich wie erledigt. Der Zustand ist das
+    // Fehlen einer Freigabe, und genau das muss dastehen.
     return {
-      title: "Historisches Ziel · archiviert",
-      detail: "Re-Entry-Fortschritt bleibt als Evidenz erhalten; das alte Ziel ist kein aktueller Freigabezustand.",
+      title: "Keine aktuelle Re-Entry-Freigabe",
+      detail:
+        "Das alte Ziel ist abgelaufen und wurde bewusst nicht fortgeschrieben — ein Nachfolge-Gate ist nicht definiert. Der Fortschritt unten ist Evidenz, keine Freigabe; Ausführung richtet sich allein nach execution_enabled / entry_mode.",
       className: "border-line-subtle bg-bg-2 text-fg-muted",
     };
   }

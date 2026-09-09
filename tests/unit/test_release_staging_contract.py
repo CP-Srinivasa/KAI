@@ -276,3 +276,66 @@ def test_der_abbruch_nennt_einen_ausweg(skript: str) -> None:
     assert "npm ci && npm run build" in zweig
     assert "cp -a <quelle>/web/dist" in zweig
     assert "--allow-missing-spa" in zweig
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-09: derselbe Fehlertyp wie oben, eine Stufe spaeter.
+#
+# ``monitor/`` wird per ``cp -a`` KOPIERT und dann versiegelt. Der Code liest
+# ``monitor/source_ranking.json`` CWD-relativ, und das CWD des Servers ist die
+# Release-Wurzel (kai-server.service: WorkingDirectory=/home/kai/current). Der
+# recalc-Job laeuft dagegen im beweglichen Checkout und schreibt dorthin.
+#
+# Gemessen auf kai-pi5 im Release 287359a4:
+#     Release  monitor/source_ranking.json      Stand 08.09. 04:01
+#     Checkout monitor/source_ranking.json      Stand 09.09. 04:01
+#     Release  monitor/source_reliability.json  EXISTIERT NICHT
+#     Release  monitor/source_rotation_state.json EXISTIERT NICHT
+#
+# Die beiden fehlenden Dateien sind gitignored, lagen im Build-Checkout also nie
+# vor. Folge auf der Oberflaeche: ``trusted_count: 0``, ``top_sources: []``,
+# leere Probation-Liste — HTTP 200, keine Fehlermeldung. Das Quellen-Panel sah
+# tot aus, obwohl der recalc-Job taeglich lief.
+#
+# Die Trennlinie ist bereits sauber definiert: was in .gitignore steht, ist
+# Runtime-Zustand und gehoert in den State; der Rest (watchlists.yml,
+# keywords.txt, der kuratierte Seed) ist Konfiguration und bleibt unveraenderlich
+# im Release.
+MONITOR_STATE_DATEIEN = (
+    "source_ranking.json",
+    "source_reliability.json",
+    "source_rotation_state.json",
+    "source_proposals.jsonl",
+    "source_discovery_runs.jsonl",
+    "source_probation_state.json",
+    "generator_edge_watch_state.json",
+)
+
+
+def test_monitor_laufzeitdateien_werden_in_den_state_verlinkt(skript: str) -> None:
+    """Sonst liest der Dienst eine Kopie, die niemand mehr beschreibt."""
+    assert "MONITOR_STATE_FILES" in skript, (
+        "der Builder verlinkt keine monitor-Laufzeitdateien in den State — "
+        "das Release friert source_ranking.json zum Bauzeitpunkt ein"
+    )
+    for name in MONITOR_STATE_DATEIEN:
+        assert name in skript, f"{name} fehlt in der monitor-State-Liste des Builders"
+
+
+def test_die_verlinkte_liste_deckt_sich_mit_gitignore() -> None:
+    """Zwei Wahrheiten darueber, was Zustand ist, waeren eine zu viel."""
+    ignoriert = (REPO / ".gitignore").read_text(encoding="utf-8")
+    for name in MONITOR_STATE_DATEIEN:
+        assert f"monitor/{name}" in ignoriert, (
+            f"monitor/{name} wird verlinkt, ist aber nicht gitignored — "
+            f"entweder ist es Konfiguration (dann nicht verlinken) oder der "
+            f"Eintrag in .gitignore fehlt"
+        )
+
+
+def test_kuratierte_monitor_konfiguration_bleibt_unveraenderlich() -> None:
+    """Der Seed und die Watchlists sind Eingabe, nicht Zustand."""
+    ignoriert = (REPO / ".gitignore").read_text(encoding="utf-8")
+    for name in ("source_candidates_seed.json", "watchlists.yml", "keywords.txt"):
+        assert name not in MONITOR_STATE_DATEIEN
+        assert f"monitor/{name}" not in ignoriert

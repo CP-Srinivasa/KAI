@@ -314,6 +314,34 @@ for s in .env artifacts data logs; do
     ln -sfn "$STATE/$s" "$STAGE/$s"
 done
 
+# monitor/ ist gemischt: kuratierte Konfiguration (watchlists.yml, keywords.txt,
+# der Kandidaten-Seed) gehoert unveraenderlich ins Release, die Ausgaben der
+# recalc-/scout-Jobs sind Zustand. stage_code() kopiert das Verzeichnis als
+# Ganzes -- die Zustandsdateien wurden damit zum Bauzeitpunkt eingefroren.
+#
+# Gemessen 2026-09-09 auf kai-pi5 (Release 287359a4): der Dienst las ein
+# source_ranking.json vom Vortag, waehrend kai-recalc-cycle taeglich in den
+# Checkout schrieb; source_reliability.json und source_rotation_state.json
+# fehlten im Release ganz, weil sie gitignored sind und im frischen
+# Build-Worktree nie existieren. Die Leser in app/api/routers/dashboard.py
+# pruefen nur .exists() -- das Quellen-Panel meldete daraufhin HTTP 200 mit
+# trusted_count 0 und leerer Rotation. Ein stiller Ausfall, kein Fehler.
+#
+# Die Trennlinie ist .gitignore: was dort steht, ist Zustand. Bewacht von
+# tests/unit/test_release_staging_contract.py.
+MONITOR_STATE_FILES="source_ranking.json source_reliability.json source_rotation_state.json source_proposals.jsonl source_discovery_runs.jsonl source_probation_state.json generator_edge_watch_state.json"
+mkdir -p "$STATE/monitor"
+for m in $MONITOR_STATE_FILES; do
+    # Die mitkopierte Fassung muss weg, sonst zeigte das Release weiter auf
+    # einen Stand, den niemand mehr fortschreibt.
+    rm -f "$STAGE/monitor/$m"
+    ln -sfn "$STATE/monitor/$m" "$STAGE/monitor/$m"
+done
+# integrity/ ist reines Laufzeit-Ergebnis (kai-integrity-anchor.timer).
+rm -rf "$STAGE/monitor/integrity"
+mkdir -p "$STATE/monitor/integrity"
+ln -sfn "$STATE/monitor/integrity" "$STAGE/monitor/integrity"
+
 echo "== 3/6 eigener venv aus dem gepinnten Lockfile ==" >&2
 # NICHT den vorhandenen venv hineinkopieren: das truege vorhandenen Drift in
 # einen angeblich unveraenderlichen Stand. Neu bauen und pruefen.

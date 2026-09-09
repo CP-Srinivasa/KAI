@@ -131,7 +131,9 @@ export function NodeReputationPanel() {
             <div className="flex items-center gap-1 text-2xs text-fg-subtle">
               <Coins size={10} className="text-ai/70" /> Routing-Income (verdient)
             </div>
-            <div className="mt-1 grid grid-cols-3 gap-2 font-mono tabular-nums text-2xs text-fg">
+            {/* 2026-09-09: grid-cols-3 auf ALLEN Breakpoints ergab in der rechten
+                 Spalte ~150px je Zelle — "30d 1.234.567 sats" passt da nicht. */}
+            <div className="mt-1 grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono tabular-nums text-2xs text-fg">
               <span title="letzte 24h">24h {fmtFee(latest.routing_fee_day_sat)}</span>
               <span title="letzte 7 Tage">7d {fmtFee(latest.routing_fee_week_sat)}</span>
               <span title="letzte 30 Tage">30d {fmtFee(latest.routing_fee_month_sat)}</span>

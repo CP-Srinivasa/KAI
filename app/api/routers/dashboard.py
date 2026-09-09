@@ -206,6 +206,17 @@ def _reentry_target_from_settings() -> tuple[str, str]:
 
 
 def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
+    """Zustand des Re-Entry-Ziels — Evidenz, nie Freigabe.
+
+    ``grants_execution_authorization`` ist konstruktionsbedingt IMMER ``False``.
+    Die einzige Ausfuehrungsfreigabe im System ist ``execution_enabled`` bzw.
+    ``entry_mode``; dieser Report darf sie weder ersetzen noch implizieren. Das
+    Feld existiert, damit die Freigabe-Frage nicht am Status-String haengt: ein
+    Konsument, der ``status`` kuenftig nicht kennt, faellt so auf "keine
+    Freigabe" zurueck statt auf eine Vermutung.
+
+    Bewacht von tests/unit/test_reentry_no_current_authorization.py.
+    """
     now = datetime.now(UTC)
     if target_date is None:
         target_date, target_source = _reentry_target_from_settings()
@@ -213,43 +224,56 @@ def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
         target_source = "explicit"
     target = _parse_iso_utc(f"{target_date}T00:00:00+00:00")
     if target is None:
-        # Fail safe: an empty/invalid configured date must not crash and must
-        # not look current — it needs an operator re-evaluation.
         return {
             "target_date": target_date,
             "target_source": target_source,
             "today": now.date().isoformat(),
-            "status": "requires_re_evaluation",
+            "status": "no_current_authorization",
+            "reason": "target_unparseable",
             "days_delta": None,
+            "grants_execution_authorization": False,
             "warning": (
-                "Re-Entry target date is missing or not parseable; operator must set a new target."
+                f"Keine gueltige Re-Entry-Freigabe: das konfigurierte Ziel ({target_date!r}) "
+                "ist nicht lesbar. Solange kein Gate definiert ist, wird keine Freigabe "
+                "abgeleitet."
             ),
         }
     delta_days = (target.date() - now.date()).days
     if delta_days < 0:
-        # A target in the past means there is no CURRENTLY ACTIVE re-entry target.
-        # Present it neutrally (config pending) rather than as an alarming
-        # "expired/error": the operator simply has not set a new target yet. The
-        # lapsed date is still surfaced for context; a genuinely future target
-        # below reads as "active".
+        # Operator-Entscheid 2026-09-09: kein Nachfolgedatum erfinden. Das alte
+        # Ziel (2026-05-16, Kriterien >=200 resolved signals ODER >=10 paper
+        # fills) ist abgelaufen, ein Nachfolge-Gate ist NICHT definiert. Der
+        # Zustand hiess zuvor "no_active_target" und war hier ausdruecklich als
+        # "Konfiguration ausstehend (kein Fehler)" gerahmt — dieselbe
+        # Verharmlosung, die der Audit vom 2026-06-08 (Befund G / FS-4) am
+        # frueheren "expired" beanstandet hatte, nur freundlicher formuliert.
+        # Ein abgelaufener Vertrag ist kein ausstehender Konfigurationseintrag.
         return {
             "target_date": target_date,
             "target_source": target_source,
             "today": now.date().isoformat(),
-            "status": "no_active_target",
+            "status": "no_current_authorization",
+            "reason": "target_lapsed",
             "days_delta": delta_days,
+            "grants_execution_authorization": False,
             "warning": (
-                f"Kein aktives Re-Entry-Target — das letzte Ziel ({target_date}) liegt "
-                "in der Vergangenheit, Konfiguration ausstehend (kein Fehler). Operator "
-                "setzt ALERT_REENTRY_TARGET_DATE, sobald ein neues Ziel feststeht."
+                f"Keine aktuelle Re-Entry-Freigabe. Das letzte Ziel ({target_date}) ist seit "
+                f"{abs(delta_days)} Tagen abgelaufen und es ist kein Nachfolge-Gate definiert. "
+                "Der Fortschritt gegen die damaligen Kriterien bleibt Evidenz — er ist keine "
+                "Freigabe. Ein neues Gate wird bewusst festgelegt, nicht aus dem alten "
+                "fortgeschrieben."
             ),
         }
     return {
         "target_date": target_date,
         "target_source": target_source,
         "today": now.date().isoformat(),
-        "status": "active",
+        # "active_target", nicht "active": ein laufendes Sammelziel, keine
+        # Ausfuehrungsfreigabe. Der alte Wert "active" las sich wie Letzteres.
+        "status": "active_target",
+        "reason": None,
         "days_delta": delta_days,
+        "grants_execution_authorization": False,
         "warning": None,
     }
 
@@ -674,6 +698,9 @@ def _shadow_attribution_24h() -> dict[str, Any]:
 def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
     """Build quality-bar metrics from the hold report and audit artifacts."""
     quality = report.get("signal_quality_validation", {})
+    # Einmal urteilen, mehrfach lesen — der Contract-Block unten fragt das
+    # Ergebnis an vier Stellen ab.
+    _priority_verdict = _precision_metrics.classify_priority_tier_lift(quality)
     hit_rate = report.get("alert_hit_rate_evidence", {})
     paper = report.get("paper_trading_evidence", {})
     gate = report.get("hold_gate_evaluation", {})
@@ -910,19 +937,15 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
                 int(quality.get("priority_tier_high_conviction_resolved") or 0)
                 + int(quality.get("priority_tier_standard_resolved") or 0)
             ),
-            confidence_interval=None,
+            confidence_interval=_priority_verdict["confidence_interval"],
             is_decision_relevant=True,
-            quality_status=(
-                "critical"
-                if isinstance(quality.get("priority_tier_lift_pct"), (int, float))
-                and float(quality.get("priority_tier_lift_pct")) < 0
-                else "warning"
-            ),
-            warning=(
-                "High-priority is not outperforming standard priority; do not present it as a "
-                "validated quality label."
-            ),
-            explanation="P10 hit-rate minus P7-P9 hit-rate.",
+            # 2026-09-09: urteilte allein nach dem Vorzeichen und meldete
+            # -8,14 pp als critical, obwohl die Wilson-CIs der beiden Tiers
+            # (60,6-77,4 gegen 65,1-86,8) auf ganzer Breite ueberlappen. Jetzt
+            # entscheidet die Disjunktheit, nicht das Vorzeichen.
+            quality_status=_priority_verdict["quality_status"],
+            warning=_priority_verdict.get("warning"),
+            explanation=("P10 hit-rate minus P7-P9 hit-rate. " + _priority_verdict["explanation"]),
         ),
         "market_regime": _metric_contract(
             value="read_only",
@@ -1682,28 +1705,19 @@ async def dashboard_priority_gate_api() -> JSONResponse:
     try:
         report = await _live_hold_report()
         quality = report.get("signal_quality_validation", {})
-        lift = quality.get("priority_tier_lift_pct")
-        high_n = quality.get("priority_tier_high_conviction_resolved")
-        standard_n = quality.get("priority_tier_standard_resolved")
-        if not isinstance(lift, (int, float)):
-            verdict = "insufficient_data"
-        elif float(lift) < 0:
-            verdict = "priority_underperforming"
-        elif high_n and standard_n:
-            verdict = "priority_validated"
-        else:
-            verdict = "priority_unproven"
+        # 2026-09-09: ein negativer Lift allein ist kein Befund, solange die
+        # Wilson-CIs der beiden Tiers ueberlappen — siehe
+        # classify_priority_tier_lift.
+        assessment = _precision_metrics.classify_priority_tier_lift(quality)
         payload["priority_quality"] = {
-            "high_priority_lift_pct": lift,
-            "high_priority_resolved": high_n,
-            "standard_resolved": standard_n,
-            "current_quality_verdict": verdict,
-            "warning": (
-                "Priority gate is blocking conservatively, but High-P is not a validated "
-                "quality label in the current evidence window."
-                if verdict in {"priority_underperforming", "priority_unproven", "insufficient_data"}
-                else None
-            ),
+            "high_priority_lift_pct": assessment["lift_pct"],
+            "high_priority_resolved": assessment["high_priority_resolved"],
+            "standard_resolved": assessment["standard_resolved"],
+            "current_quality_verdict": assessment["verdict"],
+            "significant": assessment["significant"],
+            "confidence_interval": assessment["confidence_interval"],
+            "explanation": assessment["explanation"],
+            "warning": assessment.get("warning"),
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("priority_quality_load_failed: %s", exc)

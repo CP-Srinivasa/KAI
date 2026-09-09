@@ -4,6 +4,7 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { fetchLightningStatus, type LightningStatus } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
+import { cn } from "@/lib/utils";
 
 // Lightning-Node-Status (Phase 1, read-only, default-off). Macht die Integration
 // greifbar OHNE Fake: zeigt ehrlich disabled / unavailable / ok und — wenn der
@@ -14,9 +15,13 @@ const POLL_MS = 60_000;
 
 function Stat({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-0.5">
-      <span className="text-2xs uppercase tracking-wider text-fg-subtle">{label}</span>
-      <span className={mono ? "font-mono tabular-nums text-fg" : "text-fg"}>{value}</span>
+    // 2026-09-09: Ohne min-w-0/flex-wrap sprengen lange Werte (lnd-Versions-
+    // string, Node-Alias, achtstellige sat-Betraege) die Zeile. Die Card hat
+    // overflow-hidden, der Text wurde also still abgeschnitten statt
+    // umzubrechen — das ist der "steife, nicht responsive" Eindruck.
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 py-0.5">
+      <span className="min-w-0 truncate text-2xs uppercase tracking-wider text-fg-subtle">{label}</span>
+      <span className={cn("min-w-0 break-all text-right", mono && "font-mono tabular-nums text-fg", !mono && "text-fg")}>{value}</span>
     </div>
   );
 }

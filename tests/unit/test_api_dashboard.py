@@ -204,9 +204,11 @@ def test_quality_api_returns_metrics(
     assert data["gate_status"] == "hold_remains_active"
     assert "resolved_directional_below_200" in data["blocking_reasons"]
     assert data["dashboard_truth_contract_version"] == 2
-    # A past target reads as neutral "no_active_target" (config pending), NOT an
-    # alarming "expired" — the operator simply has not set a new target yet.
-    assert data["reentry"]["status"] == "no_active_target"
+    # 2026-09-09 (Operator-Entscheid): ein abgelaufenes Ziel ohne definierten
+    # Nachfolger ist keine ausstehende Konfiguration, sondern eine fehlende
+    # Freigabe — und heisst jetzt so.
+    assert data["reentry"]["status"] == "no_current_authorization"
+    assert data["reentry"]["grants_execution_authorization"] is False
     assert data["reentry"]["target_date"] == "2026-05-16"
     assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
         "lifetime",
@@ -549,7 +551,18 @@ def test_priority_gate_endpoint_exposes_reject_semantics(tmp_path: Path) -> None
     }
 
 
-def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path: Path) -> None:
+def test_priority_gate_does_not_claim_underperformance_without_evidence(
+    tmp_path: Path,
+) -> None:
+    """2026-09-09: n=8 gegen n=8 ohne Konfidenzintervalle traegt kein Urteil.
+
+    Der Test hiess vorher ``..._marks_negative_priority_lift_as_underperforming``
+    und schrieb die reine Vorzeichen-Regel fest. Live fuehrte genau die dazu,
+    dass -8,14 pp bei ueberlappenden Wilson-CIs (60,6-77,4 gegen 65,1-86,8) als
+    ``critical`` und "High-P trifft AKTIV SCHLECHTER" auf dem Dashboard stand.
+    Die Unterperformance wird weiterhin erkannt — aber nur mit disjunkten CIs,
+    siehe den Test darunter.
+    """
     recent = datetime.now(UTC).isoformat()
     (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
     (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
@@ -583,7 +596,51 @@ def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path:
     assert r.status_code == 200
     priority_quality = r.json()["priority_quality"]
     assert priority_quality["high_priority_lift_pct"] == -12.5
+    assert priority_quality["current_quality_verdict"] == "priority_inconclusive"
+    assert priority_quality["significant"] is False
+    # Die Zahl bleibt sichtbar und die Einordnung ehrlich — sie wird nur nicht
+    # mehr als belegte Unterperformance ausgegeben.
+    assert priority_quality["warning"]
+
+
+def test_priority_gate_flags_underperformance_when_intervals_are_disjoint(
+    tmp_path: Path,
+) -> None:
+    """Mit disjunkten Wilson-CIs ist die Unterperformance ein echter Befund."""
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"started_at": recent, "status": "priority_rejected"}) + "\n",
+        encoding="utf-8",
+    )
+
+    async def fake_hold_report() -> dict[str, object]:
+        return {
+            "signal_quality_validation": {
+                "priority_tier_lift_pct": -40.0,
+                "priority_tier_high_conviction_resolved": 120,
+                "priority_tier_high_conviction_ci_low_pct": 31.0,
+                "priority_tier_high_conviction_ci_high_pct": 49.0,
+                "priority_tier_standard_resolved": 120,
+                "priority_tier_standard_ci_low_pct": 72.0,
+                "priority_tier_standard_ci_high_pct": 86.0,
+            }
+        }
+
+    app = _make_app()
+    with (
+        _patch_artifacts(tmp_path),
+        patch.object(dashboard_mod, "_live_hold_report", fake_hold_report),
+    ):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    priority_quality = r.json()["priority_quality"]
     assert priority_quality["current_quality_verdict"] == "priority_underperforming"
+    assert priority_quality["significant"] is True
     assert priority_quality["warning"]
 
 
@@ -633,25 +690,33 @@ def test_regime_endpoint_marks_read_only_and_exposes_snapshot_age(
 
 
 def test_reentry_status_config_and_failsafe_semantics() -> None:
-    # Future date → active, real positive delta.
+    # Zukunftsdatum → laufendes Sammelziel, echtes positives Delta. "active_target",
+    # nicht "active": ein laufendes Ziel ist keine Ausfuehrungsfreigabe.
     future = dashboard_mod._reentry_status(target_date="2099-12-31")
-    assert future["status"] == "active"
+    assert future["status"] == "active_target"
     assert future["days_delta"] > 0
     assert future["target_source"] == "explicit"
-    # Past date → no_active_target (config pending), NOT an alarming "expired"
-    # and NOT clamped to 0/today. days_delta stays the true negative value.
+    assert future["grants_execution_authorization"] is False
+    # Vergangenes Datum → keine aktuelle Freigabe. days_delta bleibt der echte
+    # negative Wert, wird NICHT auf 0/heute geklemmt.
     past = dashboard_mod._reentry_status(target_date="2020-01-01")
-    assert past["status"] == "no_active_target"
+    assert past["status"] == "no_current_authorization"
+    assert past["reason"] == "target_lapsed"
     assert past["days_delta"] < 0
-    # Empty/invalid → fail-safe requires_re_evaluation, no crash, no invented target.
+    # Leer/ungueltig → derselbe Freigabe-Zustand, anderer Grund. Kein Absturz,
+    # kein erfundenes Ziel.
     empty = dashboard_mod._reentry_status(target_date="")
-    assert empty["status"] == "requires_re_evaluation"
+    assert empty["status"] == "no_current_authorization"
+    assert empty["reason"] == "target_unparseable"
     assert empty["days_delta"] is None
-    # Default (from settings) → 2026-05-16 lies in the past → neutral no_active_target.
+    # Default aus den Settings → 2026-05-16 liegt in der Vergangenheit.
     default = dashboard_mod._reentry_status()
     assert default["target_date"] == "2026-05-16"
-    assert default["status"] == "no_active_target"
+    assert default["status"] == "no_current_authorization"
     assert default["target_source"] in {"config", "default_historical"}
+    # Kein Aufruf dieser Funktion darf je eine Freigabe behaupten (FS-4).
+    for state in (future, past, empty, default):
+        assert state["grants_execution_authorization"] is False
 
 
 def test_source_reliability_flags_small_n_as_provisional(artifacts_dir: Path) -> None:

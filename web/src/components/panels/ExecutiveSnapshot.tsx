@@ -10,10 +10,10 @@ import { StatusPill } from "@/components/ui/StatusPill";
 import { Gauge } from "@/components/viz/Gauge";
 import { Donut } from "@/components/viz/Donut";
 import { useApi } from "@/lib/useApi";
+import { useSharedPortfolioSnapshot } from "@/state/PortfolioSnapshotProvider";
+import { exposureFromSnapshot } from "@/lib/exposureFromSnapshot";
 import { useCurrency } from "@/state/CurrencyProvider";
 import {
-  fetchPortfolioSnapshot,
-  fetchExposureSummary,
   fetchDiversificationOverview,
 } from "@/lib/api";
 import { allocationDonutData, concentrationTone } from "@/lib/executiveSnapshot";
@@ -59,12 +59,17 @@ function Metric({
 
 export function ExecutiveSnapshot() {
   const { fmt } = useCurrency();
-  const pf = useApi(fetchPortfolioSnapshot, 30_000);
-  const ex = useApi(fetchExposureSummary, 30_000);
+  // 2026-09-09: /operator/exposure-summary war ein zweiter Round-Trip auf
+  // dieselbe serverseitige Berechnung — build_exposure_summary
+  // (portfolio_read.py:812) ist nur snapshot.exposure_summary.to_json_dict()
+  // plus vier Felder, die der Snapshot mitliefert. Portfolio und Exposure sind
+  // damit EINE Quelle, nicht zwei; entsprechend zaehlt `degraded` unten nur
+  // noch zwei Quellen statt drei.
+  const pf = useSharedPortfolioSnapshot();
   const dv = useApi(fetchDiversificationOverview, 60_000);
 
   const portfolio = pf.state === "ready" ? pf.data : null;
-  const exposure = ex.state === "ready" ? ex.data : null;
+  const exposure = pf.state === "ready" ? exposureFromSnapshot(pf.data) : null;
   const diversification = dv.state === "ready" ? dv.data : null;
 
   const largestPct =
@@ -76,14 +81,12 @@ export function ExecutiveSnapshot() {
 
   // Je Quelle getrennt: welche fehlt, und laesst sie sich erneut holen?
   const degraded = [
-    pf.state === "error" ? "Portfolio" : null,
-    ex.state === "error" ? "Exposure" : null,
+    pf.state === "error" ? "Portfolio/Exposure" : null,
     dv.state === "error" ? "Allocation" : null,
   ].filter((x): x is string => x !== null);
-  const allDown = pf.state === "error" && ex.state === "error" && dv.state === "error";
+  const allDown = pf.state === "error" && dv.state === "error";
   const reloadDegraded = () => {
     if (pf.state === "error") pf.reload();
-    if (ex.state === "error") ex.reload();
     if (dv.state === "error") dv.reload();
   };
 
@@ -95,7 +98,7 @@ export function ExecutiveSnapshot() {
       />
 
       {/* 2026-09-08: Vorher hing die einzige Fehlermeldung an
-          `pf.state === "error" && ex.state === "error"` — BEIDE mussten fallen.
+          `pf.state === "error" && pf.state === "error"` — BEIDE mussten fallen.
           Bei Teilausfall zeigte der wichtigste Block der Seite stumme Striche,
           was sich wie "keine Positionen" liest statt wie "nicht bestimmbar".
           Jetzt traegt der Block immer eine Aussage, und jede Zone kennt ihren

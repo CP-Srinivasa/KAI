@@ -701,7 +701,20 @@ export type DashboardQuality = {
   reentry?: {
     target_date: string;
     today: string;
-    status: "active" | "expired" | "no_active_target" | "requires_re_evaluation" | "unverified" | string;
+    // 2026-09-09: "active_target" | "no_current_authorization". Die Altwerte
+    // bleiben im Typ, weil ein aelteres Backend sie noch senden kann.
+    status:
+      | "active_target"
+      | "no_current_authorization"
+      | "active"
+      | "expired"
+      | "no_active_target"
+      | "requires_re_evaluation"
+      | "unverified"
+      | string;
+    reason?: "target_lapsed" | "target_unparseable" | null;
+    /** Konstruktionsbedingt immer false — dieser Report ist Evidenz, nie Freigabe. */
+    grants_execution_authorization?: boolean;
     days_delta: number | null;
     warning: string | null;
     target_source?: string;
@@ -1606,11 +1619,21 @@ export type AlertAuditSummary = {
   write_back_allowed: boolean;
   total_alerts: number;
   total_resolved?: number;
+  returned_alerts?: number;
+  alerts_truncated?: boolean;
   alerts: AlertAuditEntry[];
 };
 
+// 2026-09-09: ungekappt lieferte der Endpunkt 5,4 MB alle 30 s, wovon die
+// Seite die letzten 50 Zeilen rendert. total_alerts/total_resolved bleiben
+// serverseitig ueber die Vollmenge, nur die Liste wird gekappt.
+export const ALERT_AUDIT_ROW_LIMIT = 200;
+
 export function fetchAlertAudit(signal?: AbortSignal): Promise<AlertAuditSummary> {
-  return apiGet<AlertAuditSummary>("/operator/alert-audit", { signal });
+  return apiGet<AlertAuditSummary>(
+    `/operator/alert-audit?limit=${ALERT_AUDIT_ROW_LIMIT}`,
+    { signal },
+  );
 }
 
 export type PaperPositionTpTier = {
@@ -1656,6 +1679,13 @@ export type PortfolioSnapshot = {
   generated_at: string;
   source: string;
   audit_path: string;
+  // 2026-09-09: Das Backend liefert diese drei seit jeher mit
+  // (portfolio_read.py:220-224), der Typ kannte sie nur nicht — weshalb die
+  // Oberflaeche fuer dieselbe Information einen zweiten Endpunkt anrief.
+  // Siehe exposureFromSnapshot.ts.
+  exposure_summary?: ExposureSummary;
+  available?: boolean;
+  error?: string | null;
   cash_usd: number;
   realized_pnl_usd: number;
   total_market_value_usd: number;
@@ -1988,6 +2018,9 @@ export type ExposureSummary = {
   execution_enabled: boolean;
   write_back_allowed: boolean;
   generated_at: string;
+  // build_exposure_summary (portfolio_read.py:818) setzt audit_path mit; der Typ
+  // kannte es nicht.
+  audit_path?: string;
   available: boolean;
   error: string | null;
 };

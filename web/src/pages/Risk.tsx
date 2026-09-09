@@ -86,6 +86,22 @@ export function RiskPage() {
         divider={false}
       />
 
+      {/* 2026-09-08: Die Seite kannte nur "ready" — bei einem Fehler blieb sie
+          komplett stumm und leer. Eine Risikoseite, die schweigt, liest sich wie
+          "kein Risiko". Sie muss ausdruecklich sagen, dass die Lage unbekannt ist.
+          2026-09-09: Der Hinweis stand UNTER allen drei exp-Bloecken, also unter
+          dem Fold — oben blieb nur die Readiness-Karte sichtbar und die Seite sah
+          aus, als gaebe es kein Risiko. Zustand gehoert vor die Daten, nicht
+          dahinter. */}
+      {exposure.state === "loading" && <PanelLoading label="Exposure lädt …" />}
+      {exposure.state === "error" && (
+        <PanelError
+          error={exposure.error}
+          onRetry={exposure.reload}
+          title="Risikolage unbekannt — keine Exposure-Daten"
+        />
+      )}
+
       {/* DALI-R-Hero-v2: Gesamtbewertung als Banner mit Klartext-Risikoliste.
           Operator: "Risk genau das selbe nicht aussagekraeftig und tot."
           Lösung: oben drei klare Risk-KPIs + sammelnder Bewertungs-Banner. */}
@@ -234,17 +250,7 @@ export function RiskPage() {
         </div>
       )}
 
-      {/* 2026-09-08: Die Seite kannte nur "ready" — bei einem Fehler blieb sie
-          komplett stumm und leer. Eine Risikoseite, die schweigt, liest sich wie
-          "kein Risiko". Sie muss ausdruecklich sagen, dass die Lage unbekannt ist. */}
-      {exposure.state === "loading" && <PanelLoading label="Exposure lädt …" />}
-      {exposure.state === "error" && (
-        <PanelError
-          error={exposure.error}
-          onRetry={exposure.reload}
-          title="Risikolage unbekannt — keine Exposure-Daten"
-        />
-      )}
+
 
       {/* Sekundäre Detail-Metriken */}
       {exposure.state === "ready" && (

@@ -41,31 +41,41 @@ const TONE_RANK: Record<TruthTone, number> = {
 
 function reentryChip(quality: DashboardQuality | null): TruthChip {
   const status = quality?.reentry?.status;
-  if (status === "no_active_target") {
+  // 2026-09-09 (Operator-Entscheid): "no_active_target" mit tone "muted" und dem
+  // Text "kein Fehler" war eine Entwarnung, die es nicht gibt — visuell fast
+  // unsichtbar, inhaltlich ein "alles in Ordnung, nur noch nicht eingetragen".
+  // Das alte Ziel (2026-05-16) ist abgelaufen, ein Nachfolge-Gate ist NICHT
+  // definiert, also existiert keine Freigabe. "info", nicht "warn": es ist eine
+  // offene Entscheidung, kein Systemdefekt — ein Dauer-warn erzeugt nur
+  // Alarm-Ermuedung.
+  if (status === "no_current_authorization") {
     return {
       key: "reentry",
       label: "Re-Entry",
-      value: "nicht gesetzt",
-      tone: "muted",
-      hint: "Kein aktives Re-Entry-Target konfiguriert (Konfiguration ausstehend) — kein Fehler und kein abgelaufenes Ziel. Operator setzt ein Ziel, sobald es feststeht.",
-    };
-  }
-  if (status === "expired") {
-    return {
-      key: "reentry",
-      label: "Re-Entry",
-      value: "abgelaufen",
-      tone: "warn",
-      hint: "Historisches Re-Entry-Ziel ist abgelaufen — Fortschritt bleibt Evidenz, ist aber kein aktueller Freigabezustand. Neue Gate-Definition erforderlich.",
-    };
-  }
-  if (status === "active") {
-    return {
-      key: "reentry",
-      label: "Re-Entry",
-      value: "aktiv",
+      value: "keine Freigabe",
       tone: "info",
-      hint: "Re-Entry-Ziel ist aktiv und laeuft auf den Stichtag zu.",
+      hint: "Kein aktuelles Re-Entry-Gate definiert — das alte Ziel ist abgelaufen und wurde bewusst nicht fortgeschrieben. Der Fortschritt unten bleibt Evidenz und ist KEINE Freigabe. Ausfuehrung richtet sich allein nach execution_enabled / entry_mode.",
+    };
+  }
+  // Altwerte des Servers vor dem 2026-09-09. Bleiben stehen, damit eine aeltere
+  // Backend-Version nicht in den unbestaetigt-Zweig faellt und dadurch
+  // harmloser aussieht, als sie ist.
+  if (status === "no_active_target" || status === "expired") {
+    return {
+      key: "reentry",
+      label: "Re-Entry",
+      value: "keine Freigabe",
+      tone: "info",
+      hint: "Kein aktuelles Re-Entry-Gate definiert (Backend meldet noch den alten Statuswert). Fortschritt ist Evidenz, keine Freigabe.",
+    };
+  }
+  if (status === "active_target" || status === "active") {
+    return {
+      key: "reentry",
+      label: "Re-Entry",
+      value: "Ziel laeuft",
+      tone: "info",
+      hint: "Ein Re-Entry-Sammelziel laeuft auf seinen Stichtag zu. Das ist ein Ziel, keine Ausfuehrungsfreigabe.",
     };
   }
   return {
