@@ -87,11 +87,21 @@ class InferenceSettings(BaseSettings):
     #: eine Stufe ist ein Versprechen des Anbieters. Eine Umrechnung zwischen
     #: beiden waere geraten -- `minimal` ist kein bestimmter Token-Wert.
     #:
-    #: Auf `gemini/gemini-3.6-flash` ist `minimal` der Faktor 10,9 bei
-    #: dreifacher Geschwindigkeit (0,0017607 -> 0,0001620 USD je Aufruf,
-    #: 4508 -> 1493 ms), bei gleicher Ausgabelaenge und in 4 von 4 Laeufen
-    #: schemagueltigem JSON. Ob die Antwort BESSER ist, sagt das nicht -- auch
-    #: das hier ist ein Regler und keine Vorgabe.
+    #: KEINE EMPFEHLUNG. Eine erste Messung an einer Schlagzeile ergab Faktor
+    #: 10,9 im Preis. Gegen ECHTE Analyse-Eingaben (vier reale Dokumente,
+    #: SYSTEM_PROMPT_V1, je 16 Laeufe, max_tokens=4096) kehrt sich das um:
+    #:
+    #:   ohne      Schema 15/16   858 Denk-Token   0,0059899 USD   8020 ms
+    #:   low       Schema 13/16   152              0,0033471       5306 ms
+    #:   minimal   Schema 11/16     0              0,0028493       3705 ms
+    #:
+    #: Monoton: weniger Denken -> haeufiger `bull_case` als OBJEKT statt String
+    #: -> schlechtere Schemaquote. Der frueher gemessene Vorsprung von
+    #: `minimal` war ein Artefakt eines zu kleinen `max_tokens`; die
+    #: Vergleichsgruppe wurde abgeschnitten, nicht uebertroffen.
+    #:
+    #: Operator-Entscheidung 2026-09-09: Referenzzustand ist LEER. `minimal`
+    #: und `low` sind keine SHADOW-Kandidaten.
     route_reasoning_effort: dict[str, str] = Field(default_factory=dict)
     litellm_base_url: str = Field(default="http://127.0.0.1:4000")
     litellm_api_key: str = Field(default="", repr=False)
