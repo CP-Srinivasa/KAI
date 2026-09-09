@@ -64,8 +64,14 @@ class InferenceSettings(BaseSettings):
     #:   reasoning_effort="minimal"      0 Denk-Token, 1301 ms
     #:
     #: Der Grund ist die Form, nicht die Zahl: `thinking.budget_tokens` ist die
-    #: Anthropic-Schreibweise, und LiteLLM 1.99.0 uebersetzt sie fuer Gemini
-    #: nicht. Belegt ist das nicht am Token-Zaehler, sondern am Statuscode --
+    #: Anthropic-Schreibweise, und LiteLLM 1.99.0 uebersetzt sie FUER DIESES
+    #: MODELL nicht. Bewusst modellbezogen und nicht "fuer Gemini": am
+    #: 2026-09-08 hat derselbe Proxy auf `gemini-2.5-flash` abgestuft geantwortet
+    #: (Budget 128 -> 104 Denk-Token, Budget 0 -> 0), der Parameter kam dort also
+    #: an. Wer die weite Fassung liest, entfernt diesen Regler spaeter als
+    #: "fuer Gemini nutzlos" und nimmt den einzigen wirksamen Hebel fuer
+    #: 2.5-flash mit. Belegt ist der 3.6-Befund nicht am Token-Zaehler,
+    #: sondern am Statuscode --
     #: derselbe Wert `0` gibt DIREKT gegen Google HTTP 400 ("invalid argument",
     #: `gemini-3.6-flash` kann Denken nicht abschalten), ueber LiteLLM aber 200
     #: mit unveraendertem Denkaufwand. Ein Parameter, der eine Ablehnung

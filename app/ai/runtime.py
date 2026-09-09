@@ -209,12 +209,14 @@ def _mit_denkbudget(
     haette ausgerechnet die Einstellung verschluckt, die auf `gemini-2.5-flash`
     den Faktor 9 brachte.
 
-    ACHTUNG: `thinking` ist die Anthropic-Schreibweise. LiteLLM 1.99.0
-    uebersetzt sie fuer Gemini NICHT -- auf `gemini/gemini-3.6-flash` bleibt
-    dieser Regler wirkungslos (2026-09-09 auf kai-pi5 gemessen: 867 statt 876
-    Denk-Token bei Budget 0). Fuer diesen Weg ist `_mit_denkaufwand`
-    zustaendig. Der Regler hier bleibt fuer Transporte, die `thinking` nativ
-    tragen.
+    ACHTUNG, modellbezogen: `thinking` ist die Anthropic-Schreibweise, und
+    LiteLLM 1.99.0 uebersetzt sie fuer `gemini/gemini-3.6-flash` NICHT -- dort
+    bleibt dieser Regler wirkungslos (2026-09-09 auf kai-pi5: 867 statt 876
+    Denk-Token bei Budget 0). Fuer `gemini-2.5-flash` gilt das NICHT: am
+    2026-09-08 antwortete derselbe Proxy dort abgestuft (Budget 128 -> 104
+    Denk-Token). Der Regler ist also kein toter Code, sondern der wirksame Weg
+    fuer 2.5 und fuer Transporte, die `thinking` nativ tragen. Fuer 3.6 ist
+    `_mit_denkaufwand` zustaendig.
 
     Eine bereits gesetzte Angabe des Aufrufers bleibt stehen. Er weiss mehr
     ueber seinen Fall als eine Routen-Vorgabe, und ein stilles Ueberschreiben

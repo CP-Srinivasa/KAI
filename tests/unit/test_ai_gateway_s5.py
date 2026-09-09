@@ -458,7 +458,8 @@ async def test_die_denkstufe_erreicht_wirklich_die_anfrage() -> None:
 
     Und hier zaehlt er doppelt. Das Budget stand seit 2026-09-08 verdrahtet im
     Code und war auf `gemini/gemini-3.6-flash` trotzdem wirkungslos, weil
-    LiteLLM 1.99.0 die Anthropic-Schreibweise fuer Gemini nicht uebersetzt.
+    LiteLLM 1.99.0 die Anthropic-Schreibweise FUER DIESES MODELL nicht
+    uebersetzt -- fuer `gemini-2.5-flash` sehr wohl, dort wirkte das Budget.
     Dieser Test belegt, dass die Stufe die Anfrage verlaesst -- dass sie beim
     Anbieter ankommt, hat die Messung am 2026-09-09 auf kai-pi5 gezeigt
     (0 statt 876 Denk-Token).
