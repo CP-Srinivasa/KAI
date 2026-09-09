@@ -60,7 +60,7 @@ def _mock_client(response: object) -> MagicMock:
 
 @pytest.fixture
 def provider():
-    return AnthropicAnalysisProvider(api_key="fake-key")
+    return AnthropicAnalysisProvider(api_key="fake-key", model="claude-sonnet-4-6")
 
 
 # ── metadata ──────────────────────────────────────────────────────────────────
@@ -70,8 +70,15 @@ def test_provider_name(provider):
     assert provider.provider_name == "anthropic"
 
 
-def test_provider_model_default(provider):
-    assert provider.model == "claude-sonnet-4-6"
+def test_der_provider_verlangt_ein_modell():
+    """Kein Default: ProviderSettings ist der Vertrag, nicht dieser Konstruktor.
+
+    Ein Konstruktor-Default veraltet still — 2026-09-09 erreichte ein rotierter
+    Gemini-Schluessel `gemini-2.5-flash` nicht mehr, und der Default haette den
+    toten Namen weitergereicht.
+    """
+    with pytest.raises(TypeError):
+        AnthropicAnalysisProvider(api_key="k")  # type: ignore[call-arg]
 
 
 def test_provider_model_custom():

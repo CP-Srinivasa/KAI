@@ -116,7 +116,9 @@ async def test_text_intent_primary_uses_control_plane(
         lambda source=None: _settings("critical"),
     )
     monkeypatch.setattr(text_intent, "AsyncOpenAI", MagicMock(side_effect=AssertionError))
-    result = await text_intent.TextIntentProcessor(api_key="direct-key").process("Status")
+    result = await text_intent.TextIntentProcessor(api_key="direct-key", model="gpt-4o").process(
+        "Status"
+    )
     assert result.intent == "command"
     assert result.mapped_command == "status"
 

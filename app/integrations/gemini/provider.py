@@ -4,7 +4,7 @@ Implements BaseAnalysisProvider using the google-genai SDK's structured output
 (response_schema) feature.
 
 Provider name: "gemini"
-Default model: gemini-2.5-flash (configurable)
+Model: aus ProviderSettings.gemini_model (kein Default hier)
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ class GeminiAnalysisProvider(BaseAnalysisProvider):
 
     Args:
         api_key:    Gemini API key (required).
-        model:      Model name, default "gemini-2.5-flash".
+        model:      Model name (required — ProviderSettings is the contract).
         timeout:    HTTP timeout in seconds.
     """
 
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str,
         timeout: int = 30,
     ) -> None:
         # NEO-F-002 (2026-09-02): the timeout used to be stored and never used —

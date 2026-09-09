@@ -126,7 +126,7 @@ async def test_off_intent_ruft_kein_litellm(
     client.chat.completions.create = AsyncMock(return_value=antwort)
     monkeypatch.setattr(text_intent, "AsyncOpenAI", MagicMock(return_value=client))
 
-    ergebnis = await text_intent.TextIntentProcessor(api_key="k").process("Status")
+    ergebnis = await text_intent.TextIntentProcessor(api_key="k", model="gpt-4o").process("Status")
     assert ergebnis.intent == "chat"
     assert ergebnis.response == "hi"
 

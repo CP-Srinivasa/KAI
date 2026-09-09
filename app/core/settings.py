@@ -205,7 +205,7 @@ class ProviderSettings(BaseSettings):
     anthropic_timeout: int = Field(default=30)
 
     gemini_api_key: str = Field(default="", repr=False)
-    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_model: str = Field(default="gemini-3.6-flash")
     gemini_timeout: int = Field(default=30)
 
     youtube_api_key: str = Field(default="", repr=False)
@@ -1709,7 +1709,7 @@ class AppSettings(BaseSettings):
 def build_runtime_config_payload(settings: AppSettings) -> dict[str, object]:
     """Project the current AppSettings instance into the bundled config contract."""
 
-    primary_model = settings.providers.openai_model or "gpt-4o"
+    primary_model = settings.providers.openai_model
     fallback_model = (
         settings.providers.anthropic_model or settings.providers.gemini_model or primary_model
     )

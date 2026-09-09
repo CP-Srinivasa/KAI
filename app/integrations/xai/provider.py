@@ -8,7 +8,7 @@ xAI does not currently support OpenAI's beta.chat.completions.parse helper, so
 we request a JSON object and validate with LLMAnalysisOutput.model_validate_json.
 
 Provider name: "grok"
-Default model: grok-4
+Model: aus ProviderSettings.xai_model (kein Default hier)
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class GrokAnalysisProvider(BaseAnalysisProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "grok-4",
+        model: str,
         timeout: int = 30,
         max_tokens: int = 1024,
     ) -> None:

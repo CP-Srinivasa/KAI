@@ -1915,15 +1915,11 @@ def _build_consensus_validator(
         "gemini_api_key",
         "",
     )
-    gemini_model = (
-        getattr(
-            getattr(settings, "providers", None),
-            "gemini_model",
-            "",
-        )
-        or "gemini-2.5-flash"
-    )
-    if gemini_key:
+    gemini_model = getattr(getattr(settings, "providers", None), "gemini_model", "")
+    # Fail-closed: ohne konfiguriertes Modell entsteht KEIN Validator. Hier stand
+    # `or "gemini-2.5-flash"` — mit einem rotierten Schluessel haette das einen
+    # Validator gebaut, der bei jedem Aufruf 404 bekommt (2026-09-09 gemessen).
+    if gemini_key and gemini_model:
         configs.append(
             ValidatorConfig(
                 api_key=gemini_key,

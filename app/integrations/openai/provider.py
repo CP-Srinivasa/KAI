@@ -5,7 +5,7 @@ Implements BaseAnalysisProvider using the OpenAI SDK's structured output feature
 validated against the LLMAnalysisOutput Pydantic schema.
 
 Provider name: "openai"
-Default model: gpt-4o (configurable)
+Model: aus ProviderSettings.openai_model (kein Default hier)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
 
     Args:
         api_key:    OpenAI API key (required).
-        model:      Model name, default "gpt-4o". Must support structured outputs.
+        model:      Model name (required). Must support structured outputs.
         timeout:    HTTP timeout in seconds.
         max_tokens: Max response tokens (default 1024 is sufficient for structured output).
     """
@@ -35,7 +35,7 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o",
+        model: str,
         timeout: int = 30,
         max_tokens: int = 1024,
     ) -> None:

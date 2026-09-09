@@ -104,7 +104,7 @@ class TextIntentProcessor:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o",
+        model: str,
         timeout: int = 30,
     ) -> None:
         self._api_key = api_key
