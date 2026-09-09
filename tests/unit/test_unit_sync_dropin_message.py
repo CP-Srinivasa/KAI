@@ -30,6 +30,7 @@ import pytest
 _BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(_BASH is None, reason="bash interpreter not available")
 
+NEUZEILE = chr(10)
 REPO = Path(__file__).resolve().parents[2]
 INSTALLER = REPO / "scripts" / "pi_apply_systemd_units.sh"
 UNIT = REPO / "deploy" / "systemd" / "kai-paper-trading.service"
@@ -125,6 +126,40 @@ def test_die_meldung_verspricht_keinen_repo_dropin_weg(tmp_path: Path) -> None:
 
     assert "traegt es der Abgleich mit" not in fertig.stderr
     assert "hilft NICHT" in fertig.stderr, "der Irrweg muss ausdrücklich benannt sein"
+
+    # Der ganze Satz, nicht nur seine erste Haelfte. Die erste Fassung prueft
+    # `hilft NICHT` -- das steht auf der Zeile DAVOR und war heil, waehrend die
+    # Fortsetzung durch unescapte Backticks zu Kommandosubstitution wurde: die
+    # Shell fuehrte `.d` aus und setzte den Satz mit einer Luecke zusammen. Der
+    # Test war gruen, die Meldung kaputt.
+    assert ".d`-Verzeichnisse" in fertig.stderr, fertig.stderr
+
+
+def test_die_meldung_wirft_selbst_keinen_shell_fehler(tmp_path: Path) -> None:
+    """Eine Fehlermeldung, die einen Fehler wirft, kostet Vertrauen.
+
+    Auf kai-pi5 kam heraus:
+
+        pi_apply_systemd_units.sh: line 127: .d: command not found
+        Ein Drop-In-Verzeichnis im Repo hilft NICHT: der Abgleich kopiert
+        keine -Verzeichnisse und wertet nur /etc/systemd/system aus.
+
+    Unescapte Backticks in doppelten Anfuehrungszeichen sind
+    Kommandosubstitution. Der Operator sucht in genau diesem Moment Rat und
+    bekommt einen Skriptfehler dazu -- und einen Satz mit einem Loch.
+    """
+    dst = tmp_path / "etc"
+    (dst / "kai-beispiel.service.d").mkdir(parents=True)
+    (dst / "kai-beispiel.service.d" / "fremd.conf").write_text(
+        "[Service]" + NEUZEILE + "ExecStart=/bin/false" + NEUZEILE,
+        encoding="utf-8",
+        newline=NEUZEILE,
+    )
+
+    fehler = _lauf(_quelle(tmp_path), dst).stderr
+
+    assert "command not found" not in fehler, fehler
+    assert "line " not in fehler, "kein Skript-Fehler in der Meldung"
 
 
 def test_die_meldung_nennt_die_reihenfolge_erst_beweisen_dann_entfernen(
