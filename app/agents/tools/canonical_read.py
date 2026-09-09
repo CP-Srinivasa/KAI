@@ -1582,8 +1582,14 @@ async def get_alert_audit_summary(
                 row["resolved_after_seconds"] = sec
         enriched.append(row)
 
-    truncated = limit is not None and limit >= 0 and len(enriched) > limit
-    returned = enriched[-limit:] if truncated else enriched
+    # ``enriched[-limit:]`` kippt bei limit=0 ins Gegenteil: -0 == 0, der Slice
+    # liefert die GANZE Liste statt der leeren. Deshalb explizit, nicht clever.
+    if limit is not None and 0 <= limit < len(enriched):
+        returned = enriched[len(enriched) - limit :]
+        truncated = True
+    else:
+        returned = enriched
+        truncated = False
 
     return {
         "report_type": "alert_audit_summary",

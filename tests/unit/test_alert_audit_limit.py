@@ -79,3 +79,20 @@ async def test_limit_larger_than_population_is_not_truncated(tmp_path: Path) -> 
     out = await get_alert_audit_summary(audit_dir=str(tmp_path), limit=200)
     assert len(out["alerts"]) == 30
     assert out["alerts_truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_limit_zero_returns_nothing_not_everything(tmp_path: Path) -> None:
+    """``enriched[-0:]`` ist die GANZE Liste, nicht die leere.
+
+    Von mypy indirekt aufgedeckt (unary minus auf ``int | None``): der
+    Negativ-Slice kippt bei 0 ins Gegenteil und haette bei ``limit=0`` den
+    vollen 5,4-MB-Payload geliefert — genau das, was das Limit verhindern soll.
+    """
+    _write_audit(tmp_path, 50)
+    out = await get_alert_audit_summary(audit_dir=str(tmp_path), limit=0)
+    assert out["alerts"] == []
+    assert out["returned_alerts"] == 0
+    assert out["alerts_truncated"] is True
+    # Die Aggregate bleiben davon unberuehrt.
+    assert out["total_alerts"] == 50

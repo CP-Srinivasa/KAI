@@ -89,10 +89,15 @@ def classify_priority_tier_lift(quality: dict[str, Any]) -> dict[str, Any]:
     high_hi = _num(quality.get("priority_tier_high_conviction_ci_high_pct"))
     std_lo = _num(quality.get("priority_tier_standard_ci_low_pct"))
     std_hi = _num(quality.get("priority_tier_standard_ci_high_pct"))
-    have_ci = None not in (high_lo, high_hi, std_lo, std_hi)
-
-    # Disjoint 95 % Wilson intervals in either direction.
-    significant = bool(have_ci and (high_hi < std_lo or high_lo > std_hi))
+    # Einzeln geprueft statt ``None not in (...)``: der Tuple-Test schmaelert die
+    # Typen nicht, und ein Vergleich gegen None waere hier ein Laufzeitfehler.
+    if high_lo is None or high_hi is None or std_lo is None or std_hi is None:
+        have_ci = False
+        significant = False
+    else:
+        have_ci = True
+        # Disjunkte 95-%-Wilson-Intervalle, in beide Richtungen.
+        significant = high_hi < std_lo or high_lo > std_hi
 
     if not significant:
         explanation = (
