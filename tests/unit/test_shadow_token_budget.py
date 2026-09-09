@@ -108,3 +108,33 @@ def test_ohne_choices_bleibt_die_alte_meldung() -> None:
 def test_leerer_inhalt_bleibt_die_alte_meldung() -> None:
     with pytest.raises(ValueError, match="no JSON content"):
         parse_analysis_body(_body(""), user_prompt="x")
+
+
+def test_die_abschneidung_wird_nicht_zweitgeschrieben(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein Satz, eine Definition — sonst wird eine davon irgendwann nachgezogen.
+
+    `finish_reason == "length"` beantwortet der Transport (#946). Wuerde diese
+    Datei die Frage noch einmal selbst stellen, gaebe es zwei Wahrheiten
+    darueber, und sie muessten von Hand synchron gehalten werden.
+
+    Geprueft wird das am VERHALTEN: wenn das Transport-Praedikat "nein" sagt,
+    darf hier nichts mehr als abgeschnitten gelten -- auch dann nicht, wenn im
+    Koerper `finish_reason=length` steht.
+    """
+    import app.analysis.ai_control_plane as modul
+
+    monkeypatch.setattr(modul, "ist_abgeschnitten", lambda _body: False)
+
+    ergebnis = parse_analysis_body(_body(_GUELTIG, finish="length"), user_prompt="x")
+
+    assert ergebnis.sentiment_label.value == "bullish"
+
+
+def test_und_umgekehrt_entscheidet_allein_das_praedikat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gegenprobe: sagt der Transport "ja", scheitert es hier — ohne `length`."""
+    import app.analysis.ai_control_plane as modul
+
+    monkeypatch.setattr(modul, "ist_abgeschnitten", lambda _body: True)
+
+    with pytest.raises(ValueError, match="truncated"):
+        parse_analysis_body(_body(_GUELTIG, finish="stop"), user_prompt="x")

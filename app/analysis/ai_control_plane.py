@@ -14,6 +14,7 @@ from app.analysis.prompts import (
     ACTIVE_SYSTEM_PROMPT_VERSION,
     format_user_prompt,
 )
+from app.integrations.litellm.provider import ist_abgeschnitten
 
 _MAX_TEXT_CHARS = 6000
 
@@ -53,7 +54,11 @@ def parse_analysis_body(body: dict[str, Any], *, user_prompt: str) -> LLMAnalysi
     # nur eines davon behebt der Operator an der richtigen Stelle. Auch ein
     # zufaellig noch parsbares Ergebnis gilt hier als unvollstaendig -- eine
     # gekuerzte Analyse wie eine ganze zu behandeln waere schlimmer.
-    if erste.get("finish_reason") == "length":
+    #
+    # Das Praedikat kommt aus dem Transport (#946) und wird NICHT hier zweitge-
+    # schrieben: `finish_reason == "length"` an zwei Orten waeren zwei Wahrheiten
+    # ueber denselben Satz, und eine davon wuerde irgendwann nachgezogen.
+    if ist_abgeschnitten(body):
         raise ValueError(
             "LiteLLM analysis response was truncated (finish_reason=length) — "
             f"max_tokens={MAX_TOKENS} reicht nicht; bei denkenden Modellen zaehlt "
