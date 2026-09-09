@@ -66,6 +66,31 @@ class AttemptTrace:
         return self.cost_usd is not None
 
     @property
+    def truncated(self) -> bool | None:
+        """Hat das Modell aufgehoert, weil das Token-Budget alle war?
+
+        Abgeleitet aus `detail["finish_reason"]`, nicht zusaetzlich
+        gespeichert: ein zweiter Zustand ueber dieselbe Sache wuerde
+        irgendwann abweichen.
+
+        DREIWERTIG, und das ist Absicht. `None` heisst, dass kein
+        `finish_reason` gemeldet wurde -- also unbekannt. Ein `False` dafuer
+        behauptete eine Messung, die es nicht gab, und zoege jede Auswertung
+        in die falsche Richtung: dieselbe Falle wie eine unbekannte
+        Kostenangabe als 0.
+
+        Der Transport setzt daraufhin ausdruecklich KEINE `error_class`. Ein
+        abgeschnittener Aufruf war technisch erfolgreich und semantisch
+        unbrauchbar; das sind zwei Aussagen, und `error_class` traegt nur eine.
+        Wer das Ergebnis verwerfen will, prueft `truncated` -- in der Runtime,
+        vor dem Parser, wo eine Meldung mit `max_tokens` noch ankommt.
+        """
+        grund = self.detail.get("finish_reason")
+        if not isinstance(grund, str) or not grund:
+            return None
+        return grund == "length"
+
+    @property
     def identity_proven(self) -> bool:
         """Hat der Upstream sich selbst benannt?
 

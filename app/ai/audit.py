@@ -509,6 +509,8 @@ def record_attempt_trace(
         finish_reason=_text_oder_none(detail.get("finish_reason")),
         empty_reason=_text_oder_none(detail.get("empty_reason")),
         transport_retries=_ganzzahl(detail.get("transport_retries")),
+        truncated=attempt_trace.truncated,
+        max_tokens=_ganzzahl(detail.get("max_tokens")),
         budget_decision=budget_decision,
         circuit_state=circuit_state,
         execution_authority=execution_authority,
