@@ -151,6 +151,25 @@ def record_llm_call(
     circuit_state: str | None = None,
     execution_authority: bool | None = None,
     upstream_request_id: str | None = None,
+    # --- v5 (2026-09-09): was der Transport ueber den Aufruf weiss ---------
+    # Additiv wie die Bloecke davor. Diese Werte lagen bereits in
+    # ``AttemptTrace.detail``, kamen aber nie in der Datei an: der Schreiber
+    # pickt Felder einzeln heraus und reichte ``detail`` nicht weiter. Im echten
+    # Lauf am 2026-09-09 fiel es auf -- die Zeile trug Kosten und Modell, aber
+    # nicht die Aufschluesselung, aus der man sie versteht.
+    #
+    # `reasoning_tokens` und `cost_reasoning_usd` sind der Grund: bei denkenden
+    # Modellen liegt der Preis im Weg zur Antwort, nicht in der Antwort. Ohne
+    # sie sieht eine Aggregation nur eine Summe und keinen Hebel.
+    reasoning_tokens: int | None = None,
+    cost_reasoning_usd: float | None = None,
+    #: `stop`, `length`, `content_filter` -- ohne dieses Feld ist eine leere
+    #: Antwort nicht von einer abgeschnittenen zu unterscheiden.
+    finish_reason: str | None = None,
+    empty_reason: str | None = None,
+    #: KAI ist die einzige Retry-Autoritaet. Ein Wert ungleich 0 heisst, dass
+    #: der Transport zusaetzlich wiederholt hat.
+    transport_retries: int | None = None,
 ) -> None:
     """Append one telemetry row. Never raises into the caller (best-effort)."""
     row: dict[str, Any] = {
@@ -204,6 +223,12 @@ def record_llm_call(
         "use_case": use_case or "unknown",
         "escalation_reason": escalation_reason or "",
         "source": source,
+        # --- v5: Aufschluesselung des Transports ---------------------------
+        "reasoning_tokens": reasoning_tokens,
+        "cost_reasoning_usd": cost_reasoning_usd,
+        "finish_reason": finish_reason,
+        "empty_reason": empty_reason,
+        "transport_retries": transport_retries,
     }
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]
