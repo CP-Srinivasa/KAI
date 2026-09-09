@@ -184,6 +184,16 @@ class BudgetExceeded(RuntimeError):  # noqa: N818
         self.reason = reason
 
 
+#: ``error_type``-Werte, die eine LOKALE Abweisung benennen: der Aufruf wurde
+#: abgelehnt, BEVOR ein Provider kontaktiert wurde. Solche Zeilen sind kein
+#: Beleg ueber die Erreichbarkeit eines Anbieters -- weder dafuer noch dagegen.
+#:
+#: Der Satz steht hier und nicht in der Gesundheitsschicht, damit Ausnahme und
+#: Marker nicht auseinanderlaufen: ``__name__`` folgt einer Umbenennung der
+#: Klasse automatisch, ein Stringliteral an anderer Stelle nicht.
+LOCAL_REFUSAL_ERROR_TYPES: frozenset[str] = frozenset({BudgetExceeded.__name__})
+
+
 @dataclass(frozen=True)
 class BudgetStatus:
     """Wo das Budget steht — und ob Routinearbeit noch laufen darf."""
@@ -329,6 +339,7 @@ __all__ = [
     "BudgetState",
     "BudgetStatus",
     "BudgetStatusState",
+    "LOCAL_REFUSAL_ERROR_TYPES",
     "accumulate",
     "decide",
     "evaluate_status",

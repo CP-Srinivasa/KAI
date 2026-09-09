@@ -122,6 +122,23 @@ class AIProviderHealth(BaseModel):
     last_ok_ts: str | None = None
     last_error_class: str | None = None
     consecutive_failures: int = 0
+    #: Aufrufe, die lokal abgewiesen wurden, bevor der Anbieter kontaktiert
+    #: wurde (Budget/Policy). Sie zaehlen NICHT in ``calls`` oder ``failures``,
+    #: bleiben hier aber sichtbar — sonst sieht ein blockierter Tag aus wie ein
+    #: stiller.
+    local_refusals: int = 0
+
+
+class AIBudgetBlock(BaseModel):
+    """Budgetlage — getrennt vom Anbieterzustand ausgewiesen.
+
+    Projektion von :class:`AICostBlock`, kein zweiter Rechenweg.
+    """
+
+    budget_state: str
+    budget_status_reason: str = ""
+    routine_calls_blocked: bool = False
+    local_refusals_in_window: int = 0
 
 
 class AICostBlock(BaseModel):
@@ -164,6 +181,7 @@ class AIHealthResponse(BaseModel):
     # ``AIHealthResponse(**snapshot["ai"])`` nimmt den neuen Schluessel
     # automatisch mit.
     cost: AICostBlock | None = None
+    budget: AIBudgetBlock | None = None
 
 
 _RUNTIME_FIELDS = (
