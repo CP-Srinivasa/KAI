@@ -124,7 +124,11 @@ if [ "${#dropin_funde[@]}" -gt 0 ]; then
     echo "  (b) Das Drop-In entfernen, wenn es nachweislich nichts beitraegt:" >&2
     echo "    sudo rm $DST/<unit>.d/<datei>.conf && sudo systemctl daemon-reload" >&2
     echo "  Ein Drop-In-Verzeichnis im Repo hilft NICHT: der Abgleich kopiert" >&2
-    echo "  keine `.d`-Verzeichnisse und wertet nur $DST aus." >&2
+    # Ohne Escape sind die Backticks Kommandosubstitution: die Shell fuehrte
+    # `.d` aus, meldete "command not found" und setzte den Satz mit einer
+    # Luecke zusammen. Eine Fehlermeldung, die selbst einen Fehler wirft,
+    # kostet Vertrauen genau dort, wo der Operator gerade Rat sucht.
+    echo "  keine \`.d\`-Verzeichnisse und wertet nur $DST aus." >&2
     exit 4
 fi
 
