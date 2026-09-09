@@ -1,3 +1,10 @@
+## 2026-09-09 - KAI COST CONTROL v0.1 SEALED (D-CORE-007 geschlossen)
+
+Nachtrag #930 (Altzeilen getrennt, echter Modellname statt Provider-Name, use_case auf allen Analysepfaden,
+Dokument-/Aufruf-Zaehlung sichtbar, Zweitmeinung standardmaessig aus) und Siegelpruefung am Geraet mit neun
+Operator-Kriterien: 27 echte gpt-4o-Aufrufe bepreist (0,211 $), 0 neue COST_UNKNOWN, 0 Anthropic, Twitter
+uebersprungen, Limits 1 $/Tag und 25 $/Monat aktiv. Evidenz `docs/KAI_COST_CONTROL_V0_1.md` §11.
+
 ## 2026-09-08 - KAI COST CONTROL v0.1: messen, zuordnen, begrenzen
 
 KAI wusste nicht, was es kostet. `cost_usd` stand auf **jeder** der 14.886 Telemetriezeilen auf `null`, weil das Feld
