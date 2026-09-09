@@ -277,3 +277,21 @@ Auflösung nur über eine echte Rechnung.
   `claude-sonnet-4-6`-Validierung gegen die Rechnung 2026-08 stammt von dort.
 * ADR 0017 — Budget lehnt nur mit Beleg ab.
 * `docs/DECISION_LOG.md` — D-CORE-007.
+
+## 11. Siegel 2026-09-09 — COST CONTROL v0.1 = SEALED (D-CORE-007 geschlossen)
+
+Geprüft am Gerät (kai-pi5) nach Aktivierung von Release `9438e7c6` (PR #923 + Nachtrag #930), Kriterien des Operators:
+
+| # | Kriterium | Befund |
+|---|---|---|
+| 1 | Neue OpenAI-Aufrufe tragen gpt-4o und werden bepreist | 27 neue Zeilen, `model`/`actual_model` = `gpt-4o`, 27/27 bepreist, Summe 0,21138 $ |
+| 2 | Keine neuen COST_UNKNOWN über den Wrapper-Pfad | 0 in den neuen Zeilen |
+| 3 | Altzeilen als unmetered getrennt | `unmetered_legacy_calls_today` eigenes Feld; die 22 unbekannten Zeilen des Tages sind die Pre-Fix-Zeilen von 00:15–07:42 UTC (echte Unbekannte zur Schreibzeit), keine Altzeilen |
+| 4 | Unbekannt-Schwelle 50 | 50, Status OK, `blocks_routine=false` |
+| 5 | Anthropic-Zweitmeinung 0 neue Aufrufe | 0 seit Restart 05:31 UTC; `chain.shadow=[]`; Default im Code `false` |
+| 6 | Twitter bei jedem Cron-Tick übersprungen | 04:41, 05:42, 06:43, 07:42 CEST »twitter skipped«, 0 Fetches seit 2026-09-08 21:15 |
+| 7 | Limits 1 $/Tag, 25 $/Monat, Warnung 80 % | aktiv; Tagesstand 08:40 CEST 0,553 $ bekannt, Top openai / news_intelligence |
+| 8 | `analyze pending` mit echtem Use Case | alle 27 Zeilen `use_case=news_intelligence` |
+| 9 | Diskrepanz Dokumente vs. Modellaufrufe erklärt | CLI weist aus: `50 success / 27 llm_call / 23 skipped`; Skips sind Stub-, Relevanz- und Krypto-Gate (`reason=no_crypto_signal` u. a.), die ein Dokument ohne Modellaufruf abschließen und als Erfolg zählen — kein Cache, keine Doppelzählung |
+
+**Status:** SEALED. Keine weitere Cost-Control-Arbeit außer bei Regression oder echter neuer Kostenquelle. Bekannte Vereinfachung: Cached-Input-Preis (1,25 $/M) wird nicht modelliert, Schätzung liegt damit leicht über der Abrechnung. Hinweis für den Betrieb: mit 1 $/Tag wird die Tagesgrenze bei heutiger Analyse-Last voraussichtlich am Nachmittag erreicht; die Routine-Analyse pausiert dann bis 00:00 UTC — das ist die gewollte Kalibrierung, nicht ein Fehler.
