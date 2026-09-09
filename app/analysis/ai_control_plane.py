@@ -17,6 +17,62 @@ from app.analysis.prompts import (
 
 _MAX_TEXT_CHARS = 6000
 
+#: Ausgabedeckel der Schattenanfrage.
+#:
+#: Bei denkenden Modellen ist das KEIN Ausgabedeckel: der Denkaufwand zaehlt
+#: gegen dasselbe Budget wie die Antwort. Am 2026-09-09 auf kai-pi5 mit dieser
+#: Nutzlast gemessen, vier reale Dokumente, `gemini/gemini-3.6-flash`:
+#:
+#:   Bedarf 814..1506 Completion-Token, davon 405..1136 Denken.
+#:   VIER von acht Laeufen lagen ueber den 1024, die hier vorher standen.
+#:
+#: Ein zu kleiner Deckel schneidet mitten im JSON ab, und der Parser meldet
+#: dann `Invalid JSON: EOF while parsing a string` -- wer das liest, sucht beim
+#: Modell statt beim Budget. Der Wert hat deshalb Luft nach oben: ein hoher
+#: Deckel kostet nichts, weil nur erzeugte Token bezahlt werden.
+MAX_TOKENS = 4096
+
+
+def parse_analysis_body(body: dict[str, Any], *, user_prompt: str) -> LLMAnalysisOutput:
+    """Den Antwortkoerper in das Analyse-Schema lesen -- oder ehrlich scheitern.
+
+    Frei von der Anfrage, damit die Abschnitt-Erkennung pruefbar ist, ohne
+    einen Transport zu stellen.
+    """
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("LiteLLM analysis response has no choices")
+    erste = choices[0] if isinstance(choices[0], dict) else {}
+    message = erste.get("message")
+    raw = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("LiteLLM analysis response has no JSON content")
+
+    # VOR dem Parsen: ein abgeschnittenes Ergebnis ist kein Formfehler des
+    # Modells, sondern ein zu kleines Budget. Beides endet ohne Analyse, aber
+    # nur eines davon behebt der Operator an der richtigen Stelle. Auch ein
+    # zufaellig noch parsbares Ergebnis gilt hier als unvollstaendig -- eine
+    # gekuerzte Analyse wie eine ganze zu behandeln waere schlimmer.
+    if erste.get("finish_reason") == "length":
+        raise ValueError(
+            "LiteLLM analysis response was truncated (finish_reason=length) — "
+            f"max_tokens={MAX_TOKENS} reicht nicht; bei denkenden Modellen zaehlt "
+            "der Denkaufwand gegen dasselbe Budget"
+        )
+
+    output = LLMAnalysisOutput.model_validate_json(raw)
+    output.raw_prompt = user_prompt
+    output.raw_response = raw
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if isinstance(prompt_tokens, int):
+            output.prompt_tokens = prompt_tokens
+        if isinstance(completion_tokens, int):
+            output.completion_tokens = completion_tokens
+    return output
+
 
 class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
     """Preserve the direct provider while adding governed shadow/primary transport."""
@@ -56,25 +112,7 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
         )
 
         def parse(body: dict[str, Any]) -> LLMAnalysisOutput:
-            choices = body.get("choices")
-            if not isinstance(choices, list) or not choices:
-                raise ValueError("LiteLLM analysis response has no choices")
-            message = choices[0].get("message") if isinstance(choices[0], dict) else None
-            raw = message.get("content") if isinstance(message, dict) else None
-            if not isinstance(raw, str) or not raw:
-                raise ValueError("LiteLLM analysis response has no JSON content")
-            output = LLMAnalysisOutput.model_validate_json(raw)
-            output.raw_prompt = user_prompt
-            output.raw_response = raw
-            usage = body.get("usage")
-            if isinstance(usage, dict):
-                prompt_tokens = usage.get("prompt_tokens")
-                completion_tokens = usage.get("completion_tokens")
-                if isinstance(prompt_tokens, int):
-                    output.prompt_tokens = prompt_tokens
-                if isinstance(completion_tokens, int):
-                    output.completion_tokens = completion_tokens
-            return output
+            return parse_analysis_body(body, user_prompt=user_prompt)
 
         with analysis_prompt_scope(
             version=ACTIVE_SYSTEM_PROMPT_VERSION, prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256
@@ -92,7 +130,7 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
                             {"role": "user", "content": user_prompt},
                         ],
                         "response_format": {"type": "json_object"},
-                        "max_tokens": 1024,
+                        "max_tokens": MAX_TOKENS,
                     },
                 ),
                 settings=self._settings,
@@ -105,4 +143,4 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
         return output
 
 
-__all__ = ["ControlPlaneAnalysisProvider"]
+__all__ = ["MAX_TOKENS", "ControlPlaneAnalysisProvider", "parse_analysis_body"]
