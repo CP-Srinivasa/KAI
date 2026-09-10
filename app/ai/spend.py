@@ -290,6 +290,36 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _usage(row: dict[str, Any]) -> tuple[int, int]:
+    """Ein- und Ausgabetoken einer Zeile — unter beiden Feldnamen.
+
+    Der Direktpfad schreibt die Usage seit jeher unter ``prompt_tokens`` und
+    ``completion_tokens`` (``app/integrations/anthropic/provider.py`` bildet
+    Anthropics ``input_tokens``/``output_tokens`` genau dorthin ab). Die
+    Telemetriezeile bekam die kanonischen Namen erst am 2026-09-07 dazu, und
+    diese Funktion las nur die neuen: fuer den 02.-09.06. zaehlte sie
+    **3.651.280 Token als null**, der 07.09. war ein Mischtag mit 72,1 %
+    Erfassung.
+
+    Folgenlos war das nur, weil ``SpendWindow.input_tokens`` heute niemand
+    liest — Geld kommt aus ``cost_usd``, das Budget aus ``entries``. Ein
+    spaeterer Kostenbericht oder ein Token-Gate haette fuer die Altdaten
+    glaubwuerdige Nullen bekommen.
+
+    Vorrang haben die kanonischen Namen, JE FELD: eine Zeile mit
+    ``input_tokens`` aber ohne ``output_tokens`` soll die Ausgabe aus
+    ``completion_tokens`` ziehen duerfen, statt sie zu verlieren. Doppelt
+    gezaehlt werden kann dabei nichts — jedes Feld nimmt genau eine Quelle.
+    """
+    ein = _as_int(row.get("input_tokens"))
+    if ein is None:
+        ein = _as_int(row.get("prompt_tokens"))
+    aus = _as_int(row.get("output_tokens"))
+    if aus is None:
+        aus = _as_int(row.get("completion_tokens"))
+    return ein or 0, aus or 0
+
+
 def _add(
     buckets: dict[str, SpendBucket],
     name: str,
@@ -337,8 +367,7 @@ def spend_window(
             zeilen_kosten = float(kosten)
         else:
             zeilen_kosten = None
-        zeilen_ein = _as_int(row.get("input_tokens")) or 0
-        zeilen_aus = _as_int(row.get("output_tokens")) or 0
+        zeilen_ein, zeilen_aus = _usage(row)
 
         calls += 1
         eingabe += zeilen_ein
