@@ -278,3 +278,94 @@ def test_health_cost_block_shows_legacy_rows_as_their_own_field(tmp_path: Path) 
     assert block["unknown_cost_calls_today"] == 0
     assert block["calls_today"] == 3
     assert block["status"] == "OK"
+
+
+# ── Usage unter beiden Feldnamen ────────────────────────────────────────────
+#
+# Befund 2026-09-10: der Direktpfad schreibt die Usage seit jeher unter
+# `prompt_tokens`/`completion_tokens`; die kanonischen `input_tokens`/
+# `output_tokens` kamen erst am 2026-09-07 dazu. `spend_window` las nur die
+# neuen und zaehlte fuer den 02.-06.09. **3.651.280 Token als null** — der
+# 07.09. war ein Mischtag mit 72,1 % Erfassung.
+
+
+def test_alte_zeile_nur_mit_prompt_completion_wird_gezaehlt(tmp_path: Path) -> None:
+    """Der eigentliche Regressionsfall: eine Zeile im alten Feldnamen-Schema."""
+    sink = tmp_path / "llm.jsonl"
+    alt = _row()
+    del alt["input_tokens"]
+    del alt["output_tokens"]
+    alt["prompt_tokens"] = 1000
+    alt["completion_tokens"] = 100
+    _write(sink, [alt])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.input_tokens == 1000
+    assert fenster.output_tokens == 100
+    assert fenster.total_tokens == 1100
+
+
+def test_kanonische_felder_haben_vorrang_und_zaehlen_nicht_doppelt(tmp_path: Path) -> None:
+    """Traegt eine Zeile beide Namenspaare, gilt das kanonische — nur einmal."""
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_row(prompt_tokens=999_999, completion_tokens=999_999)])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.input_tokens == 1000
+    assert fenster.output_tokens == 100
+    assert fenster.total_tokens == 1100
+
+
+def test_fallback_gilt_je_feld_einzeln(tmp_path: Path) -> None:
+    """Eine halb umgestellte Zeile verliert ihre Ausgabe nicht.
+
+    Genau die Lage am Mischtag 2026-09-07: paarweises Zurueckfallen haette die
+    Ausgabe auf 0 gesetzt, obwohl `completion_tokens` sie traegt.
+    """
+    sink = tmp_path / "llm.jsonl"
+    halb = _row(prompt_tokens=42, completion_tokens=100)
+    del halb["output_tokens"]
+    _write(sink, [halb])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.input_tokens == 1000  # kanonisch vorhanden -> gewinnt
+    assert fenster.output_tokens == 100  # kanonisch fehlt -> Fallback greift
+
+
+def test_token_fallback_aendert_geld_und_budget_nicht(tmp_path: Path) -> None:
+    """Gegenprobe: der Fix fasst weder ``known_cost_usd`` noch ``budget_state`` an."""
+    sink = tmp_path / "llm.jsonl"
+    alt = _row(cost_usd=0.25)
+    del alt["input_tokens"]
+    del alt["output_tokens"]
+    alt["prompt_tokens"] = 1000
+    alt["completion_tokens"] = 100
+    _write(sink, [alt])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.known_cost_usd == pytest.approx(0.25)
+    assert fenster.unknown_calls == 0
+    assert fenster.calls == 1
+    zustand = fenster.budget_state()
+    assert zustand.booked_usd == pytest.approx(0.25)
+    assert zustand.known_calls == 1
+    assert zustand.unknown_calls == 0
+
+
+def test_ohne_jede_usage_bleibt_es_bei_null(tmp_path: Path) -> None:
+    """Keine Usage ist keine Usage — der Fallback erfindet nichts."""
+    sink = tmp_path / "llm.jsonl"
+    ohne = _row()
+    for feld in ("input_tokens", "output_tokens"):
+        del ohne[feld]
+    _write(sink, [ohne])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.input_tokens == 0
+    assert fenster.output_tokens == 0
+    assert fenster.calls == 1
