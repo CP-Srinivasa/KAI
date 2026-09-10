@@ -58,6 +58,20 @@ class ResearchBrief(BaseModel):
     top_actionable_signals: list[BriefDocument]
     key_documents: list[BriefDocument]
 
+    #: Beratender Freitext eines Research-Modells ZU diesem Brief. Er wird
+    #: angehaengt, NACHDEM der Brief fertig ist, und geht in keine Zahl darueber
+    #: ein: nicht in `average_priority`, nicht in `overall_sentiment`, nicht in
+    #: die Signalkandidaten. Getragen von `app/ai/brief_synthesis.py`.
+    advisory_synthesis: str | None = None
+    #: Warum keine Synthese da ist. Ein Grund ist eine Aussage, ein leeres Feld
+    #: waere keine — deshalb steht er im Brief und nicht nur im Log.
+    advisory_synthesis_unavailable: str | None = None
+    #: Das TATSAECHLICH antwortende Modell, nicht der angefragte Alias.
+    advisory_synthesis_model: str | None = None
+    #: Kosten genau dieses einen Aufrufs. Die Frage "was kostet ein Brief"
+    #: soll am Brief beantwortbar sein, nicht erst in der Telemetrie.
+    advisory_synthesis_cost_usd: float | None = None
+
     def to_markdown(self) -> str:
         """Render the brief as a Markdown document."""
         lines = [
@@ -114,7 +128,39 @@ class ResearchBrief(BaseModel):
             for doc in self.top_documents:
                 lines.extend(self._render_brief_doc_md(doc))
 
+        lines.extend(self._render_advisory_synthesis_md())
+
         return "\n".join(lines)
+
+    def _render_advisory_synthesis_md(self) -> list[str]:
+        """Der beratende Teil, als solcher gekennzeichnet und ganz am Ende.
+
+        Hinter den Dokumenten, weil er von ihnen abgeleitet ist: wer den Brief
+        von oben liest, hat die Belege gesehen, bevor er die Deutung liest.
+        """
+        if self.advisory_synthesis is None and self.advisory_synthesis_unavailable is None:
+            return []
+
+        lines = [
+            "",
+            "## Advisory Research Synthesis",
+            "*(Beratend — kein Signal, kein Alert, keine Ausfuehrung.)*",
+            "",
+        ]
+        if self.advisory_synthesis is None:
+            lines.extend(
+                [
+                    "*Nicht erhoben.*",
+                    f"**Grund:** {self.advisory_synthesis_unavailable}",
+                ]
+            )
+            return lines
+
+        herkunft = f"**Modell:** {self.advisory_synthesis_model or 'unbekannt'}"
+        if self.advisory_synthesis_cost_usd is not None:
+            herkunft += f" · **Kosten:** {self.advisory_synthesis_cost_usd:.6f} USD"
+        lines.extend([herkunft, "", self.advisory_synthesis])
+        return lines
 
     def _render_brief_doc_md(self, doc: BriefDocument) -> list[str]:
         src = doc.source_name or "Unknown Source"

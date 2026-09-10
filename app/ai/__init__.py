@@ -69,7 +69,7 @@ from app.ai.modes import (
     unknown_route_keys,
 )
 from app.ai.research import (
-    KIMI_RESEARCH_MAX_TOKENS,
+    RESEARCH_MAX_TOKENS,
     ResearchAdvisoryResult,
     ResearchUnavailableError,
     research_advisory,
@@ -144,7 +144,7 @@ __all__ = [
     "RetryPolicy",
     "DEFAULT_MAX_ATTEMPTS",
     "MAX_ATTEMPTS_CEILING",
-    "KIMI_RESEARCH_MAX_TOKENS",
+    "RESEARCH_MAX_TOKENS",
     "ResearchAdvisoryResult",
     "ResearchUnavailableError",
     "research_advisory",

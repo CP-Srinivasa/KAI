@@ -18,8 +18,10 @@ model_list:
       model: os.environ/KAI_LITELLM_STT_MODEL
   - model_name: kai-kimi-research
     litellm_params:
-      # Fixed role-qualified transport route; no activation or authority lives here.
-      model: moonshot/kimi-k2.6
+      # Role-qualified transport route. The ALIAS is fixed because KAI's route
+      # contract refers to it; the MODEL behind it is configuration, exactly
+      # like every other route. No provider is bound in the repository.
+      model: os.environ/KAI_LITELLM_RESEARCH_MODEL
 
 litellm_settings:
   # KAI/app/ai is the single bounded-retry authority.

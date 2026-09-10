@@ -24,6 +24,16 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-270 (2026-09-10)
+**Die Inferenz-Ebene beraet KAI, sie entwickelt KAI nicht — und sie ist an keinen Anbieter gebunden.**
+**Kontext**: Mit der Research-Route (#955) bekommt KAI erstmals einen Pfad, auf dem ein Modell freien Text zurueckgibt, den ein Mensch benutzt. Damit stellt sich eine Frage, die vorher keine war: Wieviel Kontrolle darf `app/ai` ueber KAI selbst haben? Zugleich stand die Route fest auf `moonshot/kimi-k2.6` im Repository — als einzige Route, die ihr Modell nicht aus der Umgebung liest.
+**Entscheidung**: (1) **Runtime-Inferenz und Softwareentwicklung sind getrennte Ebenen.** `app/ai` und LiteLLM erhalten keine Kontrolle ueber Repository, Git, CI, Deployment oder Zugangsdaten — auch keine mittelbare. Entwicklungs-, Merge- und Deploymentrechte liegen ausserhalb der Inference-Control-Plane. (2) **Keine autonome Selbstmodifikation**: kein Modul unter `app/ai` schreibt eine Datei. (3) **Anbieterunabhaengigkeit ist Architektur, nicht Absicht**: Modellnamen, Endpunkte und Zugangsdaten sind ausschliesslich Konfiguration. Der Routen-ALIAS `kai-kimi-research` bleibt fest, weil KAIs Routenvertrag ihn nennt; das MODELL dahinter kommt aus `KAI_LITELLM_RESEARCH_MODEL`. (4) KAI wird weiter primaer mit Codex entwickelt und bei Bedarf durch Claude geprueft; kein Modell im Betriebspfad erbt daraus Rechte.
+**Begruendung**: Ein Beratungspfad, der nebenbei committen, deployen oder Geheimnisse lesen koennte, waere kein Beratungspfad. Und eine Anbieterbindung im Quellcode ist teuer genau dann, wenn man sie loesen muss — beim Ausfall oder beim Preissprung des Anbieters.
+**Auswirkung**: Die Grenze wird gemessen, nicht behauptet: `tests/unit/test_inference_control_plane_isolation.py` prueft fuenf Zusicherungen (kein Prozessstart, kein Schreibweg, kein direkter `os.environ`-Zugriff, kein Anbietername im Research-Pfad, jede LiteLLM-Route holt ihr Modell aus der Umgebung). Ein Import, der die Grenze verschiebt, faellt dort auf.
+**Rueckrollbarkeit**: ja — die Route bleibt ohne `KAI_INFERENCE_ENABLED` und ohne Modell in der Umgebung wirkungslos.
+**Betroffen**: `app/ai/research.py`, `app/ai/brief_synthesis.py`, `config/litellm.yaml`, `.env.example`, `tests/unit/test_inference_control_plane_isolation.py`.
+**Cross-Ref**: ADR 0017 (Modi und Autoritaet), D-249 (kein Auto-Merge bei Architektur-PRs), PR #955.
+
 ### D-269 (2026-09-01)
 **ADR-0016 ACCEPTED — SELF-USE ONLY / FORK-B BINDING; SSG-Pilot ohne Bestandsschutz.**
 **Kontext**: ADR 0016 stand seit dem 02.08. auf DRAFT mit einer selbst gesetzten Vorbedingung: Entscheid erst nach **beiden** attestierten Verdikten. Die sind laengst da — C1 `9cab81fae4823482` terminal in der Truth-Kette (seq 71, FAIL/NO_DEMAND) und die Analyst-Probe `f0e1a3a8073fd4c0` ebenso (seq 91); der Fork-B-Quadrant Q4 ist ueber `81c41ae153e5d427` attestiert (seq 102). Das Dokument band damit nichts, obwohl alles, was es binden sollte, entschieden war.

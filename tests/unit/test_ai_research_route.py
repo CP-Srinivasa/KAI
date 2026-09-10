@@ -1,4 +1,4 @@
-"""Kimi is a free-text research adviser, never a KAI decision authority."""
+"""Das Research-Modell ist Berater im Freitext, nie KAI-Entscheidungsinstanz."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from app.ai.budget import BUDGET_EXEMPT_ROUTES
 from app.ai.config import InferenceSettings
 from app.ai.modes import has_execution_authority, resolve_mode
 from app.ai.research import (
-    KIMI_RESEARCH_MAX_TOKENS,
+    RESEARCH_MAX_TOKENS,
     ResearchUnavailableError,
     research_advisory,
 )
@@ -79,7 +79,7 @@ async def test_research_preserves_markdown_and_carries_measured_metadata(
     )
 
     assert captured["model"] == "kai-kimi-research"
-    assert captured["max_tokens"] == KIMI_RESEARCH_MAX_TOKENS == 4096
+    assert captured["max_tokens"] == RESEARCH_MAX_TOKENS == 4096
     assert "response_format" not in captured
     assert result.content == "## Gegenargument\n\n```json\n{bad}\n```"
     assert result.route == "research"
@@ -168,10 +168,12 @@ def test_research_uses_normal_budget_policy_and_defaults_to_off() -> None:
     )
 
 
-def test_litellm_route_is_fixed_and_contains_no_secret() -> None:
+def test_litellm_route_is_configurable_and_contains_no_secret() -> None:
+    """Der Alias ist fest, der Anbieter nicht — und kein Schluessel im Repo."""
     config = (Path(__file__).resolve().parents[2] / "config" / "litellm.yaml").read_text(
         encoding="utf-8"
     )
     route = config.split("model_name: kai-kimi-research", 1)[1].split("litellm_settings:", 1)[0]
-    assert "model: moonshot/kimi-k2.6" in route
+    assert "model: os.environ/KAI_LITELLM_RESEARCH_MODEL" in route
+    assert "moonshot" not in route.lower()
     assert "api_key" not in route.lower()
