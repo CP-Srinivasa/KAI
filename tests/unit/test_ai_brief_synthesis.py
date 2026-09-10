@@ -207,3 +207,21 @@ def test_ein_echter_ausfall_wird_dagegen_sichtbar() -> None:
     attach_synthesis(brief, BriefSynthesis(content=None, unavailable_reason="moonshot down"))
 
     assert "moonshot down" in brief.to_markdown()
+
+
+def test_der_http_endpunkt_zahlt_nicht_von_allein() -> None:
+    """Ein GET, der bei jedem Aufruf Geld kostet, waere ein Defekt.
+
+    Der Endpunkt wird von Oberflaechen und Agenten wiederholt gezogen. Die
+    Synthese zahlt aus demselben Topf wie die Nachrichtenanalyse, also ist sie
+    dort anzufordern und nicht abzubestellen. Auf der CLI ist jeder Aufruf eine
+    Operatorhandlung — dort ist die Voreinstellung umgekehrt.
+    """
+    import inspect
+
+    from app.api.routers.research import get_research_brief
+    from app.cli.commands.research_core import research_brief
+
+    assert inspect.signature(get_research_brief).parameters["synthesis"].default is False
+    # Typer verpackt die Voreinstellung in ein OptionInfo.
+    assert inspect.signature(research_brief).parameters["synthesis"].default.default is True

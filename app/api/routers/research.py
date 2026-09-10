@@ -41,7 +41,7 @@ async def get_research_brief(
     synthesis: Annotated[
         bool,
         Query(description="Beratende Research-Synthese anhaengen, falls die Route an ist"),
-    ] = True,
+    ] = False,
     repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> ResearchBrief:
@@ -82,6 +82,12 @@ async def get_research_brief(
     # Filter freshness before applying the output cap; stale high-priority
     # documents must not displace current documents in the candidate batch.
     brief = builder.build(filtered_documents, window_hours=window_hours, limit=limit)
+    # Voreinstellung AUS, und das ist keine Vorsicht, sondern Arithmetik: ein
+    # GET darf nicht bei jedem Aufruf Geld kosten. Der Endpunkt wird von
+    # Oberflaechen und Agenten wiederholt gezogen, waehrend die Synthese aus
+    # demselben Topf zahlt wie die Nachrichtenanalyse (`research` steht NICHT
+    # in `BUDGET_EXEMPT_ROUTES`). Wer sie will, fordert sie an: `?synthesis=true`.
+    # Auf der CLI ist es umgekehrt — dort ist jeder Aufruf eine Operatorhandlung.
     if not synthesis:
         return brief
     # Der Brief ist an dieser Stelle fertig und wird zurueckgegeben, egal wie
