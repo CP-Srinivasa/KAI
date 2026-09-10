@@ -442,8 +442,19 @@ def voraussichtliche_kosten(state: BudgetState) -> float:
     """Was der naechste Aufruf dieses Topfes voraussichtlich kostet.
 
     Kein neuer Regler und keine Preistabelle: der Mittelwert der bereits
-    bezifferten Aufrufe DESSELBEN Topfes. Ohne Historie 0.0 — dann verhaelt
-    sich jede Pruefung darunter exakt wie vorher.
+    bezifferten Aufrufe DESSELBEN Topfes.
+
+    **0.0 heisst "keine prospektive Information", nicht "kostet nichts".**
+    Der Unterschied ist keine Wortklauberei: die Zahl geht in einen
+    Deckelvergleich ein, und wer sie als Kostenaussage liest, haelt den ersten
+    Aufruf eines Topfes fuer gratis. Sie bedeutet ausschliesslich, dass vor dem
+    ersten bezifferten Aufruf nichts vorliegt, worauf sich eine ZUSAETZLICHE
+    USD-Sperre stuetzen koennte — die Pruefung faellt dann auf das
+    Rueckblickende zurueck, das es vorher schon gab, und sperrt nicht auf
+    Verdacht. Sobald ein Aufruf beziffert ist, greift die Vorausschau.
+
+    Die Aufrufgrenze deckt genau diese Luecke ab: sie ist von der ersten Zeile
+    an prospektiv und braucht keine Kostenhistorie.
 
     Gebraucht wird die Zahl, weil ein Deckel, der nur gegen BEREITS verbuchte
     Kosten prueft, immer um einen Aufruf zu spaet greift: bei ``booked`` knapp

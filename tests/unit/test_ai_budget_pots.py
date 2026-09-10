@@ -598,3 +598,41 @@ def test_auch_die_reserve_wird_prospektiv_gedeckelt() -> None:
     assert verdict.pot == "alert_reserve"
     assert verdict.allowed is False
     assert verdict.reason == "alert_reserve_exhausted"
+
+
+def test_null_heisst_keine_information_nicht_kostenlos() -> None:
+    """Die Bedeutung der 0.0 wird hier festgenagelt, nicht nur beschrieben.
+
+    ``voraussichtliche_kosten`` gibt ohne bezifferte Historie 0.0 zurueck. Das
+    darf NICHT als "dieser Aufruf kostet nichts" gelesen werden — die Zahl geht
+    in einen Deckelvergleich ein, und diese Lesart machte den ersten Aufruf
+    jedes Topfes gratis.
+
+    Was 0.0 heisst: es liegt nichts vor, worauf sich eine ZUSAETZLICHE
+    USD-Sperre stuetzen koennte. Die Pruefung faellt auf das Rueckblickende
+    zurueck und sperrt nicht auf Verdacht. Der Beweis, dass die 0.0 keine
+    Kostenaussage ist: die AUFRUFGRENZE greift trotzdem, von der ersten Zeile
+    an — ein Topf ohne jede Kostenhistorie ist an seiner Aufrufzahl erschoepfbar.
+    """
+    from app.ai.budget import voraussichtliche_kosten
+
+    leer = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=0)
+    assert voraussichtliche_kosten(leer) == 0.0
+
+    # Keine Kostenhistorie (alle Aufrufe unbeziffert) — und trotzdem gedeckelt.
+    unbeziffert = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=20)
+    assert voraussichtliche_kosten(unbeziffert) == 0.0
+
+    verdict = decide_pot(
+        route="standard",
+        pots={
+            "normal": BudgetState(booked_usd=0.84, known_calls=100, unknown_calls=0),
+            "alert_reserve": unbeziffert,
+        },
+        policy=BudgetPolicy(daily_limit_usd=1.00, monthly_limit_usd=25.0),
+        reserves=ReservePolicy(alert_reserve_usd=0.16, alert_reserve_max_calls=20),
+        alert_eligible=True,
+    )
+
+    assert verdict.allowed is False
+    assert verdict.reason == "alert_reserve_exhausted"
