@@ -11,6 +11,7 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from app.ai.brief_synthesis import attach_synthesis, synthesize_brief
 from app.core.briefs import ResearchBriefBuilder
 from app.core.settings import get_settings
 from app.core.signals import extract_signal_candidates
@@ -31,6 +32,11 @@ def research_brief(
     watchlist_type: str = typer.Option("assets", "--type", help="Watchlist type"),
     limit: int = typer.Option(100, "--limit", help="Max documents"),
     window_hours: int = typer.Option(24, "--window-hours", min=1, max=720),
+    synthesis: bool = typer.Option(
+        True,
+        "--synthesis/--no-synthesis",
+        help="Beratende Research-Synthese anhaengen, falls die Route an ist",
+    ),
 ) -> None:
     """Generate a research brief for a watchlist."""
 
@@ -50,6 +56,8 @@ def research_brief(
         docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
         builder = ResearchBriefBuilder(cluster_name=watchlist)
         brief = builder.build(docs, window_hours=window_hours, limit=limit)
+        if synthesis:
+            attach_synthesis(brief, await synthesize_brief(brief))
         return brief.to_markdown()
 
     console.print(asyncio.run(_run()))

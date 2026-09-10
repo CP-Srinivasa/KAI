@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.ai.brief_synthesis import attach_synthesis, synthesize_brief
 from app.api.deps import get_document_repo
 from app.core.briefs import ResearchBrief, ResearchBriefBuilder
 from app.core.settings import AppSettings, get_settings
@@ -37,6 +38,10 @@ async def get_research_brief(
     ] = "assets",
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     window_hours: Annotated[int, Query(ge=1, le=720)] = 24,
+    synthesis: Annotated[
+        bool,
+        Query(description="Beratende Research-Synthese anhaengen, falls die Route an ist"),
+    ] = True,
     repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> ResearchBrief:
@@ -76,7 +81,12 @@ async def get_research_brief(
     builder = ResearchBriefBuilder(cluster_name=watchlist_name)
     # Filter freshness before applying the output cap; stale high-priority
     # documents must not displace current documents in the candidate batch.
-    return builder.build(filtered_documents, window_hours=window_hours, limit=limit)
+    brief = builder.build(filtered_documents, window_hours=window_hours, limit=limit)
+    if not synthesis:
+        return brief
+    # Der Brief ist an dieser Stelle fertig und wird zurueckgegeben, egal wie
+    # die Synthese ausgeht.
+    return attach_synthesis(brief, await synthesize_brief(brief))
 
 
 @router.get(

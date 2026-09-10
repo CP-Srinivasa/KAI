@@ -1,4 +1,8 @@
-"""Role-restricted Kimi research through the existing AI control plane.
+"""Role-restricted research through the existing AI control plane.
+
+The provider is configuration, not code: this module never names a model.
+It asks the ``research`` route, and which model answers is decided by
+``KAI_LITELLM_RESEARCH_MODEL`` on the transport side.
 
 The returned text is advisory evidence, never an ``AnalysisResult`` and never
 an alert, score, signal, or execution instruction. Markdown is preserved
@@ -17,7 +21,7 @@ import httpx
 from app.ai.config import InferenceSettings
 from app.ai.runtime import LiteLLMRequest, invoke
 
-KIMI_RESEARCH_MAX_TOKENS: Final[int] = 4096
+RESEARCH_MAX_TOKENS: Final[int] = 4096
 
 
 class ResearchUnavailableError(RuntimeError):
@@ -54,9 +58,9 @@ def _raw_research_text(body: dict[str, Any]) -> str:
     try:
         content = body["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise ResearchUnavailableError("Kimi research response has no content") from exc
+        raise ResearchUnavailableError("research response has no content") from exc
     if not isinstance(content, str) or not content.strip():
-        raise ResearchUnavailableError("Kimi research response is empty")
+        raise ResearchUnavailableError("research response is empty")
     return content
 
 
@@ -69,7 +73,7 @@ async def research_advisory(
     telemetry_path: Path | None = None,
     client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
 ) -> ResearchAdvisoryResult:
-    """Return Kimi research text through ``app.ai`` or fail closed.
+    """Return research text through ``app.ai`` or fail closed.
 
     There is intentionally no direct provider fallback. OFF, missing
     credentials, transport failure, truncation, or empty content are explicit
@@ -79,7 +83,7 @@ async def research_advisory(
         raise ValueError("research prompt must not be empty")
 
     async def no_direct_provider() -> str:
-        raise ResearchUnavailableError("Kimi research route is unavailable")
+        raise ResearchUnavailableError("research route is unavailable")
 
     messages: list[dict[str, str]] = []
     if system_prompt:
@@ -93,7 +97,7 @@ async def research_advisory(
         direct_model="",
         litellm=LiteLLMRequest(
             parser=_raw_research_text,
-            payload={"messages": messages, "max_tokens": KIMI_RESEARCH_MAX_TOKENS},
+            payload={"messages": messages, "max_tokens": RESEARCH_MAX_TOKENS},
         ),
         settings=settings,
         correlation_id=correlation_id,
@@ -102,10 +106,10 @@ async def research_advisory(
     )
     outcome = routed.outcome
     if routed.transport != "litellm" or outcome is None or outcome.gateway.mode != "advisory":
-        raise ResearchUnavailableError("Kimi research did not use the advisory LiteLLM route")
+        raise ResearchUnavailableError("research did not use the advisory LiteLLM route")
     attempt = outcome.authoritative_attempt
     if attempt is None or not attempt.trace.identity_proven:
-        raise ResearchUnavailableError("Kimi research backend identity is unproven")
+        raise ResearchUnavailableError("research backend identity is unproven")
     trace = attempt.trace
     reasoning = trace.detail.get("reasoning_tokens")
     transport_retries = trace.detail.get("transport_retries")
@@ -142,7 +146,7 @@ async def research_advisory(
 
 
 __all__ = [
-    "KIMI_RESEARCH_MAX_TOKENS",
+    "RESEARCH_MAX_TOKENS",
     "ResearchAdvisoryResult",
     "ResearchUnavailableError",
     "research_advisory",
