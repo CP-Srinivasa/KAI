@@ -21,9 +21,9 @@ Rein: keine Uhr, kein I/O. Der Aufrufer bringt Fenster und Einträge mit.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal, get_args
 
 from app.ai.models import AttemptTrace
 from app.ai.routes import Route
@@ -82,6 +82,10 @@ class BudgetState:
         und erst recht keine Entwarnung.
         """
         return self.total_calls > 0 and self.unknown_calls == 0
+
+
+#: Der leere Zustand — ein Topf, in dem heute noch nichts gebucht wurde.
+_LEER: Final[BudgetState] = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=0)
 
 
 def accumulate(entries: Sequence[BudgetEntry]) -> BudgetState:
@@ -330,18 +334,207 @@ def evaluate_status(
     )
 
 
+# ── Töpfe (Budget-Policy v2, 2026-09-10) ───────────────────────────────────
+#
+# Der Befund, der diesen Abschnitt erzwingt (2026-09-10): nach Erreichen des
+# Tageslimits fiel der Anteil echter LLM-Analyse von 24,8 % auf 0,3 %, der
+# Dokumentzufluss lief unvermindert weiter, und ``is_analyzed`` blieb bei rund
+# 100 % — das Dashboard blieb grün. Alerts jedoch: 23 von 202 Dokumenten VOR
+# dem Limit, **0 von 373 danach**. Der Grund ist strukturell und nicht knapp:
+# der Regelpfad erreicht über 44.018 Dokumente maximal Priorität 6,0, die
+# Alert-Schwelle liegt bei 7. Ein erschöpftes Budget schaltet das Alerting also
+# nicht schlechter, sondern vollständig ab — lautlos.
+#
+# Ein einziges Limit über alle Aufrufe kann das nicht verhindern: die Masse
+# gewöhnlicher Nachrichten verbraucht es, lange bevor das eine Dokument kommt,
+# auf das es ankommt. Deshalb Töpfe statt einer Summe.
+
+#: Aus welchem Topf ein Aufruf bezahlt wird.
+#:
+#: ``normal``         gewöhnliche Analyse-, Chat- und Ingestionsarbeit
+#: ``alert_reserve``  geschützte Restkapazität für alert-fähige Dokumente
+#: ``validation``     ausschliesslich SHADOW/kontrollierte Validierung
+#: ``exempt``         ``critical`` — war noch nie gesperrt, bleibt es nicht
+BudgetPot = Literal["normal", "alert_reserve", "validation", "exempt"]
+
+POTS: Final[tuple[BudgetPot, ...]] = get_args(BudgetPot)
+
+#: Der Topf, dem eine Zeile ohne ``budget_pot`` zugeschlagen wird.
+#:
+#: Bewusst ``normal`` und nicht ``exempt``: Altzeilen aus der Zeit vor v2
+#: dürfen die Reserven nicht belasten, sollen aber den normalen Topf füllen.
+#: Andersherum — Altverbrauch als reservefrei zu behandeln — hiesse, am ersten
+#: Tag nach dem Rollout mit einem geschenkten Guthaben zu starten, das nie
+#: ausgegeben wurde.
+LEGACY_POT: Final[BudgetPot] = "normal"
+
+
+@dataclass(frozen=True)
+class ReservePolicy:
+    """Wie viel Tagesbudget den Reserven vorbehalten bleibt.
+
+    ``None`` heisst überall: diese Reserve existiert nicht — dann verhält sich
+    v2 wie v1, ein Topf über alles. Das ist die Voreinstellung, damit ein
+    Rollout ohne gesetzte Werte nichts ändert.
+
+    Zwei Grenzen je Reserve, und beide sind nötig:
+
+    * **USD** ist die eigentliche Aussage, solange Kosten belegt sind.
+    * **Aufrufzahl** ist die Grenze, die auch dann noch trägt, wenn sie es
+      nicht sind. Genau dafür gibt es sie: ``COST_UNKNOWN`` sperrt in v1 die
+      gesamte Routine, weil niemand mehr weiss, was ausgegeben wird. Würde das
+      auch die Alert-Reserve sperren, wäre ein MESSPROBLEM wieder ein
+      vollständiger Alert-Ausfall — dieselbe lautlose Bauart wie der Befund
+      oben, nur mit anderem Auslöser. Mit einer Aufrufgrenze bleibt die Reserve
+      begrenzt, ohne bezifferbar zu sein.
+    """
+
+    alert_reserve_usd: float | None = None
+    alert_reserve_max_calls: int | None = None
+    validation_reserve_usd: float | None = None
+    validation_reserve_max_calls: int | None = None
+
+    @property
+    def reserved_usd(self) -> float:
+        """Wie viel des Tagesbudgets gewöhnlicher Arbeit nicht zur Verfügung steht."""
+        return (self.alert_reserve_usd or 0.0) + (self.validation_reserve_usd or 0.0)
+
+    @property
+    def any_reserve_set(self) -> bool:
+        return any(
+            wert is not None
+            for wert in (
+                self.alert_reserve_usd,
+                self.alert_reserve_max_calls,
+                self.validation_reserve_usd,
+                self.validation_reserve_max_calls,
+            )
+        )
+
+    def normal_ceiling_usd(self, daily_limit_usd: float | None) -> float | None:
+        """Die Decke des normalen Topfes — ``None`` heisst unbegrenzt.
+
+        Nicht negativ: sind die Reserven grösser als das Tagesbudget, bleibt
+        für gewöhnliche Arbeit eben nichts übrig. Das ist eine extreme, aber
+        sinnvolle Konfiguration — und allemal besser als eine negative Decke,
+        gegen die jeder Vergleich unvorhersehbar ausfiele.
+        """
+        if daily_limit_usd is None:
+            return None
+        return max(0.0, daily_limit_usd - self.reserved_usd)
+
+
+@dataclass(frozen=True)
+class PotVerdict:
+    """Aus welchem Topf dieser Aufruf bezahlt wird — und ob überhaupt.
+
+    Der Topf steht auch bei ``allowed=False``: die Telemetriezeile einer
+    Ablehnung soll sagen, WORAN sie gescheitert ist. Eine abgelehnte Zeile
+    ohne Topf wäre wieder die Sorte Buchführung, die man hinterher rät.
+    """
+
+    pot: BudgetPot
+    allowed: bool
+    reason: str = ""
+
+
+def _reserve_erschoepft(state: BudgetState, limit_usd: float | None, max_calls: int | None) -> bool:
+    """Ist eine Reserve aufgebraucht? Beide Grenzen zählen, die erste gewinnt.
+
+    ``total_calls`` und nicht ``known_calls``: ein Aufruf, dessen Kosten
+    unbekannt sind, hat die Reserve trotzdem benutzt. Ihn nicht mitzuzählen
+    hiesse, die Aufrufgrenze genau in dem Zustand wirkungslos zu machen, für
+    den sie gebaut ist.
+    """
+    if limit_usd is not None and state.booked_usd >= limit_usd:
+        return True
+    return max_calls is not None and state.total_calls >= max_calls
+
+
+def decide_pot(
+    *,
+    route: str,
+    pots: Mapping[BudgetPot, BudgetState],
+    policy: BudgetPolicy,
+    reserves: ReservePolicy,
+    alert_eligible: bool = False,
+    validation: bool = False,
+    cost_unknown: bool = False,
+) -> PotVerdict:
+    """Welcher Topf zahlt — und darf er?
+
+    Die Reihenfolge ist die Aussage:
+
+    1. ``critical`` bleibt ausgenommen. Diese Ausnahme stand vor v2 und wird
+       hier nicht angetastet; sie ist die Fernbedienung des Operators für
+       genau den Zustand, den er gerade beheben muss.
+    2. **Validierung zahlt aus ihrem eigenen Topf, immer.** Kein Rückfall auf
+       ``normal`` und kein Zugriff auf die Alert-Reserve — in beide Richtungen
+       gesperrt. Ein Testtopf, der sich bei Bedarf aus der Produktionskapazität
+       bedient, ist keine Reserve, sondern eine Umgehung.
+    3. **Die Alert-Reserve ist der LETZTE Ausweg, nicht eine zweite Spur.**
+       Alert-fähige Arbeit zahlt zuerst aus ``normal`` und rutscht erst in die
+       Reserve, wenn ``normal`` erschöpft ist. Andernfalls wäre die Reserve am
+       Vormittag von gewöhnlichen Dokumenten aufgebraucht, die zufällig gut
+       gepunktet haben, und abends leer — also genau dann, wenn sie zählt.
+    4. Alles andere endet bei erschöpftem ``normal``, wie bisher.
+
+    ``cost_unknown`` behandelt den normalen Topf als erschöpft, ohne dass eine
+    Summe es belegt (v1-Verhalten von ``COST_UNKNOWN``). Die Alert-Reserve
+    bleibt erreichbar, dann aber allein über ihre Aufrufgrenze — siehe
+    :class:`ReservePolicy`.
+    """
+    if route in BUDGET_EXEMPT_ROUTES:
+        return PotVerdict(pot="exempt", allowed=True)
+
+    if validation:
+        zustand = pots.get("validation", _LEER)
+        if _reserve_erschoepft(
+            zustand, reserves.validation_reserve_usd, reserves.validation_reserve_max_calls
+        ):
+            return PotVerdict(
+                pot="validation", allowed=False, reason="validation_reserve_exhausted"
+            )
+        return PotVerdict(pot="validation", allowed=True)
+
+    normal = pots.get("normal", _LEER)
+    decke = reserves.normal_ceiling_usd(policy.daily_limit_usd)
+    normal_erschoepft = cost_unknown or (decke is not None and normal.booked_usd >= decke)
+
+    if not normal_erschoepft:
+        return PotVerdict(pot="normal", allowed=True)
+
+    if not alert_eligible:
+        return PotVerdict(
+            pot="normal",
+            allowed=False,
+            reason="cost_unknown" if cost_unknown else "normal_budget_exhausted",
+        )
+
+    reserve = pots.get("alert_reserve", _LEER)
+    if _reserve_erschoepft(reserve, reserves.alert_reserve_usd, reserves.alert_reserve_max_calls):
+        return PotVerdict(pot="alert_reserve", allowed=False, reason="alert_reserve_exhausted")
+    return PotVerdict(pot="alert_reserve", allowed=True)
+
+
 __all__ = [
     "BUDGET_EXEMPT_ROUTES",
     "BudgetDecision",
     "BudgetEntry",
     "BudgetExceeded",
     "BudgetPolicy",
+    "BudgetPot",
     "BudgetState",
     "BudgetStatus",
     "BudgetStatusState",
+    "LEGACY_POT",
     "LOCAL_REFUSAL_ERROR_TYPES",
+    "POTS",
+    "PotVerdict",
+    "ReservePolicy",
     "accumulate",
     "decide",
+    "decide_pot",
     "evaluate_status",
     "headroom_usd",
 ]

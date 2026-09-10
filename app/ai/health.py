@@ -223,6 +223,11 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         "top_provider": heute.top_provider or monat.top_provider,
         "top_use_case": heute.top_use_case or monat.top_use_case,
         "fully_accounted_today": heute.fully_accounted,
+        # Die Toepfe (Budget-Policy v2). Sie stehen hier auch dann, wenn keine
+        # Reserve gesetzt ist -- dann liegt aller Verbrauch in ``normal``, und
+        # genau das soll ablesbar sein. Eine Reserve, deren Stand nur im Code
+        # existiert, waere fuer den Operator dasselbe wie keine.
+        "pots": _topf_block(heute, status),
         "price_table_version": PRICE_TABLE_VERSION,
         "note": _COST_NOTE,
     }
@@ -273,6 +278,42 @@ def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
         "rule_path_raw_ceiling": round(rule_path_raw_ceiling(), 6),
         "rule_path_priority_ceiling": rule_path_priority_ceiling(),
     }
+def _topf_block(heute: Any, status: Any) -> dict[str, Any]:
+    """Verbrauch je Topf, mit dem jeweiligen Limit daneben.
+
+    ``remaining_usd`` bleibt ``None``, sobald der Topf unbelegte Aufrufe
+    enthaelt: der wahre Verbrauch liegt dann ueber der Summe, und eine
+    Restgroesse auszuweisen waere eine Genauigkeit, die es nicht gibt --
+    dieselbe Regel wie in ``app.ai.budget.headroom_usd``.
+    """
+    from app.ai.budget import headroom_usd
+    from app.core.ai_cost_settings import get_ai_cost_settings
+
+    try:
+        reserven = get_ai_cost_settings().reserve_policy
+    except Exception:  # noqa: BLE001 - eine Gesundheitsanzeige stirbt nicht an Kosten
+        reserven = None
+    grenzen: dict[str, float | None] = {
+        "normal": (
+            reserven.normal_ceiling_usd(status.policy.daily_limit_usd)
+            if reserven is not None
+            else status.policy.daily_limit_usd
+        ),
+        "alert_reserve": reserven.alert_reserve_usd if reserven is not None else None,
+        "validation": reserven.validation_reserve_usd if reserven is not None else None,
+        "exempt": None,
+    }
+    block: dict[str, Any] = {}
+    for topf, zustand in heute.pot_states().items():
+        limit = grenzen.get(topf)
+        block[topf] = {
+            "booked_usd": round(zustand.booked_usd, 6),
+            "calls": zustand.total_calls,
+            "unknown_cost_calls": zustand.unknown_calls,
+            "limit_usd": limit,
+            "remaining_usd": headroom_usd(zustand, limit),
+        }
+    return block
 
 
 def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -> dict[str, Any]:

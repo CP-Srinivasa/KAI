@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.audit import (
+    budget_intent_scope,
     classify_error,
     correlation_scope,
     current_correlation_id,
@@ -83,6 +84,7 @@ from app.analysis.scoring import (
     RULE_NOVELTY_CEILING,
     RULE_RELEVANCE_CEILING,
 )
+from app.core.ai_cost_settings import get_ai_cost_settings
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel, SourceType
 from app.core.logging import get_logger
@@ -825,6 +827,7 @@ class AnalysisPipeline:
 
         keyword_hits = self._keyword_engine.match(full_text)
         entity_mentions = hits_to_entity_mentions(keyword_hits)
+        alert_faehig = self._vorab_alert_faehig(doc, text, keyword_hits, entity_mentions)
 
         llm_output: LLMAnalysisOutput | None = None
         analysis_result: AnalysisResult | None = None
@@ -967,14 +970,19 @@ class AnalysisPipeline:
         elif self._provider is not None:
             llm_called = True
             try:
-                primary_task = asyncio.create_task(
-                    self._timed_primary_analyze(
-                        title=doc.title,
-                        text=text,
-                        context=context,
-                        source=doc.source_name,
+                # Die Absicht wird VOR dem Aufruf gebunden, weil das Budget vor
+                # dem Aufruf entscheidet. `create_task` kopiert den Kontext im
+                # Moment der Erzeugung -- die Aufgabe traegt die Absicht also
+                # auch dann noch, wenn dieser Block laengst verlassen ist.
+                with budget_intent_scope(alert_eligible=alert_faehig):
+                    primary_task = asyncio.create_task(
+                        self._timed_primary_analyze(
+                            title=doc.title,
+                            text=text,
+                            context=context,
+                            source=doc.source_name,
+                        )
                     )
-                )
 
                 shadow_may_overlap = self._shadow_overlaps_ensemble()
                 shadow_task: (
@@ -1117,6 +1125,53 @@ class AnalysisPipeline:
             llm_called=llm_called,
             skip_reason=skip_reason,
         )
+
+    def _vorab_alert_faehig(
+        self,
+        document: CanonicalDocument,
+        text: str,
+        keyword_hits: list[KeywordHit],
+        entity_mentions: list[EntityMention],
+    ) -> bool:
+        """Darf dieses Dokument die Alert-Reserve anfassen, wenn das normale
+        Budget erschoepft ist?
+
+        Die Frage, die hier NICHT beantwortet wird: ob das Dokument einen Alert
+        erzeugt. Das weiss erst die Analyse -- der Regelpfad erreicht ueber
+        44.018 Dokumente maximal Prioritaet 6,0, die Alert-Schwelle liegt bei 7.
+        Beantwortet wird die schwaechere und darum ueberhaupt entscheidbare
+        Frage: ist es nach den Signalen, die schon kostenlos vorliegen, nicht
+        von vornherein ausgeschlossen?
+
+        Gerechnet wird mit genau dem Regelergebnis, das die Pipeline bei
+        erschoepftem Budget ohnehin schreiben wuerde -- ``_build_fallback_analysis``
+        und ``compute_priority``, beide rein und ueber Treffer, die oben schon
+        ermittelt wurden. Kein zweites Bewertungsmodell: ein eigener Schaetzer
+        neben dem Regelpfad waere eine zweite Meinung darueber, wie wichtig ein
+        Dokument ist, und die beiden liefen auseinander.
+
+        Fehlschlaege enden bei ``True``, nicht bei ``False``. Eine kaputte
+        Vorabbewertung darf nicht dazu fuehren, dass ein wichtiges Dokument
+        die Reserve NICHT erreicht -- die Reserve ist ohnehin doppelt begrenzt
+        (USD und Aufrufzahl), ein falsch durchgelassenes Dokument kostet also
+        hoechstens einen halben Cent. Ein falsch abgewiesenes kostet einen
+        Alert.
+        """
+        from app.analysis.scoring import compute_priority
+
+        try:
+            vorab = self._build_fallback_analysis(
+                document,
+                text,
+                keyword_hits,
+                entity_mentions,
+                fallback_reason="budget_pre_score",
+            )
+            punkte = compute_priority(vorab, spam_probability=vorab.spam_probability)
+        except Exception as exc:  # noqa: BLE001 - siehe Docstring
+            logger.warning("alert_pre_score_failed", doc_id=str(document.id), error=str(exc))
+            return True
+        return punkte.priority >= get_ai_cost_settings().budget_alert_min_rule_priority
 
     def _build_fallback_analysis(
         self,
