@@ -36,7 +36,7 @@ from app.ai.budget import (
 )
 from app.ai.circuit import CircuitBook, CircuitKey, CircuitPolicy, circuit_key
 from app.ai.models import AttemptResult, AttemptTrace, InferenceResult
-from app.ai.modes import Mode, resolve_mode
+from app.ai.modes import Mode, has_execution_authority, litellm_is_authoritative, resolve_mode
 from app.ai.retry import RetryPolicy, retry_delay_s, should_retry
 from app.ai.routes import Route, escalation_reason_for, route_for
 
@@ -75,12 +75,13 @@ class GatewayOutcome:
     def authoritative(self) -> InferenceResult | None:
         """Das Ergebnis, das der Aufrufer benutzen darf.
 
-        Nur in ``primary`` UND nur bei Erfolg ist das der LiteLLM-Pfad; sonst
-        der direkte. Das ist zugleich der kontrollierte Fallback aus ADR 0017:
-        scheitert LiteLLM als autoritativer Transport, tritt der direkte Pfad
-        ein, statt den Aufruf scheitern zu lassen.
+        In ``primary`` und im research-exklusiven ``advisory`` ist das bei
+        Erfolg der LiteLLM-Pfad; sonst der direkte. Advisory trägt dabei
+        ausdrücklich keine Ausführungsautorität. Das ist zugleich der
+        kontrollierte Fallback aus ADR 0017: scheitert LiteLLM als
+        autoritativer Transport, tritt der direkte Pfad ein.
         """
-        if self.mode == "primary" and self.litellm is not None and self.litellm.ok:
+        if litellm_is_authoritative(self.mode) and self.litellm is not None and self.litellm.ok:
             return self.litellm
         return self.direct
 
@@ -93,7 +94,7 @@ class GatewayOutcome:
     def fell_back(self) -> bool:
         """Sollte LiteLLM autoritativ sein, hat es aber nicht getragen?"""
         return (
-            self.mode == "primary"
+            litellm_is_authoritative(self.mode)
             and self.litellm is not None
             and not self.litellm.ok
             and self.direct is not None
@@ -281,7 +282,9 @@ def execute(
     # Der direkte Pfad laeuft immer, AUSSER LiteLLM ist autoritativ und hat
     # getragen. Im Schatten laeuft er also mit — sonst waere der Vergleich
     # einseitig und der Schattenbetrieb wertlos.
-    litellm_carried = mode == "primary" and litellm_result is not None and litellm_result.ok
+    litellm_carried = (
+        litellm_is_authoritative(mode) and litellm_result is not None and litellm_result.ok
+    )
     if direct_call is None:
         skipped.append(SKIP_NO_TRANSPORT)
     elif not litellm_carried:
@@ -291,7 +294,7 @@ def execute(
             purpose=purpose,
             mode=mode,
             attempts=(attempt,),
-            fell_back_to_direct=mode == "primary",
+            fell_back_to_direct=litellm_is_authoritative(mode),
             correlation_id=correlation_id,
         )
 
@@ -507,11 +510,11 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
                         purpose=purpose,
                         logical_route=route,
                         mode=mode,
-                        role="shadow" if mode == "shadow" else "primary",
+                        role=mode,
                         attempt_number=attempt_number,
                         budget_decision=verdict,
                         circuit_state=state,
-                        execution_authority=mode == "primary",
+                        execution_authority=has_execution_authority(mode),
                         # `trace.ok` gehoert dem TRANSPORT, diese Felder
                         # beschreiben den VERSUCH. Bei einer abgeschnittenen
                         # Antwort faellt beides auseinander: der Transport war
@@ -535,12 +538,12 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
                         ),
                         fallback_from=(
                             "litellm"
-                            if mode == "primary" and not gelungen and not will_retry
+                            if litellm_is_authoritative(mode) and not gelungen and not will_retry
                             else None
                         ),
                         fallback_to=(
                             "direct"
-                            if mode == "primary" and not gelungen and not will_retry
+                            if litellm_is_authoritative(mode) and not gelungen and not will_retry
                             else None
                         ),
                         path=telemetry_path,
@@ -569,7 +572,9 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
         if litellm_attempts
         else None
     )
-    litellm_carried = mode == "primary" and litellm_result is not None and litellm_result.ok
+    litellm_carried = (
+        litellm_is_authoritative(mode) and litellm_result is not None and litellm_result.ok
+    )
 
     direct_attempt: AttemptResult[T] | None = None
     if direct_call is None:
@@ -585,7 +590,7 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
             purpose=purpose,
             mode=mode,
             attempts=(direct_attempt.trace,),
-            fell_back_to_direct=mode == "primary",
+            fell_back_to_direct=litellm_is_authoritative(mode),
             correlation_id=correlation_id,
         )
         if direct_attempt is not None

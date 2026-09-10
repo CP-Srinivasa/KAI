@@ -16,6 +16,10 @@ model_list:
   - model_name: kai-stt
     litellm_params:
       model: os.environ/KAI_LITELLM_STT_MODEL
+  - model_name: kai-kimi-research
+    litellm_params:
+      # Fixed role-qualified transport route; no activation or authority lives here.
+      model: moonshot/kimi-k2.6
 
 litellm_settings:
   # KAI/app/ai is the single bounded-retry authority.

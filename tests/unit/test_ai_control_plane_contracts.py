@@ -55,6 +55,7 @@ def test_intent_ist_kritisch_und_consensus_denkt_nach() -> None:
     assert route_for("intent") == "critical"
     assert route_for("consensus") == "reasoning"
     assert route_for("stt") == "stt"
+    assert route_for("research") == "research"
 
 
 def test_is_route_erkennt_fremdwerte() -> None:
@@ -102,7 +103,10 @@ def test_der_deckel_stuft_herunter_aber_niemals_hoch() -> None:
 def test_ein_globales_off_legt_alles_gleichzeitig_still() -> None:
     """Der Weg nach unten ist EIN Schalter — das ist die Zwischenfall-Zusicherung."""
     per_route = dict.fromkeys(ROUTES, "primary")
-    assert graduated_routes(per_route=per_route, ceiling="primary") == ROUTES
+    assert graduated_routes(per_route=per_route, ceiling="primary") == tuple(
+        route for route in ROUTES if route != "research"
+    )
+    assert resolve_mode("research", per_route=per_route, ceiling="primary") == "advisory"
     assert graduated_routes(per_route=per_route, ceiling="off") == ()
     for route in ROUTES:
         assert resolve_mode(route, per_route=per_route, ceiling="off") == "off"
@@ -120,7 +124,7 @@ def test_grossschreibung_und_leerraum_sind_kein_tippfehler() -> None:
 
 
 def test_is_mode_und_modes_bleiben_konsistent() -> None:
-    assert MODES == ("off", "shadow", "primary")
+    assert MODES == ("off", "shadow", "advisory", "primary")
     for mode in MODES:
         assert is_mode(mode)
     assert not is_mode("halb")
@@ -136,6 +140,7 @@ def test_ein_verschriebener_routenschluessel_faellt_auf() -> None:
 def test_nur_primary_darf_etwas_bewirken() -> None:
     assert has_execution_authority("primary")
     assert not has_execution_authority("shadow")
+    assert not has_execution_authority("advisory")
     assert not has_execution_authority("off")
 
 
@@ -241,7 +246,7 @@ def test_das_ergebnis_summiert_latenz_und_erbt_die_letzte_identitaet() -> None:
 
 def test_die_route_eines_ergebnisses_passt_zu_seinem_purpose() -> None:
     """Kein erzwungener Vertrag im Datentyp, aber der erwartete Normalfall."""
-    for purpose in ("analysis", "chat", "intent", "stt", "consensus"):
+    for purpose in ("analysis", "chat", "intent", "stt", "consensus", "research"):
         route = route_for(purpose)  # type: ignore[arg-type]
         ergebnis = InferenceResult(route=route, purpose=purpose, mode="off")  # type: ignore[arg-type]
         assert ergebnis.route == route

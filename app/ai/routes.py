@@ -29,7 +29,8 @@ from app.ai.audit import Purpose
 #: ``reasoning`` längere Ketten, teurere Modelle vertretbar
 #: ``critical``  Fehlschlag ist teuer; Fallback wichtiger als Preis
 #: ``stt``       Sprache zu Text — eigene Modalität, gleicher Vertrag
-Route = Literal["bulk", "standard", "reasoning", "critical", "stt"]
+#: ``research``  langer freier Advisory-Text, nie Analysis-/Execution-Autorität
+Route = Literal["bulk", "standard", "reasoning", "critical", "stt", "research"]
 
 ROUTES: Final[tuple[Route, ...]] = get_args(Route)
 
@@ -45,6 +46,7 @@ _PURPOSE_ROUTE: Final[dict[Purpose, Route]] = {
     "intent": "critical",
     "stt": "stt",
     "consensus": "reasoning",
+    "research": "research",
 }
 
 
@@ -76,7 +78,7 @@ CHEAPEST_ROUTE: Final[Route] = "bulk"
 #: immer gesetzt ist, sagt nichts mehr. ``stt`` ist eine andere MODALITÄT
 #: (Sprache zu Text), keine höhere Qualitätsstufe; es als Eskalation zu
 #: buchen wäre eine Kostenaussage, die es nicht gibt.
-_ESCALATED: Final[frozenset[str]] = frozenset({"reasoning", "critical"})
+_ESCALATED: Final[frozenset[str]] = frozenset({"reasoning", "critical", "research"})
 
 
 def escalation_reason_for(route: str, *, budget_bypassed: bool = False) -> str:
