@@ -150,7 +150,28 @@ class InferenceResult:
 
     @property
     def ok(self) -> bool:
-        return bool(self.attempts) and self.attempts[-1].ok
+        """Hat dieser Transport ein BRAUCHBARES Ergebnis geliefert?
+
+        Nicht dasselbe wie `AttemptTrace.ok`. Der Trace gehoert dem Transport:
+        bei einer abgeschnittenen Antwort war der technisch erfolgreich, und
+        das soll er auch melden duerfen -- sonst koennte die Runtime gar nicht
+        mehr urteilen (#946).
+
+        Hier zaehlt aber, ob etwas herauskam, denn an dieser Eigenschaft haengt
+        die AUTORITAETSFRAGE: `authoritative`, `litellm_carried` und
+        `fell_back` lesen sie. Ohne den Zusatz galte ein abgeschnittener
+        Versuch als getragen, der Direktpfad wuerde uebersprungen und der
+        Aufruf stuerbe -- ausgerechnet der kontrollierte Rueckfall aus ADR 0017,
+        der fuer genau diesen Fall da ist.
+
+        `is True` und nicht Wahrheitswert: `truncated` ist dreiwertig, `None`
+        heisst "kein finish_reason gemeldet" und darf nicht wie "abgeschnitten"
+        wirken.
+        """
+        if not self.attempts:
+            return False
+        letzter = self.attempts[-1]
+        return letzter.ok and letzter.truncated is not True
 
     @property
     def execution_authority(self) -> bool:

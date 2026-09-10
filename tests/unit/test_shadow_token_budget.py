@@ -318,3 +318,60 @@ async def test_ein_abgeschnittener_lauf_wird_nicht_als_erfolg_gezaehlt(tmp_path:
         assert e.get("truncated") is True
         assert e.get("outcome") != "success", "abgeschnitten als Erfolg gezaehlt"
         assert e.get("schema_status") != "valid", "abgeschnitten als schemagueltig gezaehlt"
+
+
+async def test_unter_primary_faellt_eine_abschneidung_auf_den_direktpfad_zurueck() -> None:
+    """Der kontrollierte Rueckfall aus ADR 0017 — genau fuer diesen Fall gedacht.
+
+    `InferenceResult.ok` liest den letzten Trace, und der bleibt bei einer
+    Abschneidung absichtlich `ok` (der Transport war erfolgreich). Ohne Zusatz
+    galte der Versuch damit als GETRAGEN: `litellm_carried` waere True, der
+    Direktpfad wuerde uebersprungen, und die Analyse stuerbe an einem zu
+    kleinen Token-Budget, statt auf den Direktanbieter zurueckzufallen.
+
+    Heute beisst das nicht, weil PRIMARY aus ist. Es waere eine Mine fuer die
+    spaetere Umstellung — gefunden von der Parallelsitzung beim Nachpruefen der
+    Folgen des Gates, dritte Schicht derselben Kette.
+    """
+    import httpx
+
+    from app.ai.runtime import invoke
+
+    direkt_gerufen: dict[str, bool] = {}
+
+    async def direkt() -> str:
+        direkt_gerufen["ja"] = True
+        return "direkt"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gemini/gemini-3.6-flash",
+                "choices": [
+                    {"message": {"content": "Der groesste Risik"}, "finish_reason": "length"}
+                ],
+            },
+            request=request,
+        )
+
+    ergebnis = await invoke(
+        purpose="analysis",
+        direct_call=direkt,
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=LiteLLMRequest(
+            parser=lambda _b: "nie", payload={"messages": [], "max_tokens": 1024}
+        ),
+        settings=InferenceSettings(
+            enabled=True, mode_ceiling="primary", route_modes={"standard": "primary"}
+        ),
+        client_factory=_client_factory(handler),
+        sleeper=_kein_schlaf,
+    )
+
+    assert direkt_gerufen.get("ja"), "der Direktpfad wurde uebersprungen — der Rueckfall fehlt"
+    assert ergebnis.value == "direkt"
+    assert ergebnis.transport == "direct"
+    assert ergebnis.outcome is not None
+    assert ergebnis.outcome.gateway.fell_back, "der Rueckfall wurde nicht als solcher gemeldet"
