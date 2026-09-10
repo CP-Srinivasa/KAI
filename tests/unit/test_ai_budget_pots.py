@@ -345,6 +345,72 @@ def test_critical_zahlt_nicht_aus_der_alert_reserve() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Das Monatslimit steht über den Töpfen.
+# ---------------------------------------------------------------------------
+
+
+def test_das_monatslimit_sperrt_auch_die_alert_reserve() -> None:
+    """Die Reserven teilen den TAG, nicht den Monat.
+
+    Sie sind dafür gebaut, dass die Masse eines Tages nicht die Kapazität für
+    das eine wichtige Dokument DESSELBEN Tages auffrisst. Ist der Monat
+    erreicht, gibt es keinen Vorrang mehr zu verteilen — es ist nichts mehr da.
+
+    Ohne diesen Zweig hätte das blosse Setzen einer Reserve die Monatsgrenze
+    stillschweigend abgeschaltet, weil danach nur noch Tagestöpfe geprüft
+    werden. Eine Kostenbremse, die man versehentlich löst, indem man eine
+    zweite einbaut, wäre die teuerste Sorte Nebenwirkung.
+    """
+    urteil = entscheide(
+        alert_eligible=True,
+        policy=BudgetPolicy(daily_limit_usd=1.25, monthly_limit_usd=25.0),
+        monthly=zustand(25.0),
+        pots={"normal": zustand(0.01), "alert_reserve": zustand(0.0, calls=0)},
+    )
+
+    assert urteil.allowed is False
+    assert urteil.reason == "monthly_limit_reached"
+
+
+def test_das_monatslimit_sperrt_auch_die_validierung() -> None:
+    urteil = entscheide(
+        validation=True,
+        policy=BudgetPolicy(daily_limit_usd=1.25, monthly_limit_usd=25.0),
+        monthly=zustand(25.0),
+        pots={"validation": zustand(0.0, calls=0)},
+    )
+
+    assert urteil.allowed is False
+    assert urteil.reason == "monthly_limit_reached"
+
+
+def test_das_monatslimit_sperrt_critical_nicht() -> None:
+    """Die eine Ausnahme bleibt die eine Ausnahme."""
+    urteil = entscheide(
+        route="critical",
+        policy=BudgetPolicy(daily_limit_usd=1.25, monthly_limit_usd=25.0),
+        monthly=zustand(99.0),
+        pots={},
+    )
+
+    assert urteil.pot == "exempt"
+    assert urteil.allowed
+
+
+def test_ein_unerreichtes_monatslimit_aendert_nichts() -> None:
+    """Die Gegenprobe: der Zweig darf nicht immer zuschlagen."""
+    urteil = entscheide(
+        alert_eligible=True,
+        policy=BudgetPolicy(daily_limit_usd=1.25, monthly_limit_usd=25.0),
+        monthly=zustand(2.4),
+        pots={"normal": zustand(NORMALE_DECKE), "alert_reserve": zustand(0.0, calls=0)},
+    )
+
+    assert urteil.pot == "alert_reserve"
+    assert urteil.allowed
+
+
+# ---------------------------------------------------------------------------
 # Getrennte Zähler: was der Strom hergibt.
 # ---------------------------------------------------------------------------
 

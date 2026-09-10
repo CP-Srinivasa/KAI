@@ -278,3 +278,70 @@ def test_ohne_entscheidung_bleibt_der_topf_none_und_wird_nicht_normal(
     )
 
     assert json.loads(sink.read_text(encoding="utf-8").strip())["budget_pot"] is None
+
+
+# ---------------------------------------------------------------------------
+# Was der Operator sieht.
+# ---------------------------------------------------------------------------
+
+
+def test_die_gesundheitsanzeige_meldet_die_wirkung_nicht_die_bauart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mit Reserven endet gewöhnliche Arbeit an 1,05 — nicht an 1,25.
+
+    Ohne diese Meldung stünde im Dashboard ``routine_calls_blocked: false``,
+    während die Routine bereits steht. Das ist wörtlich die Lage, gegen die
+    diese Policy geschrieben ist: der Betrieb sieht gesund aus, weil die
+    Anzeige eine andere Grenze meint als die, die gerade greift.
+    """
+    from app.ai.health import _budget_block, cost_block
+
+    sink = tmp_path / "llm.jsonl"
+    _verbraucht(sink, usd=1.10)
+
+    kosten = cost_block(path=sink)
+
+    assert kosten["normal_pot_exhausted"] is True
+    assert kosten["blocks_routine"] is False, "das Tageslimit allein ist nicht erreicht"
+    assert _budget_block(kosten, [])["routine_calls_blocked"] is True
+
+
+def test_der_topfblock_weist_jede_reserve_einzeln_aus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eine Reserve, deren Stand nur im Code existiert, ist für den Operator
+    dasselbe wie keine."""
+    from app.ai.health import cost_block
+
+    sink = tmp_path / "llm.jsonl"
+    _verbraucht(sink, usd=1.10)
+    _verbraucht(sink, usd=0.02, pot="alert_reserve")
+
+    toepfe = cost_block(path=sink)["pots"]
+
+    assert toepfe["alert_reserve"]["booked_usd"] == pytest.approx(0.02)
+    assert toepfe["alert_reserve"]["limit_usd"] == pytest.approx(0.15)
+    assert toepfe["alert_reserve"]["remaining_usd"] == pytest.approx(0.13)
+    assert toepfe["normal"]["limit_usd"] == pytest.approx(1.05)
+    assert toepfe["validation"]["calls"] == 0
+
+
+def test_ohne_reserven_meldet_die_anzeige_wie_vor_v2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ai.health import _budget_block, cost_block
+
+    monkeypatch.delenv("APP_AI_BUDGET_ALERT_RESERVE_USD", raising=False)
+    monkeypatch.delenv("APP_AI_BUDGET_ALERT_RESERVE_MAX_CALLS", raising=False)
+    monkeypatch.delenv("APP_AI_BUDGET_VALIDATION_RESERVE_USD", raising=False)
+    monkeypatch.delenv("APP_AI_BUDGET_VALIDATION_RESERVE_MAX_CALLS", raising=False)
+    reset_ai_cost_settings()
+
+    sink = tmp_path / "llm.jsonl"
+    _verbraucht(sink, usd=1.10)
+
+    kosten = cost_block(path=sink)
+
+    assert kosten["normal_pot_exhausted"] is False
+    assert _budget_block(kosten, [])["routine_calls_blocked"] is False

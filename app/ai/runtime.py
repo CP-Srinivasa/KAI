@@ -175,6 +175,7 @@ class _Budgetbild:
             pots=self.pots,
             policy=self.status.policy,
             reserves=self.reserves,
+            monthly=self.status.monthly,
             alert_eligible=alert_eligible,
             validation=validation,
             # ``COST_UNKNOWN`` wirkt wie ein erschöpfter Normaltopf, nicht wie

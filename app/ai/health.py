@@ -228,6 +228,12 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         # genau das soll ablesbar sein. Eine Reserve, deren Stand nur im Code
         # existiert, waere fuer den Operator dasselbe wie keine.
         "pots": _topf_block(heute, status),
+        # Mit gesetzten Reserven endet gewoehnliche Arbeit an der Decke des
+        # NORMALEN Topfes, nicht am Tageslimit. Ohne dieses Feld meldete die
+        # Gesundheitsanzeige "nicht gesperrt", waehrend die Routine bereits
+        # stand -- genau die lautlose Lage, gegen die Budget-Policy v2
+        # geschrieben ist.
+        "normal_pot_exhausted": _normaler_topf_erschoepft(heute, status),
         "price_table_version": PRICE_TABLE_VERSION,
         "note": _COST_NOTE,
     }
@@ -278,6 +284,24 @@ def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
         "rule_path_raw_ceiling": round(rule_path_raw_ceiling(), 6),
         "rule_path_priority_ceiling": rule_path_priority_ceiling(),
     }
+def _normaler_topf_erschoepft(heute: Any, status: Any) -> bool:
+    """Steht die gewoehnliche Arbeit? ``False`` auch dann, wenn es keine
+    Reserven gibt -- dann ist das Tageslimit die einzige Decke, und dafuer gibt
+    es ``blocks_routine`` bereits."""
+    from app.core.ai_cost_settings import get_ai_cost_settings
+
+    try:
+        reserven = get_ai_cost_settings().reserve_policy
+    except Exception:  # noqa: BLE001 - eine Gesundheitsanzeige stirbt nicht an Kosten
+        return False
+    if not reserven.any_reserve_set:
+        return False
+    decke = reserven.normal_ceiling_usd(status.policy.daily_limit_usd)
+    if decke is None:
+        return False
+    return heute.pot_states()["normal"].booked_usd >= decke
+
+
 def _topf_block(heute: Any, status: Any) -> dict[str, Any]:
     """Verbrauch je Topf, mit dem jeweiligen Limit daneben.
 
@@ -328,7 +352,11 @@ def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -
     return {
         "budget_state": str(status).lower() if isinstance(status, str) else "unknown",
         "budget_status_reason": str(cost.get("reason") or ""),
-        "routine_calls_blocked": bool(cost.get("blocks_routine", False)),
+        # ODER, nicht nur das eine: mit Reserven steht die Routine an der Decke
+        # des normalen Topfes, ohne sie am Tageslimit. Der Operator fragt hier
+        # nach der Wirkung, nicht nach der Bauart.
+        "routine_calls_blocked": bool(cost.get("blocks_routine", False))
+        or bool(cost.get("normal_pot_exhausted", False)),
         # Wie viele Aufrufe die Abweisung im Fenster tatsaechlich getroffen hat.
         # Ohne diese Zahl bliebe "limit_reached" eine Ansage ohne Wirkung.
         "local_refusals_in_window": sum(

@@ -238,10 +238,6 @@ class BudgetStatus:
         return not self.blocks_routine or route in BUDGET_EXEMPT_ROUTES
 
 
-def _at_or_over(state: BudgetState, limit: float | None) -> bool:
-    return limit is not None and state.booked_usd >= limit
-
-
 def _over_warn(state: BudgetState, limit: float | None, warn_pct: float) -> bool:
     return limit is not None and limit > 0 and state.booked_usd >= limit * (warn_pct / 100.0)
 
@@ -438,6 +434,10 @@ class PotVerdict:
     reason: str = ""
 
 
+def _at_or_over(state: BudgetState, limit: float | None) -> bool:
+    return limit is not None and state.booked_usd >= limit
+
+
 def _reserve_erschoepft(state: BudgetState, limit_usd: float | None, max_calls: int | None) -> bool:
     """Ist eine Reserve aufgebraucht? Beide Grenzen zählen, die erste gewinnt.
 
@@ -457,6 +457,7 @@ def decide_pot(
     pots: Mapping[BudgetPot, BudgetState],
     policy: BudgetPolicy,
     reserves: ReservePolicy,
+    monthly: BudgetState | None = None,
     alert_eligible: bool = False,
     validation: bool = False,
     cost_unknown: bool = False,
@@ -486,6 +487,22 @@ def decide_pot(
     """
     if route in BUDGET_EXEMPT_ROUTES:
         return PotVerdict(pot="exempt", allowed=True)
+
+    # Das Monatslimit steht ueber den Toepfen und wird von keinem aufgeweicht.
+    #
+    # Die Reserven teilen den TAG, nicht den Monat: sie sind dafuer gebaut,
+    # dass die Masse eines Tages nicht die Kapazitaet fuer das eine wichtige
+    # Dokument desselben Tages auffrisst. Ein erreichtes Monatslimit ist eine
+    # andere Lage — dort ist kein Vorrang mehr zu verteilen, sondern es ist
+    # nichts mehr da. Ohne diesen Zweig haette das Setzen einer Reserve die
+    # Monatsgrenze stillschweigend abgeschaltet, weil unten nur noch
+    # Tagestoepfe geprueft werden.
+    if monthly is not None and _at_or_over(monthly, policy.monthly_limit_usd):
+        return PotVerdict(
+            pot="validation" if validation else "normal",
+            allowed=False,
+            reason="monthly_limit_reached",
+        )
 
     if validation:
         zustand = pots.get("validation", _LEER)
