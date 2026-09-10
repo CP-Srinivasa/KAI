@@ -30,8 +30,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 
+from app.ai.config import InferenceSettings
+from app.ai.runtime import LiteLLMRequest
 from app.analysis.ai_control_plane import MAX_TOKENS, parse_analysis_body
 
 _GUELTIG = (
@@ -138,3 +141,120 @@ def test_und_umgekehrt_entscheidet_allein_das_praedikat(monkeypatch: pytest.Monk
 
     with pytest.raises(ValueError, match="truncated"):
         parse_analysis_body(_body(_GUELTIG, finish="stop"), user_prompt="x")
+
+
+async def test_das_gate_faengt_die_abschneidung_vor_dem_parser() -> None:
+    """Die Meldung mit `max_tokens` muss im BETRIEB erreichbar sein, nicht nur im Test.
+
+    #946 laesst eine abgeschnittene Antwort bewusst durch den Transport
+    (`ok=True`, `truncated=True`), damit die Runtime urteilen kann. #949 hat die
+    Zusicherung entfernt, die den Parser-Aufruf vorschrieb. Erst dadurch ist
+    dieses Gate ueberhaupt baubar -- vorher haette es eine fremde, gemergte
+    Kontrolle rot gemacht.
+
+    Geprueft wird am VERHALTEN: der Parser darf nicht mehr laufen, und die
+    Klassifizierung muss `truncated` sein und nicht `schema`.
+    """
+    import httpx
+
+    from app.ai.runtime import invoke
+
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gemini/gemini-3.6-flash",
+                "choices": [
+                    {"message": {"content": "Der groesste Risik"}, "finish_reason": "length"}
+                ],
+            },
+            request=request,
+        )
+
+    def parser(body: dict[str, Any]) -> str:
+        gesehen["parser"] = True
+        return "sollte nie passieren"
+
+    ergebnis = await invoke(
+        purpose="analysis",
+        direct_call=_direkt,
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=LiteLLMRequest(parser=parser, payload={"messages": [], "max_tokens": 1024}),
+        settings=InferenceSettings(
+            enabled=True, mode_ceiling="shadow", route_modes={"standard": "shadow"}
+        ),
+        client_factory=_client_factory(handler),
+        sleeper=_kein_schlaf,
+    )
+
+    assert "parser" not in gesehen, "der Parser lief trotz Abschneidung"
+    assert ergebnis.outcome is not None
+    trace = ergebnis.outcome.litellm_attempts[0].trace
+    assert trace.truncated is True
+    # KEINE eigene Fehlerklasse: `ok` gehoert dem Transport, und der war
+    # erfolgreich. Entscheidend ist, dass der Versuch scheitert und NICHT als
+    # Schemafehler gilt -- sonst schickte die Klassifizierung den naechsten
+    # Leser in den Parser statt zum Token-Deckel.
+    assert trace.error_class != "schema"
+    assert trace.ok, "ok gehoert dem Transport — das Urteil steht im error des Versuchs"
+    from app.ai.audit import is_retryable_error_class
+
+    assert not is_retryable_error_class(trace.error_class), (
+        "eine Wiederholung traefe denselben Deckel"
+    )
+
+
+async def test_ohne_abschneidung_laeuft_der_parser_ganz_normal() -> None:
+    """Gegenprobe: sonst zeigte der Test oben nur, dass nie geparst wird."""
+    import httpx
+
+    from app.ai.runtime import invoke
+
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gemini/gemini-3.6-flash",
+                "choices": [{"message": {"content": "vollstaendig"}, "finish_reason": "stop"}],
+            },
+            request=request,
+        )
+
+    def parser(body: dict[str, Any]) -> str:
+        gesehen["parser"] = True
+        return str(body["choices"][0]["message"]["content"])
+
+    await invoke(
+        purpose="analysis",
+        direct_call=_direkt,
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=LiteLLMRequest(parser=parser, payload={"messages": [], "max_tokens": 1024}),
+        settings=InferenceSettings(
+            enabled=True, mode_ceiling="shadow", route_modes={"standard": "shadow"}
+        ),
+        client_factory=_client_factory(handler),
+        sleeper=_kein_schlaf,
+    )
+
+    assert gesehen.get("parser"), "der Parser wurde uebersprungen, obwohl nichts fehlte"
+
+
+async def _direkt() -> str:
+    return "direkt"
+
+
+async def _kein_schlaf(_sekunden: float) -> None:
+    return None
+
+
+def _client_factory(handler: object) -> object:
+    def bauen(**_: object) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
+
+    return bauen
