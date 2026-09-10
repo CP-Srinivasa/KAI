@@ -417,7 +417,12 @@ async def test_eine_abgeschnittene_antwort_ueberlebt_den_transport() -> None:
         direct_provider="openai",
         direct_model="gpt-4o",
         litellm=anfrage,
-        settings=_settings("primary"),
+        # SHADOW und nicht PRIMARY: seit #945 faellt die Runtime bei
+        # `truncated` fail-closed, und in PRIMARY risse ein gescheiterter
+        # LiteLLM-Versuch den ganzen Aufruf mit. Geprueft werden soll hier
+        # aber die TRANSPORT-Eigenschaft, nicht das Urteil der Runtime --
+        # im Schatten bleibt sie beobachtbar.
+        settings=_settings("shadow"),
         client_factory=_factory(handler),
         sleeper=_no_sleep,
     )

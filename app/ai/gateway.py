@@ -495,6 +495,11 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
                         and should_retry(result.trace)
                         and attempt_number < policy.max_attempts
                     )
+                    # Hat DIESER VERSUCH ein Ergebnis geliefert? Bewusst die
+                    # Konjunktion und nicht nur `error is None`: ein Pfad, der
+                    # kuenftig einen Fehlschlag ohne Ausnahme meldet, soll hier
+                    # nicht als Erfolg durchgehen.
+                    gelungen = result.error is None and result.trace.ok
                     record_attempt_trace(
                         result.trace,
                         correlation_id=correlation_id,
@@ -507,28 +512,35 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
                         budget_decision=verdict,
                         circuit_state=state,
                         execution_authority=mode == "primary",
+                        # `trace.ok` gehoert dem TRANSPORT, diese Felder
+                        # beschreiben den VERSUCH. Bei einer abgeschnittenen
+                        # Antwort faellt beides auseinander: der Transport war
+                        # erfolgreich (`ok`), aber die Runtime hat fail-closed
+                        # geurteilt und es entstand kein Wert. Auf `trace.ok`
+                        # gestuetzt meldete die Zeile dann `outcome="success"`
+                        # und `schema_status="valid"` fuer einen Aufruf ohne
+                        # Analyse -- und `scripts/litellm_shadow_eval` bildet
+                        # seine `outcome_distribution` genau daraus. Die erste
+                        # echte SHADOW-Auswertung haette abgeschnittene Laeufe
+                        # als Erfolge gezaehlt.
                         schema_status=(
                             "valid"
-                            if result.trace.ok
+                            if gelungen
                             else "invalid"
                             if result.trace.error_class == "schema"
                             else None
                         ),
                         outcome=(
-                            "fallthrough"
-                            if will_retry
-                            else "success"
-                            if result.trace.ok
-                            else "exhausted"
+                            "fallthrough" if will_retry else "success" if gelungen else "exhausted"
                         ),
                         fallback_from=(
                             "litellm"
-                            if mode == "primary" and not result.trace.ok and not will_retry
+                            if mode == "primary" and not gelungen and not will_retry
                             else None
                         ),
                         fallback_to=(
                             "direct"
-                            if mode == "primary" and not result.trace.ok and not will_retry
+                            if mode == "primary" and not gelungen and not will_retry
                             else None
                         ),
                         path=telemetry_path,

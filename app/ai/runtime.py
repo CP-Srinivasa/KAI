@@ -402,6 +402,34 @@ async def invoke[T](
                             f"LiteLLM attempt failed: {response.trace.error_class}"
                         ),
                     )
+                # NACH dem `not ok`-Zweig und VOR dem Parser: ein abgeschnittenes
+                # Ergebnis ist kein Formfehler des Modells, sondern ein zu
+                # kleines Budget. Beides endet ohne Analyse, aber nur eines
+                # davon behebt der Operator an der richtigen Stelle -- und der
+                # Parser meldete sonst `Invalid JSON: EOF while parsing a
+                # string` ueber eine Antwort, die das Modell korrekt begonnen
+                # hatte.
+                #
+                # `is True` und nicht Wahrheitswert: `truncated` ist dreiwertig,
+                # `None` heisst "kein finish_reason gemeldet". Eine Pruefung auf
+                # Wahrheitswert behandelte "unbekannt" wie "vollstaendig" --
+                # dieselbe Falle wie eine unbekannte Kostenangabe als 0.
+                # KEINE eigene `error_class`: die wuerde `ok` auf False setzen, und
+                # `ok` gehoert dem Transport -- der war erfolgreich. Das Urteil
+                # steht im `error` des Versuchs, die Diagnose in `truncated` und
+                # `max_tokens` der Zeile. Ohne Klasse ist der Versuch ausserdem
+                # NICHT wiederholbar (`is_retryable_error_class`: `None` -> False),
+                # und das ist richtig: ein zweiter Lauf traefe denselben Deckel.
+                if response.trace.truncated is True:
+                    deckel = response.trace.detail.get("max_tokens")
+                    return AttemptResult(
+                        trace=response.trace,
+                        error=LiteLLMCallError(
+                            "LiteLLM response was truncated (finish_reason=length) — "
+                            f"max_tokens={deckel} reicht nicht; bei denkenden Modellen "
+                            "zaehlt der Denkaufwand gegen dasselbe Budget"
+                        ),
+                    )
                 try:
                     value = litellm.parser(response.body)
                 except Exception as exc:
