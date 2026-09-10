@@ -16,6 +16,10 @@ model_list:
   - model_name: kai-stt
     litellm_params:
       model: os.environ/KAI_LITELLM_STT_MODEL
+  # Provider verification only: app/ai does not map a purpose to this alias.
+  - model_name: kai-deepseek
+    litellm_params:
+      model: os.environ/KAI_LITELLM_DEEPSEEK_MODEL
 
 litellm_settings:
   # KAI/app/ai is the single bounded-retry authority.
