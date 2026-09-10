@@ -173,6 +173,19 @@ _MODE: ContextVar[str | None] = ContextVar("kai_llm_mode", default=None)
 #: Monaten drei Wahrheiten darüber, wer wofür bezahlt hat.
 _USE_CASE: ContextVar[str | None] = ContextVar("kai_llm_use_case", default=None)
 
+#: Provenienz des Analyse-SYSTEM-Prompts fuer den Transportpfad.
+#:
+#: Der direkte Analysepfad kann die Werte an der Schreibstelle mitgeben; der
+#: Weg ueber den Gateway nicht, weil `record_attempt_trace` tief in
+#: `app/ai/runtime.py` gerufen wird und den Prompt nicht sieht.
+#:
+#: Ein Rueckschluss ueber `purpose == "analysis"` waere geraten, nicht gemessen:
+#: er behauptete, jeder Analyse-Aufruf benutze diesen Prompt, und waere still
+#: falsch, sobald ein anderer Aufrufer dieselbe Absicht meldet. Wer den Prompt
+#: setzt, setzt hier auch die Provenienz.
+_PROMPT_VERSION: ContextVar[str | None] = ContextVar("kai_analysis_prompt_version", default=None)
+_PROMPT_HASH: ContextVar[str | None] = ContextVar("kai_analysis_prompt_hash", default=None)
+
 #: Warum dieser Aufruf teurer laufen darf als die günstigste Stufe. LEER ist
 #: der Normalfall und heisst: keine Eskalation. Ein leerer String statt
 #: ``None``, weil "nicht eskaliert" eine AUSSAGE ist und kein fehlender Wert.
@@ -440,6 +453,23 @@ def _text_oder_none(wert: object) -> str | None:
     return wert if isinstance(wert, str) and wert else None
 
 
+@contextmanager
+def analysis_prompt_scope(*, version: str, prompt_hash: str) -> Iterator[None]:
+    """Die Provenienz des gerade gesendeten Analyse-System-Prompts binden.
+
+    Wird dort gesetzt, wo der Prompt in die Nutzlast geht -- damit die Angabe
+    aus derselben Stelle stammt wie der Text und nicht aus einer Vermutung
+    ueber den Zweck des Aufrufs.
+    """
+    v = _PROMPT_VERSION.set(version)
+    h = _PROMPT_HASH.set(prompt_hash)
+    try:
+        yield
+    finally:
+        _PROMPT_VERSION.reset(v)
+        _PROMPT_HASH.reset(h)
+
+
 def record_attempt_trace(
     attempt_trace: AttemptTrace,
     *,
@@ -511,6 +541,8 @@ def record_attempt_trace(
         transport_retries=_ganzzahl(detail.get("transport_retries")),
         truncated=attempt_trace.truncated,
         max_tokens=_ganzzahl(detail.get("max_tokens")),
+        analysis_system_prompt_version=_PROMPT_VERSION.get(),
+        analysis_system_prompt_hash=_PROMPT_HASH.get(),
         budget_decision=budget_decision,
         circuit_state=circuit_state,
         execution_authority=execution_authority,

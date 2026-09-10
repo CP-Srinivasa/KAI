@@ -17,7 +17,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.ai.audit import is_retryable_error, note_retry_attempt
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
-from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
+from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT, format_user_prompt
 
 _MAX_TEXT_CHARS = 6000  # ~1500 tokens
 
@@ -108,7 +108,7 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
 
         response = await self._client.messages.create(  # type: ignore[call-overload]
             model=self._model,
-            system=SYSTEM_PROMPT_V1,
+            system=ACTIVE_SYSTEM_PROMPT,
             max_tokens=self._max_tokens,
             messages=[{"role": "user", "content": user_prompt}],
             tools=tools,

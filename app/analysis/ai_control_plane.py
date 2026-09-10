@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.ai.audit import analysis_prompt_scope
 from app.ai.config import InferenceSettings
 from app.ai.runtime import LiteLLMRequest, invoke
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
-from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
+from app.analysis.prompts import (
+    ACTIVE_SYSTEM_PROMPT,
+    ACTIVE_SYSTEM_PROMPT_SHA256,
+    ACTIVE_SYSTEM_PROMPT_VERSION,
+    format_user_prompt,
+)
 
 _MAX_TEXT_CHARS = 6000
 
@@ -70,24 +76,27 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
                     output.completion_tokens = completion_tokens
             return output
 
-        routed = await invoke(
-            purpose="analysis",
-            direct_call=lambda: self._direct.analyze(title=title, text=text, context=context),
-            direct_provider=self._direct.provider_name,
-            direct_model=self._direct.model or "",
-            litellm=LiteLLMRequest(
-                parser=parse,
-                payload={
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT_V1},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "max_tokens": 1024,
-                },
-            ),
-            settings=self._settings,
-        )
+        with analysis_prompt_scope(
+            version=ACTIVE_SYSTEM_PROMPT_VERSION, prompt_hash=ACTIVE_SYSTEM_PROMPT_SHA256
+        ):
+            routed = await invoke(
+                purpose="analysis",
+                direct_call=lambda: self._direct.analyze(title=title, text=text, context=context),
+                direct_provider=self._direct.provider_name,
+                direct_model=self._direct.model or "",
+                litellm=LiteLLMRequest(
+                    parser=parse,
+                    payload={
+                        "messages": [
+                            {"role": "system", "content": ACTIVE_SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "max_tokens": 1024,
+                    },
+                ),
+                settings=self._settings,
+            )
         output = routed.value
         if routed.transport == "litellm" and routed.outcome is not None:
             selected = routed.outcome.authoritative_attempt

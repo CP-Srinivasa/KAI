@@ -17,7 +17,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.ai.audit import is_retryable_error, note_retry_attempt
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
-from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
+from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT, format_user_prompt
 
 _MAX_TEXT_CHARS = 6000  # ~1500 tokens — leaves room for prompt + response
 
@@ -89,7 +89,7 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
         response = await self._client.beta.chat.completions.parse(
             model=self._model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_V1},
+                {"role": "system", "content": ACTIVE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             response_format=LLMAnalysisOutput,

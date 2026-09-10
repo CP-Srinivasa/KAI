@@ -4,6 +4,7 @@ Version: v1
 Purpose: crypto/financial news analysis → structured LLMAnalysisOutput
 """
 
+import hashlib
 from typing import Any
 
 SYSTEM_PROMPT_V1 = """\
@@ -109,6 +110,27 @@ already_priced_in:
 Be objective. Do not let brand familiarity bias your scores.
 Avoid extreme values unless clearly justified by the content.
 """
+
+#: Der Prompt, der WIRKLICH gesendet wird.
+#:
+#: Alle Aufrufer nehmen diese Konstante, keiner eine feste Version. Damit ist
+#: die Umstellung auf eine neue Fassung eine Zeile hier und kein Suchlauf durch
+#: fuenf Aufrufstellen -- und die Provenienz unten beschreibt danach ohne Zutun
+#: den neuen Text.
+ACTIVE_SYSTEM_PROMPT_VERSION = "v1"
+ACTIVE_SYSTEM_PROMPT = SYSTEM_PROMPT_V1
+
+#: ABGELEITET, nicht hinterlegt. Eine notierte Pruefsumme waere wieder nur ein
+#: Literal, das jemand nachziehen muesste -- genau die Klasse Fehler, die
+#: `schema_version` auf "v2" stehen liess, waehrend die Zeile v5-Felder trug.
+#: So kann die Angabe gar nicht danebenlaufen.
+#:
+#: Der Hash deckt den SYSTEM-Prompt ab und sonst nichts. Der Nutzer-Teil
+#: entsteht pro Dokument in `format_user_prompt` und ist in jeder Zeile ein
+#: anderer; ein Hash darueber waere als Provenienz wertlos. Die Feldnamen in
+#: der Telemetrie tragen `system` deshalb ausdruecklich.
+ACTIVE_SYSTEM_PROMPT_SHA256 = hashlib.sha256(ACTIVE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+
 
 USER_PROMPT_V1 = """\
 Document Title: {title}
