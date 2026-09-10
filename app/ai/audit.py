@@ -191,6 +191,25 @@ _PROMPT_HASH: ContextVar[str | None] = ContextVar("kai_analysis_prompt_hash", de
 #: ``None``, weil "nicht eskaliert" eine AUSSAGE ist und kein fehlender Wert.
 _ESCALATION_REASON: ContextVar[str] = ContextVar("kai_llm_escalation_reason", default="")
 
+#: Aus welchem Topf der laufende Aufruf bezahlt wird (Budget-Policy v2).
+#: Gesetzt von der Stelle, die ENTSCHEIDET (``app.ai.runtime``), nicht von der,
+#: die schreibt: der Topf ist das Ergebnis einer Abwaegung und keine
+#: Eigenschaft des Aufrufs, die sich hier nachtraeglich erraten liesse.
+_BUDGET_POT: ContextVar[str | None] = ContextVar("kai_llm_budget_pot", default=None)
+
+#: Was der AUFRUFER ueber seine eigene Arbeit weiss, bevor bezahlt wird.
+#:
+#: ``alert_eligible`` heisst NICHT "dieses Dokument erzeugt einen Alert" --
+#: das weiss erst die Analyse. Es heisst: nach den Signalen, die ohne Kosten
+#: schon vorliegen, ist es nicht ausgeschlossen. Nur solche Aufrufe duerfen die
+#: Alert-Reserve anfassen.
+#:
+#: ``validation`` markiert kontrollierte SHADOW-/Validierungsarbeit. Getrennt
+#: von ``role="shadow"``: die Rolle beschreibt, WIE gefahren wird, dieses Feld,
+#: WOFUER bezahlt wird. Ein Schattenlauf im Regelbetrieb ist keine Validierung.
+_ALERT_ELIGIBLE: ContextVar[bool] = ContextVar("kai_llm_alert_eligible", default=False)
+_VALIDATION: ContextVar[bool] = ContextVar("kai_llm_validation", default=False)
+
 
 class _AttemptCounter:
     """Physische Versuche EINES logischen Aufrufs — veränderlich mit Absicht.
@@ -267,6 +286,41 @@ def escalation_scope(reason: str) -> Iterator[str]:
         yield reason
     finally:
         _ESCALATION_REASON.reset(token)
+
+
+@contextmanager
+def budget_intent_scope(
+    *, alert_eligible: bool = False, validation: bool = False
+) -> Iterator[None]:
+    """Die Absicht des Aufrufers binden, BEVOR das Budget entscheidet.
+
+    Wird dort gesetzt, wo der Aufrufer seine eigene Arbeit kennt -- in der
+    Analyse-Pipeline also nach der regelbasierten Vorabbewertung und vor dem
+    bezahlten Aufruf. Die Runtime raet nicht: ohne diesen Block ist ein Aufruf
+    weder alert-faehig noch Validierung, und beides ist die sichere Seite.
+    """
+    a = _ALERT_ELIGIBLE.set(alert_eligible)
+    v = _VALIDATION.set(validation)
+    try:
+        yield
+    finally:
+        _ALERT_ELIGIBLE.reset(a)
+        _VALIDATION.reset(v)
+
+
+def budget_intent() -> tuple[bool, bool]:
+    """``(alert_eligible, validation)`` des laufenden Aufrufs."""
+    return _ALERT_ELIGIBLE.get(), _VALIDATION.get()
+
+
+@contextmanager
+def budget_pot_scope(pot: str) -> Iterator[None]:
+    """Den entschiedenen Topf an die Telemetriezeilen dieses Aufrufs binden."""
+    token = _BUDGET_POT.set(pot or None)
+    try:
+        yield
+    finally:
+        _BUDGET_POT.reset(token)
 
 
 @contextmanager
@@ -543,6 +597,7 @@ def record_attempt_trace(
         max_tokens=_ganzzahl(detail.get("max_tokens")),
         analysis_system_prompt_version=_PROMPT_VERSION.get(),
         analysis_system_prompt_hash=_PROMPT_HASH.get(),
+        budget_pot=_BUDGET_POT.get(),
         budget_decision=budget_decision,
         circuit_state=circuit_state,
         execution_authority=execution_authority,
@@ -671,6 +726,7 @@ async def llm_call_scope(
             mode=_MODE.get(),
             use_case=resolve_use_case(scope.purpose),
             escalation_reason=_ESCALATION_REASON.get(),
+            budget_pot=_BUDGET_POT.get(),
             retry_count=counter.retries,
         )
         raise
@@ -697,5 +753,6 @@ async def llm_call_scope(
         mode=_MODE.get(),
         use_case=resolve_use_case(scope.purpose),
         escalation_reason=_ESCALATION_REASON.get(),
+        budget_pot=_BUDGET_POT.get(),
         retry_count=counter.retries,
     )

@@ -55,8 +55,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.ai.budget import (
+    LEGACY_POT,
+    POTS,
     BudgetEntry,
     BudgetPolicy,
+    BudgetPot,
     BudgetState,
     BudgetStatus,
     accumulate,
@@ -176,6 +179,11 @@ class SpendWindow:
     #: aufbewahrt, damit :meth:`budget_state` das VORHANDENE
     #: ``app.ai.budget.accumulate`` benutzen kann statt danebenzurechnen.
     entries: tuple[BudgetEntry, ...] = ()
+    #: Dieselben Positionen, getrennt nach Topf (Budget-Policy v2). Getrennt
+    #: aufbewahrt und nicht aus ``entries`` gefiltert: eine Reserve, deren
+    #: Stand aus derselben Liste zweimal verschieden hergeleitet werden kann,
+    #: hat frueher oder spaeter zwei Staende.
+    pot_entries: dict[str, tuple[BudgetEntry, ...]] = field(default_factory=dict)
 
     @property
     def known_calls(self) -> int:
@@ -213,6 +221,15 @@ class SpendWindow:
         unbelegter Aufruf mit einer Summe macht.
         """
         return accumulate(self.entries)
+
+    def pot_states(self) -> dict[BudgetPot, BudgetState]:
+        """Der Zustand JE Topf — die Grundlage von ``app.ai.budget.decide_pot``.
+
+        Jeder bekannte Topf kommt vor, auch der leere: ein fehlender Schluessel
+        zwaenge jeden Aufrufer zu einem eigenen Standardwert, und irgendeiner
+        von ihnen naehme irgendwann einen anderen.
+        """
+        return {topf: accumulate(self.pot_entries.get(topf, ())) for topf in POTS}
 
 
 def _spitzenreiter(buckets: dict[str, SpendBucket]) -> str | None:
@@ -338,6 +355,28 @@ def _add(
     )
 
 
+def _topf_der_zeile(row: dict[str, Any]) -> BudgetPot:
+    """Welchem Topf diese Zeile zugeschlagen wird.
+
+    Zwei Faelle enden beide bei :data:`~app.ai.budget.LEGACY_POT`, und das ist
+    Absicht:
+
+    * die Zeile stammt aus der Zeit vor v8 und nennt keinen Topf,
+    * die Zeile nennt einen Topf, den es nicht gibt (Tippfehler, fremder
+      Schreiber, spaeter entfernter Topf).
+
+    Der zweite Fall duerfte NICHT stillschweigend verschwinden: ein
+    unbekannter Schluessel, den niemand einsammelt, waere Verbrauch, der in
+    keiner Reserve auftaucht und in keiner Summe fehlt -- also unsichtbar. Er
+    faellt hier auf den normalen Topf, wo er den Verbrauch erhoeht statt ihn zu
+    verstecken.
+    """
+    wert = row.get("budget_pot")
+    if isinstance(wert, str) and wert in POTS:
+        return wert
+    return LEGACY_POT
+
+
 def spend_window(
     window: Window,
     *,
@@ -356,6 +395,7 @@ def spend_window(
     nach_modell: dict[str, SpendBucket] = {}
     nach_use_case: dict[str, SpendBucket] = {}
     positionen: list[BudgetEntry] = []
+    nach_topf: dict[str, list[BudgetEntry]] = {}
 
     for row in load_rows(path):
         ts = row_ts(row)
@@ -393,7 +433,9 @@ def spend_window(
             # Altzeilen gehen NICHT in den Budgetzustand: ``accumulate`` kennt
             # nur "gebucht" und "unbekannt", und als unbekannt gezaehlt haetten
             # sie genau die Sperre ausgeloest, die dieser Nachtrag verhindert.
-            positionen.append(BudgetEntry(route="standard", cost_usd=zeilen_kosten))
+            position = BudgetEntry(route="standard", cost_usd=zeilen_kosten)
+            positionen.append(position)
+            nach_topf.setdefault(_topf_der_zeile(row), []).append(position)
 
     return SpendWindow(
         window=window,
@@ -409,6 +451,7 @@ def spend_window(
         by_model=nach_modell,
         by_use_case=nach_use_case,
         entries=tuple(positionen),
+        pot_entries={topf: tuple(eintraege) for topf, eintraege in nach_topf.items()},
     )
 
 

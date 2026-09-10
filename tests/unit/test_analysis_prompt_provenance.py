@@ -150,7 +150,6 @@ def test_die_provenienz_steht_in_der_zeile(tmp_path: Path) -> None:
 
     assert zeile["analysis_system_prompt_version"] == "v1"
     assert zeile["analysis_system_prompt_hash"] == ACTIVE_SYSTEM_PROMPT_SHA256
-    assert zeile["schema_version"] == "v7"
 
 
 def test_ohne_angabe_bleibt_es_none_und_wird_nicht_v1(tmp_path: Path) -> None:
@@ -167,9 +166,16 @@ def test_ohne_angabe_bleibt_es_none_und_wird_nicht_v1(tmp_path: Path) -> None:
     assert zeile["analysis_system_prompt_hash"] is None
 
 
-def test_der_leser_nimmt_v7_an() -> None:
-    """Ein Bump ohne diese Zeile beanstandete jede neue Zeile im S6-Harness."""
-    assert SCHEMA_VERSION == "v7"
+def test_der_leser_nimmt_die_geschriebene_version_an() -> None:
+    """Ein Bump ohne Nachzug beim Leser beanstandet jede neue Zeile im S6-Harness.
+
+    Ohne Versionsliteral, aber mit derselben Wirkung: ``SUPPORTED_SCHEMA_VERSIONS``
+    ist eine Aufzaehlung und kein Praefix-Vergleich, wer also die geschriebene
+    Version anhebt und den Leser vergisst, faellt hier durch. Das Literal stand
+    hier bis v8 zusaetzlich und hat nichts gefangen, was diese Zeile nicht
+    faengt -- es hat nur jeden Feld-Nachtrag gezwungen, eine Datei zu aendern,
+    die von Prompt-Provenienz handelt und nicht von Schemapflege.
+    """
     assert SCHEMA_VERSION in SUPPORTED_SCHEMA_VERSIONS
 
 

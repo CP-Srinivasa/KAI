@@ -50,12 +50,13 @@ def test_die_zeile_nennt_die_version_die_sie_traegt(tmp_path: Path) -> None:
     # der ein Formatwechsel ankommt. Genau dieser Test hat den v6-Bump gemeldet.
     # Im SCHREIBER dagegen waere ein Literal der Fehler -- dort ist es zur
     # Konstante geworden, weil es sonst wieder stehen bleibt.
-    assert zeile["schema_version"] == "v7"
+    assert zeile["schema_version"] == "v8"
     assert zeile["reasoning_tokens"] == 382, "die v5-Felder sind auch wirklich da"
     assert zeile["transport_retries"] == 0
     assert "truncated" in zeile, "und das v6-Feld"
     assert "analysis_system_prompt_version" in zeile, "und die v7-Felder"
     assert "analysis_system_prompt_hash" in zeile
+    assert "budget_pot" in zeile, "und das v8-Feld"
 
 
 def test_der_stempel_kommt_aus_einer_konstante(tmp_path: Path) -> None:
@@ -83,18 +84,19 @@ def test_alte_zeilen_bleiben_lesbar() -> None:
     Additiv heißt, dass ein v2-Leser eine v5-Zeile verarbeiten kann — nicht,
     dass sie dasselbe sind. Auf kai-pi5 liegen mehrere Megabyte v2.
     """
-    for alt in ("v1", "v2", "v5", "v6"):
+    for alt in ("v1", "v2", "v5", "v6", "v7"):
         assert alt in SUPPORTED_SCHEMA_VERSIONS, alt
 
 
 def test_eine_unbekannte_version_bleibt_unbekannt() -> None:
     """Die Gegenprobe: der Leser nimmt nicht einfach alles.
 
-    Die Menge ist bewusst eine Aufzählung und kein Präfix-Vergleich. Ein
-    künftiges v6 soll hier ANKOMMEN, nicht stillschweigend durchrutschen — wer
-    das Format ändert, sieht dann diese Stelle und entscheidet bewusst.
+    Die Menge ist bewusst eine Aufzählung und kein Präfix-Vergleich. Eine
+    künftige Version soll hier ANKOMMEN, nicht stillschweigend durchrutschen —
+    wer das Format ändert, sieht dann diese Stelle und entscheidet bewusst. Das
+    hat bisher zweimal funktioniert: bei v6 und bei v8.
     """
-    assert "v8" not in SUPPORTED_SCHEMA_VERSIONS
+    assert "v9" not in SUPPORTED_SCHEMA_VERSIONS
     assert "v99" not in SUPPORTED_SCHEMA_VERSIONS
 
 
@@ -109,9 +111,10 @@ def test_eine_zeile_ohne_neue_felder_bleibt_gueltig(tmp_path: Path) -> None:
 
     zeile = json.loads(sink.read_text(encoding="utf-8").strip())
 
-    assert zeile["schema_version"] == "v7"
+    assert zeile["schema_version"] == "v8"
     assert zeile["reasoning_tokens"] is None
     assert zeile["transport_retries"] is None
     assert zeile["truncated"] is None, "kein finish_reason gemeldet = unbekannt, nicht False"
     assert zeile["analysis_system_prompt_version"] is None, "kein stilles v1-Defaulting"
     assert zeile["analysis_system_prompt_hash"] is None
+    assert zeile["budget_pot"] is None, "keine Budgetentscheidung = nicht zugeordnet"

@@ -53,7 +53,11 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: ein Prompt-Versionswechsel nur nominell auditierbar -- V1- und V2-Laeufe
 #: liessen sich nur ueber den Zeitstempel des Umschaltmoments trennen, den
 #: niemand in der Datei sieht. Das ist Rekonstruktion, kein Audit.
-SCHEMA_VERSION = "v7"
+#: v8 (2026-09-10): `budget_pot` -- aus welchem Topf ein Aufruf bezahlt wurde.
+#: Getrennte Reserven ohne dieses Feld waeren nicht pruefbar: der Verbrauch
+#: eines Topfes laesst sich aus einer Zeile, die ihn nicht nennt, nicht
+#: rekonstruieren -- und eine Reserve, deren Stand man raet, ist keine.
+SCHEMA_VERSION = "v8"
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
@@ -206,6 +210,12 @@ def record_llm_call(
     #: (etwa STT oder Chat) ODER die Zeile stammt aus der Zeit vor diesem Feld.
     #: NIEMALS still auf "v1" defaulten -- eine historische Zeile rueckwirkend
     #: zu etikettieren behauptete eine Messung, die es nicht gab.
+    #: Aus welchem Topf dieser Aufruf bezahlt wurde (Budget-Policy v2).
+    #: ``None`` heisst NICHT ZUGEORDNET und nicht ``normal``: ein Aufrufer,
+    #: der keine Budgetentscheidung getroffen hat, soll keine behaupten.
+    #: Die Zuordnung von Altzeilen trifft der Leser (``LEGACY_POT``), und
+    #: zwar sichtbar an einer Stelle -- nicht der Schreiber an vielen.
+    budget_pot: str | None = None,
     analysis_system_prompt_version: str | None = None,
     #: sha256 ueber den effektiv gesendeten SYSTEM-Prompt-Text. Deckt die
     #: Nutzerhaelfte ausdruecklich NICHT ab: die entsteht pro Dokument und waere
@@ -275,6 +285,8 @@ def record_llm_call(
         # --- v7: Prompt-Provenienz ----------------------------------------
         "analysis_system_prompt_version": analysis_system_prompt_version,
         "analysis_system_prompt_hash": analysis_system_prompt_hash,
+        # --- v8: aus welchem Topf bezahlt wurde ---------------------------
+        "budget_pot": budget_pot,
     }
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]

@@ -7,7 +7,7 @@ authority remain inside ``app.ai``.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -19,6 +19,8 @@ import httpx
 
 from app.ai.audit import (
     Purpose,
+    budget_intent,
+    budget_pot_scope,
     classify_error,
     correlation_scope,
     escalation_scope,
@@ -28,8 +30,12 @@ from app.ai.budget import (
     BUDGET_EXEMPT_ROUTES,
     BudgetExceeded,
     BudgetPolicy,
+    BudgetPot,
     BudgetState,
     BudgetStatus,
+    PotVerdict,
+    ReservePolicy,
+    decide_pot,
 )
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
@@ -148,23 +154,106 @@ def _direct_trace(
     )
 
 
-def _budget_lage(telemetry_path: Path | None) -> BudgetStatus:
-    """Der Budgetzustand vor diesem Aufruf — fail-soft, nie eine Ausnahme.
+@dataclass(frozen=True)
+class _Budgetbild:
+    """Zustand, Töpfe und Reserven in EINEM Bild — einmal gelesen.
+
+    Zwei Stellen sperren: der ``off``-Zweig hier und das Gateway über
+    ``budget_blocked``. Beide müssen dieselbe Antwort geben. Deshalb wird die
+    Entscheidung EINMAL getroffen und danach nur noch weitergereicht — ein
+    zweiter Aufruf von :func:`~app.ai.budget.decide_pot` an der anderen Stelle
+    könnte auf einen inzwischen gewachsenen Strom treffen und anders ausfallen.
+    """
+
+    status: BudgetStatus
+    pots: Mapping[BudgetPot, BudgetState]
+    reserves: ReservePolicy
+
+    def verdict(self, route: str, *, alert_eligible: bool, validation: bool) -> PotVerdict:
+        """Die Entscheidung fuer diesen Aufruf -- ein Aufruf, ein Ergebnis.
+
+        Die Vorausschau braucht keine Zahl von hier: ``decide_pot`` bekommt die
+        Topfzustaende ohnehin und leitet sie ueber ``voraussichtliche_kosten``
+        aus dem Topf ab, aus dem tatsaechlich bezahlt wird. Diese Schicht hatte
+        die Schaetzung eine Zeit lang selbst berechnet und musste dafuer zweimal
+        entscheiden -- einmal, um den Topf zu finden, und einmal mit dessen
+        Schnitt. Das war eine Umdrehung zu viel fuer nichts: die Berechnung
+        gehoert dorthin, wo die Zustaende schon liegen.
+        """
+        return decide_pot(
+            route=route,
+            pots=self.pots,
+            policy=self.status.policy,
+            reserves=self.reserves,
+            monthly=self.status.monthly,
+            alert_eligible=alert_eligible,
+            validation=validation,
+            # ``COST_UNKNOWN`` wirkt wie ein erschöpfter Normaltopf, nicht wie
+            # eine Gesamtsperre: die Alert-Reserve bleibt über ihre Aufrufgrenze
+            # erreichbar. Der Grund steht in ``app.ai.budget.ReservePolicy``.
+            cost_unknown=self.status.state == "COST_UNKNOWN" and self.status.limits_configured,
+        )
+
+    def daily_for(self, pot: BudgetPot) -> BudgetState:
+        """Der Verbrauch, gegen den DIESER Aufruf gemessen wird."""
+        if pot == "exempt" or not self.reserves.any_reserve_set:
+            return self.status.daily
+        return self.pots.get(pot, BudgetState(0.0, 0, 0))
+
+    def policy_for(self, pot: BudgetPot) -> BudgetPolicy:
+        """Das Limit, gegen das DIESER Aufruf gemessen wird.
+
+        Das Gateway führt seine eigene ``decide()``-Prüfung. Bekäme es das
+        GESAMTE Tageslimit und den GESAMTEN Tagesverbrauch, würde es einen
+        Aufruf aus der Alert-Reserve genau dann ablehnen, wenn die Reserve
+        gebraucht wird — die Reserve wäre gebaut und im entscheidenden Moment
+        wirkungslos. Es bekommt deshalb die Grössen SEINES Topfes. Das Monats-
+        limit bleibt global: es begrenzt den Monat, nicht einen Topf.
+        """
+        if pot == "exempt" or not self.reserves.any_reserve_set:
+            return self.status.policy
+        grenzen: dict[BudgetPot, float | None] = {
+            "normal": self.reserves.normal_ceiling_usd(self.status.policy.daily_limit_usd),
+            "alert_reserve": self.reserves.alert_reserve_usd,
+            "validation": self.reserves.validation_reserve_usd,
+        }
+        return BudgetPolicy(
+            daily_limit_usd=grenzen.get(pot),
+            monthly_limit_usd=self.status.policy.monthly_limit_usd,
+        )
+
+
+def _budget_lage(telemetry_path: Path | None) -> _Budgetbild:
+    """Das Budgetbild vor diesem Aufruf — fail-soft, nie eine Ausnahme.
 
     Fehlschlaege beim Lesen des Stroms oder der Konfiguration duerfen den
     Aufruf nicht sperren: eine Kostenbremse, die aus einem Lesefehler heraus
     zuschlaegt, ist ein Ausfall mit Kostenbegruendung. Der Rueckfall ist der
-    unbegrenzte Zustand — also das Verhalten von vor D-CORE-007.
+    unbegrenzte Zustand — also das Verhalten von vor D-CORE-007. Das gilt auch
+    fuer die Reserven: eine unlesbare Konfiguration ergibt KEINE Reserven und
+    damit v1-Verhalten, nicht etwa eine Sperre.
     """
+    leer = BudgetState(0.0, 0, 0)
+    offen = _Budgetbild(
+        status=BudgetStatus(state="OK", daily=leer, monthly=leer, policy=BudgetPolicy()),
+        pots={},
+        reserves=ReservePolicy(),
+    )
     try:
         from app.ai.spend import current_budget_status
 
-        status, _heute, _monat = current_budget_status(path=telemetry_path)
+        status, heute, _monat = current_budget_status(path=telemetry_path)
     except Exception as exc:  # noqa: BLE001 - siehe Docstring
         logger.warning("ai_budget_state_unavailable", error=str(exc))
-        leer = BudgetState(0.0, 0, 0)
-        return BudgetStatus(state="OK", daily=leer, monthly=leer, policy=BudgetPolicy())
-    return status
+        return offen
+    try:
+        from app.core.ai_cost_settings import get_ai_cost_settings
+
+        reserven = get_ai_cost_settings().reserve_policy
+    except Exception as exc:  # noqa: BLE001 - siehe Docstring
+        logger.warning("ai_reserve_policy_unavailable", error=str(exc))
+        reserven = ReservePolicy()
+    return _Budgetbild(status=status, pots=heute.pot_states(), reserves=reserven)
 
 
 def _eskalation(route: str, lage: BudgetStatus) -> str:
@@ -174,24 +263,59 @@ def _eskalation(route: str, lage: BudgetStatus) -> str:
     )
 
 
-def _budget_gate(route: str, lage: BudgetStatus) -> None:
+def _budget_gate(route: str, bild: _Budgetbild, verdict: PotVerdict) -> None:
     """Sperrt Routinearbeit bei erreichtem Limit — ``critical`` nie.
 
     Eine typisierte Ausnahme, kein leeres Ergebnis: der Aufrufer soll das
     Dokument VERSCHIEBEN oder die Antwort ERSETZEN und das vermerken. Ein
     stilles ``None`` waere von einem Anbieterausfall nicht zu unterscheiden.
+
+    Ohne gesetzte Reserven entscheidet weiter ``BudgetStatus.allows`` — Wort
+    fuer Wort das Verhalten vor v2. Erst wenn ein Operator eine Reserve setzt,
+    uebernimmt die Topf-Entscheidung. Ein Einspielen allein aendert nichts.
     """
-    if lage.allows(route):
+    if not bild.reserves.any_reserve_set:
+        lage = bild.status
+        if lage.allows(route):
+            return
+        logger.warning(
+            "ai_budget_blocked_call",
+            route=route,
+            state=lage.state,
+            reason=lage.reason,
+            booked_usd_today=round(lage.daily.booked_usd, 4),
+            unknown_calls_today=lage.daily.unknown_calls,
+        )
+        raise BudgetExceeded(route=route, state=lage.state, reason=lage.reason)
+
+    if verdict.allowed:
         return
+    topf = bild.daily_for(verdict.pot)
     logger.warning(
         "ai_budget_blocked_call",
         route=route,
-        state=lage.state,
-        reason=lage.reason,
-        booked_usd_today=round(lage.daily.booked_usd, 4),
-        unknown_calls_today=lage.daily.unknown_calls,
+        state=bild.status.state,
+        reason=verdict.reason,
+        budget_pot=verdict.pot,
+        booked_usd_pot=round(topf.booked_usd, 4),
+        calls_pot=topf.total_calls,
+        booked_usd_today=round(bild.status.daily.booked_usd, 4),
     )
-    raise BudgetExceeded(route=route, state=lage.state, reason=lage.reason)
+    raise BudgetExceeded(route=route, state=bild.status.state, reason=verdict.reason)
+
+
+def _gateway_sperre(bild: _Budgetbild, verdict: PotVerdict) -> str:
+    """Was das Gateway als Sperrgrund sieht — dieselbe Entscheidung, ein Wort.
+
+    Das Gateway prueft zusaetzlich selbst (``decide()``). Damit daraus keine
+    zweite Meinung wird, bekommt es ueber ``policy_for``/``daily_for`` die
+    Groessen des entschiedenen Topfes UND hier den bereits gefaellten Spruch.
+    Beide Wege muessen zum selben Ergebnis kommen; kaemen sie es nicht, waere
+    die Reserve genau in dem Moment wirkungslos, fuer den sie gebaut ist.
+    """
+    if not bild.reserves.any_reserve_set:
+        return bild.status.reason if bild.status.blocks_routine else ""
+    return "" if verdict.allowed else verdict.reason
 
 
 def _mit_denkbudget(
@@ -288,7 +412,13 @@ async def invoke[T](
     if purpose == "consensus" and mode == "primary":
         mode = "shadow"
 
-    lage = _budget_lage(telemetry_path)
+    bild = _budget_lage(telemetry_path)
+    lage = bild.status
+    # Die Absicht kommt vom AUFRUFER und wird hier nicht erraten: ohne
+    # `budget_intent_scope` ist ein Aufruf weder alert-faehig noch
+    # Validierung -- die sichere Seite in beide Richtungen.
+    alert_faehig, validierung = budget_intent()
+    verdict = bild.verdict(route, alert_eligible=alert_faehig, validation=validierung)
 
     # This branch deliberately adds no network client, task or retry around the
     # legacy path. It is the hard rollback invariant, not merely a mode label.
@@ -303,8 +433,12 @@ async def invoke[T](
         #
         # Was dieser Zweig NICHT tut: einen Client bauen, eine Task starten,
         # einen Retry legen. Die harte Rollback-Zusage bleibt unberuehrt.
-        _budget_gate(route, lage)
-        with correlation_scope(correlation_id) as _, escalation_scope(_eskalation(route, lage)):
+        _budget_gate(route, bild, verdict)
+        with (
+            correlation_scope(correlation_id) as _,
+            escalation_scope(_eskalation(route, lage)),
+            budget_pot_scope(verdict.pot),
+        ):
             return RoutedValue(value=await direct_call(), transport="direct")
 
     with (
@@ -314,6 +448,11 @@ async def invoke[T](
         # das traegt sie weder Route noch Zuordnung, und die Auswertung findet
         # spaeter eine SHADOW-Seite ohne Gegenstueck.
         evaluation_scope(logical_route=route, mode=mode) as active_evaluation,
+        # Der Topf gehoert in JEDE Zeile dieses Aufrufs, nicht nur in die des
+        # Off-Zweiges: sonst truege ausgerechnet der bezahlte Pfad keine
+        # Zuordnung, und die getrennten Zaehler waeren beim naechsten Lesen
+        # wieder eine Summe.
+        budget_pot_scope(verdict.pot),
     ):
 
         async def run_direct() -> AttemptResult[T]:
@@ -497,10 +636,10 @@ async def invoke[T](
                 # Stelle weder Politik noch Zustand -- `execute_async` fiel auf
                 # `BudgetPolicy()` ohne Limits zurueck, und `decide()` antwortete
                 # ausnahmslos `allow`. Ein Budget ohne Aufrufer ist keine Bremse.
-                budget_policy=lage.policy,
-                daily=lage.daily,
+                budget_policy=bild.policy_for(verdict.pot),
+                daily=bild.daily_for(verdict.pot),
                 monthly=lage.monthly,
-                budget_blocked=lage.reason if lage.blocks_routine else "",
+                budget_blocked=_gateway_sperre(bild, verdict),
                 retry_policy=RetryPolicy(
                     max_attempts=configured.max_attempts,
                     base_backoff_s=configured.backoff_base_seconds,
