@@ -299,7 +299,7 @@ def _normaler_topf_erschoepft(heute: Any, status: Any) -> bool:
     decke = reserven.normal_ceiling_usd(status.policy.daily_limit_usd)
     if decke is None:
         return False
-    return heute.pot_states()["normal"].booked_usd >= decke
+    return bool(heute.pot_states()["normal"].booked_usd >= decke)
 
 
 def _topf_block(heute: Any, status: Any) -> dict[str, Any]:

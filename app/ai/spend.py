@@ -52,7 +52,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from app.ai.budget import (
     LEGACY_POT,
@@ -373,7 +373,7 @@ def _topf_der_zeile(row: dict[str, Any]) -> BudgetPot:
     """
     wert = row.get("budget_pot")
     if isinstance(wert, str) and wert in POTS:
-        return cast(BudgetPot, wert)
+        return wert
     return LEGACY_POT
 
 
