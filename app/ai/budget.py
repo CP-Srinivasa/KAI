@@ -34,12 +34,85 @@ from app.ai.routes import Route
 BudgetDecision = Literal["allow", "allow_unbudgeted", "reject"]
 
 
+#: Wofuer ein Aufruf da ist -- und damit, welche Reserve ihn traegt.
+#:
+#: ``normal``            der Massenpfad: Dokumente einordnen
+#: ``critical_alert``    Aufrufe, aus denen ein Alert entstehen KANN
+#: ``shadow_validation`` Schatten- und Messlaeufe
+BudgetClass = Literal["normal", "critical_alert", "shadow_validation"]
+
+_KLASSEN: frozenset[str] = frozenset({"normal", "critical_alert", "shadow_validation"})
+
+
 @dataclass(frozen=True)
 class BudgetPolicy:
-    """Limits in USD. ``None`` heisst: dieses Fenster begrenzt nichts."""
+    """Limits in USD. ``None`` heisst: dieses Fenster begrenzt nichts.
+
+    Die Reserven verschieben die Grenze ZWISCHEN den Klassen, nicht das Limit
+    selbst. Waere es anders, waeren sie eine stille Erhoehung.
+
+    WARUM ES SIE GIBT (09./10.09.2026, an zwei Tagen und ueber drei
+    Release-Staende gemessen): mit einem einzigen Topf legt das erreichte
+    Tageslimit JEDE Aufrufklasse gleichzeitig still. Der LLM-Anteil faellt von
+    rund 24 % auf 0 %, der Zufluss laeuft weiter, `is_analyzed=1` bleibt bei
+    100 % -- und kein Alert kann mehr entstehen. Nicht selten, sondern
+    strukturell: der Regelpfad erreicht ueber 44.199 Dokumente maximal
+    Prioritaet 6, die Alert-Schwelle ist 7. Keines der 11.878 Dokumente mit
+    prio>=7 stammt aus dem Regelpfad.
+
+    Voreinstellung ist 0,0 fuer beide Reserven: ohne Eintrag verhaelt sich
+    alles wie vorher.
+    """
 
     daily_limit_usd: float | None = None
     monthly_limit_usd: float | None = None
+    #: Bleibt Aufrufen vorbehalten, aus denen ein Alert entstehen kann.
+    alert_reserve_usd: float = 0.0
+    #: Bleibt Schatten- und Messlaeufen vorbehalten -- sonst frisst ein
+    #: Alert-Sturm die Faehigkeit auf, ueberhaupt noch zu messen.
+    validation_reserve_usd: float = 0.0
+
+    def __post_init__(self) -> None:
+        gesamt = self.alert_reserve_usd + self.validation_reserve_usd
+        if self.daily_limit_usd is not None and gesamt > self.daily_limit_usd:
+            raise ValueError(
+                f"Reserven ({gesamt:.4f} USD) uebersteigen das Tageslimit "
+                f"({self.daily_limit_usd:.4f} USD) — der Normalpfad waere ab dem "
+                "ersten Aufruf gesperrt"
+            )
+
+    def daily_limit_for(self, budget_class: BudgetClass) -> float | None:
+        """Die Grenze, die fuer DIESE Klasse gilt.
+
+        VERSCHACHTELT, nicht symmetrisch. Jede Klasse ist dadurch geschuetzt,
+        dass die darunterliegende frueher stoppt:
+
+            normal             Limit - Alert- - Validierungsreserve
+            critical_alert     Limit - Validierungsreserve
+            shadow_validation  Limit
+
+        Bei 1,00 USD mit 0,15 und 0,05 heisst das: der Massenpfad steht bei
+        0,80, Alert-Aufrufe laufen bis 0,95, und die letzten 0,05 erreicht nur
+        noch die Validierung. So bleibt bis zuletzt die Faehigkeit erhalten,
+        ueberhaupt zu MESSEN -- auch dann, wenn alles andere erschoepft ist.
+
+        BEKANNTE GRENZE: `BudgetState` fuehrt eine Gesamtsumme, keine Buchung
+        je Klasse. Die Zusage traegt deshalb nur, WEIL die unteren Klassen
+        frueher stoppen -- nicht, weil ihnen etwas physisch weggenommen waere.
+        Eine Klasse mit hoeherem Deckel kann in das Band der niedrigeren
+        hineinlaufen. Wollte man das ausschliessen, braeuchte es eine Buchung
+        je Klasse; das waere ein zweiter Zustand ueber demselben Geld.
+        """
+        if budget_class not in _KLASSEN:
+            raise ValueError(f"unbekannte Budgetklasse: {budget_class!r}")
+        if self.daily_limit_usd is None:
+            return None
+        fremd = {
+            "normal": self.alert_reserve_usd + self.validation_reserve_usd,
+            "critical_alert": self.validation_reserve_usd,
+            "shadow_validation": 0.0,
+        }[budget_class]
+        return self.daily_limit_usd - fremd
 
 
 @dataclass(frozen=True)
@@ -112,6 +185,7 @@ def decide(
     monthly: BudgetState,
     policy: BudgetPolicy,
     estimated_request_cost_usd: float | None = None,
+    budget_class: BudgetClass = "normal",
 ) -> BudgetDecision:
     """Darf dieser Aufruf laufen?
 
@@ -122,7 +196,11 @@ def decide(
     ``allow``, damit „wir wissen es nicht" nicht als „alles in Ordnung"
     protokolliert wird.
     """
-    if _limit_breached(daily, policy.daily_limit_usd, estimated_request_cost_usd):
+    # Die Klassengrenze statt des rohen Limits: ein Alert-Aufruf darf noch
+    # laufen, wenn der Massenpfad laengst steht. Genau das war am 09./10.09.
+    # nicht moeglich, und deshalb konnte nach dem Limit kein Alert mehr
+    # entstehen.
+    if _limit_breached(daily, policy.daily_limit_for(budget_class), estimated_request_cost_usd):
         return "reject"
     if _limit_breached(monthly, policy.monthly_limit_usd, estimated_request_cost_usd):
         return "reject"

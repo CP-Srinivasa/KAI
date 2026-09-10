@@ -408,6 +408,8 @@ def current_budget_status(
     policy = BudgetPolicy(
         daily_limit_usd=grenzen.budget_daily_usd,
         monthly_limit_usd=grenzen.budget_monthly_usd,
+        alert_reserve_usd=grenzen.budget_alert_reserve_usd,
+        validation_reserve_usd=grenzen.budget_validation_reserve_usd,
     )
     status = evaluate_status(
         daily=heute.budget_state(),

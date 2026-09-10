@@ -47,6 +47,31 @@ class AICostSettings(BaseSettings):
     budget_daily_usd: float | None = Field(default=None, ge=0.0)
     budget_monthly_usd: float | None = Field(default=None, ge=0.0)
 
+    #: Reserven innerhalb des Tageslimits. Sie ERHOEHEN es nicht, sie
+    #: verschieben nur, wer wie weit hineinlaufen darf.
+    #:
+    #: Am 09. und 10.09.2026 gemessen: nach Erreichen des Limits faellt der
+    #: LLM-Anteil auf 0 %, und weil der Regelpfad ueber 44.199 Dokumente
+    #: maximal Prioritaet 6 erreicht (Alert-Schwelle 7), kann DANACH kein
+    #: Alert mehr entstehen. Eine Reserve fuer alertfaehige Aufrufe ist der
+    #: kleinste Eingriff, der das behebt.
+    #:
+    #: Bemessung aus derselben Messung: ein Analyse-Aufruf kostet im Mittel
+    #: 0,00917 USD (n=123, Median 0,00781). Alle Regel-Dokumente mit
+    #: Prioritaet 6 nach dem Limit zu eskalieren haette am 10.09. 0,083 USD
+    #: gekostet (9 Dokumente), am 09.09. 0,596 USD (65 Dokumente). 0,15 USD
+    #: decken also einen ruhigen Tag ganz und einen schweren teilweise —
+    #: bewusst nicht ganz, sonst waere es keine Reserve, sondern ein zweites
+    #: Budget.
+    #:
+    #: Voreinstellung 0,0: ohne Eintrag aendert sich nichts.
+    budget_alert_reserve_usd: float = Field(default=0.0, ge=0.0)
+
+    #: Bleibt Schatten- und Messlaeufen vorbehalten. 0,05 USD entsprechen bei
+    #: 0,00917 USD je Aufruf rund fuenf Sonden — genug, um zu pruefen, OB der
+    #: Pfad noch traegt, zu wenig, um damit zu arbeiten. Genau so gemeint.
+    budget_validation_reserve_usd: float = Field(default=0.0, ge=0.0)
+
     #: Ab wie viel Prozent des Limits gewarnt wird. Eine Warnung SPERRT NICHTS
     #: — sie ist der einzige Zustand, in dem ein Operator noch handeln kann,
     #: bevor die Pipeline stehen bleibt.

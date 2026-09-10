@@ -27,6 +27,7 @@ from time import monotonic, sleep
 from app.ai.audit import Purpose, escalation_scope, record_attempt_trace
 from app.ai.budget import (
     BUDGET_EXEMPT_ROUTES,
+    BudgetClass,
     BudgetDecision,
     BudgetEntry,
     BudgetExceeded,
@@ -212,6 +213,10 @@ def execute(
     daily: BudgetState | None = None,
     monthly: BudgetState | None = None,
     estimated_request_cost_usd: float | None = None,
+    #: Welche Reserve diesen Aufruf traegt. Der AUFRUFER sagt es --
+    #: ein Rueckschluss aus `purpose` waere geraten, und die Klasse
+    #: entscheidet, wie weit ins Limit hinein noch gearbeitet wird.
+    budget_class: BudgetClass = "normal",
     now_s: float = 0.0,
     correlation_id: str = "",
     retry_policy: RetryPolicy | None = None,
@@ -236,6 +241,7 @@ def execute(
         monthly=monthly or empty,
         policy=budget_policy or BudgetPolicy(),
         estimated_request_cost_usd=estimated_request_cost_usd,
+        budget_class=budget_class,
     )
 
     skipped: list[SkipReason] = []
@@ -327,6 +333,10 @@ async def execute_async[T](
     daily: BudgetState | None = None,
     monthly: BudgetState | None = None,
     estimated_request_cost_usd: float | None = None,
+    #: Welche Reserve diesen Aufruf traegt. Der AUFRUFER sagt es --
+    #: ein Rueckschluss aus `purpose` waere geraten, und die Klasse
+    #: entscheidet, wie weit ins Limit hinein noch gearbeitet wird.
+    budget_class: BudgetClass = "normal",
     retry_policy: RetryPolicy | None = None,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[], float] = lambda: 0.0,
@@ -362,6 +372,7 @@ async def execute_async[T](
         monthly=monthly or empty,
         policy=budget_policy or BudgetPolicy(),
         estimated_request_cost_usd=estimated_request_cost_usd,
+        budget_class=budget_class,
     )
     skipped: list[SkipReason] = []
 
