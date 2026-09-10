@@ -376,7 +376,7 @@ async def test_ohne_budget_steht_nichts_in_der_anfrage() -> None:
     assert "thinking" not in gesehen
 
 
-async def test_eine_abgeschnittene_antwort_erreicht_den_parser() -> None:
+async def test_eine_abgeschnittene_antwort_ueberlebt_den_transport() -> None:
     """Die Bedingung, an der die ganze Aufteilung haengt.
 
     `app/ai/runtime.py` kehrt bei `not trace.ok` zurueck, BEVOR
@@ -405,7 +405,6 @@ async def test_eine_abgeschnittene_antwort_erreicht_den_parser() -> None:
 
     def parser(body: dict[str, Any]) -> str:
         gesehen["aufgerufen"] = True
-        gesehen["finish_reason"] = body["choices"][0]["finish_reason"]
         return str(body["choices"][0]["message"]["content"])
 
     anfrage: LiteLLMRequest[str] = LiteLLMRequest(
@@ -423,9 +422,23 @@ async def test_eine_abgeschnittene_antwort_erreicht_den_parser() -> None:
         sleeper=_no_sleep,
     )
 
-    assert gesehen.get("aufgerufen"), "der Parser wurde uebersprungen — #945 waere tot"
-    assert gesehen["finish_reason"] == "length"
-
+    # WAS HIER GEMEINT WAR -- und was die erste Fassung falsch zugesichert hat.
+    #
+    # Sie verlangte, dass der Parser AUFGERUFEN wird. Das war zu eng: gemeint
+    # war, dass der TRANSPORT die Diagnose nicht vorwegnimmt, also kein
+    # `not trace.ok`-Rueckweg greift. Der Operator hat fuer die Runtime
+    # ausdruecklich das Gegenteil vorgesehen -- "truncated=true -> vor Parser
+    # FAIL-CLOSED -> Parser wird nicht aufgerufen".
+    #
+    # Damit verbot diese Zusicherung genau den Entwurf, den sie schuetzen
+    # sollte. bin-f3 hat ihr Gate deshalb fallengelassen, statt eine fremde
+    # gemergte Kontrolle zu drehen -- konservativ und richtig gehandelt, aber
+    # der Fehler lag hier.
+    #
+    # Geprueft wird jetzt die Eigenschaft, auf die es ankommt: der Versuch
+    # ueberlebt den Transport. Ob ein spaeteres Runtime-Gate den Parser
+    # ueberspringt, ist eine Entscheidung der Runtime und nicht Sache dieses
+    # Tests.
     assert ergebnis.outcome is not None
     trace = ergebnis.outcome.litellm_attempts[0].trace
     assert trace.truncated is True
