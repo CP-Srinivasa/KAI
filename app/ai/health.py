@@ -284,6 +284,8 @@ def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
         "rule_path_raw_ceiling": round(rule_path_raw_ceiling(), 6),
         "rule_path_priority_ceiling": rule_path_priority_ceiling(),
     }
+
+
 def _normaler_topf_erschoepft(heute: Any, status: Any) -> bool:
     """Steht die gewoehnliche Arbeit? ``False`` auch dann, wenn es keine
     Reserven gibt -- dann ist das Tageslimit die einzige Decke, und dafuer gibt

@@ -44,6 +44,8 @@ from app.ai.budget import (
 #: halber Cent je vollständiger Analyse ist die Grössenordnung, in der die
 #: Zahlen hier gewählt sind — damit die Tests von derselben Wirklichkeit
 #: reden wie die Voreinstellungen.
+REPO = Path(__file__).resolve().parents[2]
+
 FALLKOSTEN = 0.005
 
 TAGESLIMIT = BudgetPolicy(daily_limit_usd=1.25)
@@ -411,6 +413,186 @@ def test_ein_unerreichtes_monatslimit_aendert_nichts() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Vorausschau: normal endet VOR der Reserve, nicht einen Aufruf hinein.
+# ---------------------------------------------------------------------------
+
+
+def test_ein_aufruf_der_noch_vollstaendig_unter_die_decke_passt_laeuft() -> None:
+    """Die Gegenprobe zuerst.
+
+    Eine Vorausschau, die zu früh sperrt, wäre eine stille Budgetkürzung — sie
+    liesse den letzten Aufruf verfallen, der noch bezahlt war.
+    """
+    urteil = entscheide(
+        pots={"normal": zustand(NORMALE_DECKE - 0.02)},
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert urteil.pot == "normal"
+    assert urteil.allowed
+
+
+def test_ein_aufruf_der_die_decke_reissen_wuerde_laeuft_nicht() -> None:
+    """Der eigentliche Befund.
+
+    Ohne diese Prüfung ragt der letzte Aufruf des normalen Topfes in die
+    Reserve hinein: gebucht liegt noch unter der Decke, das Ergebnis nicht
+    mehr. Dass es typischerweise nur ein Cent ist, macht es nicht harmlos —
+    eine Grenze, die im Normalfall hält und im Grenzfall nachgibt, ist keine
+    Grenze, sondern eine Tendenz.
+    """
+    urteil = entscheide(
+        pots={"normal": zustand(NORMALE_DECKE - 0.002)},
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert urteil.pot == "normal"
+    assert urteil.allowed is False
+    assert urteil.reason == "normal_budget_exhausted"
+
+
+def test_die_reserve_bleibt_dabei_unangetastet() -> None:
+    """Der abgewiesene Aufruf darf nicht ersatzweise aus der Reserve zahlen.
+
+    Sonst wäre die Vorausschau nur eine Umleitung: gewöhnliche Arbeit käme
+    genau dann an die geschützte Kapazität, wenn sie an der eigenen Decke
+    scheitert — das Gegenteil des Zwecks.
+    """
+    urteil = entscheide(
+        alert_eligible=False,
+        pots={
+            "normal": zustand(NORMALE_DECKE - 0.002),
+            "alert_reserve": zustand(0.0, calls=0),
+        },
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert urteil.pot == "normal"
+    assert urteil.allowed is False
+
+
+def test_die_alert_reserve_prueft_ihre_eigene_decke_vorausschauend() -> None:
+    urteil = entscheide(
+        alert_eligible=True,
+        pots={
+            "normal": zustand(NORMALE_DECKE),
+            "alert_reserve": zustand(0.145, calls=18),
+        },
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert urteil.pot == "alert_reserve"
+    assert urteil.allowed is False
+    assert urteil.reason == "alert_reserve_exhausted"
+
+
+def test_die_validierung_prueft_ihre_eigene_decke_vorausschauend() -> None:
+    urteil = entscheide(
+        validation=True,
+        pots={"validation": zustand(0.045, calls=6)},
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert urteil.pot == "validation"
+    assert urteil.allowed is False
+    assert urteil.reason == "validation_reserve_exhausted"
+
+
+def test_genau_auf_der_decke_aufkommen_ist_erlaubt() -> None:
+    """Der Grenzfall, und er folgt ``decide()`` wörtlich.
+
+    ``booked + estimate > limit`` sperrt, ``==`` nicht. Ein Aufruf, der das
+    Budget exakt aufbraucht, war bezahlt — ihn abzuweisen hiesse, die letzte
+    Einheit systematisch verfallen zu lassen. Die Asymmetrie zu ``booked >=
+    limit`` ist Absicht: DORT ist das Geld schon weg.
+    """
+    genau = entscheide(
+        pots={"normal": zustand(NORMALE_DECKE - 0.01)},
+        estimated_request_cost_usd=0.01,
+    )
+    ein_hauch_darueber = entscheide(
+        pots={"normal": zustand(NORMALE_DECKE - 0.01)},
+        estimated_request_cost_usd=0.0100001,
+    )
+
+    assert genau.allowed, "exakt aufgebraucht ist noch bezahlt"
+    assert ein_hauch_darueber.allowed is False
+
+
+def test_ohne_uebergebene_schaetzung_wird_die_gemessene_benutzt() -> None:
+    """Der Parameter ist ein Override, keine Voraussetzung.
+
+    ``estimated_request_cost_usd`` existiert seit D-CORE-007 und hat nie ein
+    Produktionsaufrufer gefüllt. Bliebe die Vorausschau daran hängen, wäre sie
+    eine Kontrolle, die im Code aussieht wie eine Grenze und nie greift —
+    dieselbe tote Bauart wie ``budget_usecase_usd``. Ohne übergebene Zahl
+    leitet ``decide_pot`` sie deshalb aus der Historie DESSELBEN Topfes ab.
+
+    Hier: 200 Aufrufe für 1,048 USD, also 0,00524 je Aufruf. Gebucht liegt
+    unter der Decke von 1,05, gebucht plus Schätzung nicht mehr.
+    """
+    urteil = entscheide(pots={"normal": zustand(NORMALE_DECKE - 0.002, calls=200)})
+
+    assert urteil.allowed is False
+    assert urteil.reason == "normal_budget_exhausted"
+
+
+def test_ohne_historie_gibt_es_nichts_abzuleiten_und_es_wird_nicht_geraten() -> None:
+    """Die Gegenprobe: ``None`` heisst UNBEKANNT und sperrt nicht auf Verdacht.
+
+    Ein Topf ohne bezifferte Aufrufe liefert keine Schätzung, und dann bleibt
+    es beim rückblickenden Vergleich, den es vorher schon gab. Nicht 0 und
+    keine Vermutung: eine erfundene Schätzung würde entweder zu früh sperren
+    oder eine Deckung behaupten, die niemand gemessen hat.
+    """
+    ohne_historie = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=40)
+
+    urteil = entscheide(pots={"normal": ohne_historie})
+
+    assert urteil.allowed, "ohne Zahl wird nicht vorausschauend gesperrt"
+
+
+def test_cost_unknown_bleibt_unveraendert() -> None:
+    """Die Vorausschau ändert am fail-closed-Zweig nichts.
+
+    ``COST_UNKNOWN`` sperrt den normalen Topf weiterhin ohne Summe, und die
+    Alert-Reserve bleibt weiterhin über ihre Aufrufgrenze erreichbar — eine
+    Schätzung, die aus unbelegten Aufrufen stammt, gäbe es dort ohnehin nicht.
+    """
+    gewoehnlich = entscheide(
+        cost_unknown=True,
+        pots={"normal": zustand(0.01)},
+        estimated_request_cost_usd=0.01,
+    )
+    mit_reserve = entscheide(
+        cost_unknown=True,
+        alert_eligible=True,
+        pots={"normal": zustand(0.01), "alert_reserve": zustand(0.0, calls=0)},
+        estimated_request_cost_usd=0.01,
+    )
+
+    assert gewoehnlich.allowed is False
+    assert gewoehnlich.reason == "cost_unknown"
+    assert mit_reserve.pot == "alert_reserve"
+    assert mit_reserve.allowed
+
+
+def test_die_vorausschau_folgt_derselben_regel_wie_decide() -> None:
+    """Eine Regel, eine Funktion.
+
+    ``decide()`` und ``decide_pot()`` müssen dasselbe unter "das Limit reissen"
+    verstehen. Zwei Formulierungen derselben Regel laufen auseinander, sobald
+    jemand nur eine davon anfasst — und dann sperrt das Gateway anders als die
+    Runtime, ausgerechnet am Rand.
+    """
+    quelle = (REPO / "app" / "ai" / "budget.py").read_text(encoding="utf-8")
+    treffer = [z for z in quelle.splitlines() if "booked_usd + " in z]
+
+    assert len(treffer) == 1, f"die Additionsregel steht mehr als einmal da: {treffer}"
+    assert "_limit_breached" in quelle.split("def _reserve_erschoepft")[1].split("def ")[0]
+
+
+# ---------------------------------------------------------------------------
 # Getrennte Zähler: was der Strom hergibt.
 # ---------------------------------------------------------------------------
 
@@ -600,28 +782,33 @@ def test_auch_die_reserve_wird_prospektiv_gedeckelt() -> None:
     assert verdict.reason == "alert_reserve_exhausted"
 
 
-def test_null_heisst_keine_information_nicht_kostenlos() -> None:
-    """Die Bedeutung der 0.0 wird hier festgenagelt, nicht nur beschrieben.
+def test_ohne_historie_heisst_unbekannt_und_nicht_kostenlos() -> None:
+    """Die Bedeutung des fehlenden Wertes wird hier festgenagelt, nicht beschrieben.
 
-    ``voraussichtliche_kosten`` gibt ohne bezifferte Historie 0.0 zurueck. Das
-    darf NICHT als "dieser Aufruf kostet nichts" gelesen werden — die Zahl geht
-    in einen Deckelvergleich ein, und diese Lesart machte den ersten Aufruf
-    jedes Topfes gratis.
+    ``voraussichtliche_kosten`` gibt ohne bezifferte Historie ``None`` zurueck —
+    UNBEKANNT, nicht "dieser Aufruf kostet nichts". Der Unterschied ist keine
+    Wortklauberei: die Zahl geht in einen Deckelvergleich ein, und die zweite
+    Lesart machte den ersten Aufruf jedes Topfes gratis.
 
-    Was 0.0 heisst: es liegt nichts vor, worauf sich eine ZUSAETZLICHE
+    Bewusst ``None`` und nicht ``0.0``: das Modul traegt diese Unterscheidung
+    bereits ueberall (``BudgetEntry.cost_usd``, ``AttemptTrace.truncated``, die
+    Prompt-Provenienz), und eine 0.0, die ausweislich ihrer eigenen Docstring
+    nicht 0.0 bedeutet, wird frueher oder spaeter von jemandem als Zahl gelesen.
+
+    Was ``None`` heisst: es liegt nichts vor, worauf sich eine ZUSAETZLICHE
     USD-Sperre stuetzen koennte. Die Pruefung faellt auf das Rueckblickende
-    zurueck und sperrt nicht auf Verdacht. Der Beweis, dass die 0.0 keine
-    Kostenaussage ist: die AUFRUFGRENZE greift trotzdem, von der ersten Zeile
+    zurueck und sperrt nicht auf Verdacht. Der Beweis, dass daraus keine
+    Freifahrt wird: die AUFRUFGRENZE greift trotzdem, von der ersten Zeile
     an — ein Topf ohne jede Kostenhistorie ist an seiner Aufrufzahl erschoepfbar.
     """
     from app.ai.budget import voraussichtliche_kosten
 
     leer = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=0)
-    assert voraussichtliche_kosten(leer) == 0.0
+    assert voraussichtliche_kosten(leer) is None
 
     # Keine Kostenhistorie (alle Aufrufe unbeziffert) — und trotzdem gedeckelt.
     unbeziffert = BudgetState(booked_usd=0.0, known_calls=0, unknown_calls=20)
-    assert voraussichtliche_kosten(unbeziffert) == 0.0
+    assert voraussichtliche_kosten(unbeziffert) is None
 
     verdict = decide_pot(
         route="standard",

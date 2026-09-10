@@ -173,6 +173,98 @@ async def test_validierung_steht_wenn_ihr_eigener_topf_leer_ist(tmp_path: Path) 
 
 
 # ---------------------------------------------------------------------------
+# Die Vorausschau muss im echten Aufrufweg auch eine Zahl bekommen.
+# ---------------------------------------------------------------------------
+
+
+async def test_die_runtime_liefert_die_schaetzung_aus_gebuchten_aufrufen(
+    tmp_path: Path,
+) -> None:
+    """Sonst wäre die Vorausschau ein Parameter ohne Quelle.
+
+    Genau das ist ``estimated_request_cost_usd`` seit D-CORE-007: eine
+    Durchreiche, die kein Produktionsaufrufer je gefüllt hat — dieselbe Bauart
+    wie ``budget_usecase_usd``, das eingelesen und nirgends durchgesetzt wird.
+    Die Grenze formal zu prüfen und praktisch nie ist schlimmer als sie nicht
+    zu prüfen, weil es im Code wie eine Kontrolle aussieht.
+
+    Der Aufbau hier trennt die beiden Fälle: gebucht sind 1,045 USD, die Decke
+    des normalen Topfes liegt bei 1,05 — OHNE Vorausschau liefe der Aufruf.
+    Mit ihr nicht, denn die zehn gebuchten Aufrufe kosteten im Schnitt 0,1045
+    USD, und der Rest beträgt 0,005.
+    """
+    sink = tmp_path / "llm.jsonl"
+    for _ in range(10):
+        _verbraucht(sink, usd=0.1045)
+
+    with pytest.raises(BudgetExceeded) as fehler:
+        await _ruf(sink)
+
+    assert fehler.value.reason == "normal_budget_exhausted"
+
+
+async def test_ohne_vorausschau_waere_derselbe_aufruf_durchgelaufen(
+    tmp_path: Path,
+) -> None:
+    """Die Gegenprobe zum Test darüber — sonst belegte er nur, dass irgendetwas sperrt.
+
+    Dieselbe Summe, aber auf viele billige Aufrufe verteilt: der Schnitt liegt
+    dann unter dem Rest, und der nächste Aufruf passt noch vollständig unter
+    die Decke.
+    """
+    sink = tmp_path / "llm.jsonl"
+    for _ in range(1045):
+        _verbraucht(sink, usd=0.001)
+
+    assert await _ruf(sink) == "analysiert"
+
+
+async def test_eine_leere_reserve_erbt_keinen_fremden_schnitt(tmp_path: Path) -> None:
+    """Erben liegt nahe und wäre falsch.
+
+    Eine frisch angefasste Reserve hat keinen eigenen Schnitt, und der des
+    normalen Topfes wäre zur Hand. Aber liegt der über der ganzen Decke der
+    Reserve — ein teures Modell im Normalbetrieb, eine knapp bemessene
+    Reserve —, dann ist die Reserve ab dem ERSTEN Griff gesperrt: gebaut und
+    nie benutzbar, im Betrieb sichtbar als „Reserve wirkt nicht" statt als
+    Konfigurationsfehler.
+
+    Ohne Erben überzieht der erste Aufruf höchstens um einen Aufruf, und ab dem
+    zweiten greift die Vorausschau mit einer echten Messung. Ein verlorener
+    Alert wiegt schwerer als ein überzogener Cent.
+    """
+    from app.ai.budget import voraussichtliche_kosten
+    from app.ai.runtime import _budget_lage
+
+    sink = tmp_path / "llm.jsonl"
+    for _ in range(10):
+        _verbraucht(sink, usd=0.1045)
+
+    toepfe = _budget_lage(sink).pots
+
+    assert voraussichtliche_kosten(toepfe["normal"]) == pytest.approx(0.1045)
+    assert voraussichtliche_kosten(toepfe["alert_reserve"]) is None, "kein geliehener Schnitt"
+    assert voraussichtliche_kosten(toepfe["validation"]) is None
+
+
+def test_ohne_gebuchte_aufrufe_gibt_es_keine_schaetzung(tmp_path: Path) -> None:
+    """``None`` heisst UNBEKANNT, nicht 0.
+
+    Am Tagesanfang ist der Topf leer. Eine 0 wäre eine Behauptung über die
+    Kosten des nächsten Aufrufs, und sie würde die Vorausschau wirkungslos
+    machen, ohne dass es jemandem auffiele.
+    """
+    from app.ai.budget import voraussichtliche_kosten
+    from app.ai.runtime import _budget_lage
+
+    sink = tmp_path / "llm.jsonl"
+    sink.touch()
+    reset_spend_cache()
+
+    assert voraussichtliche_kosten(_budget_lage(sink).pots["normal"]) is None
+
+
+# ---------------------------------------------------------------------------
 # Ohne gesetzte Reserven bleibt das alte Verhalten Wort für Wort.
 # ---------------------------------------------------------------------------
 

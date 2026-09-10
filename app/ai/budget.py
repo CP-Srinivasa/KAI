@@ -438,34 +438,44 @@ def _at_or_over(state: BudgetState, limit: float | None) -> bool:
     return limit is not None and state.booked_usd >= limit
 
 
-def voraussichtliche_kosten(state: BudgetState) -> float:
+def voraussichtliche_kosten(state: BudgetState) -> float | None:
     """Was der naechste Aufruf dieses Topfes voraussichtlich kostet.
 
     Kein neuer Regler und keine Preistabelle: der Mittelwert der bereits
     bezifferten Aufrufe DESSELBEN Topfes.
-
-    **0.0 heisst "keine prospektive Information", nicht "kostet nichts".**
-    Der Unterschied ist keine Wortklauberei: die Zahl geht in einen
-    Deckelvergleich ein, und wer sie als Kostenaussage liest, haelt den ersten
-    Aufruf eines Topfes fuer gratis. Sie bedeutet ausschliesslich, dass vor dem
-    ersten bezifferten Aufruf nichts vorliegt, worauf sich eine ZUSAETZLICHE
-    USD-Sperre stuetzen koennte — die Pruefung faellt dann auf das
-    Rueckblickende zurueck, das es vorher schon gab, und sperrt nicht auf
-    Verdacht. Sobald ein Aufruf beziffert ist, greift die Vorausschau.
-
-    Die Aufrufgrenze deckt genau diese Luecke ab: sie ist von der ersten Zeile
-    an prospektiv und braucht keine Kostenhistorie.
 
     Gebraucht wird die Zahl, weil ein Deckel, der nur gegen BEREITS verbuchte
     Kosten prueft, immer um einen Aufruf zu spaet greift: bei ``booked`` knapp
     unter der Decke wird der naechste Aufruf zugelassen und laeuft darueber
     hinaus. Bei einem Tagesbudget von 1,00 USD und einer Alert-Reserve von
     0,16 USD heisst das, dass ein gewoehnlicher Aufruf in die Reserve
-    hineinragt — also genau in die Kapazitaet, die fuer das eine wichtige
+    hineinragt -- also genau in die Kapazitaet, die fuer das eine wichtige
     Dokument des Tages freigehalten werden soll.
+
+    ``None`` heisst UNBEKANNT, nicht "kostet nichts". Vor dem ersten
+    bezifferten Aufruf liegt nichts vor, worauf sich eine ZUSAETZLICHE
+    USD-Sperre stuetzen koennte; die Pruefung faellt dann auf das
+    Rueckblickende zurueck, das es vorher schon gab, und sperrt nicht auf
+    Verdacht. Bewusst ``None`` und nicht ``0.0``: das Modul traegt diese
+    Unterscheidung bereits ueberall (``BudgetEntry.cost_usd``,
+    ``AttemptTrace.truncated``, die Prompt-Provenienz), und eine 0.0, die
+    ausweislich ihrer eigenen Docstring nicht 0.0 bedeutet, wird frueher oder
+    spaeter von jemandem als Zahl gelesen.
+
+    Die Aufrufgrenze deckt genau diese Luecke ab: sie ist von der ersten Zeile
+    an prospektiv und braucht keine Kostenhistorie.
+
+    **Kein Erben zwischen Toepfen.** Eine frisch angefasste Reserve hat keinen
+    eigenen Mittelwert, und der des normalen Topfes waere zur Hand. Liegt der
+    aber ueber der ganzen Decke der Reserve -- teures Modell im Normalbetrieb,
+    knapp bemessene Reserve --, ist sie ab dem ERSTEN Griff gesperrt: gebaut
+    und nie benutzbar, im Betrieb sichtbar als "Reserve wirkt nicht" statt als
+    Konfigurationsfehler. Ohne Erben ueberzieht der erste Aufruf hoechstens um
+    einen Aufruf, und ab dem zweiten greift die Vorausschau mit einer echten
+    Messung. Ein verlorener Alert wiegt schwerer als ein ueberzogener Cent.
     """
-    if state.known_calls <= 0:
-        return 0.0
+    if state.known_calls <= 0 or state.booked_usd <= 0:
+        return None
     return state.booked_usd / state.known_calls
 
 
@@ -473,23 +483,41 @@ def _reserve_erschoepft(
     state: BudgetState,
     limit_usd: float | None,
     max_calls: int | None,
-    *,
-    voraussichtlich: float = 0.0,
+    estimate: float | None = None,
 ) -> bool:
-    """Ist eine Reserve aufgebraucht? Beide Grenzen zählen, die erste gewinnt.
+    """Ist eine Reserve aufgebraucht -- oder waere sie es NACH diesem Aufruf?
+
+    Beide Grenzen zaehlen, die erste gewinnt.
 
     ``total_calls`` und nicht ``known_calls``: ein Aufruf, dessen Kosten
     unbekannt sind, hat die Reserve trotzdem benutzt. Ihn nicht mitzuzählen
     hiesse, die Aufrufgrenze genau in dem Zustand wirkungslos zu machen, für
     den sie gebaut ist.
 
-    ``voraussichtlich`` macht die USD-Grenze prospektiv. Die Aufrufgrenze war
-    es bereits: ``total_calls >= max_calls`` ist gleichbedeutend mit "dieser
-    Aufruf waere einer zu viel".
+    ``estimate`` macht die USD-Grenze prospektiv; die Aufrufgrenze war es
+    bereits (``total_calls >= max_calls`` heisst "dieser Aufruf waere einer zu
+    viel"). Die USD-Seite geht durch :func:`_limit_breached`, also durch
+    dieselbe Funktion, die schon ``decide()`` benutzt: eine zweite
+    Formulierung derselben Regel waeren zwei Meinungen darueber, was "das
+    Limit reissen" heisst, und sie liefen auseinander, sobald jemand nur eine
+    davon anfasst.
     """
-    if limit_usd is not None and state.booked_usd + voraussichtlich >= limit_usd:
+    if _limit_breached(state, limit_usd, estimate):
         return True
     return max_calls is not None and state.total_calls >= max_calls
+
+
+def _schaetzung(uebergeben: float | None, state: BudgetState) -> float | None:
+    """Die Schaetzung fuer DIESEN Topf -- uebergeben schlaegt gemessen.
+
+    Ein Aufrufer, der es besser weiss (eine echte Vorabbepreisung der Nutzlast),
+    soll seine Zahl setzen koennen; das ist die Signatur, die ``decide()`` seit
+    D-CORE-007 traegt. Nur hat sie dort nie jemand gefuellt, und ein Parameter
+    ohne Quelle ist eine Kontrolle, die im Code aussieht wie eine Grenze und
+    nie greift. Deshalb der gemessene Rueckfall: er kostet nichts, raet nichts
+    und rechnet sich bei Modellwechseln selbst nach.
+    """
+    return uebergeben if uebergeben is not None else voraussichtliche_kosten(state)
 
 
 def decide_pot(
@@ -502,6 +530,7 @@ def decide_pot(
     alert_eligible: bool = False,
     validation: bool = False,
     cost_unknown: bool = False,
+    estimated_request_cost_usd: float | None = None,
 ) -> PotVerdict:
     """Welcher Topf zahlt — und darf er?
 
@@ -525,6 +554,15 @@ def decide_pot(
     Summe es belegt (v1-Verhalten von ``COST_UNKNOWN``). Die Alert-Reserve
     bleibt erreichbar, dann aber allein über ihre Aufrufgrenze — siehe
     :class:`ReservePolicy`.
+
+    ``estimated_request_cost_usd`` prüft die Decke VORAUSSCHAUEND, mit
+    derselben Semantik wie ``decide()``: gebucht ``>=`` Deckel sperrt, und
+    gebucht ``+`` Schätzung ``>`` Deckel sperrt ebenfalls. Ohne diese Prüfung
+    dürfte der letzte Aufruf des normalen Topfes in die Reserve hineinragen —
+    der Zusage "normal endet VOR der Reserve" fehlte damit genau ein Aufruf.
+    Dass das typischerweise nur ein halber bis ganzer Cent ist, macht es nicht
+    harmlos: eine Grenze, die im Normalfall hält und im Grenzfall nachgibt, ist
+    keine Grenze, sondern eine Tendenz.
     """
     if route in BUDGET_EXEMPT_ROUTES:
         return PotVerdict(pot="exempt", allowed=True)
@@ -551,7 +589,7 @@ def decide_pot(
             zustand,
             reserves.validation_reserve_usd,
             reserves.validation_reserve_max_calls,
-            voraussichtlich=voraussichtliche_kosten(zustand),
+            _schaetzung(estimated_request_cost_usd, zustand),
         ):
             return PotVerdict(
                 pot="validation", allowed=False, reason="validation_reserve_exhausted"
@@ -562,8 +600,8 @@ def decide_pot(
     decke = reserves.normal_ceiling_usd(policy.daily_limit_usd)
     # Prospektiv, nicht rueckblickend: sonst greift die Decke einen Aufruf zu
     # spaet und der Normalbetrieb ragt in die Reserve hinein.
-    normal_erschoepft = cost_unknown or (
-        decke is not None and normal.booked_usd + voraussichtliche_kosten(normal) >= decke
+    normal_erschoepft = cost_unknown or _limit_breached(
+        normal, decke, _schaetzung(estimated_request_cost_usd, normal)
     )
 
     if not normal_erschoepft:
@@ -581,7 +619,7 @@ def decide_pot(
         reserve,
         reserves.alert_reserve_usd,
         reserves.alert_reserve_max_calls,
-        voraussichtlich=voraussichtliche_kosten(reserve),
+        _schaetzung(estimated_request_cost_usd, reserve),
     ):
         return PotVerdict(pot="alert_reserve", allowed=False, reason="alert_reserve_exhausted")
     return PotVerdict(pot="alert_reserve", allowed=True)

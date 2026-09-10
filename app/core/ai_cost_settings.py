@@ -134,11 +134,19 @@ class AICostSettings(BaseSettings):
     #: 1. Die ursprüngliche Setzung 5 hätte **21 von 217 Alerts verloren**.
     #:    Die niedrigste Vorabpriorität eines tatsächlich alert-fähigen
     #:    Dokuments ist 4.
-    #: 2. Die Vorabpriorität **trennt nicht**. Der Anteil alert-fähiger
-    #:    Dokumente bleibt über den ganzen Bereich bei rund 42 % — von k=3 bis
-    #:    k=6 steigt er um 1,2 Punkte, während die Deckung um 36 Punkte fällt.
-    #:    Eine höhere Schwelle konzentriert die Reserve also nicht, sie
-    #:    verkleinert nur die gedeckte Menge.
+    #: 2. Die Vorabpriorität **trennt nicht** — und zwar nicht schwach,
+    #:    sondern gar nicht. Die Basisrate über alle 514 Aufrufe beträgt
+    #:    42,2 %; die Werte bei k=4/5/6 lauten 42,2 / 42,7 / 43,4. Das sind
+    #:    1,2 Punkte Streuung über den gesamten belegten Wertebereich, gegen
+    #:    einen Deckungsverlust von 36 Punkten. Eine höhere Schwelle
+    #:    konzentriert die Reserve also nicht, sie verkleinert nur die
+    #:    gedeckte Menge.
+    #:
+    #:    Der zweite Grund, warum sie nichts steuert: sie BINDET nie. Selbst
+    #:    bei k=6 sind rund 64 Aufrufe je Tag zulässig, eine Reserve trägt
+    #:    etwa 20. Innerhalb einer flach verteilten Menge entscheidet dann die
+    #:    Ankunftsreihenfolge — gegenüber Alerts faktisch eine Zufallsziehung.
+    #:    Ein Tor, das nie bindet, ist kein Zielmechanismus.
     #:
     #: Der Grund für (2): wer überhaupt bis zum bezahlten Aufruf kommt, ist vom
     #: Relevanz-Gate bereits gefiltert (514 von 2.344 Dokumenten). Diese Schwelle
@@ -146,30 +154,45 @@ class AICostSettings(BaseSettings):
     #: offensichtlich belanglosen Dokumente von der Reserve fern, falls das
     #: Gate davor je lockerer wird, und sonst tut sie nichts.
     #:
-    #: **Korrektur 2026-09-10, breiteres Fenster.** Die Aussage "der gemessene
-    #: Boden ist 4" gilt nur fuer die fuenf Tage 06.-10.09. Ueber 4.000
-    #: alert-faehige Dokumente hinweg (statt 217) liegen **61 mit
-    #: Vorabprioritaet <= 3** — darunter Endprioritaet 9 und 10:
+    #: **Korrektur am selben Tag, breiteres Fenster.** Die erste Auswertung lief
+    #: ueber fuenf Tage (217 alert-faehige Dokumente) und ergab "der gemessene
+    #: Boden ist 4". Das galt fuer dieses Fenster und wurde allgemein
+    #: formuliert. Ein Minimum ist die instabilste Statistik ueberhaupt: es
+    #: wird mit jedem zusaetzlichen Tag nur kleiner, nie groesser.
     #:
-    #:   2026-08-30  vorab 3 -> final 10  Cronos/Tectonic, ~75 Mio USD
-    #:   2026-09-01  vorab 3 -> final 10  Injective, ~4,88 Mio USD
-    #:   2026-09-01  vorab 3 -> final  9  Markets Buckle After US Strikes Iran
+    #: Ueber 01.07.-05.09. (39.354 Dokumente, 10.059 mit LLM-Bewertung, davon
+    #: **4.774 mit Prioritaet >= 7**) sieht es so aus:
     #:
-    #: Recall bei k=4: 98,8 % im neuesten, 93,3 % im aeltesten 4.000er-Fenster.
-    #: k=3 haelt in beiden 100 %. Das aeltere Fenster ist nicht Nebensache —
-    #: genau dort liegen die Gegenbeispiele, und ein Ausfall dieser Groesse
-    #: darf nicht davon abhaengen, in welche Woche er faellt.
+    #:   k=3   4774/4774   100,00 %
+    #:   k=4   4773/4774    99,98 %
+    #:   k=5   4591/4774    96,2 %
+    #:   k=6   3655/4774    76,6 %
     #:
-    #: Die Wahl ist asymmetrisch, nicht knapp: die Reserve ist ohnehin in USD
-    #: UND in Aufrufzahl gedeckelt. Eine zu weite Vorauswahl kostet gedeckeltes
-    #: Geld, eine zu enge kostet einen Alert — und der ist nicht nachholbar.
-    #: Zusammen mit (2) — die Schwelle trennt ohnehin nicht — gibt es keinen
-    #: Grund, ueber den Boden zu gehen.
+    #: Es gibt also **ein** alert-faehiges Dokument mit Vorabprioritaet 3 --
+    #: `51546d0f` "Bitcoin Above $70k - Live from Honduras Airport!",
+    #: Endprioritaet 7. Bei k=4 waere es verloren. Ein Dokument reicht: die Wahl
+    #: ist asymmetrisch, nicht knapp. Die Reserve ist ohnehin in USD UND in
+    #: Aufrufzahl gedeckelt; eine zu weite Vorauswahl kostet gedeckeltes Geld,
+    #: eine zu enge kostet einen Alert, und der ist nicht nachholbar. Zusammen
+    #: mit (2) -- die Schwelle trennt ohnehin nicht -- gibt es keinen Grund,
+    #: ueber den Boden zu gehen.
+    #:
+    #: Die Zahlen stammen aus zwei unabhaengigen Auswertungen (verschiedene
+    #: Populationen und Aggregationen), die auf jeder Stelle uebereinstimmen.
+    #: Gerechnet wurde mit `monitor/` aus dem aktiven Release -- die Angabe
+    #: gehoert dazu und ist keine Formalie: die Vorabprioritaet haengt an
+    #: `keywords.txt`, `watchlists.yml` und `entity_aliases.yml`, und dieselben
+    #: Dokumente ergeben mit einer anderen Keyword-Basis andere Werte. Eine
+    #: fruehere Fassung dieses Blocks nannte 61 Dokumente <= 3 und drei
+    #: namentliche Belege; beide Auswertungen widerlegen das (die drei Belege
+    #: liegen bei 4, mit je genau einem Keyword-Treffer, also exakt an der
+    #: Kante, an der ein fehlender Treffer die Relevanz von 0,29 auf den Boden
+    #: 0,08 druecken wuerde).
     #:
     #: 4 bleibt Optimierungskandidat, nicht Voreinstellung: erst wenn eine
     #: Messung ueber ein vergleichbar breites Fenster zeigt, dass 4 nichts
     #: kostet. Nachzumessen ausserdem, sobald sich Keyword-Liste oder Watchlist
-    #: wesentlich aendern — die Vorabprioritaet haengt an beiden.
+    #: wesentlich aendern -- die Vorabprioritaet haengt an beiden.
     budget_alert_min_rule_priority: int = Field(default=3, ge=1, le=10)
 
     #: Auftraggeber → Tageslimit in USD, aus ``APP_AI_BUDGET_USECASE_<NAME>_USD``.

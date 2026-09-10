@@ -170,6 +170,16 @@ class _Budgetbild:
     reserves: ReservePolicy
 
     def verdict(self, route: str, *, alert_eligible: bool, validation: bool) -> PotVerdict:
+        """Die Entscheidung fuer diesen Aufruf -- ein Aufruf, ein Ergebnis.
+
+        Die Vorausschau braucht keine Zahl von hier: ``decide_pot`` bekommt die
+        Topfzustaende ohnehin und leitet sie ueber ``voraussichtliche_kosten``
+        aus dem Topf ab, aus dem tatsaechlich bezahlt wird. Diese Schicht hatte
+        die Schaetzung eine Zeit lang selbst berechnet und musste dafuer zweimal
+        entscheiden -- einmal, um den Topf zu finden, und einmal mit dessen
+        Schnitt. Das war eine Umdrehung zu viel fuer nichts: die Berechnung
+        gehoert dorthin, wo die Zustaende schon liegen.
+        """
         return decide_pot(
             route=route,
             pots=self.pots,
