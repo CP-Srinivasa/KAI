@@ -28,6 +28,7 @@ die zweite Kontrolle hier.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -258,3 +259,62 @@ def _client_factory(handler: object) -> object:
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))  # type: ignore[arg-type]
 
     return bauen
+
+
+async def test_ein_abgeschnittener_lauf_wird_nicht_als_erfolg_gezaehlt(tmp_path: Path) -> None:
+    """Sonst zaehlte die erste echte SHADOW-Auswertung Abschneidungen als Erfolge.
+
+    `trace.ok` gehoert dem TRANSPORT, und der war erfolgreich. `outcome` und
+    `schema_status` beschreiben aber den VERSUCH, und aus dem entstand kein
+    Wert. Auf `trace.ok` gestuetzt meldete die Zeile `outcome="success"` und
+    `schema_status="valid"` fuer einen Aufruf ohne Analyse --
+    `scripts/litellm_shadow_eval/metrics.py` bildet seine
+    `outcome_distribution` genau daraus.
+
+    Genau die Klasse, gegen die diese ganze Kette gebaut ist: gruen, obwohl
+    unbrauchbar. Gefunden hat es die Parallelsitzung beim Nachpruefen des
+    Gates, nicht der Test hier -- deshalb steht er jetzt hier.
+    """
+    import json
+
+    import httpx
+
+    from app.ai.runtime import invoke
+
+    zeile = tmp_path / "telemetrie.jsonl"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gemini/gemini-3.6-flash",
+                "choices": [
+                    {"message": {"content": "Der groesste Risik"}, "finish_reason": "length"}
+                ],
+            },
+            request=request,
+        )
+
+    await invoke(
+        purpose="analysis",
+        direct_call=_direkt,
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=LiteLLMRequest(
+            parser=lambda _b: "nie", payload={"messages": [], "max_tokens": 1024}
+        ),
+        settings=InferenceSettings(
+            enabled=True, mode_ceiling="shadow", route_modes={"standard": "shadow"}
+        ),
+        client_factory=_client_factory(handler),
+        sleeper=_kein_schlaf,
+        telemetry_path=zeile,
+    )
+
+    eintraege = [json.loads(z) for z in zeile.read_text(encoding="utf-8").splitlines() if z.strip()]
+    versuche = [e for e in eintraege if e.get("transport") == "litellm"]
+    assert versuche, "kein LiteLLM-Versuch in der Zeile"
+    for e in versuche:
+        assert e.get("truncated") is True
+        assert e.get("outcome") != "success", "abgeschnitten als Erfolg gezaehlt"
+        assert e.get("schema_status") != "valid", "abgeschnitten als schemagueltig gezaehlt"
