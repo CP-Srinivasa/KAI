@@ -40,7 +40,7 @@ def _fake_to_thread(text: str):
 
 @pytest.fixture
 def provider():
-    return GeminiAnalysisProvider(api_key="fake-key")
+    return GeminiAnalysisProvider(api_key="fake-key", model="gemini-3.6-flash")
 
 
 # ── metadata ──────────────────────────────────────────────────────────────────
@@ -50,8 +50,15 @@ def test_provider_name(provider):
     assert provider.provider_name == "gemini"
 
 
-def test_provider_model_default(provider):
-    assert provider.model == "gemini-2.5-flash"
+def test_der_provider_verlangt_ein_modell():
+    """Kein Default: ProviderSettings ist der Vertrag, nicht dieser Konstruktor.
+
+    Ein Konstruktor-Default veraltet still — 2026-09-09 erreichte ein rotierter
+    Gemini-Schluessel `gemini-2.5-flash` nicht mehr, und der Default haette den
+    toten Namen weitergereicht.
+    """
+    with pytest.raises(TypeError):
+        GeminiAnalysisProvider(api_key="k")  # type: ignore[call-arg]
 
 
 def test_provider_model_custom():
@@ -60,7 +67,7 @@ def test_provider_model_custom():
 
 
 def test_provider_stores_timeout():
-    p = GeminiAnalysisProvider(api_key="k", timeout=60)
+    p = GeminiAnalysisProvider(api_key="k", model="gemini-3.6-flash", timeout=60)
     assert p._timeout == 60
 
 

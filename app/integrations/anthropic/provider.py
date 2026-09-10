@@ -4,7 +4,7 @@ Implements BaseAnalysisProvider using the Anthropic API with tool calling
 to enforce structured JSON output matching the LLMAnalysisOutput schema.
 
 Provider name: "anthropic"
-Default model: claude-sonnet-4-6 (configurable)
+Model: aus ProviderSettings.anthropic_model (kein Default hier)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
 
     Args:
         api_key:    Anthropic API key (required).
-        model:      Model name, default "claude-sonnet-4-6".
+        model:      Model name (required — ProviderSettings is the contract).
         timeout:    HTTP timeout in seconds.
         max_tokens: Max response tokens (default 1024).
     """
@@ -35,7 +35,7 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-6",
+        model: str,
         timeout: int = 30,
         max_tokens: int = 1024,
     ) -> None:

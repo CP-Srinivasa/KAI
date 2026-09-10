@@ -209,7 +209,7 @@ def _build_persona_system_prompt(language: str) -> str:
 async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     settings = get_settings()
     api_key = settings.providers.openai_api_key
-    model = settings.providers.openai_model or "gpt-4o"
+    model = settings.providers.openai_model
 
     if not api_key:
         logger.warning("[kai-chat] no openai_api_key configured")

@@ -53,13 +53,19 @@ def _mock_parse_response(parsed: LLMAnalysisOutput) -> MagicMock:
 
 
 def test_provider_name():
-    provider = OpenAIAnalysisProvider(api_key="test-key")
+    provider = OpenAIAnalysisProvider(api_key="test-key", model="gpt-4o")
     assert provider.provider_name == "openai"
 
 
-def test_provider_model_default():
-    provider = OpenAIAnalysisProvider(api_key="test-key")
-    assert provider.model == "gpt-4o"
+def test_der_provider_verlangt_ein_modell():
+    """Kein Default: ProviderSettings ist der Vertrag, nicht dieser Konstruktor.
+
+    Ein Konstruktor-Default veraltet still — 2026-09-09 erreichte ein rotierter
+    Gemini-Schluessel `gemini-2.5-flash` nicht mehr, und der Default haette den
+    toten Namen weitergereicht.
+    """
+    with pytest.raises(TypeError):
+        OpenAIAnalysisProvider(api_key="k")  # type: ignore[call-arg]
 
 
 def test_provider_model_custom():
@@ -72,7 +78,7 @@ def test_provider_model_custom():
 
 @pytest.mark.asyncio
 async def test_analyze_returns_llm_output():
-    provider = OpenAIAnalysisProvider(api_key="test-key")
+    provider = OpenAIAnalysisProvider(api_key="test-key", model="gpt-4o")
     expected = _make_llm_output()
     mock_response = _mock_parse_response(expected)
 
@@ -95,7 +101,7 @@ async def test_analyze_returns_llm_output():
 
 @pytest.mark.asyncio
 async def test_analyze_passes_context_to_prompt():
-    provider = OpenAIAnalysisProvider(api_key="test-key")
+    provider = OpenAIAnalysisProvider(api_key="test-key", model="gpt-4o")
     expected = _make_llm_output()
     mock_response = _mock_parse_response(expected)
     captured_calls: list = []
@@ -122,7 +128,7 @@ async def test_analyze_passes_context_to_prompt():
 
 @pytest.mark.asyncio
 async def test_analyze_raises_on_null_parsed():
-    provider = OpenAIAnalysisProvider(api_key="test-key")
+    provider = OpenAIAnalysisProvider(api_key="test-key", model="gpt-4o")
     mock_response = _mock_parse_response(None)  # type: ignore
 
     with patch.object(

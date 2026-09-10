@@ -41,7 +41,7 @@ def _mock_chat_response(payload_json: str) -> MagicMock:
 
 
 def test_provider_name_and_defaults():
-    provider = GrokAnalysisProvider(api_key="test-key")
+    provider = GrokAnalysisProvider(api_key="test-key", model="grok-4")
     assert provider.provider_name == "grok"
     assert provider.model == "grok-4"
 
@@ -58,7 +58,7 @@ def test_from_settings():
 
 @pytest.mark.asyncio
 async def test_analyze_roundtrip_parses_json_object():
-    provider = GrokAnalysisProvider(api_key="test-key")
+    provider = GrokAnalysisProvider(api_key="test-key", model="grok-4")
     expected = _make_llm_output()
     mock_response = _mock_chat_response(expected.model_dump_json())
 
@@ -79,7 +79,7 @@ async def test_analyze_roundtrip_parses_json_object():
 
 @pytest.mark.asyncio
 async def test_analyze_raises_on_empty_content():
-    provider = GrokAnalysisProvider(api_key="test-key")
+    provider = GrokAnalysisProvider(api_key="test-key", model="grok-4")
     mock_response = _mock_chat_response("")
 
     with patch.object(
