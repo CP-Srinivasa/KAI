@@ -13,6 +13,7 @@ Stages:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +38,36 @@ from app.storage.document_ingest import persist_fetch_result
 from app.storage.repositories.document_repo import DocumentRepository
 
 logger = get_logger(__name__)
+
+
+async def persist_analysis(
+    repo: DocumentRepository,
+    res: PipelineResult,
+    *,
+    metadata_updates: Mapping[str, object] | None = None,
+) -> None:
+    """Den Analysestand eines Dokuments schreiben — an EINER Stelle.
+
+    Ersetzt sieben gleichlautende Bloecke (sechs hier, einer in
+    ``app/cli/main.py``), analog zu :func:`_persist_llm_audit`.
+
+    Der Grund ist derselbe wie damals, nur teurer: das Dokument wurde bis zum
+    2026-09-10 nicht mitgegeben, und ``update_analysis`` schreibt eine feste
+    Spaltenliste. ``apply_to_document`` fuellte ``entity_mentions``,
+    ``entities``, ``topics``, ``people``, ``organizations`` und
+    ``crypto_assets`` im Speicher, das UPDATE liess sie fallen — ueber 76.392
+    Dokumente lagen alle sechs bei exakt 0,00 %. An sieben Stellen war der
+    Fehler siebenmal zu uebersehen; an einer ist er einmal zu sehen.
+    """
+    if res.analysis_result is None:
+        return
+    await repo.update_analysis(
+        str(res.document.id),
+        res.analysis_result,
+        provider_name=res.document.provider,
+        metadata_updates=metadata_updates,
+        document=res.document,
+    )
 
 
 async def _persist_llm_audit(repo: DocumentRepository, res: PipelineResult) -> None:
@@ -293,12 +324,7 @@ async def run_rss_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
@@ -491,12 +517,7 @@ async def run_youtube_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
@@ -714,12 +735,7 @@ async def run_newsdata_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
@@ -894,12 +910,7 @@ async def run_okx_announcements_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
@@ -1076,12 +1087,7 @@ async def run_messari_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
@@ -1296,12 +1302,7 @@ async def run_twitter_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(
-                            str(res.document.id),
-                            res.analysis_result,
-                            provider_name=res.document.provider,
-                            metadata_updates=res.document.metadata,
-                        )
+                        await persist_analysis(repo, res, metadata_updates=res.document.metadata)
                         await _persist_llm_audit(repo, res)
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)

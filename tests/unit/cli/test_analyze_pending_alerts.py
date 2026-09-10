@@ -37,7 +37,7 @@ def _patch_analysis_infra(monkeypatch, docs, *, priority_score: int = 9):
         return docs
 
     async def fake_update_analysis(
-        self, document_id, result, *, provider_name=None, metadata_updates=None
+        self, document_id, result, *, provider_name=None, metadata_updates=None, document=None
     ):
         pass
 

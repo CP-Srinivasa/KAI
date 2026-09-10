@@ -679,6 +679,7 @@ def analyze_pending(
         from app.analysis.keywords.engine import KeywordEngine
         from app.analysis.pipeline import AnalysisPipeline
         from app.core.enums import DocumentStatus
+        from app.pipeline.service import persist_analysis
         from app.storage.repositories.document_repo import DocumentRepository
 
         console.print("[bold]Initializing Analysis Engine...[/bold]")
@@ -761,12 +762,7 @@ def analyze_pending(
                     continue
 
                 try:
-                    await repo.update_analysis(
-                        str(res.document.id),
-                        res.analysis_result,
-                        provider_name=res.document.provider,
-                        metadata_updates=res.trace_metadata,
-                    )
+                    await persist_analysis(repo, res, metadata_updates=res.trace_metadata)
                     success_count += 1
                 except Exception as e:
                     console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
