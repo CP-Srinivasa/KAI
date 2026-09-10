@@ -228,6 +228,53 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
+    """Kann ein NEU analysiertes Dokument ueberhaupt noch einen Alert ausloesen?
+
+    Der Befund, der diesen Block erzwungen hat (Spur A, 09./10.09.2026): nach
+    Erreichen des Tagesbudgets laeuft die Analyse weiter — nur nicht mehr ueber
+    den LLM. Der Zufluss bleibt gleich, ``is_analyzed`` bleibt bei ~100 %, und
+    genau deshalb sah jede Pruefung gruen aus, waehrend 373 bzw. 43 Dokumente in
+    Folge KEINEN Alert mehr ausloesen konnten.
+
+    Die Ursache ist rechnerisch, nicht zufaellig: der Regelpfad kommt hoechstens
+    auf ``raw = 0.575`` (siehe ``rule_path_raw_ceiling``), das Alert-Gate liegt
+    bei ``ALERT_GATE_RAW = 0.615``. Ueber 44.018 regelanalysierte Dokumente
+    wurde nie eine Prioritaet ueber 6 vergeben; alle 11.863 Dokumente ab
+    Prioritaet 7 kamen aus ``external_llm``.
+
+    Bewusst NUR beobachtend: dieser Block aendert weder ein Limit noch eine
+    Schwelle noch das Routing. Er sagt, was gilt — die Entscheidung, was daraus
+    folgt, gehoert dem Operator.
+    """
+    from app.analysis.scoring import (
+        ALERT_GATE_RAW,
+        rule_path_can_reach_alert_gate,
+        rule_path_priority_ceiling,
+        rule_path_raw_ceiling,
+    )
+
+    erreichbar = rule_path_can_reach_alert_gate()
+    if not routine_blocked:
+        zustand, grund = "ok", ""
+    elif erreichbar:
+        # Budget blockiert, aber der Regelpfad kaeme durch: dann ist die
+        # Alert-Faehigkeit nicht verloren, nur die Analysetiefe.
+        zustand, grund = "degraded", "budget_blocked_rule_path_still_passes_gate"
+    else:
+        zustand, grund = "unreachable", "budget_blocked_rule_path_below_alert_gate"
+    return {
+        # "Neu" ist woertlich: bereits analysierte Dokumente mit hoher
+        # Prioritaet bleiben unberuehrt. Verloren ist die Faehigkeit, aus dem
+        # laufenden Zufluss noch einen Alert zu erzeugen.
+        "alert_capability_for_new_documents": zustand,
+        "alert_capability_reason": grund,
+        "alert_gate_raw": round(ALERT_GATE_RAW, 6),
+        "rule_path_raw_ceiling": round(rule_path_raw_ceiling(), 6),
+        "rule_path_priority_ceiling": rule_path_priority_ceiling(),
+    }
+
+
 def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -> dict[str, Any]:
     """Der Budgetzustand, getrennt vom Anbieterzustand und in dessen Sprache.
 
@@ -246,6 +293,7 @@ def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -
         "local_refusals_in_window": sum(
             int(block.get("local_refusals", 0)) for block in provider_blocks
         ),
+        **_alert_capability_block(bool(cost.get("blocks_routine", False))),
     }
 
 

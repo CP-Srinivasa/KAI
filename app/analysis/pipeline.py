@@ -78,6 +78,11 @@ from app.analysis.input_contract import (
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT_SHA256, ACTIVE_SYSTEM_PROMPT_VERSION
 from app.analysis.rules.rule_analyzer import compute_spam_probability
+from app.analysis.scoring import (
+    RULE_IMPACT_CEILING,
+    RULE_NOVELTY_CEILING,
+    RULE_RELEVANCE_CEILING,
+)
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel, SourceType
 from app.core.logging import get_logger
@@ -315,14 +320,14 @@ def _fallback_relevance(
     # PH4G: minimum relevance floor for legitimate documents
     has_basic_signals = bool(document.title and (document.source_name or document.published_at))
     floor = 0.08 if has_basic_signals and raw == 0.0 else 0.0
-    return round(min(1.0, max(raw, floor)), 4)
+    return round(min(RULE_RELEVANCE_CEILING, max(raw, floor)), 4)
 
 
 def _fallback_impact(document: CanonicalDocument, affected_assets: list[str]) -> float:
     asset_signal = min(0.2, len(affected_assets) * 0.08)
     category_signal = min(0.1, len(_unique_strings(document.categories)) * 0.03)
     source_signal = 0.05 if document.source_type is not None else 0.0
-    return round(min(0.35, asset_signal + category_signal + source_signal), 4)
+    return round(min(RULE_IMPACT_CEILING, asset_signal + category_signal + source_signal), 4)
 
 
 def _fallback_novelty(document: CanonicalDocument) -> float:
@@ -335,7 +340,7 @@ def _fallback_novelty(document: CanonicalDocument) -> float:
         (reference_time - document.published_at).total_seconds() / 3600,
     )
     if age_hours <= 24:
-        return 0.6
+        return RULE_NOVELTY_CEILING
     if age_hours <= 24 * 7:
         return 0.45
     return 0.25
