@@ -412,6 +412,19 @@ def llm_usage_summary(results: list[PipelineResult], *, success: int | None = No
     return f"{erfolge} success / {aufrufe} llm_call / {uebersprungen} skipped"
 
 
+#: Treffertypen, die die Keyword-Engine liefert, fuer die ``CanonicalDocument``
+#: aber KEIN Feld hat: ``equity``, ``etf``, ``macro``.
+#:
+#: Sie werden hier bewusst verworfen statt in ``tickers`` einsortiert. ``tickers``
+#: wird von ``update_analysis`` aus ``AnalysisResult.affected_assets`` geschrieben
+#: und traegt heute Krypto- wie Aktiensymbole gemischt; ein zweiter Schreiber mit
+#: anderer Herkunft waere dort nicht mehr auseinanderzuhalten. Welches Feld
+#: kanonisch waere, entscheidet das Schema — und das kennt keines. Der Test
+#: ``test_equity_etf_macro_bleiben_ein_offener_schema_gap`` haelt diese Luecke
+#: fest, damit sie sichtbar bleibt und eine spaetere Aenderung laut wird.
+_OHNE_ZIELFELD: frozenset[str] = frozenset({"equity", "etf", "macro"})
+
+
 def _sync_flat_entities(document: CanonicalDocument, entity_mentions: list[EntityMention]) -> None:
     for mention in entity_mentions:
         name = mention.name.strip()
@@ -429,6 +442,11 @@ def _sync_flat_entities(document: CanonicalDocument, entity_mentions: list[Entit
                 document.organizations.append(name)
             if name not in document.entities:
                 document.entities.append(name)
+        elif mention.entity_type == "crypto_asset":
+            # Die Engine erkennt Krypto-Assets, das Dokument hat ein Feld dafuer,
+            # und bis 2026-09-10 verband die beiden nichts.
+            if name not in document.crypto_assets:
+                document.crypto_assets.append(name)
 
 
 @dataclass

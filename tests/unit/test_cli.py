@@ -193,7 +193,13 @@ def test_query_analyze_pending() -> None:
     updated_docs = []
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
+        self,
+        document_id: str,
+        result,
+        *,
+        provider_name: str | None = None,
+        metadata_updates=None,
+        document=None,
     ) -> None:
         updated_docs.append(document_id)
 
@@ -319,7 +325,13 @@ def test_query_analyze_pending_without_openai_key_uses_fallback_analysis(monkeyp
         ]
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
+        self,
+        document_id: str,
+        result,
+        *,
+        provider_name: str | None = None,
+        metadata_updates=None,
+        document=None,
     ) -> None:
         captured_results.append(result)
 
@@ -454,6 +466,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
             *,
             provider_name: str | None = None,
             metadata_updates=None,
+            document=None,
         ) -> None:
             for index, existing in enumerate(stored_docs):
                 if str(existing.id) == document_id:

@@ -205,7 +205,12 @@ async def test_run_rss_pipeline_full_chain(monkeypatch) -> None:
         *,
         provider_name: str | None = None,
         metadata_updates=None,
+        document=None,
     ) -> None:
+        # Ohne das Dokument verliert der Schreibpfad die Entity-Felder
+        # (Befund 2026-09-10). Der Fake haelt den Vertrag fest, statt ihn
+        # stillschweigend zu unterlaufen.
+        assert document is not None, "persist_analysis muss das Dokument mitgeben"
         updated_docs.append(document_id)
 
     monkeypatch.setattr(pipeline_service, "collect_rss_feed", fake_collect)
@@ -278,7 +283,12 @@ async def test_run_rss_pipeline_dry_run_skips_db_writes(monkeypatch) -> None:
         *,
         provider_name: str | None = None,
         metadata_updates=None,
+        document=None,
     ) -> None:
+        # Ohne das Dokument verliert der Schreibpfad die Entity-Felder
+        # (Befund 2026-09-10). Der Fake haelt den Vertrag fest, statt ihn
+        # stillschweigend zu unterlaufen.
+        assert document is not None, "persist_analysis muss das Dokument mitgeben"
         update_calls.append(document_id)
 
     monkeypatch.setattr(pipeline_service, "collect_rss_feed", fake_collect)
@@ -336,7 +346,13 @@ async def test_run_rss_pipeline_skipped_count_sums_both_duplicate_types(monkeypa
         )
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
+        self,
+        document_id: str,
+        result,
+        *,
+        provider_name: str | None = None,
+        metadata_updates=None,
+        document=None,
     ) -> None:
         pass
 

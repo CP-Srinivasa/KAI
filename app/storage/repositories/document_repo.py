@@ -165,12 +165,22 @@ class DocumentRepository:
         *,
         provider_name: str | None = None,
         metadata_updates: Mapping[str, object] | None = None,
+        document: CanonicalDocument | None = None,
     ) -> None:
         """Write analysis scores to the document and set status=ANALYZED.
 
         provider_name is an optional technical trace of the runtime-selected analysis
         engine. It lets callers persist the actual provider/winner without leaking
         provider-specific fields into AnalysisResult itself.
+
+        ``document`` ist das Dokument, auf das der Aufrufer die Analyse bereits
+        angewendet hat (``PipelineResult.apply_to_document``). Es wird gebraucht,
+        weil die Entity-Felder NICHT im ``AnalysisResult`` stehen: sie entstehen
+        aus den Keyword-Treffern und leben nur am Dokument. Ohne diesen Parameter
+        berechnete die Pipeline sie und das UPDATE liess sie fallen.
+
+        Der aus der Datenbank geladene Stand taugt dafuer nicht — er traegt genau
+        die leeren Werte, die hier ueberschrieben werden sollen.
         """
         doc = await self.get_by_id(document_id)
         current_meta = doc.metadata if doc else {}
@@ -205,6 +215,9 @@ class DocumentRepository:
         }
         if provider_name is not None:
             values["provider"] = provider_name
+        if document is not None:
+            # Dasselbe Mapping wie ``_to_model`` — nicht eine zweite Liste daneben.
+            values.update(entity_columns(document))
 
         await self._session.execute(
             update(CanonicalDocumentModel)
@@ -388,6 +401,31 @@ class DocumentRepository:
 # ── Mapping helpers ───────────────────────────────────────────────────────────
 
 
+#: Die Entity-Spalten und wie ein Dokument sie fuellt — an EINEM Ort.
+#:
+#: Befund 2026-09-10: ``_to_model`` mappte alle sechs korrekt, aber der Pfad,
+#: der nach der Analyse tatsaechlich schreibt (``update_analysis``), kannte nur
+#: eine feste Spaltenliste ohne sie. ``apply_to_document`` fuellte sie im
+#: Speicher, das UPDATE liess sie fallen: ueber 76.392 Dokumente waren
+#: ``entities``, ``entity_mentions``, ``topics``, ``people``, ``organizations``
+#: und ``crypto_assets`` zu exakt 0,00 % belegt, waehrend ``tags`` (98 %),
+#: ``categories`` (38 %) und ``tickers` (40 %) — die drei Spalten IN der Liste —
+#: normal gefuellt waren.
+#:
+#: Zwei Aufrufer, ein Mapping: eine zweite Liste neben dieser waere genau der
+#: Fehler noch einmal, nur an anderer Stelle.
+def entity_columns(doc: CanonicalDocument) -> dict[str, Any]:
+    """Die aus dem Dokument abgeleiteten Entity-Spalten als Spaltenwerte."""
+    return {
+        "entity_mentions": [e.model_dump() for e in doc.entity_mentions],
+        "entities": doc.entities,
+        "topics": doc.topics,
+        "people": doc.people,
+        "organizations": doc.organizations,
+        "crypto_assets": doc.crypto_assets,
+    }
+
+
 def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
     return CanonicalDocumentModel(
         id=str(doc.id),
@@ -421,15 +459,10 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         status=doc.status.value,
         is_duplicate=doc.is_duplicate,
         is_analyzed=doc.is_analyzed,
-        entity_mentions=[e.model_dump() for e in doc.entity_mentions],
-        entities=doc.entities,
         tickers=doc.tickers,
-        crypto_assets=doc.crypto_assets,
-        people=doc.people,
-        organizations=doc.organizations,
         tags=doc.tags,
-        topics=doc.topics,
         categories=doc.categories,
+        **entity_columns(doc),
         youtube_meta=doc.youtube_meta.model_dump() if doc.youtube_meta else None,
         podcast_meta=doc.podcast_meta.model_dump() if doc.podcast_meta else None,
         document_metadata=doc.metadata,
