@@ -613,7 +613,11 @@ def test_budget_block_reports_the_limit_separately_from_the_providers(
     snap = ai_health_snapshot(path=sink, settings=_settings())
     budget = snap["ai"]["budget"]
 
-    assert set(budget) == {
+    # Teilmenge, nicht Gleichheit: der Block ist additiv erweiterbar (Budget-
+    # Policy v2 haengt die Alert-Faehigkeit daran). Was diese Datei zusichert,
+    # sind DIESE vier Schluessel und ihre Bedeutung — nicht, dass es nie einen
+    # fuenften geben darf.
+    assert set(budget) >= {
         "budget_state",
         "budget_status_reason",
         "routine_calls_blocked",
@@ -711,12 +715,11 @@ def test_budget_block_names_the_reached_limit_in_the_agreed_words(
         reset_ai_cost_settings()
         reset_spend_cache()
 
-    assert snap["ai"]["budget"] == {
-        "budget_state": "limit_reached",
-        "budget_status_reason": "daily_limit_reached",
-        "routine_calls_blocked": True,
-        "local_refusals_in_window": 1,
-    }
+    budget = snap["ai"]["budget"]
+    assert budget["budget_state"] == "limit_reached"
+    assert budget["budget_status_reason"] == "daily_limit_reached"
+    assert budget["routine_calls_blocked"] is True
+    assert budget["local_refusals_in_window"] == 1
     # Und der Anbieter bleibt davon unberuehrt: das Limit ist unsere Lage,
     # nicht seine.
     openai = _providers(snap)["openai"]

@@ -58,6 +58,57 @@ _SPAM_PRIORITY_CAP: int = 3
 ALERT_GATE_RAW: float = 0.615
 
 
+# ── Regelpfad-Deckel (Budget-Policy v2, 2026-09-10) ──────────────────────────
+#
+# Diese drei Obergrenzen leben im Fallback in ``app/analysis/pipeline.py`` und
+# stehen HIER, weil sie nur zusammen mit den Gewichten oben eine Aussage ergeben.
+# Zwei Orte waeren zwei Meinungen darueber, wie hoch der Regelpfad kommt.
+#
+#: ``_fallback_relevance`` endet auf ``min(1.0, ...)``.
+RULE_RELEVANCE_CEILING: float = 1.00
+#: ``_fallback_impact`` endet auf ``min(0.35, ...)``.
+RULE_IMPACT_CEILING: float = 0.35
+#: ``_fallback_novelty`` gibt hoechstens 0.6 zurueck (Dokument juenger als 24 h).
+RULE_NOVELTY_CEILING: float = 0.60
+
+
+def rule_path_raw_ceiling() -> float:
+    """Der hoechste ``raw``-Wert, den der Regelpfad ueberhaupt erreichen kann.
+
+    Aus den Gewichten und den Fallback-Obergrenzen gerechnet, nicht notiert:
+    aendert jemand ein Gewicht oder einen Deckel, wandert diese Zahl mit.
+
+    ``actionable`` ist im Regelpfad dauerhaft ``False`` (I-13) — das ist keine
+    Schaetzung, sondern eine Invariante, die ``_build_fallback_analysis``
+    ausdruecklich einhaelt. Damit faellt ``_W_ACTIONABLE`` vollstaendig weg.
+    ``quality`` erreicht 1.0 bei ``spam_probability == 0``.
+    """
+    return (
+        RULE_RELEVANCE_CEILING * _W_RELEVANCE
+        + RULE_IMPACT_CEILING * _W_IMPACT
+        + RULE_NOVELTY_CEILING * _W_NOVELTY
+        + 0.0 * _W_ACTIONABLE
+        + 1.0 * _W_QUALITY
+    )
+
+
+def rule_path_priority_ceiling() -> int:
+    """Derselbe Deckel als gerundete Prioritaet — dieselbe Abbildung wie oben."""
+    return max(1, min(10, round(rule_path_raw_ceiling() * 9) + 1))
+
+
+def rule_path_can_reach_alert_gate(gate_raw: float = ALERT_GATE_RAW) -> bool:
+    """Kann ein NUR regelbasiert analysiertes Dokument das Alert-Gate passieren?
+
+    Am 2026-09-10 auf kai-pi5 gemessen: ueber 44.018 regelanalysierte Dokumente
+    lag die hoechste Prioritaet bei 6,0 — und alle 11.863 Dokumente mit
+    Prioritaet >= 7 stammten ausnahmslos aus ``external_llm``. Die Rechnung hier
+    erklaert den Befund, statt ihn nur zu wiederholen: 0.575 gegen ein Gate von
+    0.615.
+    """
+    return rule_path_raw_ceiling() >= gate_raw
+
+
 def min_priority_as_raw_gate(min_priority: int) -> float:
     """Die Ganzzahl-Schwelle als Schwelle auf ``raw`` — die Umkehrung der Rundung.
 

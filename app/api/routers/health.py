@@ -139,6 +139,14 @@ class AIBudgetBlock(BaseModel):
     budget_status_reason: str = ""
     routine_calls_blocked: bool = False
     local_refusals_in_window: int = 0
+    #: Budget-Policy v2: kann ein NEU analysiertes Dokument noch einen Alert
+    #: ausloesen? ``ok`` | ``degraded`` | ``unreachable``. Bereits analysierte
+    #: Dokumente mit hoher Prioritaet sind davon unberuehrt.
+    alert_capability_for_new_documents: str = "ok"
+    alert_capability_reason: str = ""
+    alert_gate_raw: float | None = None
+    rule_path_raw_ceiling: float | None = None
+    rule_path_priority_ceiling: int | None = None
 
 
 class AICostBlock(BaseModel):
