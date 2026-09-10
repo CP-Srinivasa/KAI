@@ -83,6 +83,7 @@ _HARD_OFF: Final = InferenceSettings.model_construct(
     litellm_base_url="http://127.0.0.1:4000",
     litellm_api_key="",
     timeout_seconds=30.0,
+    route_timeout_seconds={"research": 180.0},
     max_attempts=1,
     backoff_base_seconds=0.0,
     backoff_max_seconds=0.0,
@@ -505,9 +506,10 @@ async def invoke[T](
                 error=exc,
             )
 
+        route_timeout = configured.route_timeout_seconds.get(route, configured.timeout_seconds)
         lite_config = LiteLLMConfig(
             base_url=configured.litellm_base_url,
-            timeout_s=configured.timeout_seconds,
+            timeout_s=route_timeout,
             api_key=configured.litellm_api_key,
         )
         # Auch der Client-AUFBAU gehoert in den Schatten. Wuerde er hier
@@ -520,9 +522,7 @@ async def invoke[T](
             client: httpx.AsyncClient | None = None
             aufbau_fehler: Exception | None = None
             try:
-                client = await stack.enter_async_context(
-                    client_factory(timeout=configured.timeout_seconds)
-                )
+                client = await stack.enter_async_context(client_factory(timeout=route_timeout))
             except Exception as exc:  # noqa: BLE001 - siehe oben
                 aufbau_fehler = exc
 

@@ -63,9 +63,16 @@ from app.ai.modes import (
     Mode,
     graduated_routes,
     has_execution_authority,
+    litellm_is_authoritative,
     parse_mode,
     resolve_mode,
     unknown_route_keys,
+)
+from app.ai.research import (
+    KIMI_RESEARCH_MAX_TOKENS,
+    ResearchAdvisoryResult,
+    ResearchUnavailableError,
+    research_advisory,
 )
 from app.ai.retry import (
     DEFAULT_MAX_ATTEMPTS,
@@ -126,6 +133,7 @@ __all__ = [
     "headroom_usd",
     "graduated_routes",
     "has_execution_authority",
+    "litellm_is_authoritative",
     "llm_call_scope",
     "record_attempt_trace",
     "parse_mode",
@@ -136,6 +144,10 @@ __all__ = [
     "RetryPolicy",
     "DEFAULT_MAX_ATTEMPTS",
     "MAX_ATTEMPTS_CEILING",
+    "KIMI_RESEARCH_MAX_TOKENS",
+    "ResearchAdvisoryResult",
+    "ResearchUnavailableError",
+    "research_advisory",
     "worst_case_backoff_s",
     "LiteLLMCallError",
     "LiteLLMRequest",

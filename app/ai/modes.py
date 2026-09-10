@@ -1,12 +1,14 @@
 """Modus je Route: wer ist autoritativ, und wer läuft nur mit.
 
-ADR 0017 legt drei Modi fest und eine Regel, die wichtiger ist als die Modi
+ADR 0017 legt die autoritativen Grenzen fest und eine Regel, die wichtiger ist als die Modi
 selbst: **``PRIMARY`` wird nie global aktiviert.** Graduation erfolgt pro Route
 und bleibt Operator-Entscheidung.
 
     OFF      der bestehende direkte KAI-Pfad ist autoritativ; LiteLLM ist nicht beteiligt
     SHADOW   der direkte Pfad bleibt autoritativ; LiteLLM läuft parallel MIT
              ``execution_authority = False``
+    ADVISORY LiteLLM liefert ausschliesslich Research-Text zurück, weiterhin
+             mit ``execution_authority = False``
     PRIMARY  LiteLLM ist autoritativer Transport für GENAU DIESE Route; der
              direkte Provider bleibt kontrollierter Fallback
 
@@ -27,12 +29,12 @@ from typing import Final, Literal, get_args
 
 from app.ai.routes import ROUTES, Route
 
-Mode = Literal["off", "shadow", "primary"]
+Mode = Literal["off", "shadow", "advisory", "primary"]
 
 MODES: Final[tuple[Mode, ...]] = get_args(Mode)
 
-#: Aufsteigende Wirkmächtigkeit. ``off`` < ``shadow`` < ``primary``.
-_RANK: Final[dict[Mode, int]] = {"off": 0, "shadow": 1, "primary": 2}
+#: Aufsteigende Wirkmächtigkeit. Advisory darf nur Research-Ausgabe tragen.
+_RANK: Final[dict[Mode, int]] = {"off": 0, "shadow": 1, "advisory": 2, "primary": 3}
 
 #: Ohne jede Konfiguration ist nichts an. Das ist die einzige Voreinstellung,
 #: bei der ein Konfigurationsfehler nicht zu einer Aktivierung führt.
@@ -75,7 +77,14 @@ def resolve_mode(
     """
     cap = parse_mode(ceiling)
     wanted = parse_mode((per_route or {}).get(route), default=DEFAULT_MODE)
-    return wanted if _RANK[wanted] <= _RANK[cap] else cap
+    resolved = wanted if _RANK[wanted] <= _RANK[cap] else cap
+    # Research darf nie PRIMARY werden. Umgekehrt darf ADVISORY keine
+    # Analysis-/Alert-/Execution-nahe Route autoritativ machen.
+    if route == "research" and resolved == "primary":
+        return "advisory"
+    if route != "research" and resolved == "advisory":
+        return "shadow"
+    return resolved
 
 
 def graduated_routes(
@@ -95,6 +104,11 @@ def has_execution_authority(mode: Mode) -> bool:
     die Zusicherung, die einen Shadow-Betrieb ueberhaupt risikofrei macht.
     """
     return mode == "primary"
+
+
+def litellm_is_authoritative(mode: Mode) -> bool:
+    """Darf LiteLLM den Rückgabewert tragen, unabhängig von Ausführungsmacht?"""
+    return mode in {"advisory", "primary"}
 
 
 def unknown_route_keys(per_route: Mapping[str, object] | None) -> tuple[str, ...]:
@@ -117,6 +131,7 @@ __all__ = [
     "graduated_routes",
     "has_execution_authority",
     "is_mode",
+    "litellm_is_authoritative",
     "parse_mode",
     "resolve_mode",
     "unknown_route_keys",

@@ -57,7 +57,7 @@ ErrorClass = Literal[
     "unknown",
 ]
 
-Purpose = Literal["analysis", "chat", "intent", "stt", "consensus"]
+Purpose = Literal["analysis", "chat", "intent", "stt", "consensus", "research"]
 Outcome = Literal["success", "fallthrough", "exhausted", "skipped"]
 
 #: WOFÜR das Geld ausgegeben wurde — die Auftraggeber-Sicht.
@@ -92,6 +92,7 @@ _PURPOSE_USE_CASE: dict[str, UseCase] = {
     "intent": "operator_manual",
     "stt": "operator_manual",
     "consensus": "trading_paper",
+    "research": "research",
 }
 
 # Classes for which a second attempt cannot possibly help. Everything else is
@@ -663,7 +664,7 @@ async def llm_call_scope(
         purpose: which surface the call serves (analysis/chat/intent/stt/consensus).
         provider: provider name, e.g. ``"openai"``.
         model: model name; ``None`` becomes ``""`` (never invented).
-        role: ``primary`` | ``shadow`` | ``validator``.
+        role: ``primary`` | ``shadow`` | ``advisory`` | ``validator``.
         correlation_id: request-scoped id; falls back to the ambient
             :func:`correlation_scope` and finally to a generated one, so a row
             is never anonymous.

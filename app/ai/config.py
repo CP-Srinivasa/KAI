@@ -34,6 +34,7 @@ class InferenceSettings(BaseSettings):
             "reasoning": "kai-reasoning",
             "critical": "kai-critical",
             "stt": "kai-stt",
+            "research": "kai-kimi-research",
         }
     )
     #: Logische Route -> Denkbudget in Token. LEER heisst: kein Parameter, also
@@ -106,6 +107,7 @@ class InferenceSettings(BaseSettings):
     litellm_base_url: str = Field(default="http://127.0.0.1:4000")
     litellm_api_key: str = Field(default="", repr=False)
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    route_timeout_seconds: dict[str, float] = Field(default_factory=lambda: {"research": 180.0})
     # Die Obergrenze wird nicht zweitgeschrieben: sie gehoert der Retry-Politik.
     max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1, le=MAX_ATTEMPTS_CEILING)
     backoff_base_seconds: float = Field(default=0.25, ge=0.0, le=10.0)
@@ -113,6 +115,13 @@ class InferenceSettings(BaseSettings):
     jitter_max_seconds: float = Field(default=0.1, ge=0.0, le=5.0)
 
     _strip_api_key = field_validator("litellm_api_key", mode="before")(_strip_secret)
+
+    @field_validator("route_timeout_seconds")
+    @classmethod
+    def _route_timeouts_are_bounded(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(seconds <= 0.0 or seconds > 300.0 for seconds in value.values()):
+            raise ValueError("route timeouts must be > 0 and <= 300 seconds")
+        return value
 
     @field_validator("route_reasoning_effort")
     @classmethod
