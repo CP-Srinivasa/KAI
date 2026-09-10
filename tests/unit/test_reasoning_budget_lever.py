@@ -26,8 +26,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.ai.config import InferenceSettings
-from app.ai.runtime import _mit_denkbudget
+import pytest
+from pydantic import ValidationError
+
+from app.ai.config import ERLAUBTE_DENKSTUFEN, InferenceSettings
+from app.ai.runtime import _mit_denkaufwand, _mit_denkbudget
 
 
 def _settings(**kwargs: Any) -> InferenceSettings:
@@ -117,3 +120,105 @@ def test_ohne_nutzlast_entsteht_eine() -> None:
     ergebnis = _mit_denkbudget(None, _settings(route_reasoning_budget={"bulk": 128}), "bulk")
 
     assert ergebnis == {"thinking": {"type": "enabled", "budget_tokens": 128}}
+
+
+# ---------------------------------------------------------------------------
+# Der zweite Dialekt — und der Grund, warum es ihn braucht.
+# ---------------------------------------------------------------------------
+#
+# Am 2026-09-09 wurde auf kai-pi5 die Route auf `gemini/gemini-3.6-flash`
+# umgestellt. Dabei kehrte sich die Messung von 2026-09-08 um. Ueber den
+# laufenden Proxy gemessen, derselbe Prompt:
+#
+#     ohne Parameter               876 Denk-Token, 8353 ms
+#     thinking.budget_tokens=0     867 Denk-Token, 6526 ms   <- wirkungslos
+#     reasoning_effort="low"       499 Denk-Token, 6366 ms
+#     reasoning_effort="minimal"     0 Denk-Token, 1301 ms
+#
+# Der Beleg fuer "wirkungslos" ist nicht der Token-Zaehler -- der schwankt --,
+# sondern der Statuscode: derselbe Wert `0` gibt DIREKT gegen Google HTTP 400
+# ("invalid argument"; `gemini-3.6-flash` kann Denken nicht abschalten), ueber
+# LiteLLM 1.99.0 aber HTTP 200 mit unveraendertem Denkaufwand. Ein Parameter,
+# der eine Ablehnung ausloesen MUESSTE und keine ausloest, ist nie angekommen.
+
+
+def test_ohne_stufe_bleibt_die_nutzlast_unberuehrt() -> None:
+    """Auch hier gilt: kein Eintrag, kein Eingriff."""
+    payload = {"messages": [{"role": "user", "content": "hi"}]}
+
+    ergebnis = _mit_denkaufwand(payload, _settings(), "bulk")
+
+    assert ergebnis is payload, "nicht einmal kopiert"
+
+
+def test_die_stufe_der_route_landet_in_der_nutzlast() -> None:
+    ergebnis = _mit_denkaufwand({}, _settings(route_reasoning_effort={"bulk": "minimal"}), "bulk")
+
+    assert ergebnis == {"reasoning_effort": "minimal"}
+
+
+def test_jede_route_traegt_ihre_eigene_stufe() -> None:
+    """Der Sinn des Reglers: teuer denken, wo es zaehlt — sonst nicht."""
+    einstellungen = _settings(route_reasoning_effort={"bulk": "minimal", "critical": "high"})
+
+    sparsam = _mit_denkaufwand({}, einstellungen, "bulk")
+    grosszuegig = _mit_denkaufwand({}, einstellungen, "critical")
+    unberuehrt = _mit_denkaufwand({}, einstellungen, "standard")
+
+    assert sparsam == {"reasoning_effort": "minimal"}
+    assert grosszuegig == {"reasoning_effort": "high"}
+    assert unberuehrt == {}
+
+
+def test_die_angabe_des_aufrufers_bleibt_stehen() -> None:
+    """Er weiss mehr ueber seinen Fall als eine Routen-Vorgabe."""
+    payload = {"reasoning_effort": "high"}
+
+    ergebnis = _mit_denkaufwand(
+        payload, _settings(route_reasoning_effort={"bulk": "minimal"}), "bulk"
+    )
+
+    assert ergebnis == {"reasoning_effort": "high"}
+
+
+def test_die_stufe_veraendert_die_nutzlast_des_aufrufers_nicht() -> None:
+    """Kopieren statt schreiben — der Aufrufer besitzt sein Objekt."""
+    payload: dict[str, Any] = {"messages": []}
+
+    _mit_denkaufwand(payload, _settings(route_reasoning_effort={"bulk": "low"}), "bulk")
+
+    assert payload == {"messages": []}
+
+
+def test_beide_regler_koennen_nebeneinander_stehen() -> None:
+    """Zwei Dialekte, keine zwei Meinungen.
+
+    Ein Transport, der `thinking` nativ traegt, liest das Budget; Gemini liest
+    die Stufe. Eine Umrechnung zwischen beiden waere geraten — `minimal` ist
+    kein bestimmter Token-Wert.
+    """
+    einstellungen = _settings(
+        route_reasoning_budget={"bulk": 0},
+        route_reasoning_effort={"bulk": "minimal"},
+    )
+
+    ergebnis = _mit_denkaufwand(_mit_denkbudget({}, einstellungen, "bulk"), einstellungen, "bulk")
+
+    assert ergebnis == {
+        "thinking": {"type": "enabled", "budget_tokens": 0},
+        "reasoning_effort": "minimal",
+    }
+
+
+def test_eine_unbekannte_stufe_wird_abgewiesen() -> None:
+    """Ein Tippfehler wuerde sonst still zu "kein Regler".
+
+    Genau die Klasse Fehler, gegen die dieses Feld entstanden ist: ein
+    Parameter, den niemand annimmt, und eine Rechnung, die trotzdem laeuft.
+    """
+    with pytest.raises(ValidationError):
+        _settings(route_reasoning_effort={"bulk": "minimum"})
+
+
+def test_die_erlaubten_stufen_sind_die_von_litellm() -> None:
+    assert ERLAUBTE_DENKSTUFEN == {"minimal", "low", "medium", "high"}

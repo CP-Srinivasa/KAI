@@ -22,12 +22,14 @@ def _settings(
     purpose_route: str = "standard",
     max_attempts: int = 3,
     reasoning_budget: dict[str, int] | None = None,
+    reasoning_effort: dict[str, str] | None = None,
 ) -> InferenceSettings:
     return InferenceSettings(
         enabled=True,
         mode_ceiling=mode,
         route_modes={purpose_route: mode},
         route_reasoning_budget=reasoning_budget or {},
+        route_reasoning_effort=reasoning_effort or {},
         max_attempts=max_attempts,
         backoff_base_seconds=0.0,
         backoff_max_seconds=0.0,
@@ -449,6 +451,86 @@ async def test_eine_abgeschnittene_antwort_ueberlebt_den_transport() -> None:
     assert trace.truncated is True
     assert trace.ok, "Transport erfolgreich — das Urteil faellt die Runtime"
     assert trace.detail["max_tokens"] == 1024
+
+
+async def test_die_denkstufe_erreicht_wirklich_die_anfrage() -> None:
+    """Derselbe Anspruch wie beim Budget: der KOERPER der Anfrage zaehlt.
+
+    Und hier zaehlt er doppelt. Das Budget stand seit 2026-09-08 verdrahtet im
+    Code und war auf `gemini/gemini-3.6-flash` trotzdem wirkungslos, weil
+    LiteLLM 1.99.0 die Anthropic-Schreibweise FUER DIESES MODELL nicht
+    uebersetzt -- fuer `gemini-2.5-flash` sehr wohl, dort wirkte das Budget.
+    Dieser Test belegt, dass die Stufe die Anfrage verlaesst -- dass sie beim
+    Anbieter ankommt, hat die Messung am 2026-09-09 auf kai-pi5 gezeigt
+    (0 statt 876 Denk-Token).
+    """
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.update(json.loads(request.content))
+        return _response(request)
+
+    await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=_chat_request(),
+        settings=_settings("primary", reasoning_effort={"standard": "minimal"}),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert gesehen["reasoning_effort"] == "minimal"
+
+
+async def test_ohne_stufe_steht_nichts_in_der_anfrage() -> None:
+    """Die Gegenprobe: sonst zeigt der Test nur, dass irgendetwas gesetzt wird."""
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.update(json.loads(request.content))
+        return _response(request)
+
+    await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=_chat_request(),
+        settings=_settings("primary"),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert "reasoning_effort" not in gesehen
+
+
+async def test_beide_regler_erreichen_die_anfrage_gemeinsam() -> None:
+    """Zwei Dialekte in einer Nutzlast — keiner verdraengt den anderen."""
+    gesehen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.update(json.loads(request.content))
+        return _response(request)
+
+    await invoke(
+        purpose="analysis",
+        direct_call=lambda: _value("direkt"),
+        direct_provider="openai",
+        direct_model="gpt-4o",
+        litellm=_chat_request(),
+        settings=_settings(
+            "primary",
+            reasoning_budget={"standard": 0},
+            reasoning_effort={"standard": "minimal"},
+        ),
+        client_factory=_factory(handler),
+        sleeper=_no_sleep,
+    )
+
+    assert gesehen["thinking"] == {"type": "enabled", "budget_tokens": 0}
+    assert gesehen["reasoning_effort"] == "minimal"
 
 
 async def _value(value: str) -> str:

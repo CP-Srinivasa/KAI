@@ -205,9 +205,18 @@ def _mit_denkbudget(
     und ohne Eintrag wird er nicht angefasst -- der Aufrufer bestimmt seine
     Nutzlast, diese Funktion ergaenzt nur, was die Route vorgibt.
 
-    `0` ist ein GUELTIGER Wert und der wirksamste: er schaltet das Denken ab.
-    Eine Pruefung auf Wahrheitswert statt auf `None` haette ausgerechnet die
-    Einstellung verschluckt, die den Faktor 9 bringt.
+    `0` ist ein GUELTIGER Wert. Eine Pruefung auf Wahrheitswert statt auf `None`
+    haette ausgerechnet die Einstellung verschluckt, die auf `gemini-2.5-flash`
+    den Faktor 9 brachte.
+
+    ACHTUNG, modellbezogen: `thinking` ist die Anthropic-Schreibweise, und
+    LiteLLM 1.99.0 uebersetzt sie fuer `gemini/gemini-3.6-flash` NICHT -- dort
+    bleibt dieser Regler wirkungslos (2026-09-09 auf kai-pi5: 867 statt 876
+    Denk-Token bei Budget 0). Fuer `gemini-2.5-flash` gilt das NICHT: am
+    2026-09-08 antwortete derselbe Proxy dort abgestuft (Budget 128 -> 104
+    Denk-Token). Der Regler ist also kein toter Code, sondern der wirksame Weg
+    fuer 2.5 und fuer Transporte, die `thinking` nativ tragen. Fuer 3.6 ist
+    `_mit_denkaufwand` zustaendig.
 
     Eine bereits gesetzte Angabe des Aufrufers bleibt stehen. Er weiss mehr
     ueber seinen Fall als eine Routen-Vorgabe, und ein stilles Ueberschreiben
@@ -220,6 +229,35 @@ def _mit_denkbudget(
         return payload
     ergaenzt = dict(payload or {})
     ergaenzt["thinking"] = {"type": "enabled", "budget_tokens": max(0, budget)}
+    return ergaenzt
+
+
+def _mit_denkaufwand(
+    payload: dict[str, Any] | None, configured: InferenceSettings, route: str
+) -> dict[str, Any] | None:
+    """Die Denkstufe der Route in die Nutzlast legen -- oder nichts tun.
+
+    Derselbe Regler wie :func:`_mit_denkbudget`, anderer Dialekt.
+    `reasoning_effort` ist die Form, die LiteLLM fuer Gemini uebersetzt; am
+    2026-09-09 auf kai-pi5 ueber den laufenden Proxy gemessen:
+
+        ohne Parameter             876 Denk-Token, 8353 ms
+        thinking.budget_tokens=0   867 Denk-Token, 6526 ms  <- wirkungslos
+        reasoning_effort="low"     499 Denk-Token, 6366 ms
+        reasoning_effort="minimal"   0 Denk-Token, 1301 ms
+
+    Ohne Eintrag wird nichts angefasst, und eine bereits gesetzte Angabe des
+    Aufrufers bleibt stehen: er weiss mehr ueber seinen Fall als eine
+    Routen-Vorgabe, und ein stilles Ueberschreiben waere eine zweite Autoritaet
+    ueber dieselbe Entscheidung.
+    """
+    stufe = configured.route_reasoning_effort.get(route)
+    if stufe is None:
+        return payload
+    if payload is not None and "reasoning_effort" in payload:
+        return payload
+    ergaenzt = dict(payload or {})
+    ergaenzt["reasoning_effort"] = stufe
     return ergaenzt
 
 
@@ -391,7 +429,11 @@ async def invoke[T](
                     monotonic=clock,
                     correlation_id=active_correlation,
                     endpoint=litellm.endpoint,
-                    payload=_mit_denkbudget(litellm.payload, configured, route),
+                    payload=_mit_denkaufwand(
+                        _mit_denkbudget(litellm.payload, configured, route),
+                        configured,
+                        route,
+                    ),
                     files=litellm.files,
                     data=litellm.data,
                 )
