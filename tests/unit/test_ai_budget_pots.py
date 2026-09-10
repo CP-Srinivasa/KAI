@@ -525,3 +525,76 @@ def _jetzt():
     from datetime import UTC, datetime
 
     return datetime(2026, 9, 10, 18, 0, tzinfo=UTC)
+
+
+# ── Prospektive Kostenpruefung ──────────────────────────────────────────────
+
+
+def test_ein_normalaufruf_ragt_nicht_in_die_reserve_hinein() -> None:
+    """Der Deckel muss VOR dem Aufruf greifen, nicht nach seiner Verbuchung.
+
+    Die Luecke, gegen die dieser Test steht: ``decide_pot`` verglich nur
+    ``booked_usd`` mit der Decke. Bei ``booked`` knapp darunter wurde der
+    naechste gewoehnliche Aufruf zugelassen und lief darueber hinaus — also in
+    die Kapazitaet, die fuer das eine wichtige Dokument des Tages freigehalten
+    werden soll.
+
+    Aufbau: Tageslimit 1,00 USD, Alert-Reserve 0,16 USD, Decke fuer ``normal``
+    damit 0,84 USD. Verbucht sind 0,838 USD bei 100 Aufrufen, der naechste
+    kostet voraussichtlich 0,00838 USD — zusammen 0,846 USD und damit ueber der
+    Decke.
+    """
+    reserven = ReservePolicy(alert_reserve_usd=0.16, alert_reserve_max_calls=20)
+    normal = BudgetState(booked_usd=0.838, known_calls=100, unknown_calls=0)
+
+    verdict = decide_pot(
+        route="standard",
+        pots={"normal": normal},
+        policy=BudgetPolicy(daily_limit_usd=1.00, monthly_limit_usd=25.0),
+        reserves=reserven,
+        alert_eligible=False,
+    )
+
+    assert verdict.allowed is False
+    assert verdict.reason == "normal_budget_exhausted"
+
+
+def test_ohne_bezifferte_historie_bleibt_die_pruefung_wie_vorher() -> None:
+    """Der Zusatz erfindet nichts: ohne Historie ist die Vorausschau 0,00 USD."""
+    reserven = ReservePolicy(alert_reserve_usd=0.16, alert_reserve_max_calls=20)
+    normal = BudgetState(booked_usd=0.838, known_calls=0, unknown_calls=0)
+
+    verdict = decide_pot(
+        route="standard",
+        pots={"normal": normal},
+        policy=BudgetPolicy(daily_limit_usd=1.00, monthly_limit_usd=25.0),
+        reserves=reserven,
+        alert_eligible=False,
+    )
+
+    assert verdict.allowed is True
+    assert verdict.pot == "normal"
+
+
+def test_auch_die_reserve_wird_prospektiv_gedeckelt() -> None:
+    """Dieselbe Luecke gaebe es sonst eine Ebene tiefer."""
+    from app.ai.budget import voraussichtliche_kosten
+
+    reserve = BudgetState(booked_usd=0.155, known_calls=18, unknown_calls=0)
+    assert voraussichtliche_kosten(reserve) == pytest.approx(0.155 / 18)
+
+    verdict = decide_pot(
+        route="standard",
+        pots={
+            "normal": BudgetState(booked_usd=0.84, known_calls=100, unknown_calls=0),
+            "alert_reserve": reserve,
+        },
+        policy=BudgetPolicy(daily_limit_usd=1.00, monthly_limit_usd=25.0),
+        reserves=ReservePolicy(alert_reserve_usd=0.16, alert_reserve_max_calls=20),
+        alert_eligible=True,
+    )
+
+    # 0,155 + 0,0086 liegt ueber 0,16 — der Aufruf wuerde die Reserve sprengen.
+    assert verdict.pot == "alert_reserve"
+    assert verdict.allowed is False
+    assert verdict.reason == "alert_reserve_exhausted"

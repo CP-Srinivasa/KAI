@@ -152,12 +152,19 @@ def test_eine_kaputte_vorabbewertung_laesst_durch_statt_zu_sperren(
 
 
 def test_die_voreinstellung_ist_der_gemessene_boden() -> None:
-    """4 ist gemessen, nicht gesetzt — und das Literal hält die Messung fest.
+    """3 ist gemessen, nicht gesetzt — und das Literal hält die Messung fest.
 
-    Über fünf Tage (2026-09-06 bis -10, 2.344 Dokumente, davon 514 mit echter
-    LLM-Bewertung und darunter 217 mit Priorität >= 7) lag die niedrigste
-    Vorabpriorität eines tatsächlich alert-fähigen Dokuments bei **4**. Die
-    ursprüngliche Setzung 5 hätte 21 dieser 217 Alerts verloren.
+    Die erste Messung lief über fünf Tage (2026-09-06 bis -10, 217 Alerts) und
+    fand als niedrigste Vorabpriorität eines alert-fähigen Dokuments die 4. Über
+    ein breiteres Fenster — 4.000 alert-fähige Dokumente statt 217 — liegen
+    **61 davon bei Vorabpriorität <= 3**, darunter Endpriorität 9 und 10:
+    der Cronos/Tectonic-Angriff über ~75 Mio USD (30.08., vorab 3, final 10),
+    der Injective-Ausfall über ~4,88 Mio USD (01.09., vorab 3, final 10) und
+    der Markteinbruch nach den US-Angriffen auf Iran (01.09., vorab 3, final 9).
+
+    Recall bei k=4: 98,8 % im neuesten, 93,3 % im ältesten 4.000er-Fenster;
+    k=3 hält in beiden 100 %. Dass das Fünf-Tage-Fenster keinen solchen Fall
+    enthielt, macht ihn nicht seltener — es macht das Fenster zu schmal.
 
     Der Test pinnt die Zahl bewusst wörtlich. Wer sie anhebt, verschiebt keine
     Voreinstellung, sondern schliesst gemessene Alerts aus — das soll hier
@@ -165,7 +172,23 @@ def test_die_voreinstellung_ist_der_gemessene_boden() -> None:
     """
     reset_ai_cost_settings()
 
-    assert get_ai_cost_settings().budget_alert_min_rule_priority == 4
+    assert get_ai_cost_settings().budget_alert_min_rule_priority == 3
+
+
+def test_vier_haette_gemessene_alerts_ausgeschlossen() -> None:
+    """Die Gegenprobe zur verworfenen Voreinstellung 4.
+
+    Kein Datenzugriff, sondern die Konsequenz als Zusicherung: bei k=4 fallen
+    genau die Dokumente heraus, deren Regelpfad auf 3 kommt — und von denen
+    waren im breiten Fenster 61 tatsächlich alert-fähig. Steigt die
+    Voreinstellung je über 3, muss dieser Test mitwandern und die dann gültige
+    Messung nennen.
+    """
+    reset_ai_cost_settings()
+    schwelle = get_ai_cost_settings().budget_alert_min_rule_priority
+
+    # Ein Dokument mit Vorabpriorität 3 muss die Reserve erreichen dürfen.
+    assert schwelle <= 3
 
 
 def test_die_schwelle_trennt_nicht_und_das_steht_auch_so_da() -> None:

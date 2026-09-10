@@ -146,12 +146,31 @@ class AICostSettings(BaseSettings):
     #: offensichtlich belanglosen Dokumente von der Reserve fern, falls das
     #: Gate davor je lockerer wird, und sonst tut sie nichts.
     #:
-    #: 4 ist der höchste Wert, der nach dieser Messung nichts kostet. Der
-    #: Abstand zum gemessenen Boden ist damit NULL; wer ihn nicht will, setzt 3
-    #: — auf den heutigen Daten sind 3 und 4 für alles, was den bezahlten Pfad
-    #: erreicht, dasselbe. Nachzumessen, sobald sich Keyword-Liste oder
-    #: Watchlist wesentlich ändern: die Vorabpriorität hängt an beiden.
-    budget_alert_min_rule_priority: int = Field(default=4, ge=1, le=10)
+    #: **Korrektur 2026-09-10, breiteres Fenster.** Die Aussage "der gemessene
+    #: Boden ist 4" gilt nur fuer die fuenf Tage 06.-10.09. Ueber 4.000
+    #: alert-faehige Dokumente hinweg (statt 217) liegen **61 mit
+    #: Vorabprioritaet <= 3** — darunter Endprioritaet 9 und 10:
+    #:
+    #:   2026-08-30  vorab 3 -> final 10  Cronos/Tectonic, ~75 Mio USD
+    #:   2026-09-01  vorab 3 -> final 10  Injective, ~4,88 Mio USD
+    #:   2026-09-01  vorab 3 -> final  9  Markets Buckle After US Strikes Iran
+    #:
+    #: Recall bei k=4: 98,8 % im neuesten, 93,3 % im aeltesten 4.000er-Fenster.
+    #: k=3 haelt in beiden 100 %. Das aeltere Fenster ist nicht Nebensache —
+    #: genau dort liegen die Gegenbeispiele, und ein Ausfall dieser Groesse
+    #: darf nicht davon abhaengen, in welche Woche er faellt.
+    #:
+    #: Die Wahl ist asymmetrisch, nicht knapp: die Reserve ist ohnehin in USD
+    #: UND in Aufrufzahl gedeckelt. Eine zu weite Vorauswahl kostet gedeckeltes
+    #: Geld, eine zu enge kostet einen Alert — und der ist nicht nachholbar.
+    #: Zusammen mit (2) — die Schwelle trennt ohnehin nicht — gibt es keinen
+    #: Grund, ueber den Boden zu gehen.
+    #:
+    #: 4 bleibt Optimierungskandidat, nicht Voreinstellung: erst wenn eine
+    #: Messung ueber ein vergleichbar breites Fenster zeigt, dass 4 nichts
+    #: kostet. Nachzumessen ausserdem, sobald sich Keyword-Liste oder Watchlist
+    #: wesentlich aendern — die Vorabprioritaet haengt an beiden.
+    budget_alert_min_rule_priority: int = Field(default=3, ge=1, le=10)
 
     #: Auftraggeber → Tageslimit in USD, aus ``APP_AI_BUDGET_USECASE_<NAME>_USD``.
     #: Einmal beim Bau gelesen, nicht pro Aufruf: ``os.environ`` je LLM-Aufruf
@@ -232,7 +251,7 @@ def get_ai_cost_settings() -> AICostSettings:
             budget_alert_reserve_max_calls=None,
             budget_validation_reserve_usd=None,
             budget_validation_reserve_max_calls=None,
-            budget_alert_min_rule_priority=4,
+            budget_alert_min_rule_priority=3,
             shadow_enabled=False,
             budget_usecase_usd={},
         )

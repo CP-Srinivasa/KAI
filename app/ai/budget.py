@@ -438,15 +438,45 @@ def _at_or_over(state: BudgetState, limit: float | None) -> bool:
     return limit is not None and state.booked_usd >= limit
 
 
-def _reserve_erschoepft(state: BudgetState, limit_usd: float | None, max_calls: int | None) -> bool:
+def voraussichtliche_kosten(state: BudgetState) -> float:
+    """Was der naechste Aufruf dieses Topfes voraussichtlich kostet.
+
+    Kein neuer Regler und keine Preistabelle: der Mittelwert der bereits
+    bezifferten Aufrufe DESSELBEN Topfes. Ohne Historie 0.0 — dann verhaelt
+    sich jede Pruefung darunter exakt wie vorher.
+
+    Gebraucht wird die Zahl, weil ein Deckel, der nur gegen BEREITS verbuchte
+    Kosten prueft, immer um einen Aufruf zu spaet greift: bei ``booked`` knapp
+    unter der Decke wird der naechste Aufruf zugelassen und laeuft darueber
+    hinaus. Bei einem Tagesbudget von 1,00 USD und einer Alert-Reserve von
+    0,16 USD heisst das, dass ein gewoehnlicher Aufruf in die Reserve
+    hineinragt — also genau in die Kapazitaet, die fuer das eine wichtige
+    Dokument des Tages freigehalten werden soll.
+    """
+    if state.known_calls <= 0:
+        return 0.0
+    return state.booked_usd / state.known_calls
+
+
+def _reserve_erschoepft(
+    state: BudgetState,
+    limit_usd: float | None,
+    max_calls: int | None,
+    *,
+    voraussichtlich: float = 0.0,
+) -> bool:
     """Ist eine Reserve aufgebraucht? Beide Grenzen zählen, die erste gewinnt.
 
     ``total_calls`` und nicht ``known_calls``: ein Aufruf, dessen Kosten
     unbekannt sind, hat die Reserve trotzdem benutzt. Ihn nicht mitzuzählen
     hiesse, die Aufrufgrenze genau in dem Zustand wirkungslos zu machen, für
     den sie gebaut ist.
+
+    ``voraussichtlich`` macht die USD-Grenze prospektiv. Die Aufrufgrenze war
+    es bereits: ``total_calls >= max_calls`` ist gleichbedeutend mit "dieser
+    Aufruf waere einer zu viel".
     """
-    if limit_usd is not None and state.booked_usd >= limit_usd:
+    if limit_usd is not None and state.booked_usd + voraussichtlich >= limit_usd:
         return True
     return max_calls is not None and state.total_calls >= max_calls
 
@@ -507,7 +537,10 @@ def decide_pot(
     if validation:
         zustand = pots.get("validation", _LEER)
         if _reserve_erschoepft(
-            zustand, reserves.validation_reserve_usd, reserves.validation_reserve_max_calls
+            zustand,
+            reserves.validation_reserve_usd,
+            reserves.validation_reserve_max_calls,
+            voraussichtlich=voraussichtliche_kosten(zustand),
         ):
             return PotVerdict(
                 pot="validation", allowed=False, reason="validation_reserve_exhausted"
@@ -516,7 +549,11 @@ def decide_pot(
 
     normal = pots.get("normal", _LEER)
     decke = reserves.normal_ceiling_usd(policy.daily_limit_usd)
-    normal_erschoepft = cost_unknown or (decke is not None and normal.booked_usd >= decke)
+    # Prospektiv, nicht rueckblickend: sonst greift die Decke einen Aufruf zu
+    # spaet und der Normalbetrieb ragt in die Reserve hinein.
+    normal_erschoepft = cost_unknown or (
+        decke is not None and normal.booked_usd + voraussichtliche_kosten(normal) >= decke
+    )
 
     if not normal_erschoepft:
         return PotVerdict(pot="normal", allowed=True)
@@ -529,7 +566,12 @@ def decide_pot(
         )
 
     reserve = pots.get("alert_reserve", _LEER)
-    if _reserve_erschoepft(reserve, reserves.alert_reserve_usd, reserves.alert_reserve_max_calls):
+    if _reserve_erschoepft(
+        reserve,
+        reserves.alert_reserve_usd,
+        reserves.alert_reserve_max_calls,
+        voraussichtlich=voraussichtliche_kosten(reserve),
+    ):
         return PotVerdict(pot="alert_reserve", allowed=False, reason="alert_reserve_exhausted")
     return PotVerdict(pot="alert_reserve", allowed=True)
 
@@ -550,6 +592,7 @@ __all__ = [
     "PotVerdict",
     "ReservePolicy",
     "accumulate",
+    "voraussichtliche_kosten",
     "decide",
     "decide_pot",
     "evaluate_status",
