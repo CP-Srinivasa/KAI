@@ -113,19 +113,45 @@ class AICostSettings(BaseSettings):
     #: Ab welcher REGELBASIERTEN Vorabpriorität ein Dokument die Alert-Reserve
     #: anzapfen darf.
     #:
-    #: Die Vorabpriorität ist kein Ersatz für die Analyse, sondern ein
-    #: Ausschlusskriterium: sie entsteht aus Treffern, die die Pipeline ohnehin
-    #: schon berechnet hat (``keyword_hits``, ``entity_mentions``), kostet also
-    #: nichts. Sie sagt NICHT voraus, dass ein Dokument einen Alert erzeugt —
-    #: sie sagt, dass es nicht von vornherein ausgeschlossen ist.
+    #: Die Vorabpriorität entsteht aus Treffern, die die Pipeline ohnehin schon
+    #: berechnet hat (``keyword_hits``, ``entity_mentions``), kostet also nichts.
+    #: Sie sagt NICHT voraus, dass ein Dokument einen Alert erzeugt — sie sagt,
+    #: dass es nicht von vornherein ausgeschlossen ist.
     #:
-    #: Die Voreinstellung 5 ist eine Setzung und keine Messung: der Regelpfad
-    #: erreicht über 44.018 Dokumente maximal 6,0, die Alert-Schwelle liegt bei
-    #: 7. Welcher Wert die alert-erzeugenden Dokumente tatsächlich vollständig
-    #: einschliesst, ist an den vorhandenen Daten nachzumessen, BEVOR diese
-    #: Policy scharf geschaltet wird. Bis dahin ist 5 bewusst niedrig gewählt:
-    #: eine zu weite Reserve kostet Geld, eine zu enge kostet Alerts.
-    budget_alert_min_rule_priority: int = Field(default=5, ge=1, le=10)
+    #: **Gemessen am 2026-09-10** über fünf Tage (2026-09-06 bis -10, 2.344
+    #: Dokumente, davon 514 mit echter LLM-Bewertung und darunter 217 mit
+    #: Priorität >= 7). Für jedes alert-fähige Dokument wurde nachgerechnet,
+    #: welche Vorabpriorität der Regelpfad ihm gegeben hätte:
+    #:
+    #:   k   Deckung der Alerts   Anteil alert-fähiger ab k (LLM-bewertet)
+    #:   3      217/217  100 %       217/514  42,2 %
+    #:   4      217/217  100 %       217/514  42,2 %
+    #:   5      196/217   90,3 %     196/459  42,7 %
+    #:   6      138/217   63,6 %     138/318  43,4 %
+    #:
+    #: Zwei Dinge stehen darin, und das zweite war eine Überraschung:
+    #:
+    #: 1. Die ursprüngliche Setzung 5 hätte **21 von 217 Alerts verloren**.
+    #:    Die niedrigste Vorabpriorität eines tatsächlich alert-fähigen
+    #:    Dokuments ist 4.
+    #: 2. Die Vorabpriorität **trennt nicht**. Der Anteil alert-fähiger
+    #:    Dokumente bleibt über den ganzen Bereich bei rund 42 % — von k=3 bis
+    #:    k=6 steigt er um 1,2 Punkte, während die Deckung um 36 Punkte fällt.
+    #:    Eine höhere Schwelle konzentriert die Reserve also nicht, sie
+    #:    verkleinert nur die gedeckte Menge.
+    #:
+    #: Der Grund für (2): wer überhaupt bis zum bezahlten Aufruf kommt, ist vom
+    #: Relevanz-Gate bereits gefiltert (514 von 2.344 Dokumenten). Diese Schwelle
+    #: ist deshalb ein RÜCKFALLNETZ und kein Zielmechanismus — sie hält die
+    #: offensichtlich belanglosen Dokumente von der Reserve fern, falls das
+    #: Gate davor je lockerer wird, und sonst tut sie nichts.
+    #:
+    #: 4 ist der höchste Wert, der nach dieser Messung nichts kostet. Der
+    #: Abstand zum gemessenen Boden ist damit NULL; wer ihn nicht will, setzt 3
+    #: — auf den heutigen Daten sind 3 und 4 für alles, was den bezahlten Pfad
+    #: erreicht, dasselbe. Nachzumessen, sobald sich Keyword-Liste oder
+    #: Watchlist wesentlich ändern: die Vorabpriorität hängt an beiden.
+    budget_alert_min_rule_priority: int = Field(default=4, ge=1, le=10)
 
     #: Auftraggeber → Tageslimit in USD, aus ``APP_AI_BUDGET_USECASE_<NAME>_USD``.
     #: Einmal beim Bau gelesen, nicht pro Aufruf: ``os.environ`` je LLM-Aufruf
@@ -206,7 +232,7 @@ def get_ai_cost_settings() -> AICostSettings:
             budget_alert_reserve_max_calls=None,
             budget_validation_reserve_usd=None,
             budget_validation_reserve_max_calls=None,
-            budget_alert_min_rule_priority=5,
+            budget_alert_min_rule_priority=4,
             shadow_enabled=False,
             budget_usecase_usd={},
         )

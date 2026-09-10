@@ -15,6 +15,7 @@ prüfen die zwei Fälle hier.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,9 +23,11 @@ import pytest
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline
-from app.core.ai_cost_settings import reset_ai_cost_settings
+from app.core.ai_cost_settings import get_ai_cost_settings, reset_ai_cost_settings
 from app.core.domain.document import CanonicalDocument
 from app.normalization.entities import hits_to_entity_mentions
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 def _engine() -> KeywordEngine:
@@ -146,3 +149,39 @@ def test_eine_kaputte_vorabbewertung_laesst_durch_statt_zu_sperren(
     )
 
     assert _faehig(pipeline, doc) is True
+
+
+def test_die_voreinstellung_ist_der_gemessene_boden() -> None:
+    """4 ist gemessen, nicht gesetzt — und das Literal hält die Messung fest.
+
+    Über fünf Tage (2026-09-06 bis -10, 2.344 Dokumente, davon 514 mit echter
+    LLM-Bewertung und darunter 217 mit Priorität >= 7) lag die niedrigste
+    Vorabpriorität eines tatsächlich alert-fähigen Dokuments bei **4**. Die
+    ursprüngliche Setzung 5 hätte 21 dieser 217 Alerts verloren.
+
+    Der Test pinnt die Zahl bewusst wörtlich. Wer sie anhebt, verschiebt keine
+    Voreinstellung, sondern schliesst gemessene Alerts aus — das soll hier
+    ankommen und nicht in einem Diff untergehen.
+    """
+    reset_ai_cost_settings()
+
+    assert get_ai_cost_settings().budget_alert_min_rule_priority == 4
+
+
+def test_die_schwelle_trennt_nicht_und_das_steht_auch_so_da() -> None:
+    """Der zweite, unbequemere Teil derselben Messung.
+
+    Der Anteil alert-fähiger Dokumente bleibt über den ganzen Schwellenbereich
+    bei rund 42 % (k=3: 42,2 %, k=6: 43,4 %), während die Deckung von 100 % auf
+    63,6 % fällt. Die Vorabpriorität konzentriert die Reserve also nicht — sie
+    ist ein Rückfallnetz gegen offensichtlich Belangloses, kein Zielmechanismus.
+
+    Das gehört in den Code und nicht nur in einen Bericht: eine spätere Lesart,
+    die aus dieser Schwelle einen Treffer-Optimierer macht, wäre durch die
+    Daten widerlegt, und niemand hätte die Daten zur Hand.
+    """
+    quelle = (REPO / "app" / "core" / "ai_cost_settings.py").read_text(encoding="utf-8")
+
+    assert "RÜCKFALLNETZ" in quelle, "die Einordnung darf nicht verlorengehen"
+    assert "trennt nicht" in quelle
+    assert "217" in quelle, "die Messgrundlage steht im Code"
