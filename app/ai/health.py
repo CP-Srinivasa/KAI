@@ -351,20 +351,33 @@ def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -
     Operator zum falschen Anbieter — genau das ist am 2026-09-09 passiert.
     """
     status = cost.get("status")
+    # EIN Wert, zwei Verwendungen — und genau das ist der Punkt.
+    #
+    # ODER, nicht nur das eine: mit Reserven steht die Routine an der Decke des
+    # NORMALEN Topfes, ohne sie am Tageslimit. Der Operator fragt hier nach der
+    # Wirkung, nicht nach der Bauart.
+    #
+    # Vorher stand dieser Ausdruck zweimal da, in zwei verschiedenen Fassungen:
+    # `routine_calls_blocked` bekam das ODER (#954), `_alert_capability_block`
+    # behielt das schmale `blocks_routine` (#953). Beide Zeilen mergten sauber —
+    # Git zeigt so etwas nicht an —, und das Ergebnis meldete im Bereich
+    # zwischen der Decke des normalen Topfes und dem Tageslimit gleichzeitig
+    # "Routine gesperrt" und "Alert-Faehigkeit ok". Also genau die lautlose
+    # Gruen-Meldung, gegen die BEIDE PRs geschrieben waren, erzeugt durch ihre
+    # Kombination. Ein gemeinsamer Name kann nicht auseinanderlaufen.
+    routine_gesperrt = bool(cost.get("blocks_routine", False)) or bool(
+        cost.get("normal_pot_exhausted", False)
+    )
     return {
         "budget_state": str(status).lower() if isinstance(status, str) else "unknown",
         "budget_status_reason": str(cost.get("reason") or ""),
-        # ODER, nicht nur das eine: mit Reserven steht die Routine an der Decke
-        # des normalen Topfes, ohne sie am Tageslimit. Der Operator fragt hier
-        # nach der Wirkung, nicht nach der Bauart.
-        "routine_calls_blocked": bool(cost.get("blocks_routine", False))
-        or bool(cost.get("normal_pot_exhausted", False)),
+        "routine_calls_blocked": routine_gesperrt,
         # Wie viele Aufrufe die Abweisung im Fenster tatsaechlich getroffen hat.
         # Ohne diese Zahl bliebe "limit_reached" eine Ansage ohne Wirkung.
         "local_refusals_in_window": sum(
             int(block.get("local_refusals", 0)) for block in provider_blocks
         ),
-        **_alert_capability_block(bool(cost.get("blocks_routine", False))),
+        **_alert_capability_block(routine_gesperrt),
     }
 
 
