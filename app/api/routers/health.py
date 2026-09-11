@@ -149,6 +149,23 @@ class AIBudgetBlock(BaseModel):
     rule_path_priority_ceiling: int | None = None
 
 
+class AIPotState(BaseModel):
+    """Verbrauch EINES Budgettopfs, so wie ``app.ai.health._topf_block`` ihn baut.
+
+    ``remaining_usd`` ist ``None``, sobald der Topf unbepreiste Aufrufe enthält —
+    der wahre Verbrauch liegt dann über ``booked_usd``, und eine Restgrösse wäre
+    eine Genauigkeit, die es nicht gibt. ``limit_usd`` ist ``None``, wo es keine
+    eigene Decke gibt: bei ``exempt`` immer, bei den Reserven ohne gesetzte
+    Politik.
+    """
+
+    booked_usd: float
+    calls: int
+    unknown_cost_calls: int
+    limit_usd: float | None = None
+    remaining_usd: float | None = None
+
+
 class AICostBlock(BaseModel):
     """Kostenlage des AI-Pfads — Schätzung aus Listenpreisen, keine Abrechnung.
 
@@ -177,6 +194,17 @@ class AICostBlock(BaseModel):
     top_provider: str | None = None
     top_use_case: str | None = None
     fully_accounted_today: bool | None = None
+    #: Budget-Policy v2 (#954). Der Snapshot baut beide Felder UNBEDINGT
+    #: (``app.ai.health`` ``_topf_block`` / ``_normaler_topf_erschoepft``) — sie
+    #: fehlten hier, und ``response_model`` hat sie damit still verworfen. Der
+    #: Kommentar über dem Feld im Snapshot sagt, warum das teuer ist: "eine
+    #: Reserve, deren Stand nur im Code existiert, wäre für den Operator
+    #: dasselbe wie keine".
+    pots: dict[str, AIPotState] | None = None
+    #: Mit gesetzten Reserven endet gewöhnliche Arbeit an der Decke des NORMALEN
+    #: Topfes, nicht am Tageslimit — ``blocks_routine`` allein meldet dann noch
+    #: "nicht gesperrt", während die Routine bereits steht.
+    normal_pot_exhausted: bool = False
     price_table_version: str
     note: str
 

@@ -725,3 +725,92 @@ def test_budget_block_names_the_reached_limit_in_the_agreed_words(
     openai = _providers(snap)["openai"]
     assert openai["state"] == "ok"
     assert openai["failures"] == 0
+
+
+def test_endpoint_carries_pots_and_normal_pot_exhausted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Die Toepfe aus Budget-Policy v2 muessen die Leitung ueberleben, nicht nur
+    den Bauplan.
+
+    Der Befund, gegen den dieser Test geschrieben ist (2026-09-10, am Geraet):
+    `app/ai/health.py` baut `pots` und `normal_pot_exhausted` UNBEDINGT, und
+    `GET /health/ai` lieferte trotzdem keines von beiden. `AICostBlock` hatte
+    sie nicht deklariert, und `response_model` wirft undeklarierte Schluessel
+    still weg. Der Test auf den Builder war gruen, die Zusicherung kam beim
+    Operator nie an.
+
+    Genau dieselbe Falle hat diese Datei fuer den `budget`-Block schon einmal
+    dokumentiert (siehe `test_endpoint_carries_budget_block_and_local_refusals`).
+    Sie ist beim naechsten Feld wiedergekommen — deshalb prueft der zweite Test
+    unten nicht mehr einzelne Namen, sondern die Deckung.
+    """
+    sink = tmp_path / "llm_telemetry.jsonl"
+    _write(sink, [_row("openai", True, minutes_ago=5, correlation_id="p1")])
+    monkeypatch.setattr("app.observability.llm_telemetry.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.health.DEFAULT_TELEMETRY_PATH", sink)
+
+    from app.core.settings import get_settings
+
+    app = FastAPI()
+    app.include_router(health_router)
+    app.dependency_overrides[get_settings] = _settings
+    antwort = TestClient(app).get("/health/ai")
+
+    assert antwort.status_code == 200
+    kosten = antwort.json()["cost"]
+
+    # 1. Beide Felder kommen ueberhaupt an.
+    assert "pots" in kosten, "pots von response_model verworfen"
+    assert "normal_pot_exhausted" in kosten, "normal_pot_exhausted von response_model verworfen"
+
+    # 2. Die Toepfe sind vollstaendig und tragen ihre Struktur, nicht nur ihren
+    #    Namen — ein leeres Objekt waere derselbe Informationsverlust.
+    assert set(kosten["pots"]) == {"normal", "alert_reserve", "validation", "exempt"}
+    for name, topf in kosten["pots"].items():
+        assert set(topf) == {
+            "booked_usd",
+            "calls",
+            "unknown_cost_calls",
+            "limit_usd",
+            "remaining_usd",
+        }, f"Topf {name} unvollstaendig serialisiert"
+        assert isinstance(topf["booked_usd"], float)
+        assert isinstance(topf["calls"], int)
+
+    assert isinstance(kosten["normal_pot_exhausted"], bool)
+
+
+def test_der_kostenblock_verliert_auf_der_leitung_kein_feld(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deckungstest statt Namensliste — damit das naechste Feld nicht wieder faellt.
+
+    Zweimal ist derselbe Fehler passiert: ein Schluessel wurde im Snapshot
+    ergaenzt, im Antwortmodell vergessen und von FastAPI lautlos entfernt. Ein
+    Test, der einzelne Namen aufzaehlt, findet den dritten Fall nicht. Dieser
+    vergleicht, was der Bauplan liefert, mit dem, was die Leitung durchlaesst.
+
+    Bewusst als Teilmenge in EINE Richtung: das Modell darf mehr deklarieren als
+    der Snapshot gerade fuellt (optionale Felder), aber der Snapshot darf nichts
+    liefern, was unterwegs verschwindet.
+    """
+    sink = tmp_path / "llm_telemetry.jsonl"
+    _write(sink, [_row("openai", True, minutes_ago=5, correlation_id="p2")])
+    monkeypatch.setattr("app.observability.llm_telemetry.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.health.DEFAULT_TELEMETRY_PATH", sink)
+
+    from app.core.settings import get_settings
+
+    schnappschuss = ai_health_snapshot(path=sink, settings=_settings())["ai"]["cost"]
+
+    app = FastAPI()
+    app.include_router(health_router)
+    app.dependency_overrides[get_settings] = _settings
+    geliefert = TestClient(app).get("/health/ai").json()["cost"]
+
+    verloren = set(schnappschuss) - set(geliefert)
+    assert not verloren, (
+        f"AICostBlock deklariert diese Schluessel nicht, response_model wirft sie weg: "
+        f"{sorted(verloren)}"
+    )
