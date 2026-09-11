@@ -181,13 +181,30 @@ class AICostSettings(BaseSettings):
     #: Populationen und Aggregationen), die auf jeder Stelle uebereinstimmen.
     #: Gerechnet wurde mit `monitor/` aus dem aktiven Release -- die Angabe
     #: gehoert dazu und ist keine Formalie: die Vorabprioritaet haengt an
-    #: `keywords.txt`, `watchlists.yml` und `entity_aliases.yml`, und dieselben
-    #: Dokumente ergeben mit einer anderen Keyword-Basis andere Werte. Eine
-    #: fruehere Fassung dieses Blocks nannte 61 Dokumente <= 3 und drei
-    #: namentliche Belege; beide Auswertungen widerlegen das (die drei Belege
-    #: liegen bei 4, mit je genau einem Keyword-Treffer, also exakt an der
-    #: Kante, an der ein fehlender Treffer die Relevanz von 0,29 auf den Boden
-    #: 0,08 druecken wuerde).
+    #: `keywords.txt`, `watchlists.yml` und `entity_aliases.yml`.
+    #:
+    #: **METHODENREGEL, an der eine fruehere Fassung gescheitert ist.** Sie
+    #: nannte 61 Dokumente mit Vorabprioritaet <= 3 und drei namentliche
+    #: Belege. Der Verdacht lag zunaechst auf einer abweichenden Keyword-Basis;
+    #: am Geraet nachgeprueft ist das WIDERLEGT -- die Treffer sind da
+    #: (`hits=1`, `relevance=0,29` in allen benannten Faellen, gerechnet mit dem
+    #: `monitor/` des aktiven Release).
+    #:
+    #: Die Ursache ist die ZEITREFERENZ. `_fallback_novelty` misst das Alter
+    #: gegen `now()`: ein Dokument juenger als 24 h bekommt 0,60, aelter als
+    #: sieben Tage nur 0,25. Wer historische Dokumente HEUTE nachbewertet,
+    #: erhaelt deshalb systematisch zu niedrige Werte -- der Versatz ist
+    #: konstant `(0,60 - 0,25) * _W_NOVELTY = 0,07` im `raw`, und genau daran
+    #: kippten die drei Belege von 4 auf 3:
+    #:
+    #:   4307d0d2   heute nachgerechnet 0,274 -> 3   als frisch 0,344 -> 4
+    #:   56e2a5bc   heute nachgerechnet 0,265 -> 3   als frisch 0,335 -> 4
+    #:   b907ef8e   heute nachgerechnet 0,244 -> 3   als frisch 0,314 -> 4
+    #:
+    #: `_vorab_alert_faehig` laeuft beim INGEST, wenn das Dokument frisch ist.
+    #: Jede Rekalibrierung muss die Neuigkeit deshalb zur urspruenglichen
+    #: Bewertungszeit rekonstruieren. Wer gegen `now()` rechnet, misst nicht die
+    #: Schwelle, sondern das Alter der Stichprobe.
     #:
     #: 4 bleibt Optimierungskandidat, nicht Voreinstellung: erst wenn eine
     #: Messung ueber ein vergleichbar breites Fenster zeigt, dass 4 nichts
