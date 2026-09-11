@@ -211,6 +211,11 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         # COST_UNKNOWN aus (app/ai/spend.py::is_unmetered_legacy_row).
         "unmetered_legacy_calls_today": heute.unmetered_legacy_calls,
         "unmetered_legacy_calls_month": monat.unmetered_legacy_calls,
+        # Fehlversuche ohne gemeldeten Verbrauch (D-271). Eigenes Feld, weil
+        # sie weder bepreist noch unbelegt sind: es gab nichts zu messen. Sie
+        # loesen kein COST_UNKNOWN aus -- und verschwinden trotzdem nicht.
+        "failed_uncosted_calls_today": heute.failed_uncosted_calls,
+        "failed_uncosted_calls_month": monat.failed_uncosted_calls,
         "calls_today": heute.calls,
         "calls_month": monat.calls,
         "daily_limit_usd": status.policy.daily_limit_usd,
@@ -424,7 +429,10 @@ def ai_health_snapshot(
     by_provider: dict[str, list[dict[str, Any]]] = {name: [] for name in credentials}
     for row in rows:
         provider = row.get("provider")
-        if not isinstance(provider, str):
+        # Leer heisst: der Upstream hat sich nicht benannt (LiteLLM-Fehlversuch
+        # ohne Identitaet). Einem Anbieter laesst sich die Zeile dann nicht
+        # zuschreiben, und ein Block namens "" waere eine Behauptung.
+        if not isinstance(provider, str) or not provider:
             continue
         by_provider.setdefault(provider, []).append(row)
 
