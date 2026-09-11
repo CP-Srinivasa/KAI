@@ -79,7 +79,7 @@ async def test_research_preserves_markdown_and_carries_measured_metadata(
     )
 
     assert captured["model"] == "kai-kimi-research"
-    assert captured["max_tokens"] == RESEARCH_MAX_TOKENS == 4096
+    assert captured["max_tokens"] == RESEARCH_MAX_TOKENS == 16384
     assert "response_format" not in captured
     assert result.content == "## Gegenargument\n\n```json\n{bad}\n```"
     assert result.route == "research"
@@ -177,3 +177,16 @@ def test_litellm_route_is_configurable_and_contains_no_secret() -> None:
     assert "model: os.environ/KAI_LITELLM_RESEARCH_MODEL" in route
     assert "moonshot" not in route.lower()
     assert "api_key" not in route.lower()
+
+
+def test_der_ausgabedeckel_traegt_das_nachdenken_mit() -> None:
+    """Ein Reasoning-Modell zahlt Denken und Antwort aus DEMSELBEN Budget.
+
+    Am 2026-09-11 gemessen: 3729 der 4096 Ausgabetoken gingen ins Reasoning,
+    fuer die Antwort blieben rund 367 -- `finish_reason=length`. Der Deckel
+    muss also den gemessenen Denkanteil PLUS eine brauchbare Antwort tragen,
+    sonst ist die Route gebaut und unbenutzbar.
+    """
+    gemessener_denkanteil = 3729
+    assert RESEARCH_MAX_TOKENS == 16384
+    assert RESEARCH_MAX_TOKENS - gemessener_denkanteil > 8000
