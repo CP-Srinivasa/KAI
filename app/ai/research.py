@@ -21,7 +21,30 @@ import httpx
 from app.ai.config import InferenceSettings
 from app.ai.runtime import LiteLLMRequest, invoke
 
-RESEARCH_MAX_TOKENS: Final[int] = 4096
+#: Ausgabedeckel der Research-Route.
+#:
+#: 4096 war zu klein, und zwar nicht knapp. Am 2026-09-11 auf dem Pi gemessen,
+#: echter Brief gegen das konfigurierte Research-Modell:
+#:
+#:     input_tokens      2177
+#:     output_tokens     4096   (Deckel erreicht)
+#:     reasoning_tokens  3729   <-- davon
+#:     finish_reason     length · truncated True
+#:
+#: Ein Reasoning-Modell bezahlt sein Nachdenken aus DEMSELBEN Ausgabebudget wie
+#: die Antwort. Von 4096 Token blieben rund 367 fuer den Text uebrig; die
+#: Synthese brach mittendrin ab und wurde -- richtigerweise -- verworfen.
+#:
+#: 16384 ist ein kontrollierter Deckel, kein Maximum: der Anbieter des heute
+#: konfigurierten Modells nennt selbst den doppelten Wert als Standard.
+#: Theoretische Obergrenze bei voller Ausschoepfung und diesem Prompt rund
+#: 0,068 USD je Brief; abgerechnet wird, was wirklich entsteht. Welches Modell
+#: antwortet, steht bewusst NICHT hier — das ist Konfiguration (D-270).
+#:
+#: Sollte auch 16384 mit `finish_reason=length` enden, ist die naechste Frage
+#: NICHT "mehr Token", sondern ob dieses Modell fuer diesen Prompt
+#: unverhaeltnismaessig viel nachdenkt.
+RESEARCH_MAX_TOKENS: Final[int] = 16384
 
 
 class ResearchUnavailableError(RuntimeError):
