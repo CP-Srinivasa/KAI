@@ -22,6 +22,13 @@ model_list:
       # contract refers to it; the MODEL behind it is configuration, exactly
       # like every other route. No provider is bound in the repository.
       model: os.environ/KAI_LITELLM_RESEARCH_MODEL
+      # Muss zu `InferenceSettings.route_timeout_seconds["research"]` passen.
+      # Beide Zeitgrenzen zaehlen dieselbe Wartezeit, und die KLEINERE gewinnt:
+      # stand hier das globale `request_timeout: 30`, brach der Proxy nach 30 s
+      # mit HTTP 408 ab, waehrend KAI noch 150 s Geduld hatte. Am 2026-09-11 am
+      # Geraet gemessen, zweimal 30,0 s. Ein Drift-Test haelt die beiden Werte
+      # zusammen: tests/unit/test_research_route_timeout_agreement.py
+      timeout: 180
 
 litellm_settings:
   # KAI/app/ai is the single bounded-retry authority.
