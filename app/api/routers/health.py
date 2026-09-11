@@ -182,6 +182,10 @@ class AICostBlock(BaseModel):
     #: Getrennt ausgewiesen, weil sie kein ``COST_UNKNOWN`` ausloesen.
     unmetered_legacy_calls_today: int | None = None
     unmetered_legacy_calls_month: int | None = None
+    #: Fehlversuche ohne gemeldeten Verbrauch (D-271: ``ok=false``, kein Preis,
+    #: keine Token). Sie loesen kein ``COST_UNKNOWN`` aus und bleiben sichtbar.
+    failed_uncosted_calls_today: int | None = None
+    failed_uncosted_calls_month: int | None = None
     calls_today: int | None = None
     calls_month: int | None = None
     daily_limit_usd: float | None = None

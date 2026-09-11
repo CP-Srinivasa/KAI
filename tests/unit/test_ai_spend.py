@@ -369,3 +369,196 @@ def test_ohne_jede_usage_bleibt_es_bei_null(tmp_path: Path) -> None:
     assert fenster.input_tokens == 0
     assert fenster.output_tokens == 0
     assert fenster.calls == 1
+
+
+# ── D-271: ein Fehlversuch ohne Verbrauch ist kein unbekannter Kostenfall ────
+#
+# Befund 2026-09-11: das Unbepreist-Gate hat bis dahin ausschliesslich auf
+# Fehlversuche reagiert -- ok=false, null Token, keine Anbieteridentitaet. Am
+# 09.09. waren es 96, am 10.09. 65 gegen die Schwelle 50; an beiden Tagen hat
+# das Gate die Analyse gesperrt, ohne einen Cent zu schuetzen.
+
+
+def _fehlversuch(**kwargs: object) -> dict:
+    """Ein gescheiterter Aufruf, der keinen Verbrauch gemeldet hat."""
+    zeile = _row(
+        ok=False,
+        cost_usd=None,
+        cost_status="COST_UNKNOWN",
+        cost_reason="no_tokens",
+        input_tokens=None,
+        output_tokens=None,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+    zeile.update(kwargs)
+    return zeile
+
+
+def _research(**kwargs: object) -> dict:
+    """Eine Zeile der Research-Route ueber LiteLLM."""
+    zeile = _row(
+        provider="moonshot",
+        actual_provider="moonshot",
+        model="moonshot/kimi-k2.6",
+        actual_model="moonshot/kimi-k2.6",
+        purpose="research",
+        use_case="research",
+        transport="litellm",
+        logical_route="research",
+        cost_usd=0.00376885,
+    )
+    zeile.update(kwargs)
+    return zeile
+
+
+def test_research_zeile_ueber_litellm_zaehlt_im_budget(tmp_path: Path) -> None:
+    """Vorher unsichtbar: `moonshot` stand in keiner Anbieterliste."""
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_research()])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.calls == 1
+    assert fenster.known_cost_usd == pytest.approx(0.00376885)
+    assert fenster.by_use_case["research"].known_cost_usd == pytest.approx(0.00376885)
+    assert fenster.budget_state().booked_usd == pytest.approx(0.00376885)
+
+
+def test_litellm_zeile_ohne_bekannte_route_bleibt_draussen(tmp_path: Path) -> None:
+    """Der Transport allein genuegt nicht: die Route muss eine von KAIs sein."""
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [_research(provider="CNBC", actual_provider="CNBC", logical_route=None, purpose="rss")],
+    )
+    assert spend_window("today", path=sink).calls == 0
+
+
+def test_fehlversuch_ohne_verbrauch_zaehlt_nicht_als_unbekannt(tmp_path: Path) -> None:
+    """Der 500 nach 69 ms: ohne Identitaet, ohne Token -- nie beim Anbieter."""
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [
+            _fehlversuch(
+                provider="",
+                actual_provider=None,
+                actual_model=None,
+                purpose="research",
+                transport="litellm",
+                logical_route="research",
+                http_status=500,
+                error_class="server",
+            )
+        ],
+    )
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.calls == 1
+    assert fenster.unknown_calls == 0
+    assert fenster.failed_uncosted_calls == 1
+    assert fenster.known_calls == 0
+    # Kein Geld, keine Position: der Budgetzustand sieht den Fehlversuch nicht.
+    assert fenster.budget_state().total_calls == 0
+    assert fenster.by_provider["unknown"].unknown_calls == 0
+
+
+def test_regel_gilt_fuer_jeden_transport_auch_den_direkten(tmp_path: Path) -> None:
+    """Auch die lokale Budget-Abweisung: sie haelt das Gate sonst selbst offen."""
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [
+            _fehlversuch(
+                provider="gemini",
+                correlation_id=f"abgewiesen-{i}",
+                error_type="BudgetExceeded",
+                error_class="unknown",
+            )
+            for i in range(3)
+        ],
+    )
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.failed_uncosted_calls == 3
+    assert fenster.unknown_calls == 0
+
+
+def test_fehlversuch_mit_token_aber_ohne_preis_bleibt_unbekannt(tmp_path: Path) -> None:
+    """Hier WAR Verbrauch, nur kein Preis -- genau der Fall, fuer den das Gate da ist."""
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_fehlversuch(input_tokens=500, output_tokens=None, prompt_tokens=500)])
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.unknown_calls == 1
+    assert fenster.failed_uncosted_calls == 0
+    assert fenster.budget_state().unknown_calls == 1
+
+
+def test_erfolg_ohne_preis_und_ohne_token_bleibt_unbekannt(tmp_path: Path) -> None:
+    """Ein Erfolg ohne Usage ist eine gescheiterte MESSUNG, kein Fehlversuch."""
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [_row(cost_usd=None, cost_status="COST_UNKNOWN", input_tokens=None, output_tokens=None)],
+    )
+
+    fenster = spend_window("today", path=sink)
+
+    assert fenster.unknown_calls == 1
+    assert fenster.failed_uncosted_calls == 0
+
+
+def test_viele_fehlversuche_loesen_cost_unknown_nicht_aus(tmp_path: Path) -> None:
+    """Der 09.09. nachgestellt: 96 Fehlversuche ohne Verbrauch sperren nicht mehr."""
+    from app.ai.spend import current_budget_status
+
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_fehlversuch(correlation_id=f"f-{i}") for i in range(96)])
+
+    status, heute, _ = current_budget_status(path=sink)
+
+    assert heute.failed_uncosted_calls == 96
+    assert heute.unknown_calls == 0
+    assert status.state == "OK"
+    assert status.blocks_routine is False
+
+
+def test_die_schwelle_bleibt_fuer_echte_unbekannte_bei_fuenfzig(tmp_path: Path) -> None:
+    """Gegenprobe: 51 Aufrufe MIT Verbrauch und ohne Preis sperren weiterhin."""
+    from app.ai.spend import current_budget_status
+
+    sink = tmp_path / "llm.jsonl"
+    _write(
+        sink,
+        [_fehlversuch(correlation_id=f"f-{i}") for i in range(96)]
+        + [
+            _row(cost_usd=None, cost_status="COST_UNKNOWN", correlation_id=f"u-{i}")
+            for i in range(51)
+        ],
+    )
+
+    status, heute, _ = current_budget_status(path=sink)
+
+    assert heute.unknown_calls == 51
+    assert status.state == "COST_UNKNOWN"
+
+
+def test_kostenblock_weist_fehlversuche_als_eigenes_feld_aus(tmp_path: Path) -> None:
+    """Nie unsichtbar: der Zaehler steht neben ``unknown_cost_calls_*``."""
+    from app.ai.health import cost_block
+
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, [_fehlversuch(correlation_id="f-1"), _row(correlation_id="ok-1")])
+
+    block = cost_block(path=sink)
+
+    assert block["failed_uncosted_calls_today"] == 1
+    assert block["failed_uncosted_calls_month"] == 1
+    assert block["unknown_cost_calls_today"] == 0
+    assert block["calls_today"] == 2
+    assert block["status"] == "OK"

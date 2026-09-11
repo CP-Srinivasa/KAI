@@ -816,6 +816,61 @@ def test_der_kostenblock_verliert_auf_der_leitung_kein_feld(
     )
 
 
+def test_fehlversuche_ohne_verbrauch_kommen_ueber_http_an(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-271: der neue Zaehler ist nur dann sichtbar, wenn er die Leitung uebersteht.
+
+    Ein Research-Fehlversuch ueber LiteLLM (500, keine Identitaet, keine Token)
+    zaehlt nicht mehr als unbekannter Kostenfall -- er darf dafuer aber auch
+    nicht verschwinden. Geprueft am echten Endpunkt, nicht am Builder.
+    """
+    from app.ai.spend import reset_spend_cache
+    from app.core.settings import get_settings
+
+    fehlversuch = {
+        "ts": datetime.now(UTC).isoformat(),
+        "provider": "",
+        "model": "kai-kimi-research",
+        "ok": False,
+        "chain_position": 0,
+        "correlation_id": "research-500",
+        "purpose": "research",
+        "use_case": "research",
+        "transport": "litellm",
+        "logical_route": "research",
+        "http_status": 500,
+        "error_class": "server",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cost_usd": None,
+        "cost_status": "COST_UNKNOWN",
+        "cost_reason": "no_tokens",
+    }
+    sink = tmp_path / "llm_telemetry.jsonl"
+    _write(sink, [fehlversuch])
+    monkeypatch.setattr("app.observability.llm_telemetry.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.health.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.spend.DEFAULT_TELEMETRY_PATH", sink)
+    reset_spend_cache()
+
+    app = FastAPI()
+    app.include_router(health_router)
+    app.dependency_overrides[get_settings] = _settings
+    antwort = TestClient(app).get("/health/ai")
+    reset_spend_cache()
+
+    assert antwort.status_code == 200
+    koerper = antwort.json()
+    assert koerper["cost"]["failed_uncosted_calls_today"] == 1
+    assert koerper["cost"]["unknown_cost_calls_today"] == 0
+    assert koerper["cost"]["status"] == "OK"
+    # Ohne belegten Anbieter gibt es keinen Anbieterblock -- auch keinen namens "".
+    assert "" not in {block["name"] for block in koerper["providers"]}
+
+
 # ── Alert-Faehigkeit gegen die Decke des NORMALEN Topfes ─────────────────────
 
 
