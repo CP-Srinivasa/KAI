@@ -814,3 +814,118 @@ def test_der_kostenblock_verliert_auf_der_leitung_kein_feld(
         f"AICostBlock deklariert diese Schluessel nicht, response_model wirft sie weg: "
         f"{sorted(verloren)}"
     )
+
+
+# ── Alert-Faehigkeit gegen die Decke des NORMALEN Topfes ─────────────────────
+
+
+def _kostenzeile(cost_usd: float) -> dict[str, Any]:
+    """Eine bepreiste Zeile — nur so entsteht ueberhaupt ein Tagesverbrauch."""
+    return {
+        "ts": datetime.now(UTC).isoformat(),
+        "provider": "openai",
+        "model": "gpt-x",
+        "actual_model": "gpt-x",
+        "ok": True,
+        "chain_position": 0,
+        "correlation_id": "cap",
+        "purpose": "analysis",
+        "use_case": "news_intelligence",
+        "cost_usd": cost_usd,
+        "cost_status": "OK",
+    }
+
+
+def _budget_ueber_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, ausgegeben: float
+) -> dict[str, Any]:
+    """Setzt die Reserven, schreibt den Verbrauch und liest ``GET /health/ai``.
+
+    Ueber den ECHTEN Endpunkt, nicht ueber ``_budget_block`` — der Fehler, gegen
+    den diese Tests stehen, lebt in der Zusammensetzung des Blocks, und ein
+    Builder-Aufruf haette ihn zwar auch gezeigt, aber die Serialisierung nicht
+    mitgeprueft. Diese Datei hat zweimal gelernt, dass das ein Unterschied ist.
+    """
+    from app.ai.spend import reset_spend_cache
+    from app.core.ai_cost_settings import reset_ai_cost_settings
+    from app.core.settings import get_settings
+
+    # 1,25 − 0,16 − 0,05 = 1,04 Decke fuer den normalen Topf.
+    monkeypatch.setenv("APP_AI_BUDGET_DAILY_USD", "1.25")
+    monkeypatch.setenv("APP_AI_BUDGET_ALERT_RESERVE_USD", "0.16")
+    monkeypatch.setenv("APP_AI_BUDGET_VALIDATION_RESERVE_USD", "0.05")
+    reset_ai_cost_settings()
+
+    sink = tmp_path / "llm_telemetry.jsonl"
+    _write(sink, [_kostenzeile(ausgegeben)])
+    monkeypatch.setattr("app.observability.llm_telemetry.DEFAULT_TELEMETRY_PATH", sink)
+    monkeypatch.setattr("app.ai.health.DEFAULT_TELEMETRY_PATH", sink)
+    # DRITTE Bindung, und ohne sie misst dieser Test nichts: app/ai/spend.py holt
+    # DEFAULT_TELEMETRY_PATH beim Laden per "from ... import ...", also als eigene
+    # Kopie des Namens. Ein Patch am Ursprungsmodul erreicht sie nicht -- der
+    # Verbrauch bliebe 0,0 und alle drei Baender saehen identisch aus.
+    monkeypatch.setattr("app.ai.spend.DEFAULT_TELEMETRY_PATH", sink)
+    reset_spend_cache()
+
+    app = FastAPI()
+    app.include_router(health_router)
+    app.dependency_overrides[get_settings] = _settings
+    antwort = TestClient(app).get("/health/ai")
+    assert antwort.status_code == 200
+    reset_spend_cache()
+    return antwort.json()
+
+
+def test_unter_der_topfdecke_bleibt_alles_wie_bisher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gegenprobe: der Fix darf den Normalfall nicht anfassen."""
+    koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=0.90)
+
+    assert koerper["cost"]["normal_pot_exhausted"] is False
+    assert koerper["budget"]["routine_calls_blocked"] is False
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "ok"
+
+
+def test_zwischen_topfdecke_und_tageslimit_meldet_der_block_nicht_mehr_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Der eigentliche Befund — und er entsteht erst durch die Kombination.
+
+    Bei 1,25 / 0,16 / 0,05 liegt die Decke des normalen Topfes bei 1,04. Im
+    Bereich 1,04 <= verbraucht < 1,25 ist ``blocks_routine`` noch ``False``,
+    ``normal_pot_exhausted`` aber schon ``True``.
+
+    #954 hat ``routine_calls_blocked`` auf das ODER umgestellt, #953 gab
+    ``_alert_capability_block`` weiter nur das schmale ``blocks_routine``.
+    Beide Zeilen mergten sauber — textuell kollidieren sie nicht —, und danach
+    meldete derselbe Block gleichzeitig "Routine gesperrt" und
+    "Alert-Faehigkeit ok". Also genau die lautlose Gruen-Meldung, gegen die
+    beide PRs geschrieben waren.
+
+    Der Regelpfad erreicht das Alert-Gate strukturell nicht (Deckel 0,575 gegen
+    Gate 0,615), deshalb ist ``unreachable`` hier die wahre Aussage und nicht
+    ``degraded``.
+    """
+    koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=1.10)
+
+    assert koerper["cost"]["normal_pot_exhausted"] is True
+    assert koerper["cost"]["blocks_routine"] is False, "das Tageslimit ist NICHT erreicht"
+    assert koerper["budget"]["routine_calls_blocked"] is True
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "unreachable"
+    # Die Kernzusicherung, in der Sprache des Befunds:
+    assert not (
+        koerper["budget"]["routine_calls_blocked"]
+        and koerper["budget"]["alert_capability_for_new_documents"] == "ok"
+    ), "Routine gesperrt und Alert-Faehigkeit ok — das ist die lautlose Gruen-Meldung"
+
+
+def test_am_tageslimit_bleibt_die_bestehende_semantik(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oberhalb des Gesamtlimits aendert der Fix nichts — dort galt es schon."""
+    koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=1.30)
+
+    assert koerper["cost"]["blocks_routine"] is True
+    assert koerper["budget"]["routine_calls_blocked"] is True
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "unreachable"
