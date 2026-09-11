@@ -37,6 +37,30 @@
 # verschiedenem venv, an genau den Feldern nicht zu unterscheiden, die zur
 # Unterscheidung da sind -- und der Builder gaebe den vorhandenen zurueck.
 #
+# WAS `<specs8>` BINDET -- UND WAS NICHT
+#
+# Der Suffix haengt an den DEKLARIERTEN Specs, also an `litellm[proxy]==1.99.0`.
+# Er bindet NICHT die transitive Aufloesung: `-c "$LOCK"` zwingt nur, was IM
+# Lockfile steht, und alles, was das Extra zusaetzlich hereinzieht und dort
+# nicht vorkommt, loest pip auf "neuestes zum Bauzeitpunkt" auf.
+#
+# Daraus folgt eine Eigenschaft, die man kennen muss: derselbe Aufruf eine Woche
+# spaeter trifft denselben Pfad, und die Idempotenz meldet "existiert bereits,
+# baum-identisch". Sie gibt den ALTEN Baum zurueck, obwohl eine frische
+# Aufloesung heute andere transitive Versionen braechte.
+#
+# Das ist Absicht, nicht Versehen: DER ERSTE BAU GEWINNT, die transitive
+# Aufloesung wird eingefroren. Ein zweiter Bau, der still neuere Versionen zoege,
+# waere genau der Wandel unter gleichem Namen, gegen den das ganze Modell steht.
+# Wer etwas Neueres will, braucht eine neue Spec (`==1.99.1`) -- nicht einen
+# zweiten Bau desselben Pins.
+#
+# Was tatsaechlich installiert wurde, steht in `release.json` unter
+# `dependency_manifest_sha256`; `verify_release` haelt es zur Pruefzeit gegen den
+# venv. `extras_sha256` belegt die Absicht, das Manifest den Zustand -- bei einem
+# spaeteren Rot sagt erst der Vergleich beider, ob falsch gebaut oder
+# nachtraeglich veraendert wurde.
+#
 # `--rebuild` nur fuer den Fall RELEASE_TREE_MISMATCH: derselbe `repo_sha`,
 # aber ein anderer Baum (praktisch immer ein neu gebautes `web/dist`). Ohne
 # das Flag bricht der Builder ab, statt den alten Baum stillschweigend
