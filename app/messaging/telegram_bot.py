@@ -183,6 +183,7 @@ class TelegramOperatorBot:
         signal_approval_hmac_secret: str = "",
         live_engine: LiveExecutionEngine | None = None,
         live_engine_factory: Callable[[], LiveExecutionEngine] | None = None,
+        payment_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -265,6 +266,11 @@ class TelegramOperatorBot:
         # Eager wins over factory if both are passed (test-injection path).
         self._live_engine: LiveExecutionEngine | None = live_engine
         self._live_engine_factory: Callable[[], LiveExecutionEngine] | None = live_engine_factory
+        # D-277: lazy, damit ein Prozess ohne Control Plane (Tests, CLI) nicht kippt.
+        self._payment_service_factory = payment_service_factory
+        from app.messaging.pay_telegram_commands import PayFlow
+
+        self._pay_flow = PayFlow()
 
     @property
     def is_configured(self) -> bool:
@@ -1657,6 +1663,8 @@ class TelegramOperatorBot:
             "live": self._cmd_live,
             "trade": self._cmd_trade,
             "trail": self._cmd_trail,
+            "pay": self._cmd_pay,
+            "zahlen": self._cmd_pay,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -2632,49 +2640,21 @@ class TelegramOperatorBot:
         await self._send(chat_id, reply)
 
     async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
-        msg = (
-            "*KAI Help & Support*\n"
-            "\n"
-            "*Read-only views*\n"
-            "/status — system status\n"
-            "/positions — paper positions\n"
-            "/exposure — paper exposure and risk\n"
-            "/signals — active signals\n"
-            "/signalstatus — signal pipeline\n"
-            "/tagesbericht — daily report\n"
-            "/alertstatus — alert delivery status\n"
-            "/quality — quality-bar metrics\n"
-            "/annotate — annotate alerts\n"
-            "\n"
-            "*Actions*\n"
-            "/signal BUY BTC 65000 — submit a trading signal\n"
-            "/approve dec\\_xxx — approve a decision\n"
-            "/reject dec\\_xxx — reject a decision\n"
-            "/pause — pause the system\n"
-            "/resume — resume the system\n"
-            "/kill — emergency stop\n"
-            "\n"
-            "*Live-Mode (HOTP-gated, Phase 0)*\n"
-            "/live status — current state + caps\n"
-            "/live unlock <hotp> — unlock for live trades\n"
-            "/live lock — relock immediately\n"
-            "/trade SYM SIDE QTY ENTRY SL HOTP \\[EX\\] — place live limit order\n"
-            "\n"
-            "*Message types*\n"
-            "[NEWS] — information only, never triggers execution\n"
-            "[SIGNAL] — structured trade instruction, schema-validated\n"
-            "[EXCHANGE_RESPONSE] — execution status update\n"
-            "\n"
-            "Telegram is view-only; the JSON envelope is the source of truth. "
-            "SIGNAL entries without required fields fail closed.\n"
-            "\n"
-            "*Navigation*\n"
-            "/menu — open the main menu\n"
-            "/menu\\_reload — reload menu config\n"
-            "/menu\\_validate — validate menu config\n"
-            "/hilfe — show this help"
-        )
-        await self._send(chat_id, msg)
+        from app.messaging.telegram_help import HELP_TEXT
+
+        await self._send(chat_id, HELP_TEXT)
+
+    async def _cmd_pay(self, chat_id: int, *, args: str = "") -> None:
+        """D-277: ``/pay`` laeuft ueber den Payment Control Plane (``app.messaging.pay_telegram_commands``)."""
+        service = self._payment_service_factory() if self._payment_service_factory else None
+        if service is None:
+            await self._send(
+                chat_id, "❌ Payment Control Plane nicht verfuegbar (kein Service im Prozess)."
+            )
+            return
+        from app.messaging.pay_telegram_commands import handle_pay
+
+        await self._send(chat_id, await handle_pay(args, service, chat_id, flow=self._pay_flow))
 
     async def _cmd_menu(self, chat_id: int, *, args: str = "") -> None:
         """Show the main inline menu. Also re-docks the persistent keyboard.
