@@ -106,8 +106,8 @@ nur per SSH-Tunnel) → `kai-dev-economy` / `kai-dev-code` (Standard) / `kai-dev
 
 **Status (Operator-Einstufung 2026-09-14, nach drei Kontrollaufgaben):** `kai-dev-code`
 (Kimi K2.7 Code) ist **freigegebene Entwicklerreserve**, `kai-dev-economy` (DeepSeek V4.1
-Flash) **freigegebene Analyse-Reserve** (nur lesend), `kai-dev-frontier` bleibt ungeprüft und
-braucht Freigabe je Aufgabe. Auflagen: Zeilenangaben aus Reviews nachprüfen, ein Diff je
+Flash) **freigegebene Analyse-Reserve** (nur lesend), `kai-dev-frontier` ist geprobt (Smoke PASS
+2026-09-14, 0,000396 USD je Probe) und braucht Freigabe je Aufgabe. Auflagen: Zeilenangaben aus Reviews nachprüfen, ein Diff je
 Review-Sitzung, Modell in schreibenden Sitzungen gepinnt. Belege:
 `artifacts/operator_memos/dev_reserve_trial_2026-09-14.md`.
 

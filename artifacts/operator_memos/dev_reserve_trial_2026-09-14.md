@@ -44,7 +44,7 @@ nicht aufgefallen.
 |---|---|---|
 | `kai-dev-code` (Kimi K2.7 Code) | **freigegebene Entwicklerreserve** | Zeilenangaben aus Reviews nachprüfen; ein Diff je Review-Sitzung; Modell für schreibende Sitzungen gepinnt |
 | `kai-dev-economy` (DeepSeek V4.1 Flash) | **freigegebene Analyse-Reserve** (nur lesend) | — |
-| `kai-dev-frontier` (Kimi K3) | **ungeprüft**, Freigabe je Aufgabe | Smoke `--include-frontier` vor erstem Einsatz |
+| `kai-dev-frontier` (Kimi K3) | **geprobt** (Smoke PASS 2026-09-14 ~17:03Z: HTTP 200, 0,000396 USD je 8-Token-Probe, Preis bekannt), Freigabe je Aufgabe | nie Standardmodell; nach jeder Aufgabe zurück auf `kai-dev-code` |
 
 Folgeauftrag aus F2: Datums-Cutoff bzw. Schutz neuer Innenzeilen ohne Außenzeile in
 `app/ai/spend.py::_altpaare_entfernen` (eigenes Issue).
