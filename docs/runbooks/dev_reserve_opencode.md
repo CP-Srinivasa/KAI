@@ -27,6 +27,12 @@ KAI_DEV_LITELLM_FRONTIER_API_KEY=<Moonshot-Dev-Key>
 
 Modell-IDs vor dem Setzen gegen die Anbieterliste prüfen (Stand 2026-09-14).
 
+**Nach jeder verdeckten Eingabe die Länge prüfen** (Vorfall 14.09.: Einfügen im Windows-Terminal
+lieferte jeden Schlüssel doppelt, beide Anbieter antworteten 401):
+`grep -E "^KAI_DEV_LITELLM_.*_API_KEY=" .env | awk -F= '{print $1, length($2)}'` — DeepSeek 35,
+Moonshot 51 Zeichen. Nach jeder Änderung an diesen Werten den Proxy neu starten; LiteLLM liest
+die Umgebung nur beim Start.
+
 ## 1. Proxy starten (auf der Pi, Vordergrund)
 
 ```
@@ -80,6 +86,12 @@ Der frische Worktree hat keine `.env`; das Profil verweigert zusätzlich das Les
 von `*.env*`, `*.macaroon`, `*.pem`, `*.key`, `*wallet*`, `*secrets*` und jeden
 `git push`/`merge`/`rebase`/`reset --hard`, `gh pr merge`/`create`, `ssh`, `scp`,
 `rsync`, `sudo`, `systemctl`. Alles außer Lesen und Testen fragt.
+
+Kimi K2.7 Code denkt sichtbar und lang („Thought“-Blöcke, auch über seine eigenen Werkzeugregeln).
+Das ist Text, keine Schleife. Ein Durchgang ist zu Ende, wenn die Eingabezeile zurückkommt; Strg-C
+bricht die laufende Antwort ab. Sitzungen lassen sich nachträglich aus
+`~/.local/share/opencode/opencode.db` (Tabellen `session`, `message`, `part`) lesen, inklusive
+Token je Schritt; die Kostenanzeige in OpenCode bleibt für diesen Provider 0,00.
 
 ### Die drei Kontrollaufgaben (Einführung, ADR 0020 §Einführung)
 

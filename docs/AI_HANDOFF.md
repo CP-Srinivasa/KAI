@@ -104,8 +104,12 @@ Modell: OpenCode → LiteLLM-**Dev**-Proxy (`config/litellm_dev.yaml`, 127.0.0.1
 nur per SSH-Tunnel) → `kai-dev-economy` / `kai-dev-code` (Standard) / `kai-dev-frontier`
 (nur nach Freigabe je Aufgabe). Runbook: `docs/runbooks/dev_reserve_opencode.md`.
 
-**Status:** Repo-Seite gebaut; **noch keine freigegebene Reserve**. Die Einstufung fällt
-erst nach den drei Kontrollaufgaben (Runbook §4) durch den Operator (§6).
+**Status (Operator-Einstufung 2026-09-14, nach drei Kontrollaufgaben):** `kai-dev-code`
+(Kimi K2.7 Code) ist **freigegebene Entwicklerreserve**, `kai-dev-economy` (DeepSeek V4.1
+Flash) **freigegebene Analyse-Reserve** (nur lesend), `kai-dev-frontier` bleibt ungeprüft und
+braucht Freigabe je Aufgabe. Auflagen: Zeilenangaben aus Reviews nachprüfen, ein Diff je
+Review-Sitzung, Modell in schreibenden Sitzungen gepinnt. Belege:
+`artifacts/operator_memos/dev_reserve_trial_2026-09-14.md`.
 
 **Erlaubt:**
 - Arbeit ausschließlich in einem frischen Worktree (`kai_new_worktree.sh`), nie im Hauptcheckout, nie auf der Pi
@@ -219,7 +223,7 @@ Diese Decisions sind **nicht-delegierbar** an KIs. Operator-Sign-off ist Pflicht
 | `EXECUTION_PAPER_MIN_PRIORITY`-Änderung | Operator-Sign-off Option D bis 2026-05-30 |
 | Audit-Stream-Rotation operative Aktivierung (V6) | siehe `docs/architecture/audit_streams_spec.md` §Operator Decision Anchors |
 | Bridge-Code-Änderung (envelope_to_paper_bridge.py) | ARBEITSPAKET + Test-Plan + Operator-Sign-off |
-| Einstufung eines `kai-dev-*`-Modells als **freigegebene Entwicklerreserve** (ADR 0020 §Einführung Schritt 6) | erst nach den drei Kontrollaufgaben, `docs/runbooks/dev_reserve_opencode.md` §4; `kai-dev-frontier` zusätzlich je Aufgabe |
+| Einstufung eines `kai-dev-*`-Modells als **freigegebene Entwicklerreserve** (ADR 0020 §Einführung Schritt 6) | **erteilt 2026-09-14** für `kai-dev-code` und `kai-dev-economy` (`artifacts/operator_memos/dev_reserve_trial_2026-09-14.md`); `kai-dev-frontier` weiterhin je Aufgabe |
 
 ---
 
