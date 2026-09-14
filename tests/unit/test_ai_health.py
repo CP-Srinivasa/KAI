@@ -959,15 +959,19 @@ def test_zwischen_topfdecke_und_tageslimit_meldet_der_block_nicht_mehr_ok(
     beide PRs geschrieben waren.
 
     Der Regelpfad erreicht das Alert-Gate strukturell nicht (Deckel 0,575 gegen
-    Gate 0,615), deshalb ist ``unreachable`` hier die wahre Aussage und nicht
-    ``degraded``.
+    Gate 0,615). Hier ist aber eine Alert-Reserve gesetzt und noch leer: die
+    Runtime bezahlt alert-faehige Dokumente daraus weiter (am echten ``invoke``
+    geprueft, 2026-09-14). Die wahre Aussage ist deshalb ``reserve``, nicht
+    ``unreachable`` -- bis D-273 stand hier ``unreachable`` und widersprach der
+    Sperre, die der Block meldet. ``unreachable`` bleibt die Aussage, sobald die
+    Reserve fehlt oder erschoepft ist (tests/unit/test_alert_blindspot_reserve.py).
     """
     koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=1.10)
 
     assert koerper["cost"]["normal_pot_exhausted"] is True
     assert koerper["cost"]["blocks_routine"] is False, "das Tageslimit ist NICHT erreicht"
     assert koerper["budget"]["routine_calls_blocked"] is True
-    assert koerper["budget"]["alert_capability_for_new_documents"] == "unreachable"
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "reserve"
     # Die Kernzusicherung, in der Sprache des Befunds:
     assert not (
         koerper["budget"]["routine_calls_blocked"]
@@ -978,9 +982,17 @@ def test_zwischen_topfdecke_und_tageslimit_meldet_der_block_nicht_mehr_ok(
 def test_am_tageslimit_bleibt_die_bestehende_semantik(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Oberhalb des Gesamtlimits aendert der Fix nichts — dort galt es schon."""
+    """Auch oberhalb des Gesamtlimits zaehlt die Reserve (D-273).
+
+    Mit gesetzter Reserve prueft die Runtime Reserveaufrufe gegen den Reservetopf,
+    nicht gegen das gesamte Tageslimit -- am echten ``invoke`` bei 1,30 USD
+    geprueft: alert-faehig bezahlt, gewoehnlich abgelehnt. Die Anzeige meldet
+    deshalb ``reserve``. Dass der Tag so ueber 1,25 USD enden kann, wenn der
+    Normaltopf seine Decke schon ueberschritten hatte, ist ein bekannter
+    Randfall von #954 und in D-273 benannt, nicht Gegenstand dieses Tests.
+    """
     koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=1.30)
 
     assert koerper["cost"]["blocks_routine"] is True
     assert koerper["budget"]["routine_calls_blocked"] is True
-    assert koerper["budget"]["alert_capability_for_new_documents"] == "unreachable"
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "reserve"

@@ -140,7 +140,9 @@ class AIBudgetBlock(BaseModel):
     routine_calls_blocked: bool = False
     local_refusals_in_window: int = 0
     #: Budget-Policy v2: kann ein NEU analysiertes Dokument noch einen Alert
-    #: ausloesen? ``ok`` | ``degraded`` | ``unreachable``. Bereits analysierte
+    #: ausloesen? ``ok`` | ``reserve`` | ``degraded`` | ``unreachable``.
+    #: ``reserve``: Routine steht, alert-faehige Dokumente laufen aus der
+    #: Alert-Reserve weiter (D-273). Bereits analysierte
     #: Dokumente mit hoher Prioritaet sind davon unberuehrt.
     alert_capability_for_new_documents: str = "ok"
     alert_capability_reason: str = ""
@@ -219,6 +221,11 @@ class AICostBlock(BaseModel):
     sustainable_daily_usd: float | None = None
     projected_exceeds_monthly_limit: bool | None = None
     projection_is_lower_bound: bool | None = None
+    #: Wuerde ein alert-faehiges Dokument JETZT noch bezahlt, und aus welchem
+    #: Topf? Dieselbe Entscheidung wie die Runtime (D-273).
+    alert_eligible_call_allowed: bool | None = None
+    alert_eligible_call_pot: str | None = None
+    alert_eligible_call_reason: str = ""
     price_table_version: str
     note: str
 
