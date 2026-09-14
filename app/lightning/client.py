@@ -15,6 +15,7 @@ fail-closed status so the trading loop is never blocked by Lightning.
 from __future__ import annotations
 
 import binascii
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,51 @@ import httpx
 # which legitimately takes tens of seconds. The regular per-request timeout is
 # sized for reads and would abort mid-funding with an ambiguous outcome.
 OPEN_CHANNEL_TIMEOUT_SECONDS = 120.0
+
+# D-277: sends go through routerrpc.SendPaymentV2 (``POST /v2/router/send``). lnd
+# deprecated SendPaymentSync (the legacy v1 channels/transactions POST) in 0.20, removes it
+# in 0.21. The router endpoint streams NDJSON (one ``{"result": Payment}`` per state,
+# ``{"error": ...}`` on failure); with ``no_inflight_updates`` only the terminal
+# state arrives. ``timeout_seconds`` is lnd's own path-finding/HTLC budget; the HTTP
+# read timeout must outlast it so a slow route is a FAILED/SUCCEEDED, not a guess.
+ROUTER_SEND_PATH = "/v2/router/send"
+SEND_PAYMENT_TIMEOUT_SECONDS = 60
+_SEND_HTTP_GRACE_SECONDS = 15.0
+_NO_FAILURE = {"", "0", "NONE", "FAILURE_REASON_NONE"}
+
+
+def _int_field(raw: Any) -> int:
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalise_payment(result: dict[str, Any]) -> dict[str, Any]:
+    """One flat view of lnrpc.Payment — enums and numbers only, no route/hop data.
+
+    ``failure_reason`` is lnd's enum (``FAILURE_REASON_NO_ROUTE`` …), never free
+    text, so the journal may keep it verbatim. ``FAILURE_REASON_NONE`` becomes "".
+    """
+    fee_sat = _int_field(result.get("fee_sat"))
+    if fee_sat == 0:
+        fee_sat = _int_field(result.get("fee_msat")) // 1000
+    failure = str(result.get("failure_reason") or "").strip().upper()
+    return {
+        "status": str(result.get("status") or "").strip().upper(),
+        "payment_hash": str(result.get("payment_hash") or "").strip(),
+        "payment_preimage": str(result.get("payment_preimage") or "").strip(),
+        "fee_sat": fee_sat,
+        "value_sat": _int_field(result.get("value_sat")),
+        "failure_reason": "" if failure in _NO_FAILURE else failure,
+    }
+
+
+def _stream_error_text(message: dict[str, Any]) -> str:
+    error = message.get("error")
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("error") or error)[:200]
+    return str(message.get("message") or error)[:200]
 
 
 class LightningUnavailableError(RuntimeError):
@@ -428,17 +474,81 @@ class LndRestClient:
         encoded = quote(payment_request, safe="")
         return await self._get(f"/v1/payreq/{encoded}")
 
-    async def pay_invoice(self, *, payment_request: str, fee_limit_sat: int = 0) -> dict[str, Any]:
-        """POST /v1/channels/transactions — pay a BOLT11 invoice (SPENDS; irreversible)."""
-        body: dict[str, Any] = {"payment_request": payment_request}
-        if fee_limit_sat > 0:
-            body["fee_limit"] = {"fixed": str(int(fee_limit_sat))}
-        return await self._post("/v1/channels/transactions", body)
+    async def _post_stream(
+        self, path: str, body: dict[str, Any], *, timeout: float
+    ) -> dict[str, Any]:
+        """POST a server-streaming lnd RPC and return the LAST ``result`` message.
+
+        NDJSON lines that are not JSON are skipped (never trusted); an ``error``
+        line or a non-200 status raises with lnd's message so callers can tell
+        "permission denied" from "invalid payment request". No result at all is
+        no statement — also an error, never an empty success.
+        """
+        url = f"{self._base_url}{path}"
+        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        if self._transport is not None:
+            client_kwargs["transport"] = self._transport
+        else:
+            client_kwargs["verify"] = self._verify
+        last: dict[str, Any] | None = None
+        try:
+            async with (
+                httpx.AsyncClient(**client_kwargs) as client,
+                client.stream("POST", url, headers=self._headers, json=body) as resp,
+            ):
+                if resp.status_code != 200:
+                    text = (await resp.aread())[:200].decode("utf-8", errors="replace")
+                    raise LightningUnavailableError(
+                        f"lnd returned {resp.status_code} for {path}: {text}"
+                    )
+                async for line in resp.aiter_lines():
+                    try:
+                        message = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(message, dict):
+                        continue
+                    if "error" in message:
+                        raise LightningUnavailableError(
+                            f"lnd stream error for {path}: {_stream_error_text(message)}"
+                        )
+                    result = message.get("result")
+                    if isinstance(result, dict):
+                        last = result
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(
+                f"lnd request failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if last is None:
+            raise LightningUnavailableError(f"lnd stream for {path} carried no payment state")
+        return last
+
+    async def _send_payment(self, body: dict[str, Any], *, fee_limit_sat: int) -> dict[str, Any]:
+        """routerrpc.SendPaymentV2 with a MANDATORY fee bound (D-277)."""
+        if int(fee_limit_sat) <= 0:
+            raise ValueError("fee_limit_sat must be > 0 — a send without a fee bound is refused")
+        body = {
+            **body,
+            "fee_limit_sat": str(int(fee_limit_sat)),
+            "timeout_seconds": SEND_PAYMENT_TIMEOUT_SECONDS,
+            "no_inflight_updates": True,
+        }
+        timeout = max(self._timeout, SEND_PAYMENT_TIMEOUT_SECONDS + _SEND_HTTP_GRACE_SECONDS)
+        return _normalise_payment(await self._post_stream(ROUTER_SEND_PATH, body, timeout=timeout))
+
+    async def pay_invoice(self, *, payment_request: str, fee_limit_sat: int) -> dict[str, Any]:
+        """POST /v2/router/send — pay a BOLT11 invoice (SPENDS; irreversible).
+
+        Returns the normalised terminal Payment (see :func:`_normalise_payment`).
+        """
+        return await self._send_payment(
+            {"payment_request": payment_request}, fee_limit_sat=fee_limit_sat
+        )
 
     async def keysend(
-        self, *, dest_pubkey_hex: str, amt_sat: int, fee_limit_sat: int = 0
+        self, *, dest_pubkey_hex: str, amt_sat: int, fee_limit_sat: int
     ) -> dict[str, Any]:
-        """POST /v1/channels/transactions — spontaneous keysend (SPENDS; irreversible).
+        """POST /v2/router/send — spontaneous keysend (SPENDS; irreversible).
 
         Generates a random preimage client-side; the keysend TLV record (5482373484)
         carries it so the destination can settle without a pre-issued invoice.
@@ -455,9 +565,7 @@ class LndRestClient:
             "payment_hash": base64.b64encode(payment_hash).decode("ascii"),
             "dest_custom_records": {"5482373484": base64.b64encode(preimage).decode("ascii")},
         }
-        if fee_limit_sat > 0:
-            body["fee_limit"] = {"fixed": str(int(fee_limit_sat))}
-        return await self._post("/v1/channels/transactions", body)
+        return await self._send_payment(body, fee_limit_sat=fee_limit_sat)
 
     async def send_coins(
         self, *, addr: str, amount_sat: int, sat_per_vbyte: int = 0

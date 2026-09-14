@@ -8,7 +8,7 @@
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
 - edge status: `WIDERLEGT — canonical-edge 2026-08-25: n=208, mean -20,9 bps, median -111 bps, P(mu_net>0)=0,204; ohne Best-Trade -39,6 bps / P=0,014. Keine Ausweitung der Execution.`
 - live execution: `OFF — paper/approval-mode only; Live-Gates ungeoeffnet`
-- lightning: `Empfang live, PAY DISARMED seit 2026-08-06 (D-242). Externe Einnahmen lifetime = 0 sat.`
+- lightning: `Empfang live, PAY DISARMED seit 2026-08-06 (D-242); Re-Arm-Weg beschlossen (D-277: Self-Use, /pay, RouterRPC). Externe Einnahmen lifetime = 0 sat.`
 - policy: `Falsifikation vor Feature. Kein Aggregat ohne Zerlegung (D-244). Jede Schwelle wird gemessen, nicht gesetzt. Kein Auto-Merge bei Architektur-PRs.`
 - Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-268; die Nachtragsbloecke D-237..D-249 und D-250..D-268 sind nach Vergabe, nicht nach Datum sortiert).
 
@@ -23,6 +23,16 @@
 > Vergabereihenfolge, nicht der Chronologie** (D-235/D-236 waren am 25.08. bereits vergeben).
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
+
+### D-277 (2026-09-14)
+**Sendepfad hat einen Zweck: KAI bezahlt vom Operator per Telegram freigegebene Rechnungen. Der Sendepfad ist von der Versiegelung D-CORE-005 ausgenommen; der Rest des Payment-Kerns bleibt zu.**
+**Kontext**: D-242 hat den Sendepfad am 06.08. entschaerft, weil ein armierter Zahlungspfad ohne Nutzen reines Risiko ist. D-CORE-005 (#901) hat den Payment-Kern danach versiegelt (nur Wartung). Beides zusammen liess ein Sicherheitssystem stehen, das niemand benutzt. Dazu kommt ein technischer Blocker: der Client sendet ueber `POST /v1/channels/transactions` (SendPaymentSync); lnd hat den Endpunkt in 0.20 als veraltet markiert und entfernt ihn in 0.21. Ohne Migration bricht jedes Re-Arm beim naechsten Node-Upgrade.
+**Entscheidung** (Operator): (1) Zweck des Sendepfads ist Self-Use: KAI bezahlt BOLT11-Rechnungen, die der Operator ueber Telegram (`/pay`) einreicht und per HOTP freigibt; Journal, Caps, Reserve-Floor und Reconcile bleiben die Leitplanken, nicht der Kill-Switch. (2) Der Sendepfad (`app/lightning/client.py` Send-Methoden, `app/payments/rails/lightning*.py`, `golive_preflight`, `/pay`) ist von D-CORE-005 ausgenommen; Empfang, L402, Treasury und alles, was Dritte beruehrt, bleiben versiegelt (ADR 0016 SELF-USE ONLY, D-269). (3) Reihenfolge: RouterRPC-Migration (`/v2/router/send`, Fee-Limit Pflicht, `failure_reason` im Journal) -> Preflight-Fakten fuer den armierten Betrieb (Node-Version, SCB-Alter, Fee-Cap, Purpose) + `/pay` -> Re-Arm nur nach Preflight GO und ausdruecklichem Operator-GO mit drei Beweisen (1-sat-Send, Send ueber Cap geblockt, Send ueber Fee-Limit abgelehnt). (4) Alltags-Wallet-UX (Saldo, QR, Historie) wird NICHT in KAI gebaut; dafuer eine Wallet-App mit Budget-Macaroon am selben Node.
+**Begruendung**: Schutz ohne Nutzen ist kein Schutz, sondern toter Code. Der einzige Sendepfad, den eine Handy-Wallet nicht bietet, ist der maschinelle, journalierte, gecappte mit Operator-Freigabe im bestehenden Kanal.
+**Restrisiko**: Ein armierter Pfad kann Geld bewegen. Begrenzt durch per-Payment-Cap, Tages-Cap, Fee-Limit, HOTP ab Schwelle, Reserve-Floor und append-only-Journal; Flag bleibt bis zum Re-Arm-Beweis `false`.
+**Rueckrollbarkeit**: ja -- `APP_LN_PAY_ENABLED=false` + Restart (D-242-Zustand).
+**Betroffen**: `app/lightning/client.py`, `app/payments/rails/lightning_mapping.py`, `app/lightning/golive_preflight.py`, `scripts/ln_golive_preflight.py`, `app/messaging/`, `docs/runbooks/ln_g0_golive.md`.
+**Cross-Ref**: D-242, D-CORE-005 (#901), D-269, ADR 0016, ADR 0018 (Control Plane), lnd release notes 0.20/0.21.
 
 ### D-276 (2026-09-14)
 **Die Zurueckstellung von `kai-litellm.service` ist aufgehoben; Units im Takt bekommen in der Prozess-Sonde eine Nachmessung statt eines P0.**
