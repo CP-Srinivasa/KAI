@@ -982,17 +982,16 @@ def test_zwischen_topfdecke_und_tageslimit_meldet_der_block_nicht_mehr_ok(
 def test_am_tageslimit_bleibt_die_bestehende_semantik(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Auch oberhalb des Gesamtlimits zaehlt die Reserve (D-273).
+    """Oberhalb des Tageslimits zahlt auch die Reserve nicht mehr (D-274).
 
-    Mit gesetzter Reserve prueft die Runtime Reserveaufrufe gegen den Reservetopf,
-    nicht gegen das gesamte Tageslimit -- am echten ``invoke`` bei 1,30 USD
-    geprueft: alert-faehig bezahlt, gewoehnlich abgelehnt. Die Anzeige meldet
-    deshalb ``reserve``. Dass der Tag so ueber 1,25 USD enden kann, wenn der
-    Normaltopf seine Decke schon ueberschritten hatte, ist ein bekannter
-    Randfall von #954 und in D-273 benannt, nicht Gegenstand dieses Tests.
+    Zwischen D-273 und D-274 stand hier kurz ``reserve``: die Runtime prueft
+    Reserveaufrufe nur gegen den Reservetopf, und bei 1,30 USD im Normaltopf
+    haette die Reserve weitere 0,15 USD gezahlt. Seit D-274 haelt die Summe
+    aller Toepfe das Tageslimit; die Anzeige nennt den Grund beim Namen.
     """
     koerper = _budget_ueber_http(tmp_path, monkeypatch, ausgegeben=1.30)
 
     assert koerper["cost"]["blocks_routine"] is True
     assert koerper["budget"]["routine_calls_blocked"] is True
-    assert koerper["budget"]["alert_capability_for_new_documents"] == "reserve"
+    assert koerper["budget"]["alert_capability_for_new_documents"] == "unreachable"
+    assert koerper["budget"]["alert_capability_reason"] == "daily_limit_reached"

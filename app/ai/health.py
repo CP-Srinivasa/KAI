@@ -352,8 +352,14 @@ def _alert_capability_block(
         # Budget blockiert, aber der Regelpfad kaeme durch: dann ist die
         # Alert-Faehigkeit nicht verloren, nur die Analysetiefe.
         zustand, grund = "degraded", "budget_blocked_rule_path_still_passes_gate"
-    elif alert_call_reason in {"alert_reserve_exhausted", "monthly_limit_reached"}:
+    elif alert_call_reason == "monthly_limit_reached" or (
+        alert_call_pot == "alert_reserve"
+        and alert_call_reason in {"alert_reserve_exhausted", "daily_limit_reached"}
+    ):
         # Nicht irgendein Budgetgrund, sondern DER, der auch die Reserve sperrt.
+        # Ohne Reserve bleibt die Aussage von #953: der Regelpfad kommt nicht
+        # ueber das Gate -- ein "daily_limit_reached" des v1-Pfads sagt dem
+        # Operator weniger als das.
         zustand, grund = "unreachable", alert_call_reason
     else:
         zustand, grund = "unreachable", "budget_blocked_rule_path_below_alert_gate"
