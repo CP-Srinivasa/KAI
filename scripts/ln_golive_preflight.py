@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from app.core.lightning_settings import LightningSettings
+from app.core.payment_settings import get_payment_settings
 from app.core.settings import get_settings
 from app.lightning.adapter import CredentialScope, _build_client
+from app.lightning.backup_monitor import read_scb_status
 from app.lightning.client import LightningUnavailableError
 from app.lightning.golive_preflight import golive_preflight
 
@@ -114,6 +117,22 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool | None, bool, 
     return True, scope_minimal, can_mint, inbound_sat
 
 
+async def _probe_armed_facts(cfg: LightningSettings) -> tuple[str | None, float | None]:
+    """D-277: (lnd version, SCB copy age in seconds) -- ``None`` = unproven (NO-GO)."""
+    version: str | None = None
+    try:
+        info = await _build_client(cfg).get_info()
+        version = str(getattr(info, "version", "") or "") or None
+    except LightningUnavailableError:
+        version = None
+    age: float | None = None
+    if cfg.scb_path:
+        status = read_scb_status(cfg.scb_path)
+        if status.present and status.mtime_epoch is not None:
+            age = max(0.0, time.time() - float(status.mtime_epoch))
+    return version, age
+
+
 def _telemetry_writable() -> bool:
     try:
         _DEMAND_DIR.mkdir(parents=True, exist_ok=True)
@@ -135,6 +154,10 @@ async def _main() -> int:
         reachable, scope_minimal, can_mint, inbound_sat = await _probe_node(cfg)
     else:
         reachable, scope_minimal, can_mint, inbound_sat = None, None, None, None  # node inert
+    node_version: str | None = None
+    scb_age: float | None = None
+    if cfg.enabled and cfg.pay_enabled:
+        node_version, scb_age = await _probe_armed_facts(cfg)
     report = golive_preflight(
         cfg,
         node_reachable=reachable,
@@ -143,6 +166,9 @@ async def _main() -> int:
         inbound_liquidity_sat=inbound_sat,
         booking_unit_present=_BOOKING_UNIT.exists(),
         telemetry_writable=_telemetry_writable(),
+        node_version=node_version,
+        scb_age_seconds=scb_age,
+        payments=get_payment_settings() if cfg.pay_enabled else None,
     )
     print(json.dumps(report, indent=2))
     return 0 if report["go"] else 1

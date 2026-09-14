@@ -276,6 +276,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signal_approval_enabled=settings.execution.operator_signal_approval_enabled,
         signal_approval_ttl_minutes=settings.execution.operator_signal_approval_ttl_minutes,
         signal_approval_hmac_secret=settings.execution.operator_signal_approval_hmac_secret,
+        # D-277: /pay nutzt den Control Plane DIESES Prozesses (ein Journal, ein Schreiber).
+        payment_service_factory=lambda: getattr(app.state, "payment_service", None),
     )
     poller = TelegramPoller(
         bot,

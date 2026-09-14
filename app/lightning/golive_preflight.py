@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.lightning_settings import LightningSettings
+from app.core.payment_settings import PaymentSettings
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,86 @@ class PreflightCheck:
     name: str
     ok: bool
     detail: str
+
+
+#: routerrpc ``/v2/router/send`` (SendPaymentV2) ist seit lnd 0.11 im REST-Gateway;
+#: SendPaymentSync faellt in 0.21 weg. Der Sendepfad spricht seit D-277 nur noch v2.
+ROUTER_SEND_MIN_LND_VERSION = (0, 11, 0)
+#: Muss mit ``app.messaging.pay_telegram_commands.PAY_PURPOSE`` uebereinstimmen (Test).
+PAY_PURPOSE = "operator_pay_invoice"
+
+
+def parse_lnd_version(raw: str | None) -> tuple[int, int, int] | None:
+    """``"0.18.3-beta commit=v0.18.3-beta"`` -> ``(0, 18, 3)``; unparsebar -> ``None``."""
+    if not raw:
+        return None
+    head = raw.strip().split()[0].lstrip("v").split("-")[0]
+    parts = head.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        nums = [int(x) for x in parts[:3]]
+    except ValueError:
+        return None
+    while len(nums) < 3:
+        nums.append(0)
+    return nums[0], nums[1], nums[2]
+
+
+def _armed_send_checks(
+    cfg: LightningSettings,
+    *,
+    node_version: str | None,
+    scb_age_seconds: float | None,
+    payments: PaymentSettings | None,
+) -> list[PreflightCheck]:
+    """Fakten, die nur im armierten Betrieb zaehlen (D-277). Alle fail-closed."""
+    version = parse_lnd_version(node_version)
+    minimum = ".".join(str(x) for x in ROUTER_SEND_MIN_LND_VERSION)
+    checks = [
+        PreflightCheck(
+            "router_send_supported",
+            version is not None and version >= ROUTER_SEND_MIN_LND_VERSION,
+            f"lnd getinfo.version must parse and be >= {minimum} (the send path speaks "
+            f"/v2/router/send only); observed {node_version!r}",
+        ),
+        PreflightCheck(
+            "scb_backup_fresh",
+            scb_age_seconds is not None and scb_age_seconds <= cfg.scb_max_age_seconds,
+            f"the Static Channel Backup copy must exist and be <= {cfg.scb_max_age_seconds}s "
+            f"old before money moves; observed age {scb_age_seconds!r}",
+        ),
+    ]
+    if payments is None:
+        checks.append(
+            PreflightCheck(
+                "payment_settings_probed", False, "PaymentSettings must be supplied when armed"
+            )
+        )
+        return checks
+    checks.extend(
+        [
+            PreflightCheck(
+                "payment_mode_live",
+                payments.mode == "live",
+                "APP_PAYMENT_MODE must be 'live' for a send to leave the process; "
+                f"is {payments.mode!r}",
+            ),
+            PreflightCheck(
+                "fee_cap_configured",
+                payments.fee_limit_default_ppm > 0 and payments.fee_limit_max_sat > 0,
+                "APP_PAYMENT_FEE_LIMIT_DEFAULT_PPM and _MAX_SAT must both be > 0 (a send "
+                "without a fee bound is refused by the client)",
+            ),
+            PreflightCheck(
+                "pay_purpose_allowed",
+                PAY_PURPOSE in payments.purposes_allowed_set,
+                f"APP_PAYMENT_PURPOSES_ALLOWED must contain {PAY_PURPOSE!r} "
+                "or /pay is policy-denied",
+            ),
+        ]
+    )
+    return checks
 
 
 def golive_preflight(
@@ -48,6 +129,9 @@ def golive_preflight(
     inbound_liquidity_sat: int | None = None,
     booking_unit_present: bool | None = None,
     telemetry_writable: bool | None = None,
+    node_version: str | None = None,
+    scb_age_seconds: float | None = None,
+    payments: PaymentSettings | None = None,
 ) -> dict[str, Any]:
     """Return ``{"verdict": "GO"|"NO-GO", "go": bool, "checks": [...], "blocking": [...]}``.
 
@@ -82,6 +166,9 @@ def golive_preflight(
                 "configured and carry offchain:write (a pay_invoice probe must NOT be "
                 "permission-denied). The read/invoice credential is never promoted to "
                 "send scope.",
+            ),
+            *_armed_send_checks(
+                cfg, node_version=node_version, scb_age_seconds=scb_age_seconds, payments=payments
             ),
         ]
     else:
@@ -160,4 +247,10 @@ def golive_preflight(
     }
 
 
-__all__ = ["PreflightCheck", "golive_preflight"]
+__all__ = [
+    "PAY_PURPOSE",
+    "ROUTER_SEND_MIN_LND_VERSION",
+    "PreflightCheck",
+    "golive_preflight",
+    "parse_lnd_version",
+]
