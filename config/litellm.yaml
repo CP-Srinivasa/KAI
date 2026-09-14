@@ -29,6 +29,10 @@ model_list:
       # Geraet gemessen, zweimal 30,0 s. Ein Drift-Test haelt die beiden Werte
       # zusammen: tests/unit/test_research_route_timeout_agreement.py
       timeout: 180
+  # Provider verification only: app/ai does not map a purpose to this alias.
+  - model_name: kai-deepseek
+    litellm_params:
+      model: os.environ/KAI_LITELLM_DEEPSEEK_MODEL
 
 litellm_settings:
   # KAI/app/ai is the single bounded-retry authority.

@@ -99,7 +99,14 @@ def test_config_disables_litellm_retry_and_second_telemetry() -> None:
     assert "num_retries: 0" in config
     assert "telemetry: false" in config
     assert "master_key: os.environ/LITELLM_MASTER_KEY" in config
-    for alias in ("kai-bulk", "kai-standard", "kai-reasoning", "kai-critical", "kai-stt"):
+    for alias in (
+        "kai-bulk",
+        "kai-standard",
+        "kai-reasoning",
+        "kai-critical",
+        "kai-stt",
+        "kai-deepseek",
+    ):
         assert f"model_name: {alias}" in config
     assert "sk-" not in config
 
