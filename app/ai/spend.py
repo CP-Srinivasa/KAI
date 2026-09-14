@@ -41,6 +41,18 @@ bleiben sichtbar, sie erhoehen keine Summe, und sie zaehlen nicht gegen
 ``APP_AI_BUDGET_UNKNOWN_MAX_CALLS_PER_DAY``. Unbelegt heisst ab jetzt: die
 Messung LIEF und konnte trotzdem keinen Preis nennen.
 
+**Ein Fehlversuch ohne Verbrauch ist kein unbekannter Kostenfall (D-271).**
+Eine Zeile mit ``ok=false``, ohne Preis und ohne gemeldete Token beschreibt
+einen Aufruf, bei dem nichts gemessen wurde, weil nichts verbraucht wurde --
+ein Verbindungsfehler, ein Upstream-Ausfall, eine lokale Abweisung. Am Geraet
+waren das bis 2026-09-11 die EINZIGEN Zeilen, die das Unbepreist-Gate je
+ausgeloest haben (09.09.: 96, 10.09.: 65 gegen 50). ``cost_usd=None`` ist bei
+ihnen ein Identitaetssignal, kein Kostensignal. Sie zaehlen deshalb als
+:attr:`SpendWindow.failed_uncosted_calls` -- sichtbar, aber ohne Wirkung auf
+Summe und Schwelle. Fuer jeden Transport, nicht nur fuer LiteLLM. Das Budget
+wacht ueber Geld; ob ein Anbieter erreichbar ist, beantwortet die
+Gesundheitsschicht.
+
 Fail-soft: ein fehlender, leerer oder halb geschriebener Strom liefert einen
 Nullzustand, keine Ausnahme. Eine Kostenbremse, die beim Lesen stirbt, wäre
 ein Ausfall mit Kostenbegründung.
@@ -65,6 +77,7 @@ from app.ai.budget import (
     accumulate,
     evaluate_status,
 )
+from app.ai.routes import is_route
 from app.observability.llm_telemetry import DEFAULT_TELEMETRY_PATH
 from app.storage.jsonl_io import iter_jsonl_tolerant
 
@@ -94,7 +107,18 @@ def row_ts(row: dict[str, Any]) -> datetime | None:
 
 
 def is_ai_row(row: dict[str, Any]) -> bool:
-    """Beschreibt diese Zeile einen LLM-Aufruf an einen bezahlten Anbieter?"""
+    """Beschreibt diese Zeile einen LLM-Aufruf an einen bezahlten Anbieter?
+
+    Zwei Wege, und der erste braucht keinen Anbieternamen: eine Zeile, die
+    ueber LiteLLM auf einer von KAIs Routen lief, IST ein bezahlter Aufruf. Der
+    Anbieter dahinter ist Konfiguration (D-270) und steht in keiner Liste hier;
+    bei einem Fehlversuch ohne Identitaet ist ``provider`` sogar leer. Bis
+    2026-09-11 hing die Erkennung allein an :data:`PAID_PROVIDERS` -- die
+    Research-Route (``moonshot``) war damit fuer Budget und Gesundheit
+    unsichtbar, und sie waere es fuer jeden weiteren Anbieter geblieben.
+    """
+    if row.get("transport") == "litellm" and is_route(row.get("logical_route")):
+        return True
     provider = row.get("provider")
     return (
         isinstance(provider, str)
@@ -121,6 +145,27 @@ def is_unmetered_legacy_row(row: dict[str, Any]) -> bool:
     braeuchte ein gepflegtes Datum und laege beim naechsten Neuaufsetzen falsch.
     """
     return "cost_status" not in row
+
+
+def is_failed_uncosted_row(row: dict[str, Any]) -> bool:
+    """Ein Fehlversuch, der keinen Verbrauch gemeldet hat? (D-271)
+
+    Alle drei Merkmale muessen stimmen: gescheitert, kein Preis, keine Token.
+    Fehlt eines, bleibt die Zeile, was sie war -- ein Fehlversuch MIT Token
+    hat verbraucht und nur keinen Preis bekommen, und ein Erfolg ohne Usage ist
+    eine gescheiterte Messung. Genau fuer diese beiden Faelle gibt es das Gate.
+
+    Die Anbieteridentitaet zaehlt bewusst NICHT mit: sie trennt "hat den
+    Anbieter erreicht" von "hat ihn nicht erreicht", aber nicht "hat
+    verbraucht" von "hat nicht verbraucht". Die Frage des Budgets ist nur die
+    zweite.
+    """
+    if row.get("ok", False):
+        return False
+    kosten = row.get("cost_usd")
+    if isinstance(kosten, (int, float)) and not isinstance(kosten, bool):
+        return False
+    return _usage(row) == (0, 0)
 
 
 def dedupe_chain_levels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -170,6 +215,9 @@ class SpendWindow:
     #: Aufrufe aus der Zeit VOR der Messung (kein ``cost_status`` in der Zeile).
     #: Sichtbar, aber ohne Wirkung auf Summe und Schwelle -- siehe Modul-Docstring.
     unmetered_legacy_calls: int = 0
+    #: Fehlversuche ohne gemeldeten Verbrauch (D-271). Sichtbar, aber ohne
+    #: Wirkung auf Summe und Schwelle -- siehe :func:`is_failed_uncosted_row`.
+    failed_uncosted_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     by_provider: dict[str, SpendBucket] = field(default_factory=dict)
@@ -187,7 +235,12 @@ class SpendWindow:
 
     @property
     def known_calls(self) -> int:
-        return self.calls - self.unknown_calls - self.unmetered_legacy_calls
+        return (
+            self.calls
+            - self.unknown_calls
+            - self.unmetered_legacy_calls
+            - self.failed_uncosted_calls
+        )
 
     @property
     def total_tokens(self) -> int:
@@ -344,12 +397,13 @@ def _add(
     *,
     ein: int,
     aus: int,
+    unbelegt: bool,
 ) -> None:
     vorher = buckets.get(name, SpendBucket())
     buckets[name] = SpendBucket(
         calls=vorher.calls + 1,
         known_cost_usd=vorher.known_cost_usd + (row_cost or 0.0),
-        unknown_calls=vorher.unknown_calls + (1 if row_cost is None else 0),
+        unknown_calls=vorher.unknown_calls + (1 if unbelegt else 0),
         input_tokens=vorher.input_tokens + ein,
         output_tokens=vorher.output_tokens + aus,
     )
@@ -389,6 +443,7 @@ def spend_window(
     bekannt = 0.0
     unbekannt = 0
     altzeilen = 0
+    fehlversuche = 0
     eingabe = 0
     ausgabe = 0
     nach_provider: dict[str, SpendBucket] = {}
@@ -412,12 +467,16 @@ def spend_window(
         calls += 1
         eingabe += zeilen_ein
         ausgabe += zeilen_aus
-        # Eine Zeile ohne Preis ist entweder unbelegt (die Messung lief und
-        # fand keinen) oder eine Altzeile (die Messung lief nie). Nur die
-        # erste Sorte zaehlt gegen die Schwelle.
+        # Eine Zeile ohne Preis ist unbelegt (die Messung lief und fand keinen),
+        # eine Altzeile (die Messung lief nie) oder ein Fehlversuch ohne
+        # Verbrauch (es gab nichts zu messen, D-271). Nur die erste Sorte
+        # zaehlt gegen die Schwelle.
         alt = zeilen_kosten is None and is_unmetered_legacy_row(row)
+        fehlversuch = not alt and is_failed_uncosted_row(row)
         if alt:
             altzeilen += 1
+        elif fehlversuch:
+            fehlversuche += 1
         elif zeilen_kosten is None:
             unbekannt += 1
         else:
@@ -426,13 +485,18 @@ def spend_window(
         provider = str(row.get("provider") or "unknown")
         modell = str(row.get("actual_model") or row.get("model") or "unknown")
         use_case = str(row.get("use_case") or "unknown")
-        _add(nach_provider, provider, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
-        _add(nach_modell, modell, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
-        _add(nach_use_case, use_case, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus)
-        if not alt:
-            # Altzeilen gehen NICHT in den Budgetzustand: ``accumulate`` kennt
-            # nur "gebucht" und "unbekannt", und als unbekannt gezaehlt haetten
-            # sie genau die Sperre ausgeloest, die dieser Nachtrag verhindert.
+        unbelegt = zeilen_kosten is None and not fehlversuch
+        for toepfe, name in (
+            (nach_provider, provider),
+            (nach_modell, modell),
+            (nach_use_case, use_case),
+        ):
+            _add(toepfe, name, zeilen_kosten, ein=zeilen_ein, aus=zeilen_aus, unbelegt=unbelegt)
+        if not (alt or fehlversuch):
+            # Altzeilen und Fehlversuche ohne Verbrauch gehen NICHT in den
+            # Budgetzustand: ``accumulate`` kennt nur "gebucht" und "unbekannt",
+            # und als unbekannt gezaehlt haetten sie genau die Sperre ausgeloest,
+            # die diese beiden Nachtraege verhindern.
             position = BudgetEntry(route="standard", cost_usd=zeilen_kosten)
             positionen.append(position)
             nach_topf.setdefault(_topf_der_zeile(row), []).append(position)
@@ -445,6 +509,7 @@ def spend_window(
         known_cost_usd=round(bekannt, 8),
         unknown_calls=unbekannt,
         unmetered_legacy_calls=altzeilen,
+        failed_uncosted_calls=fehlversuche,
         input_tokens=eingabe,
         output_tokens=ausgabe,
         by_provider=nach_provider,
@@ -501,6 +566,7 @@ __all__ = [
     "current_spend",
     "dedupe_chain_levels",
     "is_ai_row",
+    "is_failed_uncosted_row",
     "is_unmetered_legacy_row",
     "load_rows",
     "reset_spend_cache",
