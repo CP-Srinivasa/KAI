@@ -243,8 +243,55 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         # Kosten. 25 USD tragen ~0,83 USD je Tag; bei 1,25 USD taeglich ist
         # der Monat nach 20 Tagen verbraucht (Operator-Auftrag 2026-09-14).
         **_hochrechnung_block(monat, status),
+        # Wuerde ein alert-faehiges Dokument JETZT noch bezahlt? Dieselbe
+        # Entscheidung, die `app.ai.runtime` vor dem echten Aufruf trifft --
+        # keine zweite Rechnung, damit Anzeige und Sperre nicht auseinanderlaufen.
+        **_alert_pfad_block(heute, status),
         "price_table_version": PRICE_TABLE_VERSION,
         "note": _COST_NOTE,
+    }
+
+
+def _alert_pfad_block(heute: Any, status: Any) -> dict[str, Any]:
+    """Topfentscheidung fuer einen alert-faehigen Standardaufruf (D-273).
+
+    Spiegelt ``app.ai.runtime._budget_gate``: ohne gesetzte Reserve gilt der
+    v1-Weg ueber ``status.allows``, mit Reserve ``decide_pot`` mit genau den
+    Argumenten von ``_Budgetbild.verdict``. Ohne diese Unterscheidung meldete
+    die Anzeige "Reserve offen", wo gar keine Reserve existiert.
+    """
+    from app.ai.budget import decide_pot
+    from app.core.ai_cost_settings import get_ai_cost_settings
+
+    try:
+        reserven = get_ai_cost_settings().reserve_policy
+    except Exception:  # noqa: BLE001 - eine Gesundheitsanzeige stirbt nicht an Kosten
+        return {
+            "alert_eligible_call_allowed": None,
+            "alert_eligible_call_pot": None,
+            "alert_eligible_call_reason": "reserve_policy_unreadable",
+        }
+    if not reserven.any_reserve_set:
+        erlaubt = bool(status.allows("standard"))
+        return {
+            "alert_eligible_call_allowed": erlaubt,
+            "alert_eligible_call_pot": "normal",
+            "alert_eligible_call_reason": "" if erlaubt else str(status.reason or ""),
+        }
+    urteil = decide_pot(
+        route="standard",
+        pots=heute.pot_states(),
+        policy=status.policy,
+        reserves=reserven,
+        monthly=status.monthly,
+        alert_eligible=True,
+        validation=False,
+        cost_unknown=status.state == "COST_UNKNOWN" and status.limits_configured,
+    )
+    return {
+        "alert_eligible_call_allowed": urteil.allowed,
+        "alert_eligible_call_pot": urteil.pot,
+        "alert_eligible_call_reason": urteil.reason or "",
     }
 
 
@@ -262,7 +309,12 @@ def _hochrechnung_block(monat: Any, status: Any) -> dict[str, Any]:
     }
 
 
-def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
+def _alert_capability_block(
+    routine_blocked: bool,
+    alert_call_allowed: bool | None = None,
+    alert_call_pot: str | None = None,
+    alert_call_reason: str = "",
+) -> dict[str, Any]:
     """Kann ein NEU analysiertes Dokument ueberhaupt noch einen Alert ausloesen?
 
     Der Befund, der diesen Block erzwungen hat (Spur A, 09./10.09.2026): nach
@@ -291,10 +343,18 @@ def _alert_capability_block(routine_blocked: bool) -> dict[str, Any]:
     erreichbar = rule_path_can_reach_alert_gate()
     if not routine_blocked:
         zustand, grund = "ok", ""
+    elif alert_call_allowed and alert_call_pot == "alert_reserve":
+        # Die Routine steht, aber alert-faehige Dokumente bekommen aus der
+        # Reserve noch eine LLM-Bewertung (D-273). Bis 2026-09-14 stand hier
+        # "unreachable" -- die Anzeige widersprach der Sperre, die sie meldet.
+        zustand, grund = "reserve", "normal_budget_exhausted_alert_reserve_open"
     elif erreichbar:
         # Budget blockiert, aber der Regelpfad kaeme durch: dann ist die
         # Alert-Faehigkeit nicht verloren, nur die Analysetiefe.
         zustand, grund = "degraded", "budget_blocked_rule_path_still_passes_gate"
+    elif alert_call_reason in {"alert_reserve_exhausted", "monthly_limit_reached"}:
+        # Nicht irgendein Budgetgrund, sondern DER, der auch die Reserve sperrt.
+        zustand, grund = "unreachable", alert_call_reason
     else:
         zustand, grund = "unreachable", "budget_blocked_rule_path_below_alert_gate"
     return {
@@ -408,7 +468,12 @@ def _budget_block(
             if rows is not None
             else sum(int(block.get("local_refusals", 0)) for block in provider_blocks)
         ),
-        **_alert_capability_block(routine_gesperrt),
+        **_alert_capability_block(
+            routine_gesperrt,
+            cost.get("alert_eligible_call_allowed"),
+            cost.get("alert_eligible_call_pot"),
+            str(cost.get("alert_eligible_call_reason") or ""),
+        ),
     }
 
 
