@@ -22,6 +22,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.ai.spend import (
+    _ALTPAAR_AB,
+    _ALTPAAR_BIS,
     is_ai_row,
     load_rows,
     reset_spend_cache,
@@ -155,6 +157,69 @@ def test_innere_zeile_mit_eigener_aussenzeile_wird_nicht_fremd_gepaart(tmp_path:
         chain_position=-1, correlation_id="doc_2", ts=(_JETZT + timedelta(seconds=4)).isoformat()
     )
     _write(sink, [innen, aussen, fremd])
+
+    assert spend_window("today", path=sink, now=_JETZT + timedelta(minutes=1)).calls == 2
+
+
+# ── 1a-ii. Der Zeitraum ist Teil der Regel (Issue #973, Review der Reserve) ─
+
+
+def test_innere_zeile_nach_dem_cutoff_wird_auch_ohne_aussenzeile_nicht_gepaart(
+    tmp_path: Path,
+) -> None:
+    """Seit dem Deploy von #970 tragen Kettenzeilen die Dokument-ID. Bricht ein
+    Aufruf ab, bevor die aeussere Zeile geschrieben ist, bleibt seine innere Zeile
+    allein -- und darf trotzdem keine fremde aeussere Zeile verdraengen."""
+    sink = tmp_path / "llm.jsonl"
+    start = _ALTPAAR_BIS + timedelta(minutes=5)
+    innen = _zeile(chain_position=0, correlation_id="doc_abgebrochen", ts=start.isoformat())
+    fremd = _zeile(
+        chain_position=-1, correlation_id="doc_fremd", ts=(start + timedelta(seconds=3)).isoformat()
+    )
+    _write(sink, [innen, fremd])
+
+    assert spend_window("today", path=sink, now=start + timedelta(minutes=1)).calls == 2
+
+
+def test_innere_zeile_vor_dem_zeitraum_wird_nicht_gepaart(tmp_path: Path) -> None:
+    """Vor #887 (07.09.) gab es die Doppelzaehlung nicht; die Regel greift dort nicht."""
+    sink = tmp_path / "llm.jsonl"
+    start = _ALTPAAR_AB - timedelta(hours=6)
+    innen = _zeile(chain_position=0, correlation_id="llm_alt", ts=start.isoformat())
+    aussen = _zeile(
+        chain_position=-1, correlation_id="doc_alt", ts=(start + timedelta(seconds=3)).isoformat()
+    )
+    _write(sink, [innen, aussen])
+
+    assert spend_window("today", path=sink, now=start + timedelta(minutes=1)).calls == 2
+
+
+def test_der_zeitraum_der_doppelzaehlung_ist_der_dokumentierte() -> None:
+    """07.09. (#887) bis zur Aktivierung des ersten Release mit #970 (14.09., 14:12Z)."""
+    assert _ALTPAAR_AB == datetime(2026, 9, 7, tzinfo=UTC)
+    assert _ALTPAAR_BIS == datetime(2026, 9, 14, 14, 15, tzinfo=UTC)
+    assert _ALTPAAR_AB < _JETZT < _ALTPAAR_BIS  # die uebrigen Paar-Tests liegen im Zeitraum
+
+
+@pytest.mark.parametrize(("abstand", "erwartet"), [(120.0, 1), (120.001, 2)])
+def test_die_grenze_von_120_sekunden_gilt_einschliesslich(
+    tmp_path: Path, abstand: float, erwartet: int
+) -> None:
+    sink = tmp_path / "llm.jsonl"
+    _write(sink, _paar(sekunden_dazwischen=abstand))
+
+    assert spend_window("today", path=sink, now=_JETZT + timedelta(minutes=5)).calls == erwartet
+
+
+def test_anbietername_im_modellfeld_paart_nicht_ueber_die_anbietergrenze(tmp_path: Path) -> None:
+    """Gegenprobe zu oben: ``model=openai`` in der Aussenzeile paart keine Gemini-Innenzeile."""
+    sink = tmp_path / "llm.jsonl"
+    innen, aussen = _paar()
+    innen["provider"] = "gemini"
+    innen["model"] = innen["actual_model"] = "gemini-2.5-flash"
+    aussen["model"] = "openai"
+    aussen["actual_model"] = None
+    _write(sink, [innen, aussen])
 
     assert spend_window("today", path=sink, now=_JETZT + timedelta(minutes=1)).calls == 2
 

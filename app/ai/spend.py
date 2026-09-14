@@ -60,8 +60,12 @@ erbt seit 2026-09-14 die Dokument-ID. Fuer den Bestand gilt eine zweite,
 enge Regel (:func:`_altpaare_entfernen`): eine aeussere Zeile entfaellt, wenn
 eine VERWAISTE innere Zeile -- keine aeussere Zeile teilt ihre ID -- mit
 gleichem Ausgang, gleichen Token und passendem Modell hoechstens
-:data:`_ALTPAAR_MAX_SEKUNDEN` vor ihr liegt, eins zu eins. Neue Zeilen
-erreicht sie nicht: ihre inneren Zeilen teilen die ID und sind nie verwaist.
+:data:`_ALTPAAR_MAX_SEKUNDEN` vor ihr liegt, eins zu eins -- und nur fuer
+innere Zeilen aus dem Zeitraum :data:`_ALTPAAR_AB` bis :data:`_ALTPAAR_BIS`.
+Neue Zeilen erreicht sie damit doppelt nicht: ihre inneren Zeilen teilen die
+ID, und selbst eine allein gebliebene (Abbruch vor der aeusseren Zeile) liegt
+nach dem Cutoff. Ohne den Zeitraum haette sie eine fremde aeussere Zeile
+verdraengen koennen (Issue #973, Review der Entwicklerreserve 14.09.).
 
 Fail-soft: ein fehlender, leerer oder halb geschriebener Strom liefert einen
 Nullzustand, keine Ausnahme. Eine Kostenbremse, die beim Lesen stirbt, wäre
@@ -108,6 +112,14 @@ _SPERR_ZWECKE: frozenset[str] = frozenset(
 #: alle 52 Paare eines Tages unter 10 s; die Grenze laesst Raum fuer Ketten,
 #: die erst nach einer Zeitueberschreitung erfolgreich waren.
 _ALTPAAR_MAX_SEKUNDEN: Final = 120.0
+
+#: Der Zeitraum der Doppelzaehlung, halboffen. Ab #887 (gemergt 07.09.2026)
+#: bekam jede Kette eine eigene ID; das erste Release mit #970 wurde am
+#: 14.09.2026 um 14:12:35Z aktiviert (release.json von e25eab08), seither
+#: erben Kettenzeilen die Dokument-ID. Innere Zeilen ausserhalb dieses
+#: Fensters sind nie "verwaist" im Sinne der Altpaarung.
+_ALTPAAR_AB: Final = datetime(2026, 9, 7, tzinfo=UTC)
+_ALTPAAR_BIS: Final = datetime(2026, 9, 14, 14, 15, tzinfo=UTC)
 
 #: Unter einer Stunde Monat ist jede Hochrechnung Rauschen: 0,05 USD um 00:30
 #: am Ersten ergaeben rund 72 USD Monatsprognose.
@@ -241,7 +253,7 @@ def _altpaare_entfernen(rows: list[dict[str, Any]], aussen_ids: set[Any]) -> lis
         if chain_position(row) < 0 or row.get("correlation_id") in aussen_ids:
             continue
         ts = row_ts(row)
-        if ts is not None:
+        if ts is not None and _ALTPAAR_AB <= ts < _ALTPAAR_BIS:
             schluessel = (bool(row.get("ok", False)), _usage(row))
             verwaist.setdefault(schluessel, []).append((ts, index))
     if not verwaist:
