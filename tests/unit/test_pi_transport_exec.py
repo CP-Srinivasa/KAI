@@ -371,6 +371,9 @@ _GEHEIMNISSE = (
     "MOONSHOT_API_KEY",
     "DEEPSEEK_API_KEY",
     "LITELLM_MASTER_KEY",
+    # Entwicklerreserve (ADR 0020): derselbe Weg, eigener Proxy, eigene Namen.
+    "LITELLM_DEV_MASTER_KEY",
+    "KAI_DEV_LITELLM_CODE_API_KEY",
 )
 
 #: Der Rumpf meldet ausschliesslich VORHANDENSEIN. Ein Test, der Werte ausgibt,
