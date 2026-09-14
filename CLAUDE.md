@@ -646,6 +646,27 @@ To keep outputs compatible:
    - TODOs,
    - local test commands.
 
+### Pflichtgate: PR-Inventar vor jeder Implementierung (Operator, 2026-09-10)
+
+Mehrere Agenten arbeiten gleichzeitig an diesem Repo. Zwei parallel gebaute
+Wahrheiten ueber denselben Vertrag (Budgetlogik, Telemetrie, Provider-Routing,
+Payment) sind gefaehrlicher als verlorene Arbeitszeit. Deshalb gilt:
+
+1. **CHECK_1 — vor dem Worktree, vor dem ersten Commit:**
+   `gh pr list --state open --json number,title,headRefName` und aktive
+   Branches auf Scope-Ueberschneidung pruefen. Titel genuegen nicht — bei
+   Verdacht die geaenderten Dateien vergleichen (`gh pr view <n> --json files`).
+2. **CHECK_2 — unmittelbar vor der PR-Eroeffnung:** dieselbe Pruefung erneut,
+   weil waehrend des eigenen Auftrags neue PRs entstanden sein koennen.
+3. **MID-TASK_RECHECK** bei laengeren Auftraegen, sobald sich der Scope
+   verschieben koennte.
+
+Bei Ueberschneidung: **nicht parallel weiterbauen.** Melden, welcher PR/Branch
+kollidiert, ob die fremde Arbeit die eigene ABLOEST, ERGAENZT oder ihr
+WIDERSPRICHT, und genau EINEN kanonischen Pfad empfehlen. Ein abgeloester
+eigener Entwurf wird geschlossen (`CLOSED_SUPERSEDED`), nie als erledigt
+gebucht. Anlass: #952 wurde parallel zu #954 gebaut und musste verworfen werden.
+
 ---
 
 ## Quality Bar
