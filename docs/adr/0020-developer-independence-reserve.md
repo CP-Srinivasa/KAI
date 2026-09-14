@@ -160,11 +160,11 @@ Reserve, nicht ein Codex-Profil.
 |---|---|
 | Architekturentscheidung | **ACCEPTED** |
 | Repo-Seite (Konfig, Skript, Client-Profil, Tests, Runbook) | **in diesem PR** |
-| Entwickler-Schlüssel bei Moonshot/DeepSeek anlegen | Operator, **offen** |
-| Sieben `.env`-Werte auf der Pi | Operator, **offen** |
-| Release mit diesem PR auf der Pi | nächster regulärer Deploy (kein Sonder-Deploy nötig) |
-| Erster Proxy-Start + Smoke | Operator, **offen** |
-| Drei Kontrollaufgaben | **offen** |
-| Einstufung K2.7 Code als freigegebene Reserve | **offen**, nach 5. |
+| Entwickler-Schlüssel bei Moonshot/DeepSeek anlegen | **erledigt** 2026-09-14 |
+| Sieben `.env`-Werte auf der Pi | **erledigt** 2026-09-14 |
+| Release mit diesem PR auf der Pi | **erledigt**, Release `5972835e` (2026-09-14 12:21Z) |
+| Erster Proxy-Start + Smoke | **erledigt**, economy + code PASS (2026-09-14) |
+| Drei Kontrollaufgaben | **erledigt**, `artifacts/operator_memos/dev_reserve_trial_2026-09-14.md` |
+| Einstufung K2.7 Code als freigegebene Reserve | **erteilt** 2026-09-14 (Operator); economy als Analyse-Reserve, frontier ungeprüft |
 | Lokale Reserve (Ollama/Qwen) | **bewusst noch nicht** |
 | DB-gestützte Virtual Keys | **bewusst noch nicht** |
