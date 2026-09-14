@@ -292,3 +292,118 @@ def test_absicht_und_zustand_bleiben_getrennte_felder() -> None:
     assert '"extras_sha256":' in code
     assert '"dependency_manifest_sha256":' in code
     assert "pip freeze" in code, "das Manifest kommt aus dem tatsaechlichen venv"
+
+
+# ---------------------------------------------------------------------------
+# Was der Pfad-Suffix bindet — und was er offenlässt.
+# ---------------------------------------------------------------------------
+
+
+def _extras_sha(specs: str) -> str:
+    """Die Hash-Zeile des Builders AUSFUEHREN, nicht nachbauen.
+
+    Eine Nachbildung prüfte die Nachbildung. Deshalb wird die Zeile aus dem
+    Skript geschnitten und mit gesetztem ``EXTRA_SPECS`` ausgeführt — dasselbe
+    ``printf``, dasselbe ``sort``, dasselbe ``sha256sum``.
+    """
+    assert _BASH is not None
+    # Die Zuweisung ist mehrzeilig (printf mit echtem Umbruch): vom Beginn bis
+    # zur schliessenden Klammer lesen, statt eine einzelne Zeile zu greifen.
+    zeilen = _text().splitlines()
+    start = next(i for i, z in enumerate(zeilen) if 'EXTRAS_SHA="$(printf' in z)
+    ende = next(i for i in range(start, len(zeilen)) if zeilen[i].rstrip().endswith(')"'))
+    fragment = "\n".join(zeilen[start : ende + 1]).strip()
+    assert fragment.startswith("EXTRAS_SHA="), fragment
+
+    skript = f'EXTRA_SPECS="{specs}"\n{fragment}\nprintf %s "$EXTRAS_SHA"'
+    fertig = subprocess.run(  # noqa: S603
+        [_BASH, "-c", skript],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert fertig.returncode == 0, fertig.stderr
+    return fertig.stdout.strip()
+
+
+def test_gleiche_specs_ergeben_denselben_diskriminator() -> None:
+    """Sonst wäre der Pfad nicht reproduzierbar — zwei Bauten desselben Standes
+    landeten unter verschiedenen Namen."""
+    a = _extras_sha("litellm[proxy]==1.99.0")
+    b = _extras_sha("litellm[proxy]==1.99.0")
+
+    assert a == b
+    assert len(a) == 64 and all(c in "0123456789abcdef" for c in a)
+
+
+def test_die_reihenfolge_der_specs_aendert_den_diskriminator_nicht() -> None:
+    """``sort`` steht genau dafür in der Zeile: die Kommandozeile darf die
+    Identität des Release nicht bestimmen."""
+    assert _extras_sha("aaa==1 bbb==2") == _extras_sha("bbb==2 aaa==1")
+
+
+def test_eine_andere_version_ergibt_einen_anderen_diskriminator() -> None:
+    """Der eigentliche Punkt, am Verhalten gemessen statt am Wortlaut.
+
+    Gehashte NAMEN würden ``litellm==1.99.0`` und ``litellm==2.0.0``
+    gleichsetzen — beide hießen `litellm`, beide bekämen denselben Pfad, und
+    der zweite Bau bekäme still den ersten zurück. Deshalb hängt der
+    Diskriminator an den aufgelösten Specs.
+    """
+    assert _extras_sha("litellm[proxy]==1.99.0") != _extras_sha("litellm[proxy]==2.0.0")
+    assert _extras_sha("litellm[proxy]==1.99.0") != _extras_sha("litellm==1.99.0")
+
+
+def test_der_kopf_erklaert_die_eigenschaft() -> None:
+    """Die Eigenschaft ist oben am Verhalten belegt — hier steht nur, dass sie
+    überhaupt erklärt wird.
+
+    Bewusst schwach formuliert: ein Test, der Wortlaut pinnt, wird rot, wenn
+    jemand denselben Sachverhalt besser formuliert, und grün, wenn die Phrase
+    über einem Builder steht, der sich anders verhält. Die zweite Richtung ist
+    die gefährliche, deshalb tragen die Verhaltenstests oben die Zusage und
+    dieser hier nur den Hinweis, dass sie erklärt ist.
+    """
+    kopf = _text()[: _text().index("set -uo pipefail")]
+    assert "extras_sha256" in kopf and "dependency_manifest_sha256" in kopf
+    assert "--extra" in kopf
+
+
+def test_die_lockdatei_ist_als_constraint_zulaessig() -> None:
+    """`pip` ist bei Constraints strenger als bei Requirements.
+
+    Editables lehnt es dort ab, `paket[extra]` ignoriert es unter Warnung. Wäre
+    davon etwas im Lockfile, bräche `-c "$LOCK"` ausgerechnet beim ersten
+    Release, das Extras trägt — an einer Stelle, die mit Editables nichts zu
+    tun hat.
+
+    Gezählt werden die ECHTEN Requirement-Zeilen, nicht alle: zwei Drittel der
+    Datei sind `# via`-Kommentare, und ein eingeschmuggeltes `-e` ginge in
+    dieser Grundgesamtheit unter.
+
+    WARUM DIESER TEST HIER STEHT UND NICHT BEIM LOCK-REFRESH
+
+    Er prüft die WIRKUNG, nicht die Ursache. Wer dem Lockfile ein `-e`
+    hinzufügt, sieht einen roten Test bei den Extras — an einer Stelle, die er
+    nicht angefasst hat. Das ist besser als der Status quo, wo der Erste, der
+    davon erführe, ein `pip`-Fehler im Release-Bau wäre, Wochen später und bei
+    jemand anderem. Aber es ist nicht der richtige Ort für die Zusage selbst.
+
+    Der gehört ins Lock-Refresh-Gate, wo die Ursache gesetzt wird (bin-ec führt
+    das als V13). Kommt dieser Ratchet, kann der Test hier schrumpfen: dann ist
+    die Eigenschaft erzwungen, statt nur beobachtet.
+
+    Bis dahin ist er kein Ballast, sondern die kürzeste verfügbare Kette
+    zwischen Ursache und Meldung — dieser Absatz steht hier, damit ihn niemand
+    für das eine hält, während er das andere ist.
+    """
+    lock = (REPO / "requirements.lock").read_text(encoding="utf-8").splitlines()
+    pins = [z for z in lock if z and not z[0].isspace() and not z.lstrip().startswith("#")]
+
+    assert pins, "ohne Requirements waere der Test wertlos"
+    for zeile in pins:
+        assert not zeile.startswith(("-e", "--editable")), zeile
+        assert "[" not in zeile, f"paket[extra] wird in Constraints ignoriert: {zeile}"
+        assert not zeile.startswith("-"), f"Options-Zeile in einer Constraint-Datei: {zeile}"
+        assert "==" in zeile, f"nicht exakt gepinnt: {zeile}"
+        assert "@" not in zeile, f"VCS-/URL-Spec: {zeile}"
