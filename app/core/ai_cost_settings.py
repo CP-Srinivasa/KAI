@@ -190,21 +190,33 @@ class AICostSettings(BaseSettings):
     #: (`hits=1`, `relevance=0,29` in allen benannten Faellen, gerechnet mit dem
     #: `monitor/` des aktiven Release).
     #:
-    #: Die Ursache ist die ZEITREFERENZ. `_fallback_novelty` misst das Alter
-    #: gegen `now()`: ein Dokument juenger als 24 h bekommt 0,60, aelter als
-    #: sieben Tage nur 0,25. Wer historische Dokumente HEUTE nachbewertet,
-    #: erhaelt deshalb systematisch zu niedrige Werte -- der Versatz ist
-    #: konstant `(0,60 - 0,25) * _W_NOVELTY = 0,07` im `raw`, und genau daran
-    #: kippten die drei Belege von 4 auf 3:
+    #: Die Ursache liegt bei `_fallback_novelty`, aber NICHT darin, dass es
+    #: gegen `now()` messen wuerde. Die Zeitreferenz ist:
     #:
-    #:   4307d0d2   heute nachgerechnet 0,274 -> 3   als frisch 0,344 -> 4
-    #:   56e2a5bc   heute nachgerechnet 0,265 -> 3   als frisch 0,335 -> 4
-    #:   b907ef8e   heute nachgerechnet 0,244 -> 3   als frisch 0,314 -> 4
+    #:   reference_time = document.fetched_at or datetime.now(UTC)
     #:
-    #: `_vorab_alert_faehig` laeuft beim INGEST, wenn das Dokument frisch ist.
-    #: Jede Rekalibrierung muss die Neuigkeit deshalb zur urspruenglichen
-    #: Bewertungszeit rekonstruieren. Wer gegen `now()` rechnet, misst nicht die
-    #: Schwelle, sondern das Alter der Stichprobe.
+    #: `fetched_at` gewinnt; der `now()`-Zweig greift nur, wenn das Feld FEHLT.
+    #: In `canonical_documents` ist es bei allen 76.944 Zeilen gesetzt, keine
+    #: einzige ist leer, und die drei Belege wurden 6,5 / 3,8 / 5,8 Minuten nach
+    #: Veroeffentlichung geholt. Ein Replay, das das persistierte Dokument laedt,
+    #: rechnet deshalb mit `novelty = 0,60` und landet bei 4 -- heute wie damals.
+    #:
+    #: Die 0,25 und damit die 3 entstehen ausschliesslich, wenn eine
+    #: Rekonstruktion `fetched_at` VERLIERT und auf `now()` zurueckfaellt. Der
+    #: Versatz ist dann konstant `(0,60 - 0,25) * _W_NOVELTY = 0,07` im `raw`,
+    #: und genau daran kippten die drei Belege:
+    #:
+    #:   4307d0d2   ohne fetched_at 0,274 -> 3   mit fetched_at 0,344 -> 4
+    #:   56e2a5bc   ohne fetched_at 0,265 -> 3   mit fetched_at 0,335 -> 4
+    #:   b907ef8e   ohne fetched_at 0,244 -> 3   mit fetched_at 0,314 -> 4
+    #:
+    #: **METHODENREGEL:** ein Replay laedt das persistierte Dokument SAMT
+    #: `fetched_at` -- ueber `_from_model`, nicht ueber einen selbstgebauten
+    #: `CanonicalDocument`. Dann stimmt die Neuigkeit von selbst, und es ist
+    #: keine Rekonstruktion der urspruenglichen Bewertungszeit noetig. Wer das
+    #: Feld unterwegs verliert, misst das Alter seiner Stichprobe statt der
+    #: Schwelle -- und bekommt es nicht gesagt, weil der Rueckfall auf `now()`
+    #: lautlos ist.
     #:
     #: 4 bleibt Optimierungskandidat, nicht Voreinstellung: erst wenn eine
     #: Messung ueber ein vergleichbar breites Fenster zeigt, dass 4 nichts
