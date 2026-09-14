@@ -209,6 +209,16 @@ class AICostBlock(BaseModel):
     #: Topfes, nicht am Tageslimit — ``blocks_routine`` allein meldet dann noch
     #: "nicht gesperrt", während die Routine bereits steht.
     normal_pot_exhausted: bool = False
+    #: Monatshochrechnung aus ENTDOPPELTEN Kosten (2026-09-14). ``None``, wo
+    #: nichts Belastbares hochzurechnen ist: in der ersten Stunde des Monats
+    #: oder ohne Monatslimit. ``projection_is_lower_bound`` sagt, ob unbepreiste
+    #: Aufrufe oder Altzeilen die Summe zu einer Untergrenze machen.
+    days_in_month: int | None = None
+    month_days_elapsed: float | None = None
+    projected_month_usd: float | None = None
+    sustainable_daily_usd: float | None = None
+    projected_exceeds_monthly_limit: bool | None = None
+    projection_is_lower_bound: bool | None = None
     price_table_version: str
     note: str
 

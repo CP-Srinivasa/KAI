@@ -53,6 +53,16 @@ Summe und Schwelle. Fuer jeden Transport, nicht nur fuer LiteLLM. Das Budget
 wacht ueber Geld; ob ein Anbieter erreichbar ist, beantwortet die
 Gesundheitsschicht.
 
+**Altzeilen der Doppelzaehlung (07.09. bis 14.09.2026).** Seit #887 bekam jede
+Kette in ``app.ai.runtime.invoke`` eine NEUE Korrelations-ID; die Regel oben
+fand deshalb kein Paar, und jede Kettenanalyse zaehlte zweimal. Der Scope
+erbt seit 2026-09-14 die Dokument-ID. Fuer den Bestand gilt eine zweite,
+enge Regel (:func:`_altpaare_entfernen`): eine aeussere Zeile entfaellt, wenn
+eine VERWAISTE innere Zeile -- keine aeussere Zeile teilt ihre ID -- mit
+gleichem Ausgang, gleichen Token und passendem Modell hoechstens
+:data:`_ALTPAAR_MAX_SEKUNDEN` vor ihr liegt, eins zu eins. Neue Zeilen
+erreicht sie nicht: ihre inneren Zeilen teilen die ID und sind nie verwaist.
+
 Fail-soft: ein fehlender, leerer oder halb geschriebener Strom liefert einen
 Nullzustand, keine Ausnahme. Eine Kostenbremse, die beim Lesen stirbt, wäre
 ein Ausfall mit Kostenbegründung.
@@ -60,14 +70,16 @@ ein Ausfall mit Kostenbegründung.
 
 from __future__ import annotations
 
+import calendar
 import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from app.ai.budget import (
     LEGACY_POT,
+    LOCAL_REFUSAL_ERROR_TYPES,
     POTS,
     BudgetEntry,
     BudgetPolicy,
@@ -85,6 +97,21 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: Quellnamen (``CNBC``) aus der Zeit vor dem eigenen ``source``-Feld — ohne
 #: diesen Filter zählt jede Aggregation Feeds als Anbieter mit.
 PAID_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "gemini", "grok"})
+
+#: Zwecke, unter denen eine LOKALE Sperre ohne Anbieternamen eine KI-Zeile ist.
+_SPERR_ZWECKE: frozenset[str] = frozenset(
+    {"analysis", "chat", "intent", "stt", "consensus", "research"}
+)
+
+#: Hoechster Abstand zwischen innerer Versuchszeile und der NACH ihr
+#: geschriebenen aeusseren Zeile desselben Aufrufs. Am Geraet (14.09.) lagen
+#: alle 52 Paare eines Tages unter 10 s; die Grenze laesst Raum fuer Ketten,
+#: die erst nach einer Zeitueberschreitung erfolgreich waren.
+_ALTPAAR_MAX_SEKUNDEN: Final = 120.0
+
+#: Unter einer Stunde Monat ist jede Hochrechnung Rauschen: 0,05 USD um 00:30
+#: am Ersten ergaeben rund 72 USD Monatsprognose.
+_HOCHRECHNUNG_MIN_TAGE: Final = 1.0 / 24.0
 
 Window = Literal["today", "month"]
 
@@ -118,6 +145,11 @@ def is_ai_row(row: dict[str, Any]) -> bool:
     unsichtbar, und sie waere es fuer jeden weiteren Anbieter geblieben.
     """
     if row.get("transport") == "litellm" and is_route(row.get("logical_route")):
+        return True
+    # Eine LOKALE Sperre hat keinen Anbieter erreicht und traegt seit
+    # 2026-09-14 keinen Namen mehr (vorher ein falsches Etikett). Sie bleibt
+    # eine KI-Zeile: Budget und Gesundheit muessen sie sehen.
+    if row.get("error_type") in LOCAL_REFUSAL_ERROR_TYPES and row.get("purpose") in _SPERR_ZWECKE:
         return True
     provider = row.get("provider")
     return (
@@ -175,11 +207,65 @@ def dedupe_chain_levels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in rows
         if chain_position(row) >= 0 and row.get("correlation_id")
     }
-    return [
+    aussen_ids = {
+        row.get("correlation_id")
+        for row in rows
+        if chain_position(row) == -1 and row.get("correlation_id")
+    }
+    ohne_huelle = [
         row
         for row in rows
         if not (chain_position(row) == -1 and row.get("correlation_id") in versuchs_ids)
     ]
+    # Verwaist wird gegen die URSPRUENGLICHEN aeusseren IDs geprueft: eine
+    # innere Zeile, deren Huelle oben regulaer entfiel, ist nicht verwaist.
+    return _altpaare_entfernen(ohne_huelle, aussen_ids)
+
+
+def _modell_schluessel(row: dict[str, Any]) -> str:
+    return str(row.get("actual_model") or row.get("model") or "").strip().lower()
+
+
+def _passt_zur_huelle(aussen: dict[str, Any], innen: dict[str, Any]) -> bool:
+    modell = _modell_schluessel(aussen)
+    if not modell or modell == _modell_schluessel(innen):
+        return True
+    # Bis 2026-09-09 (#930) stand in der aeusseren Zeile der ANBIETER im Modellfeld.
+    return modell in PAID_PROVIDERS and modell == str(innen.get("provider") or "").lower()
+
+
+def _altpaare_entfernen(rows: list[dict[str, Any]], aussen_ids: set[Any]) -> list[dict[str, Any]]:
+    """Aeussere Zeilen, deren Kette unter einer ANDEREN ID lief -- siehe Modul-Docstring."""
+    verwaist: dict[tuple[bool, tuple[int, int]], list[tuple[datetime, int]]] = {}
+    for index, row in enumerate(rows):
+        if chain_position(row) < 0 or row.get("correlation_id") in aussen_ids:
+            continue
+        ts = row_ts(row)
+        if ts is not None:
+            schluessel = (bool(row.get("ok", False)), _usage(row))
+            verwaist.setdefault(schluessel, []).append((ts, index))
+    if not verwaist:
+        return rows
+    verbraucht: set[int] = set()
+    entfallen: set[int] = set()
+    for index, row in enumerate(rows):
+        ts = row_ts(row)
+        if chain_position(row) != -1 or ts is None:
+            continue
+        bester: tuple[float, int] | None = None
+        kandidaten = verwaist.get((bool(row.get("ok", False)), _usage(row)), [])
+        for innen_ts, innen_index in kandidaten:
+            abstand = (ts - innen_ts).total_seconds()
+            if innen_index in verbraucht or not 0.0 <= abstand <= _ALTPAAR_MAX_SEKUNDEN:
+                continue
+            if not _passt_zur_huelle(row, rows[innen_index]):
+                continue
+            if bester is None or abstand < bester[0]:
+                bester = (abstand, innen_index)
+        if bester is not None:
+            verbraucht.add(bester[1])
+            entfallen.add(index)
+    return [row for index, row in enumerate(rows) if index not in entfallen]
 
 
 @dataclass(frozen=True)
@@ -520,6 +606,51 @@ def spend_window(
     )
 
 
+@dataclass(frozen=True)
+class MonthProjection:
+    """Wohin der laufende Monat bei gleicher Rate fuehrt -- aus entdoppelten Kosten."""
+
+    days_in_month: int
+    days_elapsed: float
+    month_usd_known: float
+    projected_month_usd: float | None
+    sustainable_daily_usd: float | None
+    exceeds_monthly_limit: bool | None
+    #: Unbepreiste Aufrufe oder Altzeilen im Monat: die Summe ist eine UNTERGRENZE.
+    lower_bound: bool
+
+
+def month_projection(
+    month: SpendWindow, *, monthly_limit_usd: float | None, now: datetime | None = None
+) -> MonthProjection:
+    """Lineare Hochrechnung des Monatsfensters; tragfaehige Tagesrate aus dem Monatslimit.
+
+    Die Summe kommt aus :func:`spend_window`, also aus :func:`load_rows` -- und
+    damit entdoppelt. Bei 1,25 USD/Tag waere ein 25-USD-Monat nach 20 Tagen
+    verbraucht; ohne diese Zahl merkt das niemand vor dem 20.
+    """
+    jetzt = now or datetime.now(UTC)
+    tage = calendar.monthrange(jetzt.year, jetzt.month)[1]
+    beginn = jetzt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    vergangen = max((jetzt - beginn).total_seconds() / 86_400.0, 0.0)
+    bekannt = month.known_cost_usd
+    hochrechnung = (
+        None if vergangen < _HOCHRECHNUNG_MIN_TAGE else round(bekannt / vergangen * tage, 6)
+    )
+    limit = monthly_limit_usd if monthly_limit_usd and monthly_limit_usd > 0 else None
+    return MonthProjection(
+        days_in_month=tage,
+        days_elapsed=round(vergangen, 6),
+        month_usd_known=round(bekannt, 6),
+        projected_month_usd=hochrechnung,
+        sustainable_daily_usd=None if limit is None else round(limit / tage, 6),
+        exceeds_monthly_limit=(
+            None if limit is None or hochrechnung is None else hochrechnung > limit
+        ),
+        lower_bound=month.unknown_calls > 0 or month.unmetered_legacy_calls > 0,
+    )
+
+
 def current_spend(
     *, path: Path | None = None, now: datetime | None = None
 ) -> tuple[SpendWindow, SpendWindow]:
@@ -567,6 +698,8 @@ __all__ = [
     "dedupe_chain_levels",
     "is_ai_row",
     "is_failed_uncosted_row",
+    "MonthProjection",
+    "month_projection",
     "is_unmetered_legacy_row",
     "load_rows",
     "reset_spend_cache",

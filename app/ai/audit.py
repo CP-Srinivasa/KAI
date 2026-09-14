@@ -135,10 +135,17 @@ def current_correlation_id() -> str | None:
 def correlation_scope(correlation_id: str | None) -> Iterator[str]:
     """Bind *correlation_id* to every LLM call made inside the block.
 
-    Generates one when ``None`` so a chain is never anonymous. Always resets on
-    exit, so a pipeline awaited inline cannot leak its id into its caller.
+    Without an id of its own the block INHERITS the ambient one and only
+    generates one when there is none, so a chain is never anonymous. Always
+    resets on exit, so a pipeline awaited inline cannot leak its id into its
+    caller.
     """
-    resolved = correlation_id or f"llm_{uuid4().hex[:12]}"
+    # Erben statt ersetzen (2026-09-14). `app.ai.runtime.invoke` oeffnet diesen
+    # Scope ohne eigene ID. Bis hierher erzeugte er dann IMMER eine neue: die
+    # Kettenzeilen trugen `llm_...`, die aeussere Zeile aus `AnalysisPipeline.run`
+    # die Dokument-ID `doc_...`, `dedupe_chain_levels` fand kein Paar, und das
+    # Budget zaehlte jede Kettenanalyse doppelt -- seit #887 (07.09.).
+    resolved = correlation_id or _CORRELATION_ID.get() or f"llm_{uuid4().hex[:12]}"
     token = _CORRELATION_ID.set(resolved)
     try:
         yield resolved

@@ -239,8 +239,26 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         # stand -- genau die lautlose Lage, gegen die Budget-Policy v2
         # geschrieben ist.
         "normal_pot_exhausted": _normaler_topf_erschoepft(heute, status),
+        # Wohin der Monat bei gleicher Rate fuehrt -- aus den ENTDOPPELTEN
+        # Kosten. 25 USD tragen ~0,83 USD je Tag; bei 1,25 USD taeglich ist
+        # der Monat nach 20 Tagen verbraucht (Operator-Auftrag 2026-09-14).
+        **_hochrechnung_block(monat, status),
         "price_table_version": PRICE_TABLE_VERSION,
         "note": _COST_NOTE,
+    }
+
+
+def _hochrechnung_block(monat: Any, status: Any) -> dict[str, Any]:
+    from app.ai.spend import month_projection
+
+    p = month_projection(monat, monthly_limit_usd=status.policy.monthly_limit_usd)
+    return {
+        "days_in_month": p.days_in_month,
+        "month_days_elapsed": p.days_elapsed,
+        "projected_month_usd": p.projected_month_usd,
+        "sustainable_daily_usd": p.sustainable_daily_usd,
+        "projected_exceeds_monthly_limit": p.exceeds_monthly_limit,
+        "projection_is_lower_bound": p.lower_bound,
     }
 
 
@@ -347,7 +365,11 @@ def _topf_block(heute: Any, status: Any) -> dict[str, Any]:
     return block
 
 
-def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+def _budget_block(
+    cost: dict[str, Any],
+    provider_blocks: list[dict[str, Any]],
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Der Budgetzustand, getrennt vom Anbieterzustand und in dessen Sprache.
 
     Beide Lagen sind operativ verschieden: ein Anbieterausfall wartet man ab
@@ -379,8 +401,12 @@ def _budget_block(cost: dict[str, Any], provider_blocks: list[dict[str, Any]]) -
         "routine_calls_blocked": routine_gesperrt,
         # Wie viele Aufrufe die Abweisung im Fenster tatsaechlich getroffen hat.
         # Ohne diese Zahl bliebe "limit_reached" eine Ansage ohne Wirkung.
-        "local_refusals_in_window": sum(
-            int(block.get("local_refusals", 0)) for block in provider_blocks
+        # Aus ALLEN Zeilen, wenn sie vorliegen: eine Sperre traegt seit
+        # 2026-09-14 keinen Anbieternamen mehr und steht in keinem Anbieterblock.
+        "local_refusals_in_window": (
+            sum(1 for row in rows if _is_local_refusal(row))
+            if rows is not None
+            else sum(int(block.get("local_refusals", 0)) for block in provider_blocks)
         ),
         **_alert_capability_block(routine_gesperrt),
     }
@@ -482,7 +508,7 @@ def ai_health_snapshot(
             },
             "window_hours": window_hours,
             "cost": kosten,
-            "budget": _budget_block(kosten, bloecke),
+            "budget": _budget_block(kosten, bloecke, rows),
             "providers": bloecke,
         }
     }
