@@ -532,7 +532,7 @@ class TelegramOperatorBot:
                 await self._send(chat_id, "Unauthorized. This incident is logged.")
                 return
 
-            # Voice message Ã¢â€ â€™ transcribe Ã¢â€ â€™ intent pipeline
+            # Voice message → transcribe → intent pipeline
             voice = message.get("voice")
             if voice:
                 await self._handle_voice(chat_id, voice)
@@ -604,7 +604,7 @@ class TelegramOperatorBot:
             bool(result.signal),
         )
 
-        # Natural-language command Ã¢â€ â€™ dispatch to existing handler
+        # Natural-language command → dispatch to existing handler
         if result.intent == "command" and result.mapped_command:
             await self._dispatch(chat_id, result.mapped_command)
             return
@@ -630,7 +630,7 @@ class TelegramOperatorBot:
             )
             return
 
-        # Query or chat Ã¢â€ â€™ direct response
+        # Query or chat → direct response
         await self._send(chat_id, result.response)
 
     async def _handle_structured_message(
