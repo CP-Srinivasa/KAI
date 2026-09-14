@@ -96,6 +96,41 @@ Dieses Dokument ist die **verbindliche Disziplin-Spezifikation** für alle KI-Be
 
 ---
 
+## 3b. Rolle OpenCode (unabhängige Entwicklerreserve, ADR 0020 / D-CORE-009)
+
+**Primärer Auftrag:** Ersatz für Codex/Claude Code, wenn OpenAI oder Anthropic zu teuer,
+limitiert oder nicht erreichbar sind. Herstellerneutraler Client, herstellerneutrales
+Modell: OpenCode → LiteLLM-**Dev**-Proxy (`config/litellm_dev.yaml`, 127.0.0.1:4001,
+nur per SSH-Tunnel) → `kai-dev-economy` / `kai-dev-code` (Standard) / `kai-dev-frontier`
+(nur nach Freigabe je Aufgabe). Runbook: `docs/runbooks/dev_reserve_opencode.md`.
+
+**Status:** Repo-Seite gebaut; **noch keine freigegebene Reserve**. Die Einstufung fällt
+erst nach den drei Kontrollaufgaben (Runbook §4) durch den Operator (§6).
+
+**Erlaubt:**
+- Arbeit ausschließlich in einem frischen Worktree (`kai_new_worktree.sh`), nie im Hauptcheckout, nie auf der Pi
+- Lesen, Analysieren, `pytest`/`ruff`; Codeänderungen nur auf ARBEITSPAKET-Basis und nach Rückfrage (das Profil fragt bei jedem Edit)
+- Modell für eine schreibende Sitzung **pinnen**; Wechsel nur zwischen Sitzungen (Handoff, Runbook §5)
+
+**Verboten (im `opencode.json`-Profil technisch verweigert, nicht nur verabredet):**
+- `git push`/`merge`/`rebase`/`reset --hard`, `gh pr merge`/`create`, `ssh`, `scp`, `rsync`, `sudo`, `systemctl`
+- Lesen von `.env*`, Macaroons, `*.pem`, `*.key`, Wallet- und Secrets-Dateien
+- Zugriff auf Laufzeit-Routen (`kai-standard`, `kai-kimi-research`, …): der Dev-Proxy kennt sie nicht
+- Zugriff auf `LITELLM_MASTER_KEY`, Produktions-Provider-Schlüssel oder Port 4000
+- Automatischer Anbieterwechsel mitten in einer schreibenden Sitzung
+- Nutzung einer Route, deren Smoke `FAIL_CLOSED` meldet (keine Modellidentität oder keine Kostenmessung)
+
+**Ausgabeformat:** wie Codex (§3) — Änderungsbericht, Quality Gates mit Zahlen, Risiken,
+Nächste TODOs, Testbefehl. Zusätzlich je Sitzung: Modell, Kosten laut OpenCode **und**
+laut Anbieterkonsole, Dauer.
+
+**Was sich für Claude Code und Codex NICHT ändert:** beide bleiben nativ. Keine globale
+`ANTHROPIC_BASE_URL`, kein Umschreiben von Konfigurationsdateien zwischen Anthropic und
+Kimi. Ein optionales `codex --profile kai-dev` auf denselben Dev-Proxy ist erlaubt,
+ersetzt OpenCode aber nicht (Client bliebe OpenAI).
+
+---
+
 ## 4. Rolle Antigravity (Integration + IDE-nahe Validierung)
 
 **Primärer Auftrag:** End-to-End-Validierung, UI-Smoke, Browser-Validierung, IDE-Konflikt-Prüfung.
@@ -184,6 +219,7 @@ Diese Decisions sind **nicht-delegierbar** an KIs. Operator-Sign-off ist Pflicht
 | `EXECUTION_PAPER_MIN_PRIORITY`-Änderung | Operator-Sign-off Option D bis 2026-05-30 |
 | Audit-Stream-Rotation operative Aktivierung (V6) | siehe `docs/architecture/audit_streams_spec.md` §Operator Decision Anchors |
 | Bridge-Code-Änderung (envelope_to_paper_bridge.py) | ARBEITSPAKET + Test-Plan + Operator-Sign-off |
+| Einstufung eines `kai-dev-*`-Modells als **freigegebene Entwicklerreserve** (ADR 0020 §Einführung Schritt 6) | erst nach den drei Kontrollaufgaben, `docs/runbooks/dev_reserve_opencode.md` §4; `kai-dev-frontier` zusätzlich je Aufgabe |
 
 ---
 

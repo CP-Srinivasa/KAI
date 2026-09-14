@@ -1,0 +1,54 @@
+# Entwicklerreserve (ADR 0020, D-CORE-009). ZWEITER, GETRENNTER Proxy.
+#
+# Das ist NICHT `config/litellm.yaml`. Dieselbe attestierte Transport-Runtime
+# (ADR 0019), aber ein eigener Prozess mit eigenem Schluessel auf einem
+# eigenen Port (127.0.0.1:4001), der keine einzige Laufzeit-Route kennt.
+# `app/ai` liest diese Datei nicht, die Fallback-Kette der Laufzeit auch
+# nicht; ein Test haelt das so (tests/unit/test_dev_reserve_contract.py).
+#
+# Konsument ist ein Entwicklerclient (OpenCode, optional ein Codex-Profil),
+# nie KAI selbst. Gestartet wird der Proxy ausschliesslich von Hand ueber
+# `scripts/dev_reserve.sh proxy` -- es gibt keine systemd-Unit und keinen
+# Timer, absichtlich. Erreichbar vom Laptop nur durch einen SSH-Tunnel.
+#
+# Kein Anbieter steht im Repository: Modell UND Zugangsdaten je Route kommen
+# aus der Umgebung. Die Zugangsdaten sind eigene Entwickler-Schluessel
+# (`KAI_DEV_*`), nicht die Laufzeit-Schluessel -- so bleibt der Verbrauch
+# beim Anbieter getrennt sichtbar, und der Reserve-Proxy braucht keinen
+# Produktionsschluessel in seiner Umgebung.
+#
+# Was hier NICHT steht, und warum: `litellm_settings.max_budget` wirkt nur
+# mit angeschlossener Datenbank; ohne DB laesst der Proxy Anfragen ueber das
+# Limit hinaus durch (fail-open) und warnt nur beim Start. Eine Budgetzeile
+# hier waere eine Bremse, die nicht bremst. Die Kostengrenze liegt deshalb
+# an den Anbieter-Schluesseln, und `scripts/dev_reserve.sh smoke` schliesst
+# jede Route, die keine Kostenmessung liefert (FAIL_CLOSED).
+model_list:
+  # Analyse, Tests, kleine isolierte Fixes. Vorgesehen: DeepSeek V4.1 Flash.
+  - model_name: kai-dev-economy
+    litellm_params:
+      model: os.environ/KAI_DEV_LITELLM_ECONOMY_MODEL
+      api_key: os.environ/KAI_DEV_LITELLM_ECONOMY_API_KEY
+  # Regulaere Coding-Reserve. Vorgesehen: Kimi K2.7 Code.
+  - model_name: kai-dev-code
+    litellm_params:
+      model: os.environ/KAI_DEV_LITELLM_CODE_MODEL
+      api_key: os.environ/KAI_DEV_LITELLM_CODE_API_KEY
+  # Eskalationsstufe, nur nach ausdruecklicher Freigabe je Aufgabe.
+  # Vorgesehen: Kimi K3. Kein Standardmodell.
+  - model_name: kai-dev-frontier
+    litellm_params:
+      model: os.environ/KAI_DEV_LITELLM_FRONTIER_MODEL
+      api_key: os.environ/KAI_DEV_LITELLM_FRONTIER_API_KEY
+
+litellm_settings:
+  # Der Client entscheidet ueber Wiederholungen, nicht der Transport.
+  num_retries: 0
+  # Coding-Antworten sind lang; 30 s (Laufzeit-Default) reichen hier nicht.
+  request_timeout: 300
+  telemetry: false
+
+general_settings:
+  # Eigener Schluessel. `LITELLM_MASTER_KEY` der Laufzeit taucht hier nicht
+  # auf und verlaesst die Pi nicht.
+  master_key: os.environ/LITELLM_DEV_MASTER_KEY
