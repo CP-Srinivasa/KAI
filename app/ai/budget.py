@@ -622,7 +622,28 @@ def decide_pot(
         _schaetzung(estimated_request_cost_usd, reserve),
     ):
         return PotVerdict(pot="alert_reserve", allowed=False, reason="alert_reserve_exhausted")
+    # Das Tageslimit ist die Zusage nach aussen; die Reserve VERTEILT es, sie
+    # erhoeht es nicht (D-274). Ohne diese Zeile prueft ein Reserveaufruf nur
+    # seinen eigenen Topf: liegt der Normaltopf schon ueber seiner Decke --
+    # Reserve mitten am Tag nach mehr als 1,10 USD aktiviert --, endete der Tag
+    # bei Tageslimit plus Reserve. Gezaehlt wird der ganze Tag, auch ``exempt``:
+    # ``critical`` ist von der Sperre ausgenommen, nicht vom Limit, und so hat
+    # v1 das Tageslimit immer gerechnet.
+    tag = _tagessumme(pots)
+    if _limit_breached(
+        tag, policy.daily_limit_usd, _schaetzung(estimated_request_cost_usd, reserve)
+    ):
+        return PotVerdict(pot="alert_reserve", allowed=False, reason="daily_limit_reached")
     return PotVerdict(pot="alert_reserve", allowed=True)
+
+
+def _tagessumme(pots: Mapping[BudgetPot, BudgetState]) -> BudgetState:
+    """Alle Toepfe des Tages als EIN Zustand -- fuer das Tageslimit."""
+    return BudgetState(
+        booked_usd=sum(state.booked_usd for state in pots.values()),
+        known_calls=sum(state.known_calls for state in pots.values()),
+        unknown_calls=sum(state.unknown_calls for state in pots.values()),
+    )
 
 
 __all__ = [

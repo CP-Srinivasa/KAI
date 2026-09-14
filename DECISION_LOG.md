@@ -24,6 +24,16 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-274 (2026-09-14)
+**Die Alert-Reserve verteilt das Tageslimit, sie erhoeht es nicht.**
+**Kontext**: Mit gesetzter Reserve prueft `decide_pot` einen Reserveaufruf nur gegen den Reservetopf (#954). Liegt der Normaltopf bereits ueber seiner Decke -- Reserve mitten am Tag nach mehr als 1,10 USD aktiviert, oder Altbestand vor der Entdopplung (D-272) --, zahlte die Reserve trotzdem weitere 0,15 USD: der Tag konnte bei 1,40 statt 1,25 USD enden. Beim Sandbox-Beweis zu D-273 wurde das am echten `invoke` bei 1,30 USD belegt.
+**Entscheidung**: Die Summe ALLER Tagestoepfe (auch `exempt`, wie das v1-Tageslimit) haelt das Tageslimit auch fuer alert-faehige Aufrufe, vorausschauend mit derselben Schaetzung wie jede andere Decke. Grund `daily_limit_reached`; `/health/ai` meldet dann `unreachable` mit diesem Grund. Reihenfolge bleibt: Reservegrenze zuerst, dann Tageslimit, Monatslimit steht ueber allem.
+**Begruendung**: Das Tageslimit ist die Zusage nach aussen. Eine Reserve, die es im Randfall aufweicht, macht aus 1,25 eine Tendenz.
+**Restrisiko**: Im Normalbetrieb aendert sich nichts, weil der Normaltopf bei 1,10 endet und Reserve 0,15 die Summe genau auf 1,25 bringt.
+**Rueckrollbarkeit**: ja, `git revert`; keine Konfiguration betroffen.
+**Betroffen**: `app/ai/budget.py`, `app/ai/health.py`, `tests/unit/test_reserve_daily_cap.py`, `tests/unit/test_ai_health.py`.
+**Cross-Ref**: #954, D-273, D-272.
+
 ### D-273 (2026-09-14)
 **Die Alert-Blindstelle nach erschoepftem Budget wird ueber die Alert-Reserve geschlossen, nicht ueber eine Score-Aenderung.**
 **Kontext**: Die Kettentests vom 14.09. haben belegt: ist das Budget erschoepft oder fallen beide Anbieter aus, bewertet KAI regelbasiert mit hoechstens Prioritaet 6 (raw 0,575), die Alert-Schwelle liegt bei 7 (raw 0,615) -- es entsteht strukturell kein Alert. Die Alert-Reserve aus #954 kann das fuer alert-faehige Dokumente schliessen, war am Geraet aber nie gesetzt. Zusaetzlich meldete `/health/ai` "unreachable", sobald der Normaltopf erschoepft war, auch wenn die Reserve noch Luft hatte: die Anzeige widersprach der Sperre.
