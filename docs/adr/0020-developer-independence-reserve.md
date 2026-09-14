@@ -165,6 +165,6 @@ Reserve, nicht ein Codex-Profil.
 | Release mit diesem PR auf der Pi | **erledigt**, Release `5972835e` (2026-09-14 12:21Z) |
 | Erster Proxy-Start + Smoke | **erledigt**, economy + code PASS (2026-09-14) |
 | Drei Kontrollaufgaben | **erledigt**, `artifacts/operator_memos/dev_reserve_trial_2026-09-14.md` |
-| Einstufung K2.7 Code als freigegebene Reserve | **erteilt** 2026-09-14 (Operator); economy als Analyse-Reserve, frontier ungeprüft |
+| Einstufung K2.7 Code als freigegebene Reserve | **erteilt** 2026-09-14 (Operator); economy als Analyse-Reserve, frontier geprobt (Smoke PASS 17:03Z, 0,000396 USD), Freigabe je Aufgabe |
 | Lokale Reserve (Ollama/Qwen) | **bewusst noch nicht** |
 | DB-gestützte Virtual Keys | **bewusst noch nicht** |
