@@ -94,7 +94,7 @@ from app.normalization.entities import hits_to_entity_mentions
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
-_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body Ã¢â€°Â¤ 50 bytes
+_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body ≤ 50 bytes
 _MIN_RULE_RELEVANCE_FOR_LLM = 0.10  # D-110: skip LLM for very low rule relevance
 
 
