@@ -97,7 +97,7 @@ _HEALTHY_ACTIVE_STATES = frozenset({"active", "activating", "reloading"})
 # outage — operator ``systemctl stop`` or StartLimitBurst exhaustion (which flips
 # ActiveState to ``failed``, never tolerated here) — is caught once the inactive
 # dwell exceeds the cycle tolerance, i.e. within ~1.5 min.
-_CYCLING_SERVICES = frozenset({"kai-entry-watch.service"})
+CYCLING_SERVICES = frozenset({"kai-entry-watch.service"})
 _CYCLING_TOLERATED_STATES = frozenset({"inactive", "deactivating"})
 # duration(55) + RestartSec(5) + slack for GC/scheduling jitter.
 _CYCLING_SERVICE_MAX_INACTIVE_SEC = 90
@@ -232,7 +232,7 @@ def _check_service_active(
         return CheckResult(name=f"systemd:{unit}", ok=True, detail=f"ActiveState={state}")
 
     # Cycling worker: tolerate a *recent* inactive (restart pending), fail a stale one.
-    if unit in _CYCLING_SERVICES and state in _CYCLING_TOLERATED_STATES:
+    if unit in CYCLING_SERVICES and state in _CYCLING_TOLERATED_STATES:
         try:
             inactive_usec = inactive_usec_fn(unit_path)
         except Exception as exc:  # noqa: BLE001
