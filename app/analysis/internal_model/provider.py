@@ -6,7 +6,7 @@ No external API calls. No API key. Always available.
 Intentionally conservative:
 - sentiment always NEUTRAL (rules cannot reliably determine direction)
 - actionable always False (human review gate)
-- priority ceiling of 5 (I-13)
+- priority ceiling of 6 (I-13; scoring.rule_path_priority_ceiling)
 - confidence reflects keyword density, not semantic understanding
 
 Upgrade path: replace the _compute_* methods with a fine-tuned model
@@ -95,7 +95,8 @@ class InternalModelProvider(BaseAnalysisProvider):
     Implements BaseAnalysisProvider so it slots into AnalysisPipeline
     or EnsembleProvider without any special handling.
 
-    Priority ceiling: ≤ 5 (I-13). Use external providers to exceed this.
+    Priority ceiling: ≤ 6 (I-13, scoring.rule_path_priority_ceiling). Use external
+    providers to exceed this.
     """
 
     def __init__(self, keyword_engine: KeywordEngine) -> None:

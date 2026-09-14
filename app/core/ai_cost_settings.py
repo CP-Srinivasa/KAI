@@ -23,17 +23,10 @@ gemacht hat.
 
 from __future__ import annotations
 
-import os
-
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.ai.budget import ReservePolicy
-
-#: Präfix der Env-Variablen für Verbrauchsgrenzen je Auftraggeber:
-#: ``APP_AI_BUDGET_USECASE_NEWS_INTELLIGENCE_USD=2.50``.
-USECASE_LIMIT_PREFIX = "APP_AI_BUDGET_USECASE_"
-USECASE_LIMIT_SUFFIX = "_USD"
 
 
 class AICostSettings(BaseSettings):
@@ -224,32 +217,11 @@ class AICostSettings(BaseSettings):
     #: wesentlich aendern -- die Vorabprioritaet haengt an beiden.
     budget_alert_min_rule_priority: int = Field(default=3, ge=1, le=10)
 
-    #: Auftraggeber → Tageslimit in USD, aus ``APP_AI_BUDGET_USECASE_<NAME>_USD``.
-    #: Einmal beim Bau gelesen, nicht pro Aufruf: ``os.environ`` je LLM-Aufruf
-    #: abzufragen wäre dieselbe Sorte versteckter Kosten, die dieses Modul misst.
-    budget_usecase_usd: dict[str, float] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _collect_usecase_limits(self) -> AICostSettings:
-        if self.budget_usecase_usd:
-            return self
-        gefunden: dict[str, float] = {}
-        for key, value in os.environ.items():
-            if not key.startswith(USECASE_LIMIT_PREFIX) or not key.endswith(USECASE_LIMIT_SUFFIX):
-                continue
-            name = key[len(USECASE_LIMIT_PREFIX) : -len(USECASE_LIMIT_SUFFIX)].lower()
-            if not name:
-                continue
-            try:
-                betrag = float(value)
-            except (TypeError, ValueError):
-                # Ein unlesbares Limit wird NICHT als 0 gelesen. Null waere die
-                # haerteste denkbare Sperre aus einem Tippfehler heraus.
-                continue
-            if betrag >= 0.0:
-                gefunden[name] = betrag
-        object.__setattr__(self, "budget_usecase_usd", gefunden)
-        return self
+    # ``budget_usecase_usd`` (Tageslimit je Auftraggeber aus
+    # ``APP_AI_BUDGET_USECASE_<NAME>_USD``) stand hier vom 08.09. bis zum
+    # 14.09.2026: eingelesen, nirgends durchgesetzt. Eine Grenze, die im Code
+    # wie eine Kontrolle aussieht und nie greift, ist schlimmer als keine
+    # (D-275). Wer sie braucht, baut sie zusammen mit ihrem Leser.
 
     @property
     def any_limit_set(self) -> bool:
@@ -257,7 +229,6 @@ class AICostSettings(BaseSettings):
         return (
             self.budget_daily_usd is not None
             or self.budget_monthly_usd is not None
-            or bool(self.budget_usecase_usd)
             or self.reserve_policy.any_reserve_set
         )
 
@@ -305,7 +276,6 @@ def get_ai_cost_settings() -> AICostSettings:
             budget_validation_reserve_max_calls=None,
             budget_alert_min_rule_priority=3,
             shadow_enabled=False,
-            budget_usecase_usd={},
         )
     _CACHE["current"] = gelesen
     return gelesen
@@ -317,8 +287,6 @@ def reset_ai_cost_settings() -> None:
 
 
 __all__ = [
-    "USECASE_LIMIT_PREFIX",
-    "USECASE_LIMIT_SUFFIX",
     "AICostSettings",
     "get_ai_cost_settings",
     "reset_ai_cost_settings",

@@ -525,7 +525,8 @@ def test_ohne_uebergebene_schaetzung_wird_die_gemessene_benutzt() -> None:
     ``estimated_request_cost_usd`` existiert seit D-CORE-007 und hat nie ein
     Produktionsaufrufer gefüllt. Bliebe die Vorausschau daran hängen, wäre sie
     eine Kontrolle, die im Code aussieht wie eine Grenze und nie greift —
-    dieselbe tote Bauart wie ``budget_usecase_usd``. Ohne übergebene Zahl
+    dieselbe tote Bauart wie das 2026-09-14 entfernte ``budget_usecase_usd``
+    (D-275). Ohne übergebene Zahl
     leitet ``decide_pot`` sie deshalb aus der Historie DESSELBEN Topfes ab.
 
     Hier: 200 Aufrufe für 1,048 USD, also 0,00524 je Aufruf. Gebucht liegt

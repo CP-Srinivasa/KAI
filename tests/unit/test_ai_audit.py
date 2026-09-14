@@ -269,3 +269,13 @@ async def test_v1_summary_reads_v2_rows(tmp_path: Path) -> None:
     summary = llm_telemetry_summary(window_hours=1.0, path=p)
     assert summary["n"] == 2 and summary["failures"] == 1
     assert summary["failure_rate_pct"] == 50.0
+
+
+def test_lokale_budgetsperre_ist_local_refusal_und_nie_retry_faehig() -> None:
+    """D-275: eine Sperre, die als ``unknown`` erscheint, schickt zur Fehlersuche beim Anbieter."""
+    from app.ai.budget import BudgetExceeded
+
+    exc = BudgetExceeded(route="standard", state="LIMIT_REACHED", reason="daily_limit_reached")
+
+    assert classify_error(exc) == "local_refusal"
+    assert is_retryable_error(exc) is False
