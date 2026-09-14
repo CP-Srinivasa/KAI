@@ -661,11 +661,20 @@ class AnalysisPipeline:
         try:
             output = await self._provider.analyze(title=title, text=text, context=context)
         except Exception as exc:
-            fehlmodell = _resolve_runtime_model_name(self._provider)
+            # Eine lokale Budgetsperre hat keinen Anbieter erreicht. Bis
+            # 2026-09-14 trug ihre Zeile den Namen des letzten Kettengewinners
+            # ("gemini") und keinen Grund -- ein Etikett, das einen
+            # Anbieteraufruf vortaeuscht. Jetzt: kein Anbieter, kein Modell,
+            # der Grund steht in ``budget_decision`` als ``reject:<reason>``.
+            gesperrt = isinstance(exc, BudgetExceeded)
+            fehlmodell = None if gesperrt else _resolve_runtime_model_name(self._provider)
             record_llm_call(
-                provider=name,
+                provider="" if gesperrt else name,
                 model=fehlmodell or "",
                 actual_model=fehlmodell,
+                budget_decision=(
+                    f"reject:{exc.reason}" if isinstance(exc, BudgetExceeded) else None
+                ),
                 use_case=resolve_use_case("analysis"),
                 ok=False,
                 latency_ms=(monotonic() - started) * 1000.0,

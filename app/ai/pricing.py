@@ -30,20 +30,21 @@ Rein: keine Uhr, kein I/O, kein Netz. Testbar wie ``app.ai.budget``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Final, Literal
 
 #: Version der Tabelle. Sie steht in JEDER Telemetriezeile, die mit ihr
 #: gerechnet wurde (``cost_source="list_price:<version>"``) — ohne das wäre
 #: eine spätere Preisänderung rückwirkend nicht von einem Rechenfehler zu
 #: unterscheiden.
-PRICE_TABLE_VERSION: Final = "2026-09-08"
+PRICE_TABLE_VERSION: Final = "2026-09-14"
 
 #: Woher die Zahlen stammen. ``list_price`` heisst: öffentlich ausgewiesener
 #: Listenpreis, NICHT der abgerechnete Betrag.
 PRICE_SOURCE: Final = "list_price"
 
 #: Stand der Erhebung.
-PRICE_TABLE_DATE: Final = "2026-09-08"
+PRICE_TABLE_DATE: Final = "2026-09-14"
 
 CostStatus = Literal["OK", "COST_UNKNOWN"]
 
@@ -58,6 +59,11 @@ class ModelPrice:
     #: erfüllt das heute. Alles andere ist Liste, nicht Beleg.
     confirmed: bool = False
     note: str = ""
+    #: Letzter Tag (einschliesslich, UTC), an dem der Listenpreis gilt. Danach
+    #: ist die Schaetzung ``COST_UNKNOWN`` mit ``price_expired``: ein
+    #: veralteter Preis waere eine stille Untertreibung, die unsichtbare Null
+    #: in anderer Form. ``None`` heisst: kein angekuendigtes Ende.
+    valid_until: date | None = None
 
 
 #: Modell → Preis. Was hier NICHT steht, ist ``COST_UNKNOWN`` — es gibt keinen
@@ -86,6 +92,17 @@ PRICE_TABLE: Final[dict[str, ModelPrice]] = {
     ),
     "gemini-2.5-flash": ModelPrice(0.30, 2.50, note="Listenpreis; Operator-Bestaetigung offen"),
     "gemini-2.5-pro": ModelPrice(1.25, 10.00, note="Listenpreis; Operator-Bestaetigung offen"),
+    # Google Gemini API, Paid Tier, https://ai.google.dev/gemini-api/docs/pricing
+    # (Seite "Last updated 2026-09-11 UTC", abgerufen 2026-09-14): 0,75 Eingabe /
+    # 3,75 Ausgabe inkl. Denk-Token je 1 Mio. bis 31.12.2026, ab 01.01.2027
+    # 1,50 / 7,50. Seit 10.09. das Gemini-Modell der Kette; ohne Eintrag war
+    # jeder echte Fallback-Aufruf COST_UNKNOWN (Kettentest 14.09.).
+    "gemini-3.6-flash": ModelPrice(
+        0.75,
+        3.75,
+        note="Listenpreis Google 2026-09-11; bis 2026-12-31, danach 1.50/7.50",
+        valid_until=date(2026, 12, 31),
+    ),
 }
 
 
@@ -96,7 +113,7 @@ class CostEstimate:
     usd: float | None
     status: CostStatus
     #: Warum unbekannt: ``no_tokens`` | ``unknown_model`` | ``no_model`` |
-    #: ``negative_tokens``. Bei ``OK`` leer.
+    #: ``negative_tokens`` | ``price_expired``. Bei ``OK`` leer.
     reason: str = ""
     #: Herkunft der Zahl. Bei ``OK``: ``list_price:<version>``.
     source: str = ""
@@ -147,6 +164,8 @@ def estimate_cost_usd(
     model: str | None,
     input_tokens: int | None,
     output_tokens: int | None,
+    *,
+    on: date | None = None,
 ) -> CostEstimate:
     """Kosten aus Token und Listenpreis — oder ``COST_UNKNOWN`` mit Grund.
 
@@ -154,6 +173,7 @@ def estimate_cost_usd(
         model: Modellname; wird über :func:`normalize_model` nachgeschlagen.
         input_tokens: Eingabetoken; ``None`` heisst UNBEKANNT, nicht 0.
         output_tokens: Ausgabetoken; ``None`` heisst UNBEKANNT, nicht 0.
+        on: Stichtag fuer :attr:`ModelPrice.valid_until`; ``None`` ist heute (UTC).
 
     Returns:
         :class:`CostEstimate`. ``status="OK"`` nur, wenn Modell UND beide
@@ -166,6 +186,9 @@ def estimate_cost_usd(
     price = PRICE_TABLE.get(name)
     if price is None:
         return CostEstimate(usd=None, status="COST_UNKNOWN", reason="unknown_model", model=name)
+    stichtag = on or datetime.now(UTC).date()
+    if price.valid_until is not None and stichtag > price.valid_until:
+        return CostEstimate(usd=None, status="COST_UNKNOWN", reason="price_expired", model=name)
     if input_tokens is None or output_tokens is None:
         return CostEstimate(usd=None, status="COST_UNKNOWN", reason="no_tokens", model=name)
     try:
