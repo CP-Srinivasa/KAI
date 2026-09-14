@@ -1241,7 +1241,8 @@ class AnalysisPipeline:
             details.append(f"source: {document.source_name}")
 
         # PH4G note: actionable remains False in fallback to respect I-13
-        # priority ceiling (max 5 for rule-only). Setting actionable=True would
+        # priority ceiling (max 6 for rule-only, see scoring.rule_path_priority_ceiling;
+        # the earlier "5" here was stale). Setting actionable=True would
         # trigger the +1 bonus in compute_priority() and breach the ceiling.
 
         return AnalysisResult(

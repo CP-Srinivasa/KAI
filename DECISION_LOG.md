@@ -33,6 +33,15 @@
 **Rueckrollbarkeit**: ja -- Eintrag in `DEFERRED_UNITS` wiederherstellen bzw. `CYCLING_RESAMPLE_DELAYS_SEC` leeren.
 **Betroffen**: `app/alerts/process_runtime_probe.py`, `app/observability/premium_pipeline_health.py`, `tests/unit/test_deferred_unit_expectation.py`, `tests/unit/test_process_runtime_cycling_units.py`.
 **Cross-Ref**: ADR 0019, D-270, Health-Alerts 09.–14.09., Spur-A-Cron am 14.09. deaktiviert.
+
+### D-275 (2026-09-14)
+**Keine tote Bremse: `budget_usecase_usd` entfernt; lokale Sperren bekommen die Fehlerklasse `local_refusal`.**
+**Kontext**: `AICostSettings.budget_usecase_usd` las seit D-CORE-007 Tageslimits je Auftraggeber aus `APP_AI_BUDGET_USECASE_<NAME>_USD`, kein Leser hat sie je durchgesetzt (am 14.09. verifiziert; auf dem Geraet ist keine solche Variable gesetzt). Zugleich fiel eine lokale Budgetsperre in `classify_error` auf `unknown`, dieselbe Klasse wie ein unerklaerter Absturz.
+**Entscheidung**: (1) Feld, Validator und Konstanten entfernt; wer ein Limit je Auftraggeber braucht, baut es zusammen mit seinem Leser und Test. (2) `ErrorClass` bekommt `local_refusal`, erkannt ueber `LOCAL_REFUSAL_ERROR_TYPES`; nie retry-faehig. (3) Nebenbei: der Lock-Workflow zeigt die pip-audit-Ausgabe (stderr) im PR-Text; der Off-Loop-Test prueft Reihenfolge statt Wandzeit; die Kommentare zum Regelmaximum sagen 6.
+**Begruendung**: Eine Grenze, die im Code wie eine Kontrolle aussieht und nie greift, verleitet zu falscher Sicherheit; ein Sperrgrund, der als `unknown` erscheint, verleitet zur Fehlersuche beim Anbieter.
+**Rueckrollbarkeit**: ja, `git revert`; keine Konfiguration auf dem Geraet betroffen.
+**Betroffen**: `app/core/ai_cost_settings.py`, `app/ai/audit.py`, `.github/workflows/lock-update.yml`, `tests/unit/test_dashboard_hold_report_offloop.py`, `app/analysis/pipeline.py`, `app/analysis/internal_model/provider.py`.
+**Cross-Ref**: D-CORE-007, D-271, D-274, #967.
 ### D-274 (2026-09-14)
 **Die Alert-Reserve verteilt das Tageslimit, sie erhoeht es nicht.**
 **Kontext**: Mit gesetzter Reserve prueft `decide_pot` einen Reserveaufruf nur gegen den Reservetopf (#954). Liegt der Normaltopf bereits ueber seiner Decke -- Reserve mitten am Tag nach mehr als 1,10 USD aktiviert, oder Altbestand vor der Entdopplung (D-272) --, zahlte die Reserve trotzdem weitere 0,15 USD: der Tag konnte bei 1,40 statt 1,25 USD enden. Beim Sandbox-Beweis zu D-273 wurde das am echten `invoke` bei 1,30 USD belegt.

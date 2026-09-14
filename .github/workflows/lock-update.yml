@@ -48,7 +48,7 @@ jobs:
           pip-audit -r requirements.lock \
             --ignore-vuln CVE-2026-3219 \
             --ignore-vuln CVE-2026-6357 \
-            --format columns | tee audit_output.txt
+            --format columns 2>&1 | tee audit_output.txt
 
       - name: Generate PR body
         id: prbody

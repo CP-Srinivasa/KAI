@@ -184,7 +184,8 @@ async def test_die_runtime_liefert_die_schaetzung_aus_gebuchten_aufrufen(
 
     Genau das ist ``estimated_request_cost_usd`` seit D-CORE-007: eine
     Durchreiche, die kein Produktionsaufrufer je gefüllt hat — dieselbe Bauart
-    wie ``budget_usecase_usd``, das eingelesen und nirgends durchgesetzt wird.
+    wie ``budget_usecase_usd``, das eingelesen und nirgends durchgesetzt wurde
+    (entfernt 2026-09-14, D-275).
     Die Grenze formal zu prüfen und praktisch nie ist schlimmer als sie nicht
     zu prüfen, weil es im Code wie eine Kontrolle aussieht.
 

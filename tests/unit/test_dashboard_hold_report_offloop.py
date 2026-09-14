@@ -170,9 +170,15 @@ async def test_load_source_by_doc_offloads_blocking_audit_scan(
         await asyncio.sleep(0.05)
         health_response = await client.get("/health")
         elapsed = time.perf_counter() - started_at
+        # Die Aussage ist die REIHENFOLGE: /health antwortet, WAEHREND der
+        # 1,5-s-Scan noch laeuft. Eine Wandzeit-Schranke (< 0,2 s) fiel auf
+        # einem ausgelasteten CI-Runner bei 0,43 s um (#967, 14.09.2026),
+        # obwohl der Scan nachweislich ausgelagert war.
+        noch_am_laufen = not source_task.done()
         source_map = await source_task
 
     assert health_response.status_code == 200
     assert health_response.json()["status"] == "ok"
-    assert elapsed < 0.2
+    assert noch_am_laufen, "/health kam erst nach dem blockierenden Scan zurueck"
+    assert elapsed < 1.5, "/health hat auf den ganzen 1,5-s-Scan gewartet"
     assert source_map == {}

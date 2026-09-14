@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 
 ErrorClass = Literal[
     "timeout",
+    # Der Aufruf wurde LOKAL abgewiesen (Budget), kein Anbieter erreicht.
+    # Bis 2026-09-14 fiel er auf "unknown" -- dieselbe Klasse wie ein
+    # unerklaerter Absturz, obwohl der Grund im Namen der Ausnahme steht.
+    "local_refusal",
     "rate_limit",
     "auth",
     "quota",
@@ -101,7 +105,9 @@ _PURPOSE_USE_CASE: dict[str, UseCase] = {
 # `empty` gehoert dazu: derselbe Aufruf mit demselben Token-Budget liefert
 # dieselbe abgeschnittene Antwort. Ein zweiter Versuch kostet Geld und
 # Reasoning-Token und aendert nichts.
-_NON_RETRYABLE: frozenset[str] = frozenset({"auth", "quota", "schema", "cancelled", "empty"})
+_NON_RETRYABLE: frozenset[str] = frozenset(
+    {"auth", "quota", "schema", "cancelled", "empty", "local_refusal"}
+)
 
 # 4xx codes that DO warrant a retry (the rest of 4xx is a client-side defect).
 _RETRYABLE_CLIENT_STATUS: frozenset[int] = frozenset({408, 409, 425, 429})
@@ -430,6 +436,12 @@ def classify_error(exc: BaseException) -> ErrorClass:
     try:
         if isinstance(exc, asyncio.CancelledError):
             return "cancelled"
+        # Spaeter Import: app.ai.budget ist beim Laden dieses Moduls noch
+        # nicht importierbar (es haengt an app.ai.models, das hier ankommt).
+        from app.ai.budget import LOCAL_REFUSAL_ERROR_TYPES
+
+        if type(exc).__name__ in LOCAL_REFUSAL_ERROR_TYPES:
+            return "local_refusal"
         # asyncio.TimeoutError is an alias of builtins.TimeoutError since 3.11.
         if isinstance(exc, TimeoutError):
             return "timeout"
