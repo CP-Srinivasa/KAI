@@ -2,7 +2,7 @@
 #    uv pip compile pyproject.toml --extra dev --universal -o requirements.lock
 aiosqlite==0.22.1
     # via ai-analyst-trading-bot (pyproject.toml)
-alembic==1.19.2
+alembic==1.20.0
     # via ai-analyst-trading-bot (pyproject.toml)
 annotated-doc==0.0.5
     # via
@@ -10,7 +10,7 @@ annotated-doc==0.0.5
     #   typer
 annotated-types==0.8.0
     # via pydantic
-anthropic==1.4.0
+anthropic==1.5.0
     # via ai-analyst-trading-bot (pyproject.toml)
 anyio==4.15.1
     # via
@@ -25,7 +25,7 @@ anyio==4.15.1
     #   watchfiles
 apscheduler==3.11.3
     # via ai-analyst-trading-bot (pyproject.toml)
-ast-serialize==0.10.0
+ast-serialize==0.11.2
     # via mypy
 attrs==26.1.0
     # via
@@ -54,7 +54,7 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   typer
 courlan==1.4.0
     # via trafilatura
-coverage==7.16.0
+coverage==7.16.1
     # via pytest-cov
 cryptography==50.0.1
     # via
@@ -86,9 +86,9 @@ feedparser-sgmllib==2.1.0
     # via feedparser
 freezegun==1.5.5
     # via ai-analyst-trading-bot (pyproject.toml)
-google-auth==2.57.1
+google-auth==2.58.0
     # via google-genai
-google-genai==2.22.0
+google-genai==2.23.0
     # via ai-analyst-trading-bot (pyproject.toml)
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
     # via sqlalchemy
@@ -116,9 +116,9 @@ httpx2==2.12.0
     # via
     #   anthropic
     #   openai
-httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten'
+httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
-hypothesis==6.167.1
+hypothesis==6.168.0
     # via ai-analyst-trading-bot (pyproject.toml)
 idna==3.19
     # via
@@ -129,7 +129,7 @@ idna==3.19
     #   requests
 iniconfig==2.3.0
     # via pytest
-jiter==0.16.0
+jiter==0.17.0
     # via
     #   anthropic
     #   openai
@@ -168,7 +168,7 @@ mypy==2.3.1
     # via ai-analyst-trading-bot (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-openai==3.8.0
+openai==3.13.0
     # via ai-analyst-trading-bot (pyproject.toml)
 opentimestamps==0.4.5
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -180,7 +180,7 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
-portalocker==4.3.0
+portalocker==4.3.2
     # via ai-analyst-trading-bot (pyproject.toml)
 psutil==7.2.2
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -215,7 +215,7 @@ pygments==2.21.0
     # via
     #   pytest
     #   rich
-pyjwt==2.13.0
+pyjwt==2.14.0
     # via mcp
 pyotp==2.10.0
     # via ai-analyst-trading-bot (pyproject.toml)
@@ -262,7 +262,7 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2026.9.3
+regex==2026.9.10
     # via dateparser
 requests==2.34.2
     # via
@@ -308,7 +308,7 @@ starlette==1.6.0
     #   sse-starlette
 structlog==26.1.0
     # via ai-analyst-trading-bot (pyproject.toml)
-telethon==1.44.0
+telethon==1.45.0
     # via ai-analyst-trading-bot (pyproject.toml)
 tenacity==9.1.4
     # via
@@ -316,8 +316,6 @@ tenacity==9.1.4
     #   google-genai
 tld==0.13.2
     # via courlan
-tomli==2.4.1 ; python_full_version <= '3.11'
-    # via coverage
 trafilatura==2.2.0
     # via ai-analyst-trading-bot (pyproject.toml)
 truststore==0.10.4 ; sys_platform != 'emscripten'
@@ -350,7 +348,7 @@ typing-inspection==0.4.4
     #   mcp
     #   pydantic
     #   pydantic-settings
-tzdata==2026.3 ; sys_platform == 'win32'
+tzdata==2026.4 ; sys_platform == 'win32'
     # via
     #   faker
     #   tzlocal
@@ -365,7 +363,7 @@ urllib3==2.7.0
     #   htmldate
     #   requests
     #   trafilatura
-uvicorn==0.52.4
+uvicorn==0.53.0
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
     #   mcp
