@@ -2837,3 +2837,43 @@ async def test_live_eager_engine_wins_over_factory(tmp_path, monkeypatch):
 
     assert factory_calls == []
     assert eager.status_called is True
+
+
+# --- D-277: /pay haengt am Payment Control Plane des Prozesses ---------------
+
+
+@pytest.mark.asyncio
+async def test_pay_without_a_control_plane_replies_unavailable(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/pay lnbc10u1x"}})
+    assert len(sent) == 1 and "nicht verfuegbar" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_pay_dispatches_through_the_factory_and_help_lists_it(tmp_path, monkeypatch):
+    calls: list[int] = []
+
+    def factory() -> object:
+        calls.append(1)
+        return object()  # bare /pay shows usage and never touches the service
+
+    bot = _bot(tmp_path, payment_service_factory=factory)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/pay"}})
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/help"}})
+    assert calls == [1]
+    assert "/pay <bolt11>" in sent[0]
+    assert "/pay" in sent[1]

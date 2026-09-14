@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.lightning_settings import LightningSettings
+from app.core.payment_settings import PaymentSettings
 from app.lightning.client import LightningUnavailableError, LndRestClient
 from app.lightning.golive_preflight import golive_preflight
 
@@ -44,6 +45,21 @@ def _all_node_ok() -> dict:
     }
 
 
+def _armed_send_facts() -> dict:
+    """D-277: im armierten Regime muessen die Sende-Fakten bewiesen sein (fail-closed)."""
+    return {
+        "node_version": "0.18.3-beta commit=v0.18.3-beta",
+        "scb_age_seconds": 600.0,
+        "payments": PaymentSettings(
+            _env_file=None,
+            mode="live",
+            fee_limit_default_ppm=3000,
+            fee_limit_max_sat=200,
+            purposes_allowed="data_subscription,operator_pay_invoice",
+        ),
+    }
+
+
 def test_go_when_everything_ready() -> None:
     out = golive_preflight(_ready_cfg(), **_all_node_ok())
     assert out["verdict"] == "GO" and out["go"] is True and out["blocking"] == []
@@ -54,7 +70,9 @@ def test_armed_mode_drops_receive_only_invariants() -> None:
     (pay_enabled_off / macaroon_scope_minimal) are REPLACED, not reported as failures.
     A send-capable macaroon (scope_minimal=False) is the correct armed state → GO."""
     cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
-    out = golive_preflight(cfg, **{**_all_node_ok(), "macaroon_scope_minimal": False})
+    out = golive_preflight(
+        cfg, **{**_all_node_ok(), "macaroon_scope_minimal": False}, **_armed_send_facts()
+    )
     names = {c["name"] for c in out["checks"]}
     assert "pay_enabled_off" not in names
     assert "macaroon_scope_minimal" not in names

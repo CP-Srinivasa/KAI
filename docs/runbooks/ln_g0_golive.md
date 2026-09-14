@@ -81,3 +81,7 @@ Verifiable Bitcoin fee/mempool time series — raw observations + deterministic
 min/median/max — straight from KAI's own `bitcoind` node. No account, machine-payable:
 hit the endpoint, pay the `402` Lightning invoice, retry with
 `Authorization: L402 <token>:<preimage>`, get the JSON. Sovereign truth, not a forecast.
+
+## Sendepfad (D-277)
+
+Re-Arm des Sendepfads mit drei Beweisen: `ln_rearm_sendpath.md`.
