@@ -24,6 +24,16 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-276 (2026-09-14)
+**Die Zurueckstellung von `kai-litellm.service` ist aufgehoben; Units im Takt bekommen in der Prozess-Sonde eine Nachmessung statt eines P0.**
+**Kontext**: Seit dem 09.09. meldete jeder Health-Lauf `deferred_unit_active: kai-litellm.service` als P0. Die Zurueckstellung vom 08.09. (openai-Konflikt) war durch den separaten Transport-Baum aus ADR 0019 gegenstandslos geworden; die Research-Route laeuft seit dem 11.09. ueber den Proxy (`KIMI_RESEARCH_INTEGRATION = PASS`). Alle drei Wiedervorlage-Bedingungen des Eintrags waren erfuellt, der Eintrag stand trotzdem. Daneben meldete die Prozess-Sonde alle paar Laeufe `EXPECTED_UNIT_NOT_RUNNING` oder `INVALID Marker-PID != MainPID` fuer `kai-entry-watch.service`, die absichtlich in 55-s-Laeufen mit `RestartSec=5` arbeitet (946 fehlerfreie Starts am 14.09.).
+**Entscheidung** (Operator): (1) `kai-litellm.service` wird aus `DEFERRED_UNITS` entfernt und ist damit erwartete, attestierende Unit; der Mechanismus bleibt fuer kuenftige Zurueckstellungen. (2) Besteht ein Prozess-HOLD ausschliesslich aus `NOT_RUNNING`/`INVALID` einer Unit aus `CYCLING_SERVICES`, misst die Sonde bis zu zweimal im Abstand von 10 s nach und meldet, was danach steht. (3) `CYCLING_SERVICES` in `premium_pipeline_health` ist der eine Katalog fuer beide Sonden; ein Test bindet ihn an `Restart=always` und `--duration-seconds` in der Unit-Datei.
+**Begruendung**: Ein P0, den niemand schliessen kann, entwertet jeden P0 daneben. Die Nachmessung verdeckt keinen Ausfall: ein echter Stillstand ueberlebt jede Wiederholung, und jeder andere Zustand oder jede andere Unit geht ohne Wartezeit raus.
+**Restrisiko**: Ein Health-Lauf mit Taktluecke dauert bis zu 20 s laenger. Ein Ausfall von `kai-litellm` ist jetzt ein HOLD — das ist gewollt, denn die Research-Route haengt daran.
+**Rueckrollbarkeit**: ja -- Eintrag in `DEFERRED_UNITS` wiederherstellen bzw. `CYCLING_RESAMPLE_DELAYS_SEC` leeren.
+**Betroffen**: `app/alerts/process_runtime_probe.py`, `app/observability/premium_pipeline_health.py`, `tests/unit/test_deferred_unit_expectation.py`, `tests/unit/test_process_runtime_cycling_units.py`.
+**Cross-Ref**: ADR 0019, D-270, Health-Alerts 09.–14.09., Spur-A-Cron am 14.09. deaktiviert.
+
 ### D-275 (2026-09-14)
 **Keine tote Bremse: `budget_usecase_usd` entfernt; lokale Sperren bekommen die Fehlerklasse `local_refusal`.**
 **Kontext**: `AICostSettings.budget_usecase_usd` las seit D-CORE-007 Tageslimits je Auftraggeber aus `APP_AI_BUDGET_USECASE_<NAME>_USD`, kein Leser hat sie je durchgesetzt (am 14.09. verifiziert; auf dem Geraet ist keine solche Variable gesetzt). Zugleich fiel eine lokale Budgetsperre in `classify_error` auf `unknown`, dieselbe Klasse wie ein unerklaerter Absturz.
@@ -32,7 +42,6 @@
 **Rueckrollbarkeit**: ja, `git revert`; keine Konfiguration auf dem Geraet betroffen.
 **Betroffen**: `app/core/ai_cost_settings.py`, `app/ai/audit.py`, `.github/workflows/lock-update.yml`, `tests/unit/test_dashboard_hold_report_offloop.py`, `app/analysis/pipeline.py`, `app/analysis/internal_model/provider.py`.
 **Cross-Ref**: D-CORE-007, D-271, D-274, #967.
-
 ### D-274 (2026-09-14)
 **Die Alert-Reserve verteilt das Tageslimit, sie erhoeht es nicht.**
 **Kontext**: Mit gesetzter Reserve prueft `decide_pot` einen Reserveaufruf nur gegen den Reservetopf (#954). Liegt der Normaltopf bereits ueber seiner Decke -- Reserve mitten am Tag nach mehr als 1,10 USD aktiviert, oder Altbestand vor der Entdopplung (D-272) --, zahlte die Reserve trotzdem weitere 0,15 USD: der Tag konnte bei 1,40 statt 1,25 USD enden. Beim Sandbox-Beweis zu D-273 wurde das am echten `invoke` bei 1,30 USD belegt.

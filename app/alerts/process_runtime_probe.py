@@ -18,9 +18,21 @@ Gibt den Alarmtext zurueck, nicht die ``HealthIssue`` — ``HealthIssue`` wohnt 
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from app.observability.process_runtime_marker import ProcessProvenance
+
+#: Nachmessen fuer Units im Takt (Katalog: ``premium_pipeline_health.CYCLING_SERVICES``).
+#: Eine Pause kostet ``RestartSec`` 5 s, Start und Selbstbezeugung rund 4 s. Zwei
+#: Nachmessungen im Abstand von 10 s treffen einen laufenden, bezeugten Prozess;
+#: laenger als 20 s haelt der Health-Lauf dafuer nicht an.
+CYCLING_RESAMPLE_DELAYS_SEC: Final[tuple[float, ...]] = (10.0, 10.0)
+
+_sleep: Callable[[float], None] = time.sleep
 
 
 def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None:
@@ -36,6 +48,42 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
     erwartete Revision bezeugt. Fehlt ein Marker, lautet der Zustand ``UNKNOWN``
     — nie „in Ordnung".
     """
+    # Eine Unit im Takt (``kai-entry-watch``: 55 s Lauf, ``RestartSec=5``) steht in
+    # jeder Momentaufnahme mit einigen Prozent Wahrscheinlichkeit zwischen zwei
+    # Laeufen — 946 fehlerfreie Starts am 2026-09-14, und trotzdem alle paar
+    # Health-Laeufe ein P0. Besteht der Befund AUSSCHLIESSLICH aus solchen
+    # Taktluecken, wird nachgemessen; gemeldet wird, was danach noch steht. Ein
+    # echter Ausfall ueberlebt jede Wiederholung, jeder andere Befund geht ohne
+    # Wartezeit raus.
+    befund, luecke = _evaluate_once(repo_root, checkout_sha)
+    for pause in CYCLING_RESAMPLE_DELAYS_SEC:
+        if not luecke:
+            break
+        _sleep(pause)
+        befund, luecke = _evaluate_once(repo_root, checkout_sha)
+    return befund
+
+
+def nur_taktluecke(result: ProcessProvenance) -> bool:
+    """Besteht der HOLD nur aus dem Fenster zwischen zwei Laeufen einer Takt-Unit?
+
+    Taktluecke heisst: die Unit laeuft gerade nicht (Pause nach ``RestartSec``)
+    oder ihr Marker stammt noch vom Vorlauf (neuer Prozess, Selbstbezeugung
+    laeuft). Jeder andere Zustand, jede Unit ausserhalb des Katalogs und jeder
+    Grund auf Deploy-Ebene macht den Befund sofort echt.
+    """
+    from app.observability.premium_pipeline_health import CYCLING_SERVICES
+    from app.observability.process_runtime_marker import STATE_INVALID, STATE_NOT_RUNNING
+
+    luecken = {STATE_NOT_RUNNING, STATE_INVALID}
+    if result.ok or not set(result.reasons) <= luecken:
+        return False
+    offen = [f for f in result.findings if not f.passing]
+    return bool(offen) and all(f.unit in CYCLING_SERVICES and f.state in luecken for f in offen)
+
+
+def _evaluate_once(repo_root: Path, checkout_sha: str) -> tuple[str | None, bool]:
+    """Eine Momentaufnahme: ``(Befundtext, besteht er nur aus Taktluecken?)``."""
     from app.observability.process_runtime_marker import (
         ProcessObservation,
         current_boot_id,
@@ -59,7 +107,7 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
         # gilt der Vertrag ausdruecklich NICHT — und "nicht anwendbar" ist etwas
         # anderes als "bestanden". Auf dem Pi ist ``expected`` nie leer, dort
         # fuehrt dieselbe Lage zu HOLD statt zu Schweigen.
-        return None
+        return None, False
     boot = current_boot_id()
     observations = [
         ProcessObservation(
@@ -116,8 +164,8 @@ def process_runtime_finding(repo_root: Path, *, checkout_sha: str) -> str | None
     )
     befund = "" if result.ok else render_process_provenance(result)
     if kette and befund:
-        return kette + "; " + befund
-    return kette or befund or None
+        return kette + "; " + befund, False
+    return kette or befund or None, not kette and nur_taktluecke(result)
 
 
 def unit_active_enter_utc(unit: str) -> str:
@@ -310,22 +358,13 @@ def _active_release(state_root: Path) -> tuple[str, str]:
 #: Jeder Eintrag traegt Datum, Grund und das EREIGNIS, das ihn beendet — kein
 #: Ablaufdatum. Ein Datum laeuft ab, ohne dass sich etwas geaendert haette;
 #: dann steht die Erwartung wieder da, waehrend der Grund fortbesteht.
-DEFERRED_UNITS: Final[dict[str, dict[str, str]]] = {
-    "kai-litellm.service": {
-        "decision_date": "2026-09-08",
-        "reason": (
-            "DEFERRED_UPSTREAM_DEPENDENCY_CONFLICT — litellm 1.99.0 verlangt "
-            "openai<3.0.0,>=2.20.0, das Lockfile pinnt openai==3.6.0. Auch "
-            "1.100.0 scheitert identisch; ohne Pin loest pip auf litellm-0.1.236 "
-            "auf. Ein Core-Downgrade von openai ist ausgeschlossen."
-        ),
-        "reopen_when": (
-            "die LiteLLM-Runtime-Adoption ausdruecklich wiedereroeffnet ist UND "
-            "ein vertraeglicher Abhaengigkeitsvertrag existiert UND Bau, "
-            "Installation und Start erneut operator-freigegeben sind"
-        ),
-    },
-}
+#:
+#: Leer heisst: nichts ist zurueckgestellt. ``kai-litellm.service`` stand hier vom
+#: 2026-09-08 bis 2026-09-14 (openai-Konflikt). Der separate Transport-Baum aus
+#: ADR 0019 hat ihn aufgeloest, die Research-Route laeuft seit dem 2026-09-11 ueber
+#: den Proxy — alle drei Wiedervorlage-Bedingungen waren erfuellt, der Eintrag
+#: erzeugte aber weiter jeden Health-Lauf ein P0. Aufgehoben mit D-276.
+DEFERRED_UNITS: Final[dict[str, dict[str, str]]] = {}
 
 #: Zustaende, in denen eine zurueckgestellte Unit NICHT sein darf. Zurueckgestellt
 #: heisst "wird nicht erwartet" — ausdruecklich nicht "wird nicht beobachtet".
@@ -438,7 +477,9 @@ def expected_attesting_units(repo_root: Path) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CYCLING_RESAMPLE_DELAYS_SEC",
     "DEFERRED_UNITS",
+    "nur_taktluecke",
     "STATE_DEFERRED_UNEXPECTED",
     "deferred_unit_finding",
     "deferred_unit_violations",
