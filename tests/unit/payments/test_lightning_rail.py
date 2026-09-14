@@ -122,7 +122,7 @@ class FakeClient:
             raise response
         if response is not None:
             return dict(response)
-        return {"payment_preimage": PREIMAGE_HASH, "payment_route": {"total_fees": "3"}}
+        return {"status": "SUCCEEDED", "payment_preimage": PREIMAGE_HASH, "fee_sat": 3}
 
     async def list_payments(self, **kwargs: Any) -> Any:
         self.calls.append(("list_payments", kwargs))
@@ -402,19 +402,25 @@ async def test_a_transport_error_is_unknown() -> None:
     assert result.outcome is RailOutcome.UNKNOWN
 
 
-async def test_a_payment_error_in_a_200_is_a_failure() -> None:
-    """lnd antwortet 200 auch bei gescheiterter Zahlung (``payment_error``)."""
-    client = FakeClient(pay={"payment_error": "no route to " + PAYEE_PUBKEY})
+async def test_a_failed_router_payment_keeps_the_lnd_reason() -> None:
+    """SendPaymentV2 liefert FAILED als Endzustand — mit lnd-Enum, nie Freitext."""
+    client = FakeClient(pay={"status": "FAILED", "failure_reason": "FAILURE_REASON_NO_ROUTE"})
     result = await a_rail(client).pay(an_intent(), an_attempt())
     assert result.outcome is RailOutcome.FAILED
-    assert result.failure_reason == "PAYMENT_ERROR"
-    assert PAYEE_PUBKEY not in result.model_dump_json(), (
-        "der lnd-Fehlerstring kann ein Ziel zurueckspiegeln und wird nie uebernommen"
-    )
+    assert result.failure_reason == "FAILURE_REASON_NO_ROUTE"
+    assert PAYEE_PUBKEY not in result.model_dump_json()
+
+
+async def test_an_in_flight_terminal_state_is_unknown_not_failed() -> None:
+    """lnd-Timeout vor dem Endzustand: der Send kann draussen sein."""
+    client = FakeClient(pay={"status": "IN_FLIGHT"})
+    result = await a_rail(client).pay(an_intent(), an_attempt())
+    assert result.outcome is RailOutcome.UNKNOWN
+    assert result.raw_status == "IN_FLIGHT"
 
 
 async def test_a_200_without_preimage_is_unknown() -> None:
-    result = await a_rail(FakeClient(pay={})).pay(an_intent(), an_attempt())
+    result = await a_rail(FakeClient(pay={"status": "SUCCEEDED"})).pay(an_intent(), an_attempt())
     assert result.outcome is RailOutcome.UNKNOWN
 
 

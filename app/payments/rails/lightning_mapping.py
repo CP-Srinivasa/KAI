@@ -93,33 +93,34 @@ def destination_from_payreq(decoded: dict[str, Any], *, rail: str) -> DecodedDes
 def result_from_send(
     response: dict[str, Any], *, rail: str, attempt: PaymentAttempt, moment: datetime
 ) -> RailResult:
-    """lnd antwortet mit HTTP 200 auch dann, wenn die Zahlung scheiterte.
+    """Der normalisierte Endzustand von ``routerrpc.SendPaymentV2`` (D-277).
 
-    ``payment_error`` ist ein Freitext, der ein Ziel zurueckspiegeln kann — er
-    wird deshalb nie uebernommen, sondern nur als Anwesenheit gewertet.
+    ``status`` und ``failure_reason`` sind lnd-Enums, kein Freitext — der
+    Grund darf deshalb ins Journal. Ein SUCCEEDED ohne Preimage ist kein Beweis,
+    ein IN_FLIGHT (lnd-Timeout vor dem Endzustand) keine Aussage: beides wird
+    UNKNOWN und vom Reconciler gegen den Node aufgeloest.
     """
-    error = str(response.get("payment_error", "")).strip()
-    if error:
+    status = str(response.get("status", "")).strip().upper()
+    preimage = str(response.get("payment_preimage", "")).strip()
+    failure = str(response.get("failure_reason", "")).strip().upper()[:64]
+    if status == "FAILED" or (failure and status != "SUCCEEDED"):
         return RailResult(
             rail=rail,
             outcome=RailOutcome.FAILED,
             rail_dedup_key=attempt.rail_dedup_key,
             observed_at=moment,
-            failure_reason="PAYMENT_ERROR",
+            failure_reason=failure or "FAILED",
             raw_status="FAILED",
         )
-    preimage = str(response.get("payment_preimage", "")).strip()
-    route = response.get("payment_route") or {}
-    fee_sat = int(route.get("total_fees") or route.get("total_fees_msat", 0) or 0)
-    if not preimage:
-        # 200 ohne Fehler UND ohne Preimage: kein Beweis, keine Aussage.
+    if status != "SUCCEEDED" or not preimage:
         return RailResult(
             rail=rail,
             outcome=RailOutcome.UNKNOWN,
             rail_dedup_key=attempt.rail_dedup_key,
             observed_at=moment,
-            raw_status="NO_PREIMAGE",
+            raw_status=(status or "NO_STATUS") if status != "SUCCEEDED" else "NO_PREIMAGE",
         )
+    fee_sat = int(response.get("fee_sat") or 0)
     return RailResult(
         rail=rail,
         outcome=RailOutcome.SETTLED,

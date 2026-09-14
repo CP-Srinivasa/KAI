@@ -41,13 +41,20 @@ async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) ->
     except LightningUnavailableError:
         return None  # capability not provisioned → nothing probed (fail-closed upstream)
     try:
-        await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
+        # fee_limit_sat=1: der Client verweigert 0 vor jedem Node-Kontakt (D-277); die
+        # Rechnung ist Muell, also bewegt auch ein sendefaehiges Macaroon nichts.
+        await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=1)
         return False  # node ACCEPTED a spend attempt → macaroon too broad
     except LightningUnavailableError as exc:
         text = str(exc).lower()
         if "permission denied" in text or "lnd returned 403" in text:
             return True
-        if "invalid payment request" in text or "lnd returned 400" in text:
+        if (
+            "invalid payment request" in text
+            or "lnd returned 400" in text
+            or "checksum failed" in text
+            or "lnd stream error" in text
+        ):
             return False
         return None
 

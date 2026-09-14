@@ -29,7 +29,7 @@ Send-Gate) gegated.
 | Node-Status / Balances / Channels (Phase 1) | `adapter.py` | GET `/v1/state`,`/v1/getinfo`,`/v1/balance/*`,`/v1/channels`,`/v1/fees` | `info:read offchain:read onchain:read` (= readonly) |
 | Invoice erstellen (Receive) | `receive_gate.create_invoice` | POST `/v1/invoices` | `invoices:write` |
 | BOLT12-Offer (Receive, Sprint 3) | (Sprint 3) | POST `/v2/...offers` | `invoices:write offchain:read` |
-| Invoice zahlen (Send) | `payments/rails/lightning.py::pay` | GET `/v1/payreq/{pay_req}` vor POST `/v1/channels/transactions` | `offchain:read offchain:write` |
+| Invoice zahlen (Send) | `payments/rails/lightning.py::pay` | GET `/v1/payreq/{pay_req}` vor POST `/v2/router/send` (SendPaymentV2, D-277) | `offchain:read offchain:write` |
 | On-Chain-Withdraw (Send) | — (DEFERRED, kein Aufrufer) | POST `/v1/transactions` | `onchain:write` |
 | Channel öffnen | — (DEFERRED, kein Aufrufer) | POST `/v1/channels` | `onchain:write offchain:write` |
 | Channel schließen | — (DEFERRED, kein Aufrufer) | DELETE `/v1/channels/{txid}/{idx}` | `offchain:write onchain:write` |
