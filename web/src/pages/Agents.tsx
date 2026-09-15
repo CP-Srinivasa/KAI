@@ -29,8 +29,10 @@ import {
   type AgentEventSource,
   type AgentStatus,
   type AgentSummary,
+  type AgentWiring,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useSaveState, saveStateText } from "@/lib/useSaveState";
 
 type AgentTab = "command" | "chat" | "details";
 
@@ -41,9 +43,28 @@ const STATUS_TONE: Record<AgentStatus, "pos" | "warn" | "muted"> = {
 };
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
-  live: "Live",
-  prepared: "Vorbereitet",
+  live: "Aktiv",
+  prepared: "Bereit",
   unavailable: "Nicht verfügbar",
+};
+
+// Status nie nur ueber Farbe: jedes Badge traegt zusaetzlich ein Symbol.
+const STATUS_GLYPH: Record<AgentStatus, string> = {
+  live: "\u25cf",
+  prepared: "\u25cb",
+  unavailable: "\u2715",
+};
+
+const WIRING_LABEL: Record<AgentWiring, string> = {
+  autonomous: "autonom",
+  interactive: "interaktiv",
+};
+
+const WIRING_TITLE: Record<AgentWiring, string> = {
+  autonomous:
+    "Autonom: dieser Agent hat einen Handler in app/agents/worker.py und laeuft im Agent-Worker — ohne Claude-Code-Sitzung.",
+  interactive:
+    "Interaktiv: Claude-Code-only. Ein Kommando wird in die Queue geschrieben und wartet auf eine Sitzung; es laeuft nicht von selbst an.",
 };
 
 const STATUS_HINT: Record<AgentStatus, string> = {
@@ -62,10 +83,18 @@ export function AgentsPage() {
         title="Agenten"
         // 2026-09-09: Die Liste war handgepflegt und nannte sechs Agenten,
         // waehrend darunter elf Karten rendern. Aus den Daten ableiten.
+        // 2026-09-15: "alle ausschließlich von Claude Code ausgeführt" war
+        // falsch. Das Backend fuehrt drei Agenten mit `wiring="autonomous"`
+        // (SENTR, Watchdog, Architect) — die haben einen Worker-Handler und
+        // laufen ohne Sitzung. Der Satz behauptete das Gegenteil.
         sub={
           list.state === "ready"
-            ? `${list.data.agents.length} Agenten — alle ausschließlich von Claude Code ausgeführt`
-            : "Alle Agenten ausschließlich von Claude Code ausgeführt"
+            ? (() => {
+                const auto = list.data.agents.filter((a) => a.wiring === "autonomous").length;
+                const total = list.data.agents.length;
+                return `${total} Agenten — ${auto} laufen autonom im Agent-Worker, ${total - auto} nur interaktiv über Claude Code`;
+              })()
+            : "Autonome Agenten laufen im Worker, interaktive nur über Claude Code"
         }
         tone="ai"
         icon={<Bot size={18} />}
@@ -75,7 +104,9 @@ export function AgentsPage() {
         right={<LiveDot {...liveDotProps(list)} staleAfterMs={75_000} />}
       />
 
-      <Card padded className="synthwave-pulse-edge">
+      {/* Operator-Brief 2026-05-13 Punkt 5: die Lichtkante gehoert auf die
+          Agenten-Karten selbst, nicht auf die Erklaerung darueber. */}
+      <Card padded>
         <div className="flex items-start gap-3 text-xs text-fg-muted leading-relaxed">
           <Bot size={14} className="mt-0.5 text-fg-subtle shrink-0" aria-hidden />
           <div className="min-w-0 space-y-1.5">
@@ -151,7 +182,7 @@ function AgentCard({
   const [tab, setTab] = useState<AgentTab>("chat");
   const triggerDetailReload = () => setDetailReloadKey((k) => k + 1);
   return (
-    <Card padded>
+    <Card padded className="synthwave-pulse-edge overflow-hidden">
       <CardHeader
         title={
           <div className="flex items-center gap-2">
@@ -167,9 +198,18 @@ function AgentCard({
           )
         }
         right={
-          <Badge tone={STATUS_TONE[agent.status]} dot>
-            {STATUS_LABEL[agent.status]}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <Badge tone={STATUS_TONE[agent.status]} dot title={STATUS_HINT[agent.status]}>
+              <span aria-hidden>{STATUS_GLYPH[agent.status]}</span>
+              {STATUS_LABEL[agent.status]}
+            </Badge>
+            <Badge
+              tone={agent.wiring === "autonomous" ? "info" : "muted"}
+              title={WIRING_TITLE[agent.wiring]}
+            >
+              {WIRING_LABEL[agent.wiring]}
+            </Badge>
+          </div>
         }
       />
 
@@ -434,26 +474,22 @@ function CommandComposer({
   onSent: () => void;
 }) {
   const [note, setNote] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [result, setResult] = useState<{ mode: string; kind: "ok" | "err"; msg: string } | null>(null);
+  // 2026-09-15 DALI v2.1: EIN Muster fuer Speicher-/Sende-Rueckmeldung —
+  // sofort "wird gespeichert", "gespeichert" erst nach der Antwort, Fehler
+  // bleibt stehen und laesst sich wiederholen (kein stilles Ausblenden).
+  const save = useSaveState();
+  const [activeMode, setActiveMode] = useState<string | null>(null);
+  const busy = save.busy ? activeMode : null;
 
   async function send(mode: string) {
-    if (busy) return;
-    setBusy(mode);
-    setResult(null);
-    try {
+    if (save.busy) return;
+    setActiveMode(mode);
+    await save.run(`Kommando ${mode}`, async () => {
       const r = await postAgentCommand(slug, mode, note.trim() || undefined);
-      setResult({ mode, kind: "ok", msg: `Queued · id ${r.id.slice(0, 8)}` });
       setNote("");
       onSent();
-      setTimeout(() => setResult(null), 4000);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unbekannter Fehler";
-      setResult({ mode, kind: "err", msg });
-      setTimeout(() => setResult(null), 6000);
-    } finally {
-      setBusy(null);
-    }
+      return `in Warteschlange · id ${r.id.slice(0, 8)}`;
+    });
   }
 
   return (
@@ -478,9 +514,9 @@ function CommandComposer({
           <button
             key={mode}
             onClick={() => send(mode)}
-            disabled={busy !== null}
+            disabled={save.busy}
             className={cn(
-              "inline-flex items-center gap-1.5 h-8 px-3 rounded-sm border text-xs font-medium",
+              "inline-flex items-center gap-1.5 min-h-[44px] lg:min-h-0 lg:h-8 px-3 rounded-sm border text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
               "border-line-subtle bg-bg-2 text-fg hover:bg-bg-3 hover:border-line",
               busy === mode && "opacity-60 cursor-wait",
               busy !== null && busy !== mode && "opacity-40 cursor-not-allowed",
@@ -496,23 +532,43 @@ function CommandComposer({
           </button>
         ))}
       </div>
-      {result && (
+      {save.state.kind !== "idle" && (
         <div
+          role="status"
+          aria-live="polite"
           className={cn(
-            "flex items-start gap-2 rounded-sm border px-2.5 py-1.5 text-xs",
-            result.kind === "ok"
-              ? "border-pos/30 bg-pos/10 text-pos"
-              : "border-neg/30 bg-neg/10 text-neg",
+            "flex flex-wrap items-center gap-2 rounded-sm border px-2.5 py-1.5 text-xs",
+            save.state.kind === "saved" && "border-pos/30 bg-pos/10 text-pos",
+            save.state.kind === "saving" && "border-info/30 bg-info/10 text-info",
+            save.state.kind === "error" && "border-neg/30 bg-neg/10 text-neg",
           )}
         >
-          {result.kind === "ok" ? (
-            <CheckCircle2 size={12} className="mt-0.5 shrink-0" />
+          {save.state.kind === "saved" ? (
+            <CheckCircle2 size={12} className="shrink-0" />
+          ) : save.state.kind === "saving" ? (
+            <RefreshCw size={12} className="shrink-0 animate-spin motion-reduce:animate-none" />
           ) : (
-            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+            <AlertTriangle size={12} className="shrink-0" />
           )}
-          <span className="min-w-0 break-words">
-            <strong className="font-mono">{result.mode}</strong> · {result.msg}
-          </span>
+          <span className="min-w-0 break-words">{saveStateText(save.state)}</span>
+          {save.state.kind === "error" && (
+            <span className="ml-auto flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void save.retry()}
+                className="inline-flex items-center gap-1 min-h-[32px] px-2 rounded-sm border border-neg/40 bg-bg-1 text-neg hover:bg-neg/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                <RefreshCw size={11} /> Wiederholen
+              </button>
+              <button
+                type="button"
+                onClick={save.reset}
+                className="min-h-[32px] px-2 rounded-sm text-fg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                Schließen
+              </button>
+            </span>
+          )}
         </div>
       )}
     </div>

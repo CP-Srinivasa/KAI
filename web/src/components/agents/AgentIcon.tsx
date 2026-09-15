@@ -17,6 +17,13 @@ const CUSTOM_ICON_PNG: Record<string, string> = {
   dali: `${BASE}agents/dali.png`,
   satoshi: `${BASE}agents/satoshi.png`,
   neo: `${BASE}agents/neo.png`,
+  // 2026-09-15 DALI v2.1: Originalgrafiken von Desktop\<Name>\<Name>.png,
+  // quadratisch beschnitten, 384x384, palettiert (< 50 kB je Datei). Fuer
+  // architecture-red-team und data-quality-inspector gibt es kein Original —
+  // die behalten ihre SVG-Glyphe, es wird nichts erfunden.
+  einstein: `${BASE}agents/einstein.png`,
+  "kai-finder": `${BASE}agents/kai-finder.png`,
+  xqu: `${BASE}agents/xqu.png`,
 };
 
 type IconProps = { size: number };
@@ -401,17 +408,30 @@ export function AgentIcon({
   const SvgComp = CUSTOM_ICON_SVG[key];
   const FallbackLucide = FALLBACK_LUCIDE[key];
 
-  // Operator 2026-05-10: alte PNG (Tradition) bleibt links, neue SVG (Persona-Glyph)
-  // rechts daneben mit Neon-Glow. PNG ist 1x size, SVG ist gleich gross.
-  // Glow nur auf SVG-Side via filter:drop-shadow currentColor — PNG hat eigene
-  // Farben und braucht keine zusaetzliche Aura.
-  const glowStyle = {
-    filter: "drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor)",
-  };
+  // 2026-09-15 DALI v2.1: EINE Kachel pro Agent.
+  //
+  // Vorher rendete dieses Modul fuer sechs Agenten ZWEI Glyphen nebeneinander
+  // (PNG + SVG) und fuer die uebrigen fuenf nur eine. Im Roster standen damit
+  // doppelt breite Kacheln neben einfach breiten, mit unterschiedlichem Rahmen
+  // und unterschiedlicher Aura — elf Agenten in zwei Formaten. Das war als
+  // Uebergangszustand gedacht ("alte PNG bleibt, neue SVG rechts daneben") und
+  // ist als Dauerzustand einfach nur inkonsistent.
+  //
+  // Jetzt: identischer Rahmen, identische Kantenlaenge, identische Rundung fuer
+  // ALLE. Wo ein PNG existiert, traegt es die Kachel (es ist das ausgestaltete
+  // Portrait); sonst die SVG-Glyphe. Der Neon-Glow ist ein einzelner, kurzer
+  // Schatten statt zwei uebereinanderliegender — bei elf Kacheln addierten sich
+  // die Hoefe zu einer Leuchtflaeche.
+  const glowStyle = { filter: "drop-shadow(0 0 3px currentColor)" };
+  const frame = "inline-grid place-items-center shrink-0 rounded-md ring-1 ring-fg-subtle/15 bg-bg-1/40 overflow-hidden";
 
   return (
-    <span className={cn("inline-flex items-center gap-2 shrink-0", className)}>
-      {pngSrc && (
+    <span
+      className={cn(frame, className)}
+      style={{ width: size, height: size }}
+      data-agent-slug={key}
+    >
+      {pngSrc ? (
         <img
           src={pngSrc}
           alt=""
@@ -420,20 +440,18 @@ export function AgentIcon({
           decoding="async"
           width={size}
           height={size}
-          className="inline-block shrink-0 rounded-md object-contain ring-1 ring-fg-subtle/15 bg-bg-1/40 p-0.5"
-          style={{ width: size, height: size }}
+          className="h-full w-full object-contain p-0.5"
         />
-      )}
-      {SvgComp ? (
-        <span className={cn("inline-flex shrink-0", tone)} style={glowStyle}>
-          <SvgComp size={size} />
+      ) : SvgComp ? (
+        <span className={cn("inline-flex", tone)} style={glowStyle}>
+          <SvgComp size={Math.round(size * 0.78)} />
         </span>
       ) : FallbackLucide ? (
-        <span className={cn("inline-flex shrink-0", tone)} style={glowStyle}>
-          <FallbackLucide size={size} strokeWidth={2.25} />
+        <span className={cn("inline-flex", tone)} style={glowStyle}>
+          <FallbackLucide size={Math.round(size * 0.78)} strokeWidth={2.25} />
         </span>
       ) : (
-        <Bot size={size} className={cn("shrink-0", tone)} strokeWidth={2.25} />
+        <Bot size={Math.round(size * 0.78)} className={cn(tone)} strokeWidth={2.25} />
       )}
     </span>
   );

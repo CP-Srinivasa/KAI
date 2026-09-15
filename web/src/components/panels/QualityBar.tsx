@@ -29,6 +29,10 @@ type Row = {
   value: number | null;
   target: number;
   format: (n: number) => string;
+  /** Was ein verfehltes Ziel konkret bedeutet — und was als Naechstes zu tun
+   *  ist. "1/3 · Ziele verfehlt" war eine Note ohne Aufgabe. */
+  meaning: string;
+  nextAction: string;
   hint?: string;
   /** Optional title-Tooltip auf dem hint-span (D-1: "Lift unsicher"-Erklaerung). */
   hintTooltip?: string;
@@ -46,6 +50,9 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       value: data?.forward_precision_pct ?? null,
       target: 60,
       format: (n) => `${n.toFixed(2)}%`,
+      meaning:
+        "Unter 60 % trifft weniger als jedes zweite gemeldete Signal im Forward-Fenster — die Alert-Schwelle ist zu weit.",
+      nextAction: "Per-Source-Precision öffnen und die schwächste Quelle drosseln.",
       hint:
         data?.precision_pct != null
           ? `Raw: ${data.precision_pct.toFixed(2)}%`
@@ -56,6 +63,9 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       value: data?.resolved_count ?? null,
       target: 50,
       format: (n) => `${n}`,
+      meaning:
+        "Unter 50 aufgelösten Alerts ist jede Präzisionszahl darüber statistisch zu dünn, um daraus etwas zu schließen.",
+      nextAction: "Nichts tun — warten, bis das Fenster genug Auflösungen enthält.",
     },
     (() => {
       // D-149: priority_corr (Pearson) ist auf P7-P10-Band nicht aussagekraeftig.
@@ -80,6 +90,9 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
         target: 15,
         format: (n: number) => formatTierLift(n),
         toneFn: tierLiftTone,
+        meaning:
+          "Unter +15pp trennt die Prioritätsstufe High-Conviction nicht messbar von Standard — die Priorität trägt dann keine Information.",
+        nextAction: "Prioritätsregeln prüfen (app/alerts) oder das High-Conviction-Band engerziehen.",
         hint,
         hintTooltip,
       } satisfies Row;
@@ -108,6 +121,16 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
     verdictTone = "neg";
   }
 
+  // Kernaussage in einem Satz. Vorher stand hier nur "1/3" — eine Note, aus der
+  // der Operator die Bedeutung selbst ableiten musste.
+  const missed = rows.filter((r) => !(r.value != null && r.value >= r.target));
+  const headline =
+    met === total
+      ? "Die Signalqualität trägt Entscheidungen: alle drei Ziele sind erreicht."
+      : missed.length === total
+        ? "Kein Qualitätsziel erreicht — Zahlen dieser Seite tragen noch keine Handelsentscheidung."
+        : `${missed.length} von ${total} Zielen verfehlt: ${missed.map((r) => r.label).join(", ")}.`;
+
   return (
     <Card padded>
       <CardHeader
@@ -119,6 +142,15 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
           </Badge>
         }
       />
+      {/* Bedeutung vor Balken: was sagt dieser Block ueberhaupt aus? */}
+      <p
+        className={cn(
+          "-mt-1 mb-3.5 text-xs leading-relaxed",
+          verdictTone === "pos" ? "text-fg-muted" : "text-fg",
+        )}
+      >
+        {headline}
+      </p>
       <div className="space-y-3.5">
         {rows.map((r) => {
           const hasValue = r.value != null;
@@ -163,6 +195,17 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
                 label={r.label}
                 className="mt-1.5"
               />
+              {/* Nur beim verfehlten Ziel: Bedeutung + naechster Schritt. Beim
+                  erreichten Ziel waere das Text ohne Anlass. */}
+              {!ok && (
+                <div className="mt-1.5 text-2xs leading-relaxed text-fg-muted">
+                  <span>{r.meaning}</span>
+                  <span className="ml-1 text-fg">
+                    <span className="text-fg-subtle">Nächste Aktion: </span>
+                    {r.nextAction}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}
@@ -188,11 +231,8 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
           </span>
           {/* V1-Backfill-Marker lebt im ReentryGatePanel direkt am PnL-Wert
               (DALI-P-026-r1 Folge-Cleanup) — hier nicht mehr doppelt. */}
-          {data.generated_at && (
-            <span className="ml-auto font-mono">
-              {data.generated_at.substring(0, 19).replace("T", " ")}
-            </span>
-          )}
+          {/* Der Report-Zeitstempel stand hier zum dritten Mal auf derselben
+              Seite. Er gehoert in den Lage-Streifen, nicht in jeden Kartenfuss. */}
         </div>
       )}
     </Card>

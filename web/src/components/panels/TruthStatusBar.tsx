@@ -130,7 +130,7 @@ function TruthStatusBarImpl({ quality, regime, priorityGate, qualityState }: Pro
           type="button"
           onClick={() => setShowDiag((s) => !s)}
           aria-expanded={showDiag}
-          className="inline-flex items-center gap-1 text-2xs font-mono text-fg-subtle hover:text-fg transition-colors focus:outline-none focus-visible:underline"
+          className="inline-flex items-center gap-1 min-h-[44px] lg:min-h-0 px-1 text-2xs font-mono text-fg-subtle hover:text-fg transition-colors focus:outline-none focus-visible:underline"
         >
           <Activity size={11} aria-hidden />
           Warum unverändert?

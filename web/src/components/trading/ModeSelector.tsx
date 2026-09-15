@@ -11,11 +11,26 @@ const ICONS: Record<TradingMode, typeof Shield> = {
   sim: FlaskConical,
 };
 
-const TONE: Record<TradingMode, "warn" | "neg" | "info"> = {
-  paper: "warn",
-  live: "neg",
-  sim: "info",
-};
+// 2026-09-15 DALI v2.1: die Tone-Tabelle ist weg.
+//
+// Dieser Umschalter faerbte sich rot fuer "live", orange fuer "paper", cyan fuer
+// "sim" und pulste im Live-Zustand — er sah aus wie der Hauptschalter der
+// Ausfuehrung. Er ist es nicht: `mode` liegt in localStorage
+// (state/AppState.tsx), wird an KEINEN Endpunkt geschickt und aendert keinen
+// Serverzustand. Die echte Freigabe sind `execution_enabled` /
+// `write_back_allowed` aus dem Portfolio-Snapshot; sie stehen im Lage-Streifen
+// der Uebersicht und auf der System-Seite.
+//
+// Bewertet, aber verworfen: den Umschalter zur reinen Anzeige der
+// Backend-Wahrheit umbauen. Die Topbar liegt AUSSERHALB des
+// PortfolioSnapshotProvider — das haette einen zweiten Poller auf den
+// teuersten Endpunkt gesetzt (5,2-MB-Audit je Aufbau, Single-Worker-Pi), fuer
+// eine Information, die 40px weiter unten schon steht. Ebenfalls verworfen: die
+// Beschriftung "Ansichts-Modus". Er filtert keine Ansicht, er waehlt vor, wofuer
+// spaetere Order-Aktionen gelten — "Ansicht" waere die zweite Unwahrheit.
+//
+// Also: neutrale Optik, kein Puls, ehrliches Label. Die Live-Bestaetigung
+// bleibt, denn die Vorwahl ist die Voraussetzung fuer echte Order-Aktionen.
 
 export function ModeSelector({ compact = false }: { compact?: boolean }) {
   const { t } = useT();
@@ -24,7 +39,6 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
   const [pendingLive, setPendingLive] = useState(false);
 
   const Icon = ICONS[mode];
-  const tone = TONE[mode];
 
   const handlePick = (m: TradingMode) => {
     if (m === "live" && confirmLive && mode !== "live") {
@@ -42,21 +56,22 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
         <button
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            "h-8 inline-flex items-center gap-1.5 sm:gap-2 rounded-sm border bg-bg-2 px-2 sm:px-2.5 text-xs transition-colors",
-            tone === "neg"
-              ? "border-neg/40 text-neg bg-neg/5 hover:bg-neg/10"
-              : tone === "info"
-                ? "border-info/30 text-info bg-info/5 hover:bg-info/10"
-                : "border-warn/30 text-warn bg-warn/5 hover:bg-warn/10",
+            "h-11 lg:h-8 inline-flex items-center gap-1.5 sm:gap-2 rounded-sm border border-line-subtle bg-bg-2 px-2 sm:px-2.5 text-xs text-fg-muted transition-colors hover:bg-bg-3 hover:text-fg",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
+            mode === "live" && "border-neg/40 text-neg",
           )}
           aria-haspopup="listbox"
           aria-expanded={open}
-          aria-label={t("topbar.mode_switch")}
+          aria-label="Order-Vorwahl wählen — steuert keine laufende Ausführung"
+          title="Vorwahl für künftige Order-Aktionen aus dieser Oberfläche. KEIN Systemzustand: die laufende Handelsfreigabe steht im Lage-Streifen der Übersicht (execution_enabled)."
         >
-          <StatusDot tone={tone} pulse={mode === "live"} />
-          <Icon size={13} />
-          <span className="hidden sm:inline font-semibold">
-            {mode === "paper" ? t("topbar.mode_paper") : mode === "live" ? t("topbar.mode_live") : t("topbar.mode_sim")}
+          <StatusDot tone={mode === "live" ? "neg" : "muted"} />
+          <Icon size={13} aria-hidden />
+          <span className="hidden sm:inline">
+            <span className="text-fg-subtle">Vorwahl: </span>
+            <span className="font-semibold">
+              {mode === "paper" ? t("topbar.mode_paper") : mode === "live" ? t("topbar.mode_live") : t("topbar.mode_sim")}
+            </span>
           </span>
           {!compact && <ChevronDown size={12} className="hidden sm:inline opacity-70" />}
         </button>
@@ -74,25 +89,30 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
               <div className="px-2 py-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-fg-subtle">
                 {t("topbar.mode_switch")}
               </div>
+              <p className="px-2 pb-1.5 text-2xs leading-relaxed text-fg-muted">
+                Vorwahl für Order-Aktionen aus dieser Oberfläche. Sie schaltet
+                nichts im Backend — ob KAI ausführt, steht im Lage-Streifen der
+                Übersicht.
+              </p>
               {(["paper", "sim", "live"] as TradingMode[]).map((m) => {
                 const I = ICONS[m];
                 const active = m === mode;
-                const toneM = TONE[m];
                 return (
                   <button
                     key={m}
                     onClick={() => handlePick(m)}
                     className={cn(
-                      "w-full flex items-start gap-2.5 p-2 rounded-sm text-left transition-colors",
+                      "w-full min-h-[44px] flex items-start gap-2.5 p-2 rounded-sm text-left transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
                       active ? "bg-bg-3" : "hover:bg-bg-2",
                     )}
                   >
                     <span
                       className={cn(
                         "h-7 w-7 rounded-sm grid place-items-center shrink-0 mt-0.5",
-                        toneM === "neg" && "bg-neg/10 text-neg",
-                        toneM === "info" && "bg-info/10 text-info",
-                        toneM === "warn" && "bg-warn/10 text-warn",
+                        // Nur "live" behaelt eine Warnfarbe — dort haengt eine
+                        // echte Konsequenz dran. paper/sim sind neutral.
+                        m === "live" ? "bg-neg/10 text-neg" : "bg-bg-3 text-fg-muted",
                       )}
                     >
                       <I size={13} />

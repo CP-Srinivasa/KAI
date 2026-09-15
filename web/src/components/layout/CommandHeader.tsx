@@ -10,6 +10,9 @@
 import { Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useBackendHealth } from "@/lib/useBackendHealth";
+import { useSharedPortfolioSnapshot } from "@/state/PortfolioSnapshotProvider";
+import { exposureFromSnapshot } from "@/lib/exposureFromSnapshot";
+import { formatAbsolute, formatRelative, parseIso } from "@/lib/time";
 import {
   deriveTruthChips,
   highestTruthTone,
@@ -30,10 +33,10 @@ import { cn } from "@/lib/utils";
 
 const ATTENTION_TONES: ReadonlySet<TruthTone> = new Set<TruthTone>(["critical", "warn"]);
 
-function freshness(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return iso.substring(0, 19).replace("T", " ");
-}
+/** Ab hier ist der Report nicht mehr "eben", sondern alt. Der Poller laeuft
+ *  alle 30 s; 5 Minuten sind zehn ausgefallene Runden — das ist keine
+ *  Schwankung mehr, sondern ein Befund. */
+const STALE_AFTER_MS = 5 * 60_000;
 
 export function CommandHeader({
   kai,
@@ -54,15 +57,26 @@ export function CommandHeader({
   qualityState: "loading" | "ready" | "error";
 }) {
   const health = useBackendHealth();
+  // Kein zusaetzlicher Abruf: der Snapshot liegt schon unter dem Provider der
+  // Uebersicht. Er ist die EINZIGE belastbare Quelle fuer die Handelsfreigabe —
+  // der Paper/Sim/Live-Schalter in der Topbar ist localStorage, kein Systemzustand.
+  const snap = useSharedPortfolioSnapshot();
+  const exposure = snap.state === "ready" ? exposureFromSnapshot(snap.data) : null;
   const chips = deriveTruthChips(quality, regime, priorityGate);
   const topChip = chips[0] ?? null;
   const attentionCount = chips.filter((c) => ATTENTION_TONES.has(c.tone)).length;
   const worst = highestTruthTone(chips);
 
+  const generatedAt = quality?.generated_at ?? null;
+  const parsed = parseIso(generatedAt);
+  const ageMs = parsed ? Date.now() - parsed.getTime() : null;
+  const stale = ageMs != null && ageMs > STALE_AFTER_MS;
+
   return (
     <div
       className={cn(
-        "sticky top-0 z-20 -mx-4 mb-1 flex flex-wrap items-center gap-2 border-b px-4 py-2 backdrop-blur xl:-mx-5 xl:px-5",
+        // top-14 = Hoehe der sticky Topbar; z-10 bleibt unter deren z-20.
+        "sticky top-14 z-10 -mx-4 mb-1 flex flex-wrap items-center gap-2 border-b px-4 py-2 backdrop-blur xl:-mx-5 xl:px-5",
         "bg-bg-0/85",
         worst === "critical" ? "border-neg/40" : worst === "warn" ? "border-warn/30" : "border-line-subtle",
       )}
@@ -89,11 +103,58 @@ export function CommandHeader({
         <StatusPill kind="pending" label="Live · lädt" />
       )}
 
-      {/* Backend-Gesundheit. */}
+      {/* 2026-09-15 DALI v2.1: Drei GETRENNTE Aussagen, die vorher vermischt
+          waren. "Backend v0.42" plus ein gruener Punkt neben einem Zeitstempel
+          las sich als eine einzige Zusage "Live-Daten" — und der Handelsmodus
+          stand anderswo (Topbar, Sidebar-Pille) und kam aus localStorage.
+          Verbindung, Datenalter und Handelsfreigabe sind drei unabhaengige
+          Tatsachen und werden jetzt auch so gelesen. Version gehoert in den
+          Footer, nicht in die Lage-Leiste. */}
+
+      {/* (1) Verbindung zum Backend. */}
       <StatusPill
         kind={backendHealthToStatus(health.state)}
-        label={health.state === "connected" ? `Backend v${health.version}` : `Backend ${health.state}`}
+        label={health.state === "connected" ? "Backend verbunden" : `Backend ${health.state}`}
       />
+
+      {/* (2) Datenalter — relativ, mit ehrlicher Stale-Schwelle. Eine stehende
+          Uhr ist gefaehrlicher als eine fehlende. */}
+      <Badge
+        tone={qualityState === "error" ? "neg" : stale ? "warn" : qualityState === "ready" ? "muted" : "neutral"}
+        dot
+        title={
+          qualityState === "ready"
+            ? `Report erzeugt: ${formatAbsolute(generatedAt)}` +
+              (stale ? ` · aelter als ${Math.round(STALE_AFTER_MS / 60000)} min — Pipeline pruefen` : "")
+            : "Datenalter unbekannt — der Quality-Report ist nicht abrufbar."
+        }
+      >
+        {qualityState === "ready"
+          ? `Daten ${formatRelative(generatedAt)}${stale ? " · veraltet" : ""}`
+          : qualityState === "error"
+            ? "Daten n/v"
+            : "Daten laden …"}
+      </Badge>
+
+      {/* (3) Handelsfreigabe aus dem Backend — NICHT der lokale Ansichtsmodus. */}
+      <Badge
+        tone={exposure == null ? "neutral" : exposure.execution_enabled ? "warn" : "muted"}
+        dot
+        title={
+          exposure == null
+            ? "Handelsfreigabe unbekannt: der Portfolio-Snapshot antwortet nicht. Bewusst kein 'aus' behaupten."
+            : exposure.execution_enabled
+              ? "Backend fuehrt Orders aus (execution_enabled=true)." +
+                (exposure.write_back_allowed ? " Write-Back frei." : " Write-Back gesperrt.")
+              : "Backend fuehrt KEINE Orders aus (execution_enabled=false). Der Paper/Sim/Live-Schalter in der Topbar aendert daran nichts."
+        }
+      >
+        {exposure == null
+          ? "Handel n/v"
+          : exposure.execution_enabled
+            ? "Handel: Ausfuehrung AN"
+            : "Handel: Ausfuehrung AUS"}
+      </Badge>
 
       {/* Dringlichster Wahrheits-Status (entry-mode/Gates/…). */}
       {topChip && (
@@ -112,20 +173,8 @@ export function CommandHeader({
         </Badge>
       )}
 
-      {/* Report-Frische rechtsbündig. */}
-      <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-2xs text-fg-subtle">
-        <span
-          className={cn(
-            "h-1.5 w-1.5 rounded-full",
-            qualityState === "ready" ? "bg-pos" : qualityState === "error" ? "bg-neg" : "bg-fg-subtle",
-          )}
-        />
-        {qualityState === "ready"
-          ? `Report ${freshness(quality?.generated_at)}`
-          : qualityState === "error"
-            ? "Report-Fehler"
-            : "lädt …"}
-      </span>
+      {/* Der frueher hier rechts stehende Report-Zeitstempel ist in die
+          Daten-Pille gewandert (er stand fuenfmal auf derselben Seite). */}
     </div>
   );
 }

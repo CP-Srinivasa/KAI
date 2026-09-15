@@ -40,6 +40,7 @@ export function PreparedPanel({
   compact = false,
   status = "roadmap",
   roadmapNote,
+  nextStep,
   // Legacy-Props: bewusst akzeptiert, aber NICHT mehr gerendert. Sie trugen
   // früher den irreführenden Prozent-/Phasen-Strip. `timeline` wird, falls
   // gesetzt, als ehrliche Roadmap-Notiz (ohne Prozent) weitergeführt.
@@ -54,6 +55,11 @@ export function PreparedPanel({
   compact?: boolean;
   status?: PreparedStatus;
   roadmapNote?: string;
+  /** Der EINE naechste Schritt, der diese Karte live macht. Wird mit einem
+   *  ausdruecklichen "Termin offen" gerendert — es gibt keinen bestaetigten
+   *  Termin, und ein leeres Feld liest sich wie "demnaechst" (Operator-Brief
+   *  2026-05-13 Punkt 2/4: Planung sofort erkennbar, nichts vergessen). */
+  nextStep?: string;
   /** @deprecated entfällt — kein Reifegrad-Prozent mehr. */
   phase?: string;
   /** @deprecated entfällt — kein Reifegrad-Prozent mehr. */
@@ -86,6 +92,15 @@ export function PreparedPanel({
           </p>
           {detail && <div className="text-2xs text-fg-subtle break-words">{detail}</div>}
           {note && <div className="text-2xs text-fg-subtle break-words">{note}</div>}
+          {nextStep && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1 text-2xs">
+              <span className="text-fg-subtle">Nächster Schritt:</span>
+              <span className="text-fg">{nextStep}</span>
+              <Badge tone="muted" title="Kein bestätigter Termin — es wird keiner erfunden. Sobald ein Sprint ihn trägt, steht er hier.">
+                Termin offen
+              </Badge>
+            </div>
+          )}
           {action && <div className="pt-1">{action}</div>}
         </div>
       </div>

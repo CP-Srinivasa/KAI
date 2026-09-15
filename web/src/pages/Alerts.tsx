@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Send, RefreshCw, AlertCircle, Inbox, Bell, Info, CheckCircle2, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Send, RefreshCw, AlertCircle, Inbox, Bell, Info, CheckCircle2, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
 import { Funnel } from "@/components/viz/Funnel";
@@ -60,7 +60,25 @@ const SENTIMENT_LABEL_DE: Record<string, string> = {
   mixed: "gemischt",
 };
 
+const ALERTS_PAGE_SIZE = 25;
+const ALERTS_PAGE_KEY = "kai-alerts-page";
+
+function readAlertsPage(): number {
+  try {
+    const v = Number(sessionStorage.getItem(ALERTS_PAGE_KEY));
+    return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 1;
+  } catch {
+    return 1;
+  }
+}
+
 export function AlertsPage() {
+  const [page, setPage] = useState<number>(readAlertsPage);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(ALERTS_PAGE_KEY, String(page));
+    } catch {}
+  }, [page]);
   const { t } = useT();
   const audit = useApi(fetchAlertAudit, 30_000);
   const [testing, setTesting] = useState(false);
@@ -96,7 +114,13 @@ export function AlertsPage() {
   }
 
   const entries = audit.state === "ready" ? audit.data.alerts : [];
-  const rows = entries.slice(-50).reverse();
+  // 2026-09-15 DALI v2.1: Seiten statt "zeige juengste 50" — die anderen 150
+  // gelieferten Zeilen waren unerreichbar. Seitenposition ueberlebt
+  // Uebersicht -> Details -> zurueck (sessionStorage, pro Tab).
+  const newestFirst = [...entries].reverse();
+  const pageCount = Math.max(1, Math.ceil(newestFirst.length / ALERTS_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const rows = newestFirst.slice((safePage - 1) * ALERTS_PAGE_SIZE, safePage * ALERTS_PAGE_SIZE);
   const total = audit.state === "ready" ? audit.data.total_alerts : 0;
   const totalResolved = audit.state === "ready" ? audit.data.total_resolved ?? 0 : 0;
 
@@ -121,7 +145,7 @@ export function AlertsPage() {
         divider={false}
         sub={
           audit.state === "ready"
-            ? `${total} Einträge · ${totalResolved} aufgelöst · zeige jüngste ${rows.length}`
+            ? `${total} Einträge · ${totalResolved} aufgelöst · Seite ${safePage} / ${pageCount} (${newestFirst.length} geladen)`
             : t("pages.alerts.sub")
         }
         right={
@@ -422,6 +446,32 @@ export function AlertsPage() {
               </tbody>
             </table>
           </div>
+          {pageCount > 1 && (
+            <nav
+              aria-label="Seiten der Alert-Liste"
+              className="flex items-center justify-between gap-2 border-t border-line-subtle px-4 py-2 text-xs"
+            >
+              <button
+                type="button"
+                onClick={() => setPage(Math.max(1, safePage - 1))}
+                disabled={safePage <= 1}
+                className="inline-flex items-center gap-1 min-h-[44px] lg:min-h-0 lg:h-8 px-3 rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                <ChevronLeft size={12} /> Neuere
+              </button>
+              <span className="font-mono text-2xs text-fg-subtle">
+                Seite {safePage} / {pageCount} · {ALERTS_PAGE_SIZE} je Seite
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(Math.min(pageCount, safePage + 1))}
+                disabled={safePage >= pageCount}
+                className="inline-flex items-center gap-1 min-h-[44px] lg:min-h-0 lg:h-8 px-3 rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                Ältere <ChevronRight size={12} />
+              </button>
+            </nav>
+          )}
         </Card>
       )}
 

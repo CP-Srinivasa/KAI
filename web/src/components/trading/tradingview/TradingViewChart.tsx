@@ -37,6 +37,9 @@ interface TradingViewChartProps {
   mode?: ChartMode;
   heightClass?: string;
   title?: string;
+  /** Embed (Script + iframe) erst nach Klick laden — fuer Uebersichtskarten,
+   *  die den Chart nicht bei jedem Seitenaufbau brauchen. */
+  deferUntilClick?: boolean;
 }
 
 export function TradingViewChart({
@@ -45,7 +48,11 @@ export function TradingViewChart({
   mode,
   heightClass = "h-[520px]",
   title = "Chart",
+  deferUntilClick = false,
 }: TradingViewChartProps) {
+  // 2026-09-15: schwere Diagramme erst bei Bedarf. Solange nicht "armed", wird
+  // weder das Embed-Script geladen noch ein iframe erzeugt.
+  const [armed, setArmed] = useState(!deferUntilClick);
   const { theme } = useTheme();
   const effectiveMode: ChartMode = mode ?? resolveMode();
   const effectiveSymbol =
@@ -70,6 +77,10 @@ export function TradingViewChart({
   useEffect(() => {
     if (!enabled) {
       setStatus({ state: "disabled" });
+      return;
+    }
+    if (!armed) {
+      setStatus({ state: "deferred" });
       return;
     }
     if (effectiveMode !== "widget") {
@@ -139,7 +150,7 @@ export function TradingViewChart({
     return () => {
       el.innerHTML = "";
     };
-  }, [enabled, effectiveMode, effectiveSymbol, effectiveInterval, theme]);
+  }, [enabled, armed, effectiveMode, effectiveSymbol, effectiveInterval, theme]);
 
   return (
     <Card
@@ -155,7 +166,7 @@ export function TradingViewChart({
             <button
               type="button"
               onClick={() => setFullscreen((v) => !v)}
-              className="h-7 w-7 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors"
+              className="h-11 w-11 lg:h-7 lg:w-7 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               aria-label={fullscreen ? "Vollbild verlassen (Esc)" : "Chart im Vollbild"}
               title={fullscreen ? "Vollbild verlassen (Esc)" : "Vollbild"}
             >
@@ -166,13 +177,16 @@ export function TradingViewChart({
       />
       <div className={cn("relative w-full rounded-md bg-bg-1 border border-line-subtle overflow-hidden", fullscreen ? "flex-1 min-h-0" : heightClass)}>
         {status.state === "disabled" && <DisabledOverlay />}
+        {status.state === "deferred" && (
+          <DeferredOverlay symbol={effectiveSymbol} onLoad={() => setArmed(true)} />
+        )}
         {status.state === "unsupported" && (
           <UnsupportedOverlay message={status.message ?? ""} />
         )}
         {status.state === "error" && (
           <ErrorOverlay message={status.message ?? "Unbekannter Fehler"} />
         )}
-        {enabled && effectiveMode === "widget" && (
+        {enabled && armed && effectiveMode === "widget" && (
           <>
             <div
               ref={containerRef}
@@ -221,6 +235,12 @@ function StatusBadge({
         {mode}
       </Badge>
     );
+  if (status.state === "deferred")
+    return (
+      <Badge tone="muted" dot title="Chart wird erst auf Klick geladen — spart Script und iframe beim Seitenaufbau.">
+        auf Abruf
+      </Badge>
+    );
   if (status.state === "loading")
     return (
       <Badge tone="info" dot>
@@ -237,6 +257,24 @@ function StatusBadge({
     <Badge tone="pos" dot>
       Live
     </Badge>
+  );
+}
+
+function DeferredOverlay({ symbol, onLoad }: { symbol: string; onLoad: () => void }) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+      <div className="max-w-md space-y-3 text-xs text-fg-muted">
+        <p className="text-sm font-medium text-fg">{symbol}</p>
+        <p>Der TradingView-Chart wird erst auf Abruf geladen (externes Script + iframe).</p>
+        <button
+          type="button"
+          onClick={onLoad}
+          className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-sm border border-info/40 bg-info/10 text-info text-xs font-semibold hover:bg-info/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        >
+          Chart laden
+        </button>
+      </div>
+    </div>
   );
 }
 

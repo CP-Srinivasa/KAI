@@ -71,7 +71,7 @@ export function NotificationsBell() {
     <div className="relative" ref={panelRef}>
       <button
         onClick={toggle}
-        className="relative h-8 w-8 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors"
+        className="relative h-11 w-11 lg:h-8 lg:w-8 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
         aria-label={`Notifications${unseenCount > 0 ? ` (${unseenCount} neu)` : ""}`}
         aria-haspopup="dialog"
         aria-expanded={open}

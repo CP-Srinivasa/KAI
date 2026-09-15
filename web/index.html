@@ -7,9 +7,10 @@
     <link rel="alternate icon" type="image/png" href="/dashboard/favicon.png" />
     <title>KAI — Control Center</title>
     <link rel="preconnect" href="https://rsms.me/" />
-    <link rel="preconnect" href="https://s3.tradingview.com" crossorigin />
+    <!-- 2026-09-15: preconnect/preload fuer TradingView entfernt: das Embed-
+         Script lud damit auf JEDER Seite vorab, auch ohne gerenderten Chart.
+         Der Chart laedt jetzt erst auf Klick. -->
     <link rel="dns-prefetch" href="https://s3.tradingview.com" />
-    <link rel="preload" href="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" as="script" crossorigin />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
     <link
       rel="stylesheet"

@@ -52,10 +52,14 @@ export function KpiCard({
       className={cn(
         "relative overflow-hidden border-l-2",
         tone === "pos" && "border-l-pos/70 glow-border-pos",
-        // 2026-05-08 Operator-Folge: KPI mit neg/warn-Tone atmet permanent —
-        // Operator sieht sofort wo etwas unter Threshold liegt.
+        // 2026-09-15 DALI v2.1: "atmet permanent" traf vier der neun KPI-Karten
+        // gleichzeitig, sobald sie unter Ziel lagen — Dauerzustand, kein Ereignis.
+        // Vier atmende Karten sind keine Dringlichkeit, sondern Hintergrundrauschen,
+        // und sie machen die eine wirklich rote Karte unsichtbar. Bewegung bleibt
+        // nur fuer tone="neg" (Fehler); warn traegt Farbe, Rand und Delta — das
+        // reicht, um "unter Ziel" zu lesen.
         tone === "neg" && "border-l-neg/70 glow-border-neg attention-breathe-neg",
-        tone === "warn" && "border-l-warn/70 glow-border-warn attention-breathe-warn",
+        tone === "warn" && "border-l-warn/70 glow-border-warn",
         tone === "info" && "border-l-info/70 glow-border-info",
         tone === "ai" && "border-l-ai/70 glow-border-ai",
         tone === "neutral" && "border-l-line-subtle",

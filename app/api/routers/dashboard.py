@@ -25,6 +25,7 @@ from app.alerts.hold_metrics import build_hold_metrics_report
 from app.api.deps import get_document_repo, get_source_repo, get_source_repo_optional
 from app.api.routers import dashboard_artifacts as _dashboard_artifacts
 from app.api.routers.dashboard_quality_cache import SingleFlightCache
+from app.api.routers.dashboard_recent_alerts import recent_alert_rows
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -1158,17 +1159,7 @@ def _build_quality_payload(report: dict[str, Any]) -> dict[str, Any]:
         # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
         "per_source_stability": report.get("per_source_stability", {}),
         "source_reliability": source_reliability,
-        "recent_alerts": [
-            {
-                "doc_id": r.get("document_id", "")[:12],
-                "sentiment": r.get("sentiment_label", ""),
-                "priority": r.get("priority"),
-                "assets": r.get("affected_assets", []),
-                "dispatched_at": r.get("dispatched_at", "")[:16],
-                "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
-            }
-            for r in reversed(recent_alerts)
-        ],
+        "recent_alerts": recent_alert_rows(recent_alerts, outcomes_by_doc),
         "generated_at": generated_at,
     }
     return quality_payload

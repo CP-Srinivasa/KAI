@@ -2,7 +2,7 @@
 import { Bot, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge, StatusDot } from "@/components/ui/Primitives";
 import { AgentIcon } from "@/components/agents/AgentIcon";
-import { fetchAgents, type AgentListResponse, type AgentSummary, type AgentStatus } from "@/lib/api";
+import { fetchAgents, type AgentListResponse, type AgentSummary, type AgentStatus, type AgentWiring } from "@/lib/api";
 import { formatRelative, formatAbsolute } from "@/lib/time";
 import { usePolling } from "@/lib/usePolling";
 import { useRouter } from "@/state/Router";
@@ -16,10 +16,32 @@ function statusTone(s: AgentStatus): "pos" | "warn" | "neg" {
   return "neg";
 }
 
+// 2026-09-15 DALI v2.1: deutsche Klartext-Woerter statt der rohen
+// Backend-Schluessel, und Status nicht nur ueber Farbe: jedes Wort traegt ein
+// Symbol. "prepared"/"offline" waren ausserdem ungenau — `unavailable` heisst
+// "Dropbox-Verzeichnis fehlt", nicht "Prozess offline".
 function statusLabel(s: AgentStatus): string {
-  if (s === "live") return "live";
-  if (s === "prepared") return "prepared";
-  return "offline";
+  if (s === "live") return "aktiv";
+  if (s === "prepared") return "bereit";
+  return "nicht verfügbar";
+}
+
+function statusGlyph(s: AgentStatus): string {
+  if (s === "live") return "\u25cf";
+  if (s === "prepared") return "\u25cb";
+  return "\u2715";
+}
+
+// autonom = eigener Worker-Handler, laeuft ohne Claude-Code-Sitzung.
+// interaktiv = Claude-Code-only, ein Kommando wartet in der Queue.
+function wiringLabel(w: AgentWiring): string {
+  return w === "autonomous" ? "autonom" : "interaktiv";
+}
+
+function wiringTitle(w: AgentWiring): string {
+  return w === "autonomous"
+    ? "Autonom: hat einen Handler in app/agents/worker.py und laeuft im Agent-Worker, ohne Claude-Code-Sitzung."
+    : "Interaktiv: Claude-Code-only. Ein Kommando landet in der Queue und wartet auf eine Sitzung — es laeuft nicht von selbst.";
 }
 
 export function AgentsStatusCard() {
@@ -31,6 +53,9 @@ export function AgentsStatusCard() {
   const { navigate } = useRouter();
 
   const agents = state.state === "ready" ? state.data.agents : [];
+  // Der Untertitel trug bisher den Report-Zeitstempel — den vierten auf
+  // derselben Seite. Er sagt jetzt stattdessen das, was man hier wissen will.
+  const autonomous = agents.filter((a) => a.wiring === "autonomous").length;
 
   return (
     <Card padded>
@@ -38,7 +63,7 @@ export function AgentsStatusCard() {
         title="Agent Roster"
         subtitle={
           state.state === "ready"
-            ? `${agents.length} Agenten · Stand: ${state.data.generated_at.substring(0, 19).replace("T", " ")}`
+            ? `${agents.length} Agenten · ${autonomous} autonom im Worker, ${agents.length - autonomous} interaktiv über Claude Code`
             : undefined
         }
         right={
@@ -84,7 +109,9 @@ function AgentTile({ agent, onClick }: { agent: AgentSummary; onClick: () => voi
     >
       <div className="flex items-center gap-2 min-w-0">
         <AgentIcon slug={agent.slug} size={26} />
-        <StatusDot tone={tone} pulse={agent.status === "live"} />
+        {/* pulse entfernt: bei elf Kacheln pulsierten dauerhaft alle aktiven
+            gleichzeitig — Bewegung ohne Ereignis. */}
+        <StatusDot tone={tone} />
         <span className="font-mono text-xs font-semibold truncate flex-1">{agent.name}</span>
         <ExternalLink
           size={10}
@@ -94,18 +121,32 @@ function AgentTile({ agent, onClick }: { agent: AgentSummary; onClick: () => voi
       <div className="flex items-center justify-between text-2xs font-mono">
         <span
           className={cn(
-            "uppercase tracking-wide",
+            "inline-flex items-center gap-1",
             tone === "pos" ? "text-pos" : tone === "warn" ? "text-warn" : "text-fg-subtle",
           )}
         >
+          <span aria-hidden>{statusGlyph(agent.status)}</span>
           {statusLabel(agent.status)}
         </span>
         <span className="text-fg-subtle">
           {agent.findings_count > 0 ? `${agent.findings_count} findings` : "—"}
         </span>
       </div>
-      <div className="text-2xs text-fg-subtle font-mono truncate">
-        {agent.last_seen ? formatRelative(agent.last_seen) : "nie gesehen"}
+      <div className="flex items-center justify-between gap-1.5 text-2xs">
+        <span className="text-fg-subtle font-mono truncate">
+          {agent.last_seen ? formatRelative(agent.last_seen) : "nie gesehen"}
+        </span>
+        <span
+          className={cn(
+            "shrink-0 rounded-xs border px-1 py-0.5",
+            agent.wiring === "autonomous"
+              ? "border-info/30 bg-info/10 text-info"
+              : "border-line-subtle bg-bg-2 text-fg-subtle",
+          )}
+          title={wiringTitle(agent.wiring)}
+        >
+          {wiringLabel(agent.wiring)}
+        </span>
       </div>
     </button>
   );

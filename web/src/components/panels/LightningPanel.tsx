@@ -4,6 +4,7 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { fetchLightningStatus, type LightningStatus } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
+import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 
 // Lightning-Node-Status (Phase 1, read-only, default-off). Macht die Integration
@@ -30,11 +31,28 @@ const fmtSats = (sat: number) => `${sat.toLocaleString("de-DE")} sats`;
 const fmtBtc = (sat: number) =>
   `${(sat / 1e8).toLocaleString("de-DE", { minimumFractionDigits: 8, maximumFractionDigits: 8 })} BTC`;
 
-export function LightningPanel() {
+type LightningView = {
+  state: "loading" | "ready" | "error";
+  data: LightningStatus | null;
+  error: { kind: string; message: string } | null;
+};
+
+/** Die Uebersicht reicht ihren EINEN Abruf herein (`status`); die Node-Seite
+ *  pollt selbst. Kein bedingter Hook: zwei Komponenten, eine Ansicht. */
+export function LightningPanel({ status }: { status?: AsyncState<LightningStatus> }) {
+  if (status) return <LightningPanelView polling={status} />;
+  return <LightningPanelSelf />;
+}
+
+function LightningPanelSelf() {
   const polling = usePolling<LightningStatus>(
     (signal) => fetchLightningStatus(signal),
     { intervalMs: POLL_MS, pauseWhenHidden: true, retry: { maxAttempts: 3, baseMs: 2_000 } },
   );
+  return <LightningPanelView polling={polling} />;
+}
+
+function LightningPanelView({ polling }: { polling: LightningView }) {
   const data = polling.state === "ready" ? polling.data : null;
 
   const stateBadge =
@@ -85,7 +103,7 @@ export function LightningPanel() {
 
       {polling.state === "error" && (
         <div className="rounded-sm border border-neg/30 bg-neg/5 px-3 py-2 text-2xs font-mono text-neg">
-          Status-Endpoint nicht erreichbar ({polling.error.kind}) ·{" "}
+          Status-Endpoint nicht erreichbar ({polling.error?.kind ?? "unbekannt"}) ·{" "}
           <span className="font-mono">/dashboard/api/lightning</span>
         </div>
       )}

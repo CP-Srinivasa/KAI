@@ -896,6 +896,8 @@ export type DashboardQuality = {
     assets: string[];
     dispatched_at: string;
     outcome: string;
+    /** Lesbare Herkunft (AlertAuditRecord.source_name); null bei alten Records. */
+    source_name?: string | null;
   }>;
   generated_at: string;
 };
@@ -2330,6 +2332,19 @@ export function postAlertTest(): Promise<AlertTestResponse> {
 
 export type AgentStatus = "live" | "prepared" | "unavailable";
 
+/**
+ * Wie ein Agent ausgefuehrt wird.
+ *
+ * Das Backend liefert dieses Feld seit 2026-09-08 (app/api/routers/agents.py:
+ * drei `autonomous` = sentr/watchdog/architect mit Handler in
+ * app/agents/worker.py, acht `interactive` = Claude-Code-only). Der Typ hier
+ * liess es fallen, also zeigte die Oberflaeche elf Agenten als eine einzige
+ * Klasse und behauptete im Untertitel, ALLE liefen ausschliesslich ueber Claude
+ * Code — fuer die drei autonomen ist das falsch. Ein Feld, das die einzige
+ * betrieblich relevante Unterscheidung traegt, darf nicht still verschwinden.
+ */
+export type AgentWiring = "autonomous" | "interactive";
+
 export type AgentSummary = {
   slug: string;
   name: string;
@@ -2338,6 +2353,7 @@ export type AgentSummary = {
   modes: string[];
   permissions: string[];
   status: AgentStatus;
+  wiring: AgentWiring;
   last_seen: string | null;
   findings_count: number;
   runs_count: number;
