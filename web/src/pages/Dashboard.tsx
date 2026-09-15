@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Wrench, Info } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, ChevronUp, Wrench, Info } from "lucide-react";
 import "@/styles/kai.tokens.css";
 import { useKaiState } from "@/lib/useKaiState";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -49,37 +49,65 @@ import {
   TIER_LIFT_INSIGNIFICANT_TOOLTIP,
 } from "@/lib/tierLift";
 import { useRouter, type Route } from "@/state/Router";
+import { useApi } from "@/lib/useApi";
+import { fetchLightningStatus } from "@/lib/api";
 
-// Roadmap-Karten: ehrlich als Roadmap markiert (kein Reifegrad-Prozent mehr).
+// Geplante Bereiche: ehrlich als Roadmap markiert (kein Reifegrad-Prozent mehr).
 // Portfolio Snapshot, Risk Meter und Allocation sind als echte Live-Tiles
 // umgesetzt (LivePortfolioTiles) und deshalb hier entfernt.
+//
+// 2026-09-15 DALI v2.1: Jede Karte traegt jetzt drei Dinge, die vorher fehlten —
+// den EINEN naechsten Schritt, ein ausdrueckliches "Termin offen" (es gibt
+// keinen, und ein leeres Feld liest sich wie "demnaechst") und, falls es die
+// Funktion schon irgendwo gibt, den Weg dorthin. Die AI-Insights-Karte sagte
+// selbst, dass die Seite existiert, und verlinkte sie nicht.
 type DashboardPreparedPanel = {
   title: string;
   reason: string;
   detail: string;
-  roadmapNote?: string;
+  /** Der eine naechste Schritt, der diese Karte live macht. */
+  nextStep: string;
+  /** Wenn es die Funktion schon als eigene Seite gibt: dorthin verlinken. */
+  route?: Route;
+  routeLabel?: string;
 };
 
 const PREPARED_PANELS: DashboardPreparedPanel[] = [
   {
     title: "Equity / PnL Kurve",
     reason: "Kapital-Entwicklung über Zeit aus dem Paper-Execution-Ledger.",
-    detail: "Rohdaten in artifacts/paper_execution_audit.jsonl. Aggregations-Endpoint noch offen.",
-    roadmapNote: "Roadmap: Equity/PnL-Aggregations-Endpoint.",
+    detail: "Rohdaten in artifacts/paper_execution_audit.jsonl.",
+    nextStep: "Equity/PnL-Aggregations-Endpoint bauen.",
   },
   {
     title: "Sentiment Stream",
     reason: "Rolling Sentiment aus analysierten News- und Social-Dokumenten.",
-    detail: "Backend-Ingestion läuft; Aggregations-Endpoint für den Frontend-Stream noch offen.",
-    roadmapNote: "Roadmap: GET /operator/recent-news.",
+    detail: "Backend-Ingestion läuft, nur die Aggregation fehlt.",
+    nextStep: "GET /operator/recent-news bereitstellen.",
   },
   {
     title: "AI Insights",
     reason: "LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten.",
-    detail: "Eigene AI-Insights-Page existiert; eine Dashboard-Kurzkarte braucht einen stabilen Insight-Endpoint.",
-    roadmapNote: "Roadmap: stabiler Insight-Endpoint.",
+    detail: "Die vollständige AI-Insights-Seite ist bereits nutzbar — hier fehlt nur die Kurzfassung.",
+    nextStep: "Stabilen Insight-Endpoint für die Kurzkarte festlegen.",
+    route: "ai",
+    routeLabel: "AI Insights öffnen",
   },
 ];
+
+// WP-4 / DALI v2.1: Der Fokus-Umschalter sass unter dem EdgeTruthPanel — also
+// hinter dem, was er filtert — und sprang bei jedem Reload zurueck. Er gehoert
+// in den Seitenkopf und muss seine Wahl behalten.
+const FOCUS_KEY = "kai-dashboard-focus";
+type DashboardFocus = "alles" | "problem";
+
+function readFocus(): DashboardFocus {
+  try {
+    return localStorage.getItem(FOCUS_KEY) === "problem" ? "problem" : "alles";
+  } catch {
+    return "alles";
+  }
+}
 
 export function Dashboard() {
   const { t } = useT();
@@ -108,9 +136,15 @@ export function Dashboard() {
   // Nur noch fuer den Status-Pill im Command-Header. Das KAI-Live-Widget, das
   // diesen Zustand ebenfalls las, ist entfernt.
   const kai = useKaiState();
-  // WP-4: Fokus-Modus. "problem" blendet die Detail-Panels aus; Lage (Command
-  // Header, Executive Snapshot, Akute Punkte, Truth) bleibt immer sichtbar.
-  const [focus, setFocus] = useState<"alles" | "problem">("alles");
+  // 2026-09-15: EIN Abruf von /dashboard/api/lightning fuer Node-KPI und
+  // Lightning-Karte (vorher zwei Poller auf denselben Endpunkt alle 60 s).
+  const lightning = useApi(fetchLightningStatus, 60_000);
+  const [focus, setFocus] = useState<DashboardFocus>(readFocus);
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOCUS_KEY, focus);
+    } catch {}
+  }, [focus]);
 
   return (
     // 2026-09-09: EIN Portfolio-Snapshot fuer Executive-Snapshot und
@@ -119,6 +153,7 @@ export function Dashboard() {
     // desselben Snapshots alle 30 s, je drei Vollpaesse ueber ein 5,2-MB-Audit.
     <PortfolioSnapshotProvider>
     <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
+      {/* ===== 1 BETRIEBSLAGE — Backend, Datenalter und Handelsfreigabe getrennt, sticky ===== */}
       {/* WP-1.1: sticky Command Header — verdichtete, nie wegscrollende Lage-Leiste. */}
       <PanelErrorBoundary name="Command-Header">
         <CommandHeader
@@ -131,11 +166,12 @@ export function Dashboard() {
         />
       </PanelErrorBoundary>
 
-      <header className="flex items-center justify-between flex-wrap gap-3">
+      {/* Seitenkopf: Titel + Fokus. Der Report-Zeitpunkt stand fuenfmal auf
+          dieser Seite (Kopf, Lage-Leiste, Quality-Bar-Fuss, Agent-Roster,
+          Truth-Diagnose) — er steht jetzt AUSSCHLIESSLICH im Lage-Streifen. */}
+      <header className="flex items-end justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-display text-fg">
-            {t("pages.dashboard.title")}
-          </h1>
+          <h1 className="text-display text-fg">{t("pages.dashboard.title")}</h1>
           <p className="text-xs text-fg-muted mt-1">
             {data
               ? t("pages.dashboard.sub", {
@@ -145,32 +181,34 @@ export function Dashboard() {
               : "Live-Daten vom Backend, Auto-Refresh alle 30 s."}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-2xs font-mono text-fg-subtle">
-          <span
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              q.state === "ready"
-                ? "bg-pos"
-                : q.state === "error"
-                  ? "bg-neg"
-                  : "bg-fg-subtle",
-            )}
-          />
-          <span>
-            {q.state === "ready"
-              ? `Report: ${(data?.generated_at ?? "").substring(0, 19).replace("T", " ")}`
-              : q.state === "error"
-                ? `Fehler: ${q.error.message}`
-                : "lädt …"}
-          </span>
+        <div className="flex items-center gap-2">
+          <span className="text-2xs uppercase tracking-wider text-fg-subtle">Ansicht</span>
+          <div
+            className="inline-flex rounded-sm border border-line-subtle bg-bg-2 p-0.5"
+            role="group"
+            aria-label="Fokus-Modus"
+          >
+            {(["alles", "problem"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFocus(f)}
+                aria-pressed={focus === f}
+                className={cn(
+                  "min-h-[44px] min-w-[44px] px-3 rounded-xs text-xs font-medium lg:min-h-0 lg:h-7 lg:px-2.5 lg:text-2xs",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
+                  focus === f ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg",
+                )}
+              >
+                {f === "alles" ? "Alles" : "Problem-Fokus"}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
-      {/* WP-1.2: Executive Snapshot — prominente Lageübersicht direkt unter dem Header. */}
-      <PanelErrorBoundary name="Executive-Snapshot">
-        <ExecutiveSnapshot />
-      </PanelErrorBoundary>
 
+      {/* ===== 2 HANDLUNGSBEDARF — was jetzt zu tun ist, vor allen Zahlen ===== */}
       {/* WP-1.3: Akute Punkte — handlungsorientierte Triage der blockierenden Gates/Probleme. */}
       <PanelErrorBoundary name="Akute-Punkte">
         <AcutePointsBoard
@@ -179,12 +217,6 @@ export function Dashboard() {
           priorityGate={priorityGate}
           qualityState={q.state}
         />
-      </PanelErrorBoundary>
-
-      {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
-          neue Premium-Paper-Entries blockiert. Read-only, kein Live-Eingriff. */}
-      <PanelErrorBoundary name="Premium-Runtime-Banner">
-        <PremiumRuntimeBanner />
       </PanelErrorBoundary>
 
       {q.state === "error" && (
@@ -201,6 +233,18 @@ export function Dashboard() {
           </div>
         </Card>
       )}
+
+      {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
+          neue Premium-Paper-Entries blockiert. Read-only, kein Live-Eingriff. */}
+      <PanelErrorBoundary name="Premium-Runtime-Banner">
+        <PremiumRuntimeBanner />
+      </PanelErrorBoundary>
+
+      {/* ===== 3 ENTSCHEIDUNGSGRUNDLAGE — Kapital, Wahrheit, Kennzahlen, Signale ===== */}
+      {/* WP-1.2: Executive Snapshot — prominente Lageübersicht direkt unter dem Header. */}
+      <PanelErrorBoundary name="Executive-Snapshot">
+        <ExecutiveSnapshot />
+      </PanelErrorBoundary>
 
       {/* Wahrheitsstatus — kompakte Truth-Layer-Leiste (DALI 2026-06-04).
           Macht historical/24h/read-only/blocked/unproven auf einen Blick sichtbar. */}
@@ -224,36 +268,7 @@ export function Dashboard() {
         <EdgeTruthPanel />
       </PanelErrorBoundary>
 
-      {/* WP-4: Fokus-Modus — Problem-Fokus blendet die Detail-Panels aus; Lage
-          (Command Header, Executive Snapshot, Akute Punkte, Truth) bleibt. */}
-      <div className="flex items-center gap-2">
-        <span className="text-2xs uppercase tracking-wider text-fg-subtle">Ansicht</span>
-        <div className="inline-flex rounded-sm border border-line-subtle bg-bg-2 p-0.5" role="group" aria-label="Fokus-Modus">
-          {(["alles", "problem"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFocus(f)}
-              aria-pressed={focus === f}
-              className={cn(
-                "px-2.5 h-6 rounded-xs text-2xs font-medium",
-                focus === f ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg",
-              )}
-            >
-              {f === "alles" ? "Alles" : "Problem-Fokus"}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className={cn(focus === "problem" ? "hidden" : "space-y-4 xl:space-y-5")}>
-      {/* Die 5 „n" — SSOT-Disambiguierung der fünf resolved/n-Zähler (Dali
-          2026-06-13). Hebt das einzige n hervor, das fürs #167-Edge-Gate zählt
-          (resolved_real), und dämpft die vier anderen Pipelines bewusst ab.
-          Top-Platzierung: Operator soll es ohne Seitenwechsel sehen. */}
-      <PanelErrorBoundary name="n-Übersicht">
-        <NOverviewPanel />
-      </PanelErrorBoundary>
-
       {/* 2026-09-08: KAI-Live-Widget entfernt (Operator-Entscheidung). Es trug die
           Spruchmaschine, einen Timer alle 45-90 s ohne document.hidden-Guard sowie
           Chat und Spracheingabe — keines davon in Gebrauch. Die Backend-Routen
@@ -379,7 +394,7 @@ export function Dashboard() {
         />
         {/* WP-1.4: Node-/Chain-Status-KPI (ehrlich gegen bestehendes Lightning-Endpoint). */}
         <PanelErrorBoundary name="Node-Status-KPI">
-          <NodeStatusKpi />
+          <NodeStatusKpi status={lightning} />
         </PanelErrorBoundary>
         {/* #314: Audit-Integritäts-KPI (ehrlich gegen bestehendes /dashboard/api/integrity). */}
         <PanelErrorBoundary name="Audit-Integrität-KPI">
@@ -425,87 +440,19 @@ export function Dashboard() {
         </PanelErrorBoundary>
       )}
 
-      {/* REGIME-R1 (2026-05-09): Markt-Regime read-only-Beobachter (BTC + ETH).
-          Read-only-Phase, kein TradingLoop-Block — Operator-Validierung über 14 Tage. */}
-      <PanelErrorBoundary name="Markt-Regime">
-        <RegimeStatusPanel data={regime} />
-      </PanelErrorBoundary>
-
+      {/* Signal-Matrix + Markt-Snapshot. Keine erzwungene Gleichhoehe. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 md:col-span-6 lg:col-span-4">
-          <PanelErrorBoundary name="Lightning-Node">
-            <LightningPanel />
-          </PanelErrorBoundary>
-        </div>
-      </div>
-
-      {/* Aktiver Analytics-Grid — Symmetrie ab lg: linke Card streckt sich,
-          rechter Stack teilt sich die Hoehe via flex-1. Mobile bleibt block-stack. */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-8 lg:[&>*]:h-full">
-          <PanelErrorBoundary name="Quality-Bar">
-            <QualityBarPanel data={data} />
-          </PanelErrorBoundary>
-        </div>
-        <div className="col-span-12 lg:col-span-4 flex flex-col gap-4 lg:[&>*]:flex-1">
-          <PanelErrorBoundary name="Signal-Qualität">
-            <SignalQualityCard
-              data={data}
-              state={q.state}
-              generatedAt={data?.generated_at ?? null}
-            />
-          </PanelErrorBoundary>
-          <PanelErrorBoundary name="Trading-Loop-Status">
-            <TradingLoopCard
-              data={data}
-              state={q.state}
-              generatedAt={data?.generated_at ?? null}
-            />
-          </PanelErrorBoundary>
-        </div>
-      </div>
-
-      {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI).
-          Beide Spalten strecken Card auf gleiche Hoehe ab lg. */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
-          <PanelErrorBoundary name="Active-Precision">
-            <ActivePrecisionCard data={provenance} />
-          </PanelErrorBoundary>
-        </div>
-        {/* V-DB4a 2026-05-08: Per-source Active-Precision aus Hold-Report. */}
-        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
-          <PanelErrorBoundary name="Source-Precision">
-            <PerSourcePrecisionPanel data={data} />
-          </PanelErrorBoundary>
-        </div>
-      </div>
-
-      {/* Source-Reliability + Rolling Stability (Drift-Detection). */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
-          <PanelErrorBoundary name="Source-Reliability">
-            <SourceReliabilityPanel data={data} />
-          </PanelErrorBoundary>
-        </div>
-        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
-          <PanelErrorBoundary name="Source-Stability">
-            <PerSourceStabilityPanel data={data} />
-          </PanelErrorBoundary>
-        </div>
-      </div>
-
-      {/* Signal-Matrix + Market-Snapshot — gleiche Hoehe ab lg. */}
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
+        <div className="col-span-12 lg:col-span-7">
           <PanelErrorBoundary name="Signal-Matrix">
             <SignalHeatmapPanel />
           </PanelErrorBoundary>
         </div>
-        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
+        <div className="col-span-12 lg:col-span-5">
           <PanelErrorBoundary name="Markt-Snapshot">
             {isTradingViewEnabled() ? (
-              <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" />
+              /* 2026-09-15: schwere Diagramme erst bei Bedarf — Embed-Script und
+                 iframe laden erst nach Klick, nicht mit der Seite. */
+              <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" deferUntilClick />
             ) : (
               <Card padded>
                 <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
@@ -518,16 +465,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Agent Roster */}
-      <PanelErrorBoundary name="Agent-Roster">
-        <AgentsStatusCard />
-      </PanelErrorBoundary>
-
-      {/* DALI-P-101 mount-point candidate */}
-      <PanelErrorBoundary name="Timer-Gesundheit">
-        <TimerHealthCard />
-      </PanelErrorBoundary>
-
       {/* Recent Alerts */}
       <PanelErrorBoundary name="Recent-Alerts">
         <RecentAlertsCard
@@ -537,27 +474,130 @@ export function Dashboard() {
         />
       </PanelErrorBoundary>
 
-      {/* Quick-Win-Tiles: echte Paper-Mode-Daten aus laufenden Read-Endpoints. */}
-      <PanelErrorBoundary name="Live-Portfolio-Tiles">
-        <LivePortfolioTiles />
-      </PanelErrorBoundary>
+      {/* ===== 4 VERTIEFUNG — Nachweise, Quellen, Betrieb, Historie — einklappbar ===== */}
+      <DeepSection title="Analysen & Qualität" hint="Quality-Bar, Signal-Qualität, Trading-Loop, Active-Precision, die fünf n">
+        {/* Die 5 „n" — SSOT-Disambiguierung der fünf resolved/n-Zähler (Dali
+            2026-06-13). Hebt das einzige n hervor, das fürs #167-Edge-Gate zählt
+            (resolved_real), und dämpft die vier anderen Pipelines bewusst ab.
+            Top-Platzierung: Operator soll es ohne Seitenwechsel sehen. */}
+        <PanelErrorBoundary name="n-Übersicht">
+          <NOverviewPanel />
+        </PanelErrorBoundary>
+
+        {/* Analytics-Grid. 2026-09-15: `lg:[&>*]:h-full` / `lg:[&>*]:flex-1`
+            entfernt — die erzwungene Gleichhoehe erzeugte Leerflaechen unter der
+            kuerzeren Karte. Eine Karte ist so hoch wie ihr Inhalt. */}
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-12 lg:col-span-8">
+            <PanelErrorBoundary name="Quality-Bar">
+              <QualityBarPanel data={data} />
+            </PanelErrorBoundary>
+          </div>
+          <div className="col-span-12 lg:col-span-4 flex flex-col gap-4">
+            <PanelErrorBoundary name="Signal-Qualität">
+              <SignalQualityCard
+                data={data}
+                state={q.state}
+                generatedAt={data?.generated_at ?? null}
+              />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary name="Trading-Loop-Status">
+              <TradingLoopCard
+                data={data}
+                state={q.state}
+                generatedAt={data?.generated_at ?? null}
+              />
+            </PanelErrorBoundary>
+          </div>
+        </div>
+
+        {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI).
+            Keine erzwungene Gleichhoehe: Karten wachsen mit ihrem Inhalt. */}
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-12 lg:col-span-7">
+            <PanelErrorBoundary name="Active-Precision">
+              <ActivePrecisionCard data={provenance} />
+            </PanelErrorBoundary>
+          </div>
+          {/* V-DB4a 2026-05-08: Per-source Active-Precision aus Hold-Report. */}
+          <div className="col-span-12 lg:col-span-5">
+            <PanelErrorBoundary name="Source-Precision">
+              <PerSourcePrecisionPanel data={data} />
+            </PanelErrorBoundary>
+          </div>
+        </div>
+      </DeepSection>
+
+      <DeepSection title="Quellen" hint="Zuverlässigkeit und Drift je Quelle">
+        {/* Source-Reliability + Rolling Stability (Drift-Detection). */}
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-12 lg:col-span-5">
+            <PanelErrorBoundary name="Source-Reliability">
+              <SourceReliabilityPanel data={data} />
+            </PanelErrorBoundary>
+          </div>
+          <div className="col-span-12 lg:col-span-7">
+            <PanelErrorBoundary name="Source-Stability">
+              <PerSourceStabilityPanel data={data} />
+            </PanelErrorBoundary>
+          </div>
+        </div>
+      </DeepSection>
+
+      <DeepSection title="Markt & Node" hint="Markt-Regime und Lightning-Node">
+        {/* REGIME-R1 (2026-05-09): Markt-Regime read-only-Beobachter (BTC + ETH).
+            Read-only-Phase, kein TradingLoop-Block — Operator-Validierung über 14 Tage. */}
+        <PanelErrorBoundary name="Markt-Regime">
+          <RegimeStatusPanel data={regime} />
+        </PanelErrorBoundary>
+
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-12 md:col-span-6 lg:col-span-4">
+            <PanelErrorBoundary name="Lightning-Node">
+              <LightningPanel status={lightning} />
+            </PanelErrorBoundary>
+          </div>
+        </div>
+      </DeepSection>
+
+      <DeepSection title="Agenten & Betrieb" hint="Agent-Roster und Timer-Gesundheit">
+        {/* Agent Roster */}
+        <PanelErrorBoundary name="Agent-Roster">
+          <AgentsStatusCard />
+        </PanelErrorBoundary>
+
+        {/* DALI-P-101 mount-point candidate */}
+        <PanelErrorBoundary name="Timer-Gesundheit">
+          <TimerHealthCard />
+        </PanelErrorBoundary>
+      </DeepSection>
+
+      <DeepSection title="Portfolio-Kacheln" hint="Paper-Positionen, Risiko, Allokation">
+        {/* Quick-Win-Tiles: echte Paper-Mode-Daten aus laufenden Read-Endpoints. */}
+        <PanelErrorBoundary name="Live-Portfolio-Tiles">
+          <LivePortfolioTiles />
+        </PanelErrorBoundary>
+      </DeepSection>
 
       {/* Roadmap-Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
       <PreparedSection />
 
-      {/* Historie: das abgelaufene Re-Entry-Ziel bleibt als Evidenz erhalten,
-          aber am Seitenende statt in Prime-Position. Das Panel klappt die toten
-          Balken selbst ein (ExpiredCollapse). */}
-      {reentryArchived && (
-        <PanelErrorBoundary name="Re-Entry-Gate (Historie)">
-          <ReentryGatePanel
-            quality={data}
-            qualityState={q.state}
-            qualityError={q.state === "error" ? q.error.message : null}
-            priorityGate={priorityGate}
-          />
-        </PanelErrorBoundary>
-      )}
+      <DeepSection title="Historie" hint="Abgelaufene Re-Entry-Ziele als Evidenz">
+        {/* Historie: das abgelaufene Re-Entry-Ziel bleibt als Evidenz erhalten,
+            aber am Seitenende statt in Prime-Position. Das Panel klappt die toten
+            Balken selbst ein (ExpiredCollapse). */}
+        {reentryArchived && (
+          <PanelErrorBoundary name="Re-Entry-Gate (Historie)">
+            <ReentryGatePanel
+              quality={data}
+              qualityState={q.state}
+              qualityError={q.state === "error" ? q.error.message : null}
+              priorityGate={priorityGate}
+            />
+          </PanelErrorBoundary>
+        )}
+      </DeepSection>
+
       </div>
 
       <DashboardFooter />
@@ -591,7 +631,7 @@ function DashboardFooter() {
             key={it.route}
             type="button"
             onClick={() => navigate(it.route)}
-            className="hover:text-fg focus:text-fg focus:outline-none focus-visible:underline underline-offset-2"
+            className="inline-flex items-center min-h-[44px] lg:min-h-0 px-1 hover:text-fg focus:text-fg focus:outline-none focus-visible:underline underline-offset-2"
           >
             {t(`dashboard.${it.key}`)}
           </button>
@@ -609,23 +649,81 @@ function DashboardFooter() {
   );
 }
 
+/**
+ * Vertiefung — Nachweise und Detailanalysen hinter einem Klick.
+ *
+ * Die Uebersicht trug 20 Panels in einer flachen Kette: Handlungsbedarf stand
+ * hinter dem Kapitalstand, Quellen-Statistik und Historie konkurrierten mit dem
+ * akuten Befund um dieselbe Aufmerksamkeit. Hier ist nichts entfernt — es
+ * konkurriert nur nicht mehr.
+ */
+function DeepSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint: string;
+  children: ReactNode;
+}) {
+  // Uebersicht -> Details -> zurueck: der Auf-/Zu-Zustand bleibt je Gruppe
+  // erhalten (localStorage, wie der Fokus-Modus). Sonst steht der Operator nach
+  // jedem Seitenwechsel wieder vor sechs geschlossenen Gruppen.
+  const storageKey = "kai-dashboard-deep:" + title;
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, open ? "1" : "0");
+    } catch {}
+  }, [open, storageKey]);
+  return (
+    <section className="space-y-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full min-h-[44px] flex items-center justify-between gap-3 rounded-sm border border-line-subtle bg-bg-2 px-4 py-2 text-left hover:bg-bg-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold tracking-tight text-fg">{title}</span>
+          <span className="block text-2xs text-fg-subtle">{hint}</span>
+        </span>
+        <span className="text-fg-subtle shrink-0" aria-hidden>
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </span>
+      </button>
+      {open && <div className="space-y-4 xl:space-y-5">{children}</div>}
+    </section>
+  );
+}
+
 function PreparedSection() {
   const [expanded, setExpanded] = useState(false);
+  const { navigate } = useRouter();
   return (
     <section className="space-y-3">
       <button
+        type="button"
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
-        className="w-full flex items-center justify-between gap-3 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors px-4 py-2.5 text-left"
+        className="w-full min-h-[44px] flex items-center justify-between gap-3 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors px-4 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <Wrench size={14} className="text-fg-subtle shrink-0" aria-hidden />
-          <h2 className="text-sm font-semibold tracking-tight text-fg-muted uppercase shrink-0">
-            Vorbereitet
+          {/* "Vorbereitet" klang nach fertig-und-wartend. Diese Bereiche sind
+              geplant, und zwar ohne Termin — beides steht jetzt im Kopf. */}
+          <h2 className="text-sm font-semibold tracking-tight text-fg-muted shrink-0">
+            Geplant
           </h2>
           <span className="text-2xs text-fg-subtle font-mono shrink-0">
             {PREPARED_PANELS.length}
-            <span className="hidden sm:inline"> Bereiche · Roadmap</span>
+            <span className="hidden sm:inline"> Bereiche · Termin offen</span>
           </span>
           {!expanded && (
             <div className="hidden md:flex items-center gap-1.5 flex-wrap min-w-0 overflow-hidden">
@@ -641,7 +739,7 @@ function PreparedSection() {
             </div>
           )}
         </div>
-        <span className="text-fg-subtle shrink-0">
+        <span className="text-fg-subtle shrink-0" aria-hidden>
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </span>
       </button>
@@ -654,7 +752,22 @@ function PreparedSection() {
               reason={p.reason}
               detail={p.detail}
               status="roadmap"
-              roadmapNote={p.roadmapNote}
+              // Status, naechster Schritt und Terminlage in einer Zeile. Kein
+              // erfundenes Datum, kein Quartal, kein "bald" — "Termin offen"
+              // ist die Wahrheit und als solche lesbar.
+              nextStep={p.nextStep}
+              action={
+                p.route && p.routeLabel ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(p.route as Route)}
+                    className="inline-flex items-center gap-1.5 min-h-[44px] lg:min-h-0 lg:h-7 px-2.5 rounded-sm border border-line-subtle bg-bg-2 text-2xs font-medium text-fg hover:bg-bg-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                  >
+                    {p.routeLabel}
+                    <ChevronRight size={12} aria-hidden />
+                  </button>
+                ) : undefined
+              }
             />
           ))}
         </div>

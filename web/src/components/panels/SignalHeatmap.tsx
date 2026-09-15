@@ -249,13 +249,24 @@ function HeatmapTable({
   overflow: number;
   onSelect: () => void;
 }) {
+  // 2026-09-15 DALI v2.1: zwei Darstellungen statt einer gequetschten.
+  //
+  // Der Stand vom 2026-09-08 loeste das Kollabieren der Symbolspalte mit
+  // `min-w-[520px]` in einem `overflow-x-auto`. Auf dem Telefon entstand damit
+  // eine verschachtelte Scrollflaeche: innerhalb der vertikal scrollenden Seite
+  // ein horizontal scrollender Kasten. Man findet ihn nicht, und wenn man ihn
+  // findet, scrollt beim Wischen die falsche Achse. Neun Spalten sind auf 390px
+  // auch mit Scrollen nicht lesbar.
+  //
+  // Mobile bekommt deshalb eine Liste (eine Karte je Symbol, die vier Zahlen,
+  // die eine Entscheidung tragen), Desktop das Gitter — jetzt OHNE Mindestbreite
+  // und damit ohne verschachtelten Scroll: die Zahlenspalten duerfen von 34px
+  // auf 26px schrumpfen, das traegt neun Spalten ab 640px.
   return (
-    // 2026-09-08: overflow-x + Mindestbreite. Vorher kollabierte die Symbolspalte
-    // auf schmalen Viewports auf 0 und `truncate` loeschte das Symbol — uebrig
-    // blieb die zusammengeklebte Kopfzeile "SymbolErk.Zul.Abgel.Prüf.Eingr.OffenZu"
-    // ueber einer scheinbar leeren Tabelle.
-    <div className="-mx-1 space-y-1 overflow-x-auto px-1">
-      <div className="min-w-[520px] grid grid-cols-[minmax(96px,1fr)_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
+    <>
+      <MobileSignalList rows={rows} overflow={overflow} onSelect={onSelect} />
+      <div className="hidden md:block -mx-1 space-y-1 px-1">
+      <div className="grid grid-cols-[minmax(72px,1fr)_repeat(7,minmax(26px,34px))_minmax(84px,auto)] items-center gap-1.5 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
         <span>Symbol</span>
         <span className="text-center">Erk.</span>
         <span className="text-center">Zul.</span>
@@ -274,7 +285,7 @@ function HeatmapTable({
         <button
           key={r.symbol}
           onClick={onSelect}
-          className="w-full min-w-[520px] grid grid-cols-[minmax(96px,1fr)_40px_40px_40px_40px_40px_40px_40px_minmax(92px,auto)] items-center gap-1.5 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
+          className="w-full grid grid-cols-[minmax(72px,1fr)_repeat(7,minmax(26px,34px))_minmax(84px,auto)] items-center gap-1.5 px-1 py-1.5 min-h-[44px] lg:min-h-0 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           title={`${r.totalSignals} Signal${r.totalSignals === 1 ? "" : "e"} · Long ${r.long} · Short ${r.short} · letztes ${formatAbsolute(r.latestTs)}`}
         >
           <span className="font-mono font-semibold truncate">{r.symbol}</span>
@@ -297,7 +308,75 @@ function HeatmapTable({
       {overflow > 0 && (
         <button
           onClick={onSelect}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 mt-1 text-2xs font-mono text-fg-subtle hover:text-fg transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 mt-1 text-2xs font-mono text-fg-subtle hover:text-fg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+        >
+          +{overflow} weitere
+          <ExternalLink size={10} />
+        </button>
+      )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Mobile Listenansicht der Signal-Matrix.
+ *
+ * Bewusst NICHT alle neun Lifecycle-Spalten: auf dem Telefon zaehlt, ob eine
+ * echte Position offen ist (Offen/Zu), wie die Richtung liegt (Long/Short) und
+ * ob etwas auf einen Blick wartet (Pruef.). Erkannt/Zugelassen/Abgelehnt/
+ * Eingereicht sind Zwischenstufen — sie stehen im Tooltip und vollstaendig in
+ * der Desktop-Ansicht und auf /external.
+ */
+function MobileSignalList({
+  rows,
+  overflow,
+  onSelect,
+}: {
+  rows: SymbolRow[];
+  overflow: number;
+  onSelect: () => void;
+}) {
+  return (
+    <div className="md:hidden space-y-1.5">
+      {rows.map((r) => (
+        <button
+          key={r.symbol}
+          onClick={onSelect}
+          className="w-full min-h-[44px] rounded-sm border border-line-subtle bg-bg-1 px-3 py-2 text-left hover:bg-bg-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+          title={`${r.totalSignals} Signal${r.totalSignals === 1 ? "" : "e"} · Erk. ${r.recognised} · Zul. ${r.eligible} · Abgel. ${r.rejected} · Pruef. ${r.review} · Eingr. ${r.submitted} · letztes ${formatAbsolute(r.latestTs)}`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-semibold truncate">{r.symbol}</span>
+            <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-2xs text-fg-muted">
+              <StatusDotTone tone={r.latestTone} />
+              <span className="truncate">{r.latestState ?? "—"}</span>
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs">
+            <span className="text-fg-muted">
+              Long <span className="text-fg font-semibold">{r.long}</span>
+              {" · "}Short <span className="text-fg font-semibold">{r.short}</span>
+            </span>
+            <span className={r.open > 0 ? "text-pos" : "text-fg-subtle"}>
+              Offen <span className="font-semibold">{r.open}</span>
+            </span>
+            <span className={r.closed > 0 ? "text-pos" : "text-fg-subtle"}>
+              Zu <span className="font-semibold">{r.closed}</span>
+            </span>
+            {r.review > 0 && (
+              <span className="text-warn" title="Abgelaufen oder ungültig — braucht einen Blick, ist keine Ablehnung">
+                Prüf. <span className="font-semibold">{r.review}</span>
+              </span>
+            )}
+            <span className="ml-auto text-fg-subtle">{formatRelative(r.latestTs)}</span>
+          </div>
+        </button>
+      ))}
+      {overflow > 0 && (
+        <button
+          onClick={onSelect}
+          className="w-full min-h-[44px] flex items-center justify-center gap-1.5 text-2xs font-mono text-fg-subtle hover:text-fg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
         >
           +{overflow} weitere
           <ExternalLink size={10} />

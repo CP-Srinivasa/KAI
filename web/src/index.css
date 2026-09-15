@@ -192,12 +192,17 @@ body {
 .glow-border-ai     { box-shadow: inset 0 0 0 1px rgb(var(--ai) / 0.18),     0 0 14px -2px rgb(var(--ai) / 0.25); }
 .glow-border-accent { box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.18), 0 0 14px -2px rgb(var(--accent) / 0.25); }
 
-.dark .glow-border-pos    { box-shadow: inset 0 0 0 1px rgb(var(--pos) / 0.32),    0 0 22px -2px rgb(var(--pos) / 0.45); }
-.dark .glow-border-neg    { box-shadow: inset 0 0 0 1px rgb(var(--neg) / 0.32),    0 0 22px -2px rgb(var(--neg) / 0.45); }
-.dark .glow-border-warn   { box-shadow: inset 0 0 0 1px rgb(var(--warn) / 0.32),   0 0 22px -2px rgb(var(--warn) / 0.45); }
-.dark .glow-border-info   { box-shadow: inset 0 0 0 1px rgb(var(--info) / 0.32),   0 0 22px -2px rgb(var(--info) / 0.45); }
-.dark .glow-border-ai     { box-shadow: inset 0 0 0 1px rgb(var(--ai) / 0.32),     0 0 22px -2px rgb(var(--ai) / 0.45); }
-.dark .glow-border-accent { box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.32), 0 0 22px -2px rgb(var(--accent) / 0.45); }
+/* 2026-09-15 DALI v2.1: Dark-Mode-Halo von 22px/0.45 auf 14px/0.26 gedaempft.
+   Auf der Uebersicht tragen neun KPI-Karten diese Klasse gleichzeitig; bei 0.45
+   Deckung ueberlappen die Hoefe benachbarter Karten und der Bildschirm
+   flaechenleuchtet. Die Inset-Hairline bleibt kraeftig — sie ist die Information,
+   der Halo war nur Effekt. */
+.dark .glow-border-pos    { box-shadow: inset 0 0 0 1px rgb(var(--pos) / 0.32),    0 0 14px -4px rgb(var(--pos) / 0.26); }
+.dark .glow-border-neg    { box-shadow: inset 0 0 0 1px rgb(var(--neg) / 0.32),    0 0 14px -4px rgb(var(--neg) / 0.26); }
+.dark .glow-border-warn   { box-shadow: inset 0 0 0 1px rgb(var(--warn) / 0.32),   0 0 14px -4px rgb(var(--warn) / 0.26); }
+.dark .glow-border-info   { box-shadow: inset 0 0 0 1px rgb(var(--info) / 0.32),   0 0 14px -4px rgb(var(--info) / 0.26); }
+.dark .glow-border-ai     { box-shadow: inset 0 0 0 1px rgb(var(--ai) / 0.32),     0 0 14px -4px rgb(var(--ai) / 0.26); }
+.dark .glow-border-accent { box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.32), 0 0 14px -4px rgb(var(--accent) / 0.26); }
 
 /* Synthwave-Top-Edge — Cyan→Magenta→Pink-Gradient als 1px-Linie am Card-Top.
    Wird auf prominenten Cards (KAI Live, Hero-Sections) eingesetzt. Setzt
@@ -283,7 +288,9 @@ body {
   box-shadow: 0 0 4px currentColor, 0 0 1px currentColor;
 }
 .dark .dot-glow {
-  box-shadow: 0 0 6px currentColor, 0 0 12px rgb(255 255 255 / 0.05);
+  /* 12px weisser Zweit-Halo entfernt: er machte aus jedem Status-Punkt eine
+     kleine Lampe, und die Uebersicht traegt Dutzende davon. */
+  box-shadow: 0 0 5px currentColor;
 }
 
 /* Synthwave-Divider — eigenstaendige 1px-Linie mit Cyan->Violet->Pink-Verlauf.
@@ -307,10 +314,11 @@ body {
   background-size: 250% 100%;
   background-position: -25% 0%;
   border-radius: 1px;
-  animation: synthwave-pulse-flow 8s ease-in-out infinite alternate;
+  /* Gleiche Begruendung wie .synthwave-pulse-edge: Einlauf, dann Ruhe. */
+  animation: synthwave-pulse-flow 8s ease-in-out 4 alternate forwards;
 }
 .dark .synthwave-divider {
-  box-shadow: 0 0 6px rgb(var(--ai) / 0.18);
+  box-shadow: 0 0 4px rgb(var(--ai) / 0.12);
 }
 @media (prefers-reduced-motion: reduce) {
   .synthwave-divider {
@@ -406,12 +414,19 @@ body {
     transparent 100%);
   background-size: 250% 100%;
   background-position: -25% 0%;
-  animation: synthwave-pulse-flow 8s ease-in-out infinite alternate;
+  /* 2026-09-15 DALI v2.1: vier Durchlaeufe (2x hin und zurueck), danach steht
+     der Schweif in der Mitte. Die Lichtkante sitzt auf JEDER ersten Card jeder
+     Unterseite — als Endlosschleife war sie eine Dauerbewegung im Blickfeld,
+     ohne je etwas zu bedeuten. Als Einlauf-Signatur bleibt die Identitaet, die
+     Unruhe geht. */
+  animation: synthwave-pulse-flow 8s ease-in-out 4 alternate forwards;
   pointer-events: none;
   border-radius: 1px;
 }
 .dark .synthwave-pulse-edge::before {
-  filter: drop-shadow(0 0 4px rgb(var(--ai) / 0.35));
+  /* Glow im Dark-Mode gedaempft (0.35 -> 0.22): auf bg-0 = rgb(11 14 20) trug
+     der Halo weiter als die 1px-Linie, die er begleiten soll. */
+  filter: drop-shadow(0 0 3px rgb(var(--ai) / 0.22));
 }
 @keyframes synthwave-pulse-flow {
   0%   { background-position: -25% 0%; }
@@ -459,11 +474,17 @@ body {
       0 0 18px rgb(var(--warn) / 0.25);
   }
 }
+/* 2026-09-15 DALI v2.1: `infinite` wird zu zwei Zyklen.
+   Gemessen auf der Uebersicht: 36 gleichzeitig laufende CSS-Animationen. Eine
+   Dauerschleife macht aus einer Warnung Tapete — der Blick lernt sie weg. Zwei
+   Atemzuege holen den Blick, danach STEHT die Kante sichtbar (forwards behaelt
+   den 100%-Keyframe, also den ruhigen Glow). Wer die Karte spaeter sucht, findet
+   sie an Farbe, Rand und Kante, nicht an Bewegung. */
 .attention-breathe-neg {
-  animation: attn-breathe-neg 3.6s ease-in-out infinite;
+  animation: attn-breathe-neg 3.6s ease-in-out 2 both;
 }
 .attention-breathe-warn {
-  animation: attn-breathe-warn 4.2s ease-in-out infinite;
+  animation: attn-breathe-warn 4.2s ease-in-out 2 both;
 }
 @media (prefers-reduced-motion: reduce) {
   .attention-breathe-neg,

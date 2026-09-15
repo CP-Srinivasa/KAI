@@ -245,6 +245,9 @@ def test_quality_api_includes_alerts_with_outcomes(
     assert alerts[0]["doc_id"] == "abc12345-dea"
     assert alerts[0]["sentiment"] == "bullish"
     assert alerts[0]["outcome"] == "hit"
+    # Die Uebersichtskarte zeigt die Quelle; der Schluessel muss immer da sein,
+    # auch wenn alte Records ihn nicht tragen (dann None, nie fehlend).
+    assert "source_name" in alerts[0]
 
 
 def test_quality_api_includes_source_reliability_summary(

@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  KAI Dashboard — Breakpoint-Harness (Sprint-Abnahme §7, DALI v2.1).
+
+  Zweck: dieselbe Seite bei 320 / 390 / 768 / 1024 / 1440 CSS-Pixeln nebeneinander,
+  plus die Messwerte, die die Abnahme verlangt — ohne Framework, ohne Headless-Browser.
+
+  Verwendung (gleiche Origin ist Pflicht, sonst blockt der Browser den Zugriff auf
+  die Frames):
+    cd web && npm run build && cp scripts/breakpoint-harness.html dist/__harness.html
+    npx vite preview --port 4173      → http://localhost:4173/dashboard/__harness.html
+  oder im Dev-Server: npm run dev     → http://localhost:5173/scripts/breakpoint-harness.html
+  (dann unten "Basis" auf "/" stellen).
+
+  Die Datei gehoert NICHT in ein Deploy: `web/dist` ist gitignored, der Kopiervorgang
+  ist bewusst manuell.
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>KAI Breakpoint-Harness</title>
+<style>
+  body { margin: 0; background: #0B0E14; color: #E8ECF3; font: 12px/16px ui-monospace, Consolas, monospace; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #1E2430; position: sticky; top: 0; background: #11151D; z-index: 2; }
+  button, input { font: inherit; background: #161B25; color: #E8ECF3; border: 1px solid #282F3E; border-radius: 6px; min-height: 32px; padding: 0 10px; }
+  #frames { display: flex; gap: 12px; align-items: flex-start; padding: 12px; overflow-x: auto; }
+  .frame label { display: block; margin-bottom: 4px; color: #9CA5B8; }
+  iframe { border: 1px solid #282F3E; background: #111; display: block; }
+  table { border-collapse: collapse; margin: 0 12px 24px; }
+  td, th { border: 1px solid #1E2430; padding: 4px 8px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .bad { color: #FF1744; } .ok { color: #00FFA3; } .warn { color: #FF5A1E; }
+</style>
+</head>
+<body>
+<header>
+  <strong>KAI Breakpoint-Harness</strong>
+  <label>Basis <input id="base" value="/dashboard/" size="14"></label>
+  <label>Route <input id="route" value="" size="12" placeholder="#alerts"></label>
+  <button id="reload">Frames laden</button>
+  <button id="measure">Messen (nach dem Laden, t ≥ 20 s für Animationen)</button>
+  <button id="scroll">scrollTo 800 (Sticky-Probe)</button>
+</header>
+<div id="frames"></div>
+<table id="out"><thead><tr>
+  <th>Breite</th><th>vw</th><th>docScrollW</th><th>Überlauf</th><th>Elemente &gt; vw</th>
+  <th>Ziele &lt; 44 px</th><th>Ziele gesamt</th><th>Animationen</th><th>verschachtelt scrollbar</th>
+  <th>sticky @800 (top)</th><th>Seitenhöhe</th>
+</tr></thead><tbody></tbody></table>
+<script>
+const WIDTHS = [320, 390, 768, 1024, 1440];
+const framesEl = document.getElementById("frames");
+function load() {
+  framesEl.innerHTML = "";
+  const base = document.getElementById("base").value;
+  const route = document.getElementById("route").value;
+  for (const w of WIDTHS) {
+    const d = document.createElement("div"); d.className = "frame";
+    d.innerHTML = `<label>${w} px</label>`;
+    const f = document.createElement("iframe");
+    f.width = String(w); f.height = "800"; f.dataset.w = String(w); f.src = base + route;
+    d.appendChild(f); framesEl.appendChild(d);
+  }
+}
+function metrics(f) {
+  const w = f.contentWindow, d = f.contentDocument, de = d.documentElement;
+  const all = [...d.querySelectorAll("*")];
+  const over = all.filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > w.innerWidth + 1; });
+  const targets = [...d.querySelectorAll("button,a,[role=button]")].filter(b => b.getBoundingClientRect().width > 0);
+  const small = targets.filter(b => { const r = b.getBoundingClientRect(); return r.width < 44 || r.height < 44; });
+  const anim = all.filter(e => { const a = w.getComputedStyle(e).animationName; return a && a !== "none" && w.getComputedStyle(e).animationPlayState !== "paused"; }).length;
+  const nested = all.filter(e => { const cs = w.getComputedStyle(e); return (cs.overflowX === "auto" || cs.overflowX === "scroll") && e.scrollWidth > e.clientWidth + 1; }).length;
+  const sticky = all.find(e => w.getComputedStyle(e).position === "sticky" && e !== d.querySelector("header"));
+  const stickyTop = sticky ? Math.round(sticky.getBoundingClientRect().top) : null;
+  return { vw: w.innerWidth, docW: de.scrollWidth, over: de.scrollWidth - w.innerWidth, overEls: over.length, small: small.length, targets: targets.length, anim, nested, stickyTop, h: de.scrollHeight };
+}
+function cell(v, bad) { return `<td class="${bad ? "bad" : "ok"}">${v}</td>`; }
+document.getElementById("reload").onclick = load;
+document.getElementById("scroll").onclick = () => { for (const f of framesEl.querySelectorAll("iframe")) f.contentWindow.scrollTo(0, 800); };
+document.getElementById("measure").onclick = () => {
+  const tb = document.querySelector("#out tbody"); tb.innerHTML = "";
+  for (const f of framesEl.querySelectorAll("iframe")) {
+    let m; try { m = metrics(f); } catch (e) { tb.insertAdjacentHTML("beforeend", `<tr><td>${f.dataset.w}</td><td colspan="10" class="bad">${e.message}</td></tr>`); continue; }
+    const mobile = Number(f.dataset.w) <= 768;
+    tb.insertAdjacentHTML("beforeend", `<tr><td>${f.dataset.w}</td><td>${m.vw}</td><td>${m.docW}</td>${cell(m.over, m.over > 0)}${cell(m.overEls, m.overEls > 0)}${cell(m.small, mobile && m.small > 0)}<td>${m.targets}</td>${cell(m.anim, m.anim > 3)}${cell(m.nested, m.nested > 0)}<td>${m.stickyTop == null ? "—" : m.stickyTop}</td><td>${m.h}</td></tr>`);
+  }
+};
+load();
+</script>
+</body>
+</html>

@@ -1,3 +1,23 @@
+## 2026-09-15 - Dashboard UI v2.1 „DALI meets Leonardo da Vinci" (Facelift, Frontend + eine Backend-Zeile)
+
+Die Uebersicht ordnet sich jetzt nach Prioritaet statt nach Bau-Chronologie: Lage-Leiste (Backend / Datenalter /
+Handelsfreigabe als DREI getrennte Aussagen, sticky unter der Topbar) → Handlungsbedarf (Akute Punkte) → Kapital,
+Wahrheit, Kennzahlen, Signal-Matrix, Alerts → sechs eingeklappte Vertiefungsgruppen (Zustand persistiert) → Geplant
+(„Naechster Schritt · Termin offen") → Historie. Belegte Defekte behoben: die „nie wegscrollende" Lage-Leiste war durch
+`overflow-x-hidden` auf `<main>` nie sticky; horizontaler Ueberlauf bei 320/768/1024 px durch den Topbar-Cluster
+(jetzt bis xl in EIN „Mehr"-Menue gefaltet); abgeschnittener Datenbasis-Umschalter bei 390 px. Mobile Bottom-Bar
+(Uebersicht · Signale · Portfolio · Alerts · Mehr) mit safe-area, alle Bedienelemente ≥ 44 px bis einschliesslich
+Tablet (768 px), sichtbarer Fokus-Ring, deutsche aria-labels. Bewegung reduziert: Lichtkante laeuft vier Durchlaeufe
+und steht dann, `attention-breathe` zwei Zyklen und nur noch fuer Fehler, Dark-Halo gedaempft. Agenten: `wiring`
+(autonom/interaktiv) sichtbar, Status deutsch mit Symbol, EINE Kachel je Agent, neun Portraits palettiert (1,17 MB → 0,33 MB),
+Einstein/KAI-Finder/Xqu aus den Originalgrafiken. Quality-Bar mit Kernaussage + naechster Aktion; Directional Alerts mit
+Prioritaets-Band (1–10, Gate ≥ 7) und `source_name` statt Hash (Backend `recent_alerts` liefert das Feld jetzt);
+Signal-Matrix mobil als Liste ohne verschachtelten Scroll. Paper/Sim/Live-Schalter ist als lokale „Vorwahl" gekennzeichnet
+und behauptet keinen Systemzustand mehr. Lightning wird auf der Uebersicht einmal statt zweimal abgerufen, TradingView
+laedt erst auf Klick (kein Preload mehr), Alerts-Seite paginiert (25/Seite), Agent-Kommandos melden „wird gespeichert →
+gespeichert / Fehler + Wiederholen" (`useSaveState`). Plan, Messwerte und Abnahme: `docs/ui/dali_dashboard_v2_1_facelift_plan.md`;
+Breakpoint-Harness `web/scripts/breakpoint-harness.html`. Kein Deploy — die SPA geht mit dem gebuendelten Release 17./18.09.
+
 ## 2026-09-09 - KAI COST CONTROL v0.1 SEALED (D-CORE-007 geschlossen)
 
 Nachtrag #930 (Altzeilen getrennt, echter Modellname statt Provider-Name, use_case auf allen Analysepfaden,

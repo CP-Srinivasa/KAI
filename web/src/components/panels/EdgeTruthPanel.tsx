@@ -110,9 +110,9 @@ export function EdgeTruthPanel() {
   });
 
   const toggle = (
-    <div className="inline-flex items-center gap-2">
+    <div className="inline-flex flex-wrap items-center gap-2">
       <span className="text-3xs uppercase tracking-wider text-fg-subtle">Datenbasis</span>
-      <div className="inline-flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5">
+      <div className="inline-flex flex-wrap items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5">
         {MODES.map(({ v, label, hint }) => (
           <button
             key={String(v)}
@@ -120,7 +120,7 @@ export function EdgeTruthPanel() {
             title={hint}
             onClick={() => setCanonical(v)}
             className={cn(
-              "px-2 py-0.5 text-3xs font-mono rounded-xs transition-colors whitespace-nowrap",
+              "px-2 min-h-[44px] lg:min-h-0 lg:py-0.5 text-3xs font-mono rounded-xs transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
               canonical === v ? "bg-info/15 text-info" : "text-fg-subtle hover:text-fg",
             )}
           >
@@ -131,12 +131,18 @@ export function EdgeTruthPanel() {
     </div>
   );
 
+  // 2026-09-15: bei 390 px ragte der Umschalter bis 441 px und wurde von
+  // <main> abgeschnitten (gemessen). Unter md steht er unter dem Kopf, ab md
+  // rechts daneben — derselbe Knoten, nur ein anderer Platz.
   const header = (
-    <CardHeader
-      title="Edge-Wahrheit"
-      subtitle="Kosten-bereinigte Edge je abgeschlossenem Round-Trip — entscheidet nichts, belegt Evidenz"
-      right={toggle}
-    />
+    <>
+      <CardHeader
+        title="Edge-Wahrheit"
+        subtitle="Kosten-bereinigte Edge je abgeschlossenem Round-Trip — entscheidet nichts, belegt Evidenz"
+        right={<div className="hidden md:block">{toggle}</div>}
+      />
+      <div className="md:hidden -mt-1 mb-3">{toggle}</div>
+    </>
   );
 
   if (data.state !== "ready") {

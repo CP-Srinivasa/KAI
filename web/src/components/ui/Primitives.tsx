@@ -315,15 +315,26 @@ export function InfoHint({
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onClick={() => setOpen((v) => !v)}
+        // 2026-09-15 DALI v2.1: das sichtbare "i" bleibt 14 px, die Touchflaeche
+        // ist mobil 44 px (negative Raender halten den Textfluss unveraendert);
+        // ab lg faellt die Flaeche auf die Glyphe zurueck (Maus statt Finger).
         className={cn(
-          "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full",
-          "border border-info/40 bg-bg-2 text-info text-[9px] font-bold leading-none",
-          "transition-colors hover:border-info hover:bg-info/10",
+          "group/info inline-flex h-11 w-11 -m-[15px] items-center justify-center rounded-full",
+          "lg:m-0 lg:h-3.5 lg:w-3.5",
           "focus:outline-none focus-visible:ring-1 focus-visible:ring-info/60",
           triggerClassName,
         )}
       >
-        i
+        <span
+          aria-hidden
+          className={cn(
+            "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full",
+            "border border-info/40 bg-bg-2 text-info text-[9px] font-bold leading-none",
+            "transition-colors group-hover/info:border-info group-hover/info:bg-info/10",
+          )}
+        >
+          i
+        </span>
       </button>
       {open && (
         <span

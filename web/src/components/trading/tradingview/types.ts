@@ -21,7 +21,7 @@ export interface TradingViewChartConfig {
 }
 
 export interface TradingViewChartStatus {
-  state: "disabled" | "loading" | "ready" | "error" | "unsupported";
+  state: "disabled" | "deferred" | "loading" | "ready" | "error" | "unsupported";
   message?: string;
 }
 

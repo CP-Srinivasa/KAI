@@ -72,9 +72,15 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const { route, navigate } = useRouter();
   const { mode } = useAppState();
 
-  // 2026-05-10 DALI-Mode-Konsistenz: live=pos (grün), paper=warn (orange),
-  // sim=info (cyan). Operator-Wunsch.
-  const modeTone: "pos" | "warn" | "info" = mode === "live" ? "pos" : mode === "sim" ? "info" : "warn";
+  // 2026-09-15 DALI v2.1: Diese Pille zeigte "LIVE" in Signalgruen mit
+  // pulsierendem Punkt — auf Basis von `mode` aus localStorage. Sie las sich als
+  // Betriebszustand "Live-Handel laeuft", war aber eine Browser-Vorwahl ohne
+  // jede Backend-Bindung. Die Handelsfreigabe steht in `execution_enabled` und
+  // wird im Lage-Streifen der Uebersicht angezeigt.
+  //
+  // Die Pille bleibt (die Vorwahl existiert und wird in Einstellungen
+  // persistiert), aber sie behauptet nichts mehr: eine Tonalitaet fuer alle
+  // Modi, kein Puls, und der Text sagt, was sie ist.
   const modeLabel = mode === "live" ? t("topbar.mode_live") : mode === "sim" ? t("topbar.mode_sim") : t("topbar.mode_paper");
   const ModeIcon = mode === "live" ? Zap : mode === "sim" ? FlaskConical : Shield;
 
@@ -116,8 +122,8 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
         {onMobileClose && (
           <button
             onClick={onMobileClose}
-            className="md:hidden ml-auto h-7 w-7 grid place-items-center rounded-sm text-fg-muted hover:bg-bg-2 hover:text-fg"
-            aria-label="Close menu"
+            className="md:hidden ml-auto h-11 w-11 grid place-items-center rounded-sm text-fg-muted hover:bg-bg-2 hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            aria-label="Menü schließen"
           >
             <X size={16} />
           </button>
@@ -127,21 +133,18 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
       {!collapsed && (
         <div className="px-3 pt-3">
           <div
-            className={cn(
-              "flex items-center justify-between px-2 py-1.5 rounded-sm border text-xs",
-              modeTone === "pos"
-                ? "border-pos/30 bg-pos/5 text-pos"
-                : modeTone === "info"
-                  ? "border-info/25 bg-info/5 text-info"
-                  : "border-warn/25 bg-warn/5 text-warn",
-            )}
+            className="flex items-center justify-between px-2 py-1.5 rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg-muted"
+            title="Lokale Ansichtsvorwahl im Browser. Sie steuert KEINE Ausführung — die echte Handelsfreigabe steht im Lage-Streifen der Übersicht (execution_enabled)."
           >
-            <div className="flex items-center gap-2">
-              <StatusDot tone={modeTone} pulse={mode === "live"} />
-              <ModeIcon size={12} />
-              <span className="font-semibold">{modeLabel}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <StatusDot tone="muted" />
+              <ModeIcon size={12} aria-hidden />
+              <span className="truncate">
+                <span className="text-fg-subtle">Ansicht: </span>
+                <span className="font-semibold text-fg">{modeLabel}</span>
+              </span>
             </div>
-            <span className="text-2xs opacity-70 font-mono">{t("topbar.env_phase")}</span>
+            <span className="text-2xs opacity-70 font-mono shrink-0">{t("topbar.env_phase")}</span>
           </div>
         </div>
       )}
@@ -161,10 +164,11 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
         <button
           onClick={() => setCollapsed((v) => !v)}
           className={cn(
-            "hidden md:flex w-full items-center gap-2 h-8 px-2.5 rounded-sm text-fg-muted hover:bg-bg-2 hover:text-fg transition-colors text-xs",
+            "hidden md:flex w-full items-center gap-2 h-11 lg:h-8 px-2.5 rounded-sm text-fg-muted hover:bg-bg-2 hover:text-fg transition-colors text-xs",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
             collapsed && "justify-center",
           )}
-          aria-label="Toggle sidebar"
+          aria-label={collapsed ? "Seitenleiste ausklappen" : "Seitenleiste einklappen"}
         >
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           {!collapsed && <span>{t("nav.collapse")}</span>}
@@ -225,10 +229,17 @@ function NavItem({
     <button
       onClick={onClick}
       className={cn(
-        "group relative w-full flex items-center gap-2.5 h-8 px-2.5 rounded-sm text-xs transition-colors",
+        // 2026-09-15 DALI v2.1: h-8 (32px) ist im Drawer die primaere
+        // Touchflaeche und lag unter jedem Mindestmass. Mobil h-11 = 44px,
+        // ab md wieder h-8 (dort zeigt eine Maus, kein Finger).
+        "group relative w-full flex items-center gap-2.5 h-11 lg:h-8 px-2.5 rounded-sm text-xs transition-colors",
+        // Fokus war unsichtbar: Tastatur-Navigation durch die Sidebar zeigte
+        // keinen Ring, nur den Browser-Default, den `rounded-sm` verdeckt.
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
         active ? "bg-bg-3 text-fg" : "text-fg-muted hover:bg-bg-2 hover:text-fg",
         collapsed && "justify-center",
       )}
+      aria-current={active ? "page" : undefined}
       title={collapsed ? label : undefined}
     >
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full bg-accent" />}

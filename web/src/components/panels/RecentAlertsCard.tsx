@@ -27,6 +27,45 @@ const OUTCOME_LABEL: Record<string, string> = {
   pending: "offen",
 };
 
+// Prioritaets-Baender exakt wie app/alerts/formatters.py. Die Zahl allein sagt
+// nichts: "7" liest sich klein, ist aber die Schwelle, ab der ein Alert
+// ueberhaupt versendet wird (Alert-Gate filtert P<7). Band-Label dazu, Skala in
+// den Tooltip — kein Ratespiel am Zahlenwert.
+const PRIORITY_SCALE_TOOLTIP =
+  "Prioritaet 1–10 (Quelle: app/alerts/audit.py). Baender: 1–3 niedrig · 4–6 mittel · " +
+  "7–8 hoch · 9–10 kritisch. Ab 10 High-Conviction. Das Alert-Gate verwirft alles unter 7 — " +
+  "was hier steht, hat das Gate passiert.";
+
+function priorityBand(p: number): { label: string; tone: "muted" | "info" | "warn" | "neg" } {
+  if (p >= 9) return { label: "kritisch", tone: "neg" };
+  if (p >= 7) return { label: "hoch", tone: "warn" };
+  if (p >= 4) return { label: "mittel", tone: "info" };
+  return { label: "niedrig", tone: "muted" };
+}
+
+function PriorityCell({ p }: { p: number | null | undefined }) {
+  if (p == null) {
+    return <span className="text-fg-subtle" title="Keine Prioritaet im Datensatz">—</span>;
+  }
+  const band = priorityBand(p);
+  return (
+    <Badge tone={band.tone} title={PRIORITY_SCALE_TOOLTIP}>
+      <span className="font-mono font-semibold">{p}</span>
+      <span className="text-fg-subtle/80">·</span>
+      <span>{band.label}</span>
+    </Badge>
+  );
+}
+
+/** Quelle statt Hash. Der Vertrag liefert seit 2026-09-15 `source_name`
+ *  (AlertAuditRecord). Fehlt er (alte Records), steht ehrlich "Quelle unbekannt"
+ *  — der 12-Zeichen-Hash aus `doc_id` bleibt im title als Forensik-Anker und
+ *  wird NICHT als Quelle ausgegeben. */
+function sourceLabel(sourceName: string | null | undefined): string {
+  const s = (sourceName ?? "").trim();
+  return s.length > 0 ? s : "Quelle unbekannt";
+}
+
 function SentimentBadge({ s }: { s: string }) {
   if (!s) return <span className="text-fg-subtle">—</span>;
   const tone = s === "bullish" ? "pos" : s === "bearish" ? "neg" : "muted";
@@ -78,9 +117,9 @@ function RecentAlertsCardImpl({ data, state, generatedAt }: Props) {
               <tr className="text-2xs uppercase tracking-wide text-fg-subtle border-b border-line-subtle">
                 <th
                   className="text-left py-2 pr-3 font-medium"
-                  title="Dokument-ID aus der Quelle (News-Artikel, Telegram-Envelope, …)"
+                  title="Herkunft des Dokuments (News-Artikel, Telegram-Envelope, …). Die vollstaendige Dokument-ID steht im Tooltip der Zelle."
                 >
-                  Dokument
+                  Quelle
                 </th>
                 <th
                   className="text-left py-2 pr-3 font-medium"
@@ -89,8 +128,8 @@ function RecentAlertsCardImpl({ data, state, generatedAt }: Props) {
                   Stimmung
                 </th>
                 <th
-                  className="text-center py-2 pr-3 font-medium"
-                  title="Priorität 1–10. P≥7 = Premium-Signal."
+                  className="text-left py-2 pr-3 font-medium"
+                  title={PRIORITY_SCALE_TOOLTIP}
                 >
                   Priorität
                 </th>
@@ -120,11 +159,18 @@ function RecentAlertsCardImpl({ data, state, generatedAt }: Props) {
                   key={`${a.doc_id}-${i}`}
                   className="border-b border-line-subtle/60 last:border-0"
                 >
-                  <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">{a.doc_id}</td>
+                  <td
+                    className="py-2 pr-3 text-xs text-fg-muted"
+                    title={`Dokument-ID: ${a.doc_id}`}
+                  >
+                    {sourceLabel(a.source_name)}
+                  </td>
                   <td className="py-2 pr-3">
                     <SentimentBadge s={a.sentiment} />
                   </td>
-                  <td className="py-2 pr-3 text-center font-mono">{a.priority ?? "—"}</td>
+                  <td className="py-2 pr-3">
+                    <PriorityCell p={a.priority} />
+                  </td>
                   <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">
                     {a.assets.length ? a.assets.join(", ") : "—"}
                   </td>

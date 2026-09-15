@@ -571,7 +571,8 @@ export function PortfolioPage() {
           </>
         }
         status="live_only"
-        roadmapNote="Live-only: Börsen-Balance-Reader, freie Margin und Withdrawal-Audit — im Paper-Mode bewusst nicht anwendbar."
+        roadmapNote="Gilt erst im Live-Mode — im Paper-Mode gibt es keine echten Börsen-Balances, die man zeigen könnte."
+        nextStep="Börsen-Balance-Reader (Positionen + freie Margin) und Withdrawal-Audit bauen — erst nach den Live-Gates."
       />
 
       {/* DALI-P2: Per-Asset-Unrealized-PnL als Heatmap-Pills.
@@ -1158,7 +1159,8 @@ export function PortfolioPage() {
           </>
         }
         status="roadmap"
-        roadmapNote="Roadmap: Equity/Drawdown-Aggregation aus paper_execution_audit.jsonl."
+        roadmapNote="Rohdaten liegen vollständig in artifacts/paper_execution_audit.jsonl."
+        nextStep="Equity-/Drawdown-Aggregations-Endpoint bauen, dann Linienchart mit Drawdown-Spiegel."
       />
     </div>
   );

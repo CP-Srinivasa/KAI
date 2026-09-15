@@ -113,7 +113,7 @@ export function ExecutiveSnapshot() {
           <button
             type="button"
             onClick={reloadDegraded}
-            className="border-fg-subtle/30 text-fg-muted hover:text-fg hover:border-fg-subtle/60 ml-auto rounded-md border px-2 py-0.5 transition-colors"
+            className="border-fg-subtle/30 text-fg-muted hover:text-fg hover:border-fg-subtle/60 ml-auto rounded-md border px-2 py-0.5 min-h-[44px] lg:min-h-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
           >
             Erneut laden
           </button>

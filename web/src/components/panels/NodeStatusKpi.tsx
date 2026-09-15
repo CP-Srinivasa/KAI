@@ -8,13 +8,24 @@
 import { Card } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { Badge } from "@/components/ui/Primitives";
-import { useApi } from "@/lib/useApi";
+import { useApi, type AsyncState } from "@/lib/useApi";
 import { useCurrency } from "@/state/CurrencyProvider";
-import { fetchLightningStatus } from "@/lib/api";
+import { fetchLightningStatus, type LightningStatus } from "@/lib/api";
 
-export function NodeStatusKpi() {
-  const { fmtNum } = useCurrency();
+/** Eigener Poller nur, wenn kein geteilter Status hereinkommt (die Uebersicht
+ *  reicht ihren einen Abruf an KPI und Lightning-Karte durch). */
+export function NodeStatusKpi({ status }: { status?: AsyncState<LightningStatus> }) {
+  if (status) return <NodeStatusKpiView q={status} />;
+  return <NodeStatusKpiSelf />;
+}
+
+function NodeStatusKpiSelf() {
   const q = useApi(fetchLightningStatus, 60_000);
+  return <NodeStatusKpiView q={q} />;
+}
+
+function NodeStatusKpiView({ q }: { q: AsyncState<LightningStatus> }) {
+  const { fmtNum } = useCurrency();
   const d = q.state === "ready" ? q.data : null;
 
   return (

@@ -333,7 +333,8 @@ export function RiskPage() {
           </>
         }
         status="roadmap"
-        roadmapNote="Roadmap: GET /operator/risk-summary (Exposure + Paper-Audit, Vol 7/30d, Max-DD)."
+        roadmapNote="Quellen vorhanden: Exposure-Summary und Paper-Audit; es fehlt nur die Verdichtung."
+        nextStep="GET /operator/risk-summary bauen (Risk-Score, Volatilität 7/30 Tage, Max-Drawdown)."
       />
 
       {/* DALI v2 S5 M4c: "Missed-Signal-Analyse" -> "Verpasste Trading-Chancen"
@@ -350,7 +351,8 @@ export function RiskPage() {
           </>
         }
         status="roadmap"
-        roadmapNote="Roadmap: blocked_alerts.jsonl × alert_outcomes.jsonl (Top-10 mit Blockgrund + 24h-Forward-PnL)."
+        roadmapNote="Quellen vorhanden: blocked_alerts.jsonl und alert_outcomes.jsonl."
+        nextStep="Blockierte Alerts mit ihrem 24h-Ergebnis verknüpfen — Top-10 mit Blockgrund und Forward-PnL."
       />
     </div>
   );
