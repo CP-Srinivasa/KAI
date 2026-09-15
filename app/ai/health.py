@@ -233,6 +233,10 @@ def cost_block(path: Path | None = None) -> dict[str, Any]:
         # genau das soll ablesbar sein. Eine Reserve, deren Stand nur im Code
         # existiert, waere fuer den Operator dasselbe wie keine.
         "pots": _topf_block(heute, status),
+        # Was gerade laeuft und noch keine Zeile hat (MB-06.4): je Topf die
+        # Aufrufe im Flug und ihre geschaetzten Kosten. Im Normalfall leer;
+        # gefuellt genau dann, wenn die Toepfe oben eine Untergrenze sind.
+        "inflight": _unterwegs_block(),
         # Mit gesetzten Reserven endet gewoehnliche Arbeit an der Decke des
         # NORMALEN Topfes, nicht am Tageslimit. Ohne dieses Feld meldete die
         # Gesundheitsanzeige "nicht gesperrt", waehrend die Routine bereits
@@ -391,6 +395,16 @@ def _normaler_topf_erschoepft(heute: Any, status: Any) -> bool:
     if decke is None:
         return False
     return bool(heute.pot_states()["normal"].booked_usd >= decke)
+
+
+def _unterwegs_block() -> dict[str, dict[str, float | int]]:
+    """Aufrufe im Flug je Topf (MB-06.4) — fail-soft, nie eine Ausnahme."""
+    try:
+        from app.ai.runtime import inflight_reservations
+
+        return inflight_reservations()
+    except Exception:  # noqa: BLE001 - eine Gesundheitsanzeige stirbt nicht daran
+        return {}
 
 
 def _topf_block(heute: Any, status: Any) -> dict[str, Any]:

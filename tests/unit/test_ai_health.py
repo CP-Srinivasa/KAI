@@ -780,6 +780,12 @@ def test_endpoint_carries_pots_and_normal_pot_exhausted(
 
     assert isinstance(kosten["normal_pot_exhausted"], bool)
 
+    # 3. MB-06.4: die Reservierungen im Flug kommen an — im Ruhezustand leer,
+    #    aber deklariert. Ein fehlender Schluessel waere wieder das still
+    #    verworfene Feld.
+    assert "inflight" in kosten, "inflight von response_model verworfen"
+    assert kosten["inflight"] == {}
+
 
 def test_der_kostenblock_verliert_auf_der_leitung_kein_feld(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
