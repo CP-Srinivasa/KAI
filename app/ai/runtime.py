@@ -7,8 +7,8 @@ authority remain inside ``app.ai``.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AsyncExitStack
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, AsyncExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +36,7 @@ from app.ai.budget import (
     PotVerdict,
     ReservePolicy,
     decide_pot,
+    voraussichtliche_kosten,
 )
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
@@ -224,6 +225,101 @@ class _Budgetbild:
         )
 
 
+class _Unterwegs:
+    """Was gerade laeuft und noch keine Zeile hat — je Topf, im Prozess (MB-06.4).
+
+    Das Budget liest den Strom VOR dem Aufruf, die Zeile entsteht NACH ihm.
+    Fuenf parallele Aufrufe eines Batches (``pipeline._MAX_CONCURRENT``) sahen
+    bis 6e5a7b6e alle denselben Stand: bei einer Reserve von 20 Aufrufen gingen
+    so bis zu vier zu viel durch, die Decke des Normaltopfes konnte um vier
+    Mittelwerte ueberschossen werden. Ein zugelassener Aufruf haelt deshalb
+    seinen Topf, bis er zurueck ist — mit dem Mittelwert des Topfes als Kosten
+    oder, ohne Mittelwert, nur als Aufruf. Dieselbe Doktrin wie im Budget:
+    unbekannt heisst gezaehlt, nicht null.
+
+    Grenze, bewusst: prozessweit. kai-server und ein CLI-Lauf sehen einander
+    weiterhin erst ueber den Strom; ein Semaphor ueber Prozesse hinweg waere
+    fuer ~150 Aufrufe am Tag Overengineering. Ohne gesetzte Reserven bleibt
+    die Einfaltung wirkungslos, weil dann ``BudgetStatus.allows`` entscheidet
+    und keine Toepfe liest — v1-Verhalten, Wort fuer Wort.
+    """
+
+    def __init__(self) -> None:
+        self._calls: dict[BudgetPot, int] = {}
+        self._known: dict[BudgetPot, int] = {}
+        self._usd: dict[BudgetPot, float] = {}
+
+    def fold(self, pots: Mapping[BudgetPot, BudgetState]) -> dict[BudgetPot, BudgetState]:
+        """Die Topfzustaende PLUS das, was unterwegs ist."""
+        folded = dict(pots)
+        for pot, calls in self._calls.items():
+            basis = folded.get(pot, BudgetState(0.0, 0, 0))
+            known = self._known.get(pot, 0)
+            folded[pot] = BudgetState(
+                booked_usd=basis.booked_usd + self._usd.get(pot, 0.0),
+                known_calls=basis.known_calls + known,
+                unknown_calls=basis.unknown_calls + (calls - known),
+            )
+        return folded
+
+    @contextmanager
+    def halten(self, pot: BudgetPot, estimate_usd: float | None) -> Iterator[None]:
+        self._calls[pot] = self._calls.get(pot, 0) + 1
+        if estimate_usd is not None:
+            self._known[pot] = self._known.get(pot, 0) + 1
+            self._usd[pot] = self._usd.get(pot, 0.0) + estimate_usd
+        try:
+            yield
+        finally:
+            self._calls[pot] -= 1
+            if estimate_usd is not None:
+                self._known[pot] -= 1
+                self._usd[pot] -= estimate_usd
+            if self._calls[pot] <= 0:
+                self._calls.pop(pot, None)
+                self._known.pop(pot, None)
+                self._usd.pop(pot, None)
+
+    def snapshot(self) -> dict[str, dict[str, float | int]]:
+        return {
+            pot: {
+                "calls": calls,
+                "known_calls": self._known.get(pot, 0),
+                "usd": round(self._usd.get(pot, 0.0), 6),
+            }
+            for pot, calls in self._calls.items()
+        }
+
+    def clear(self) -> None:
+        self._calls.clear()
+        self._known.clear()
+        self._usd.clear()
+
+
+_UNTERWEGS: Final[_Unterwegs] = _Unterwegs()
+
+
+def inflight_reservations() -> dict[str, dict[str, float | int]]:
+    """Laufende, noch nicht verbuchte Aufrufe je Topf — fuer Health und Tests."""
+    return _UNTERWEGS.snapshot()
+
+
+def reset_inflight_reservations() -> None:
+    """Reservierungen verwerfen (Tests)."""
+    _UNTERWEGS.clear()
+
+
+def _reservierung(bild: _Budgetbild, verdict: PotVerdict) -> AbstractContextManager[None]:
+    """Die Klammer um den Aufruf: haelt den Topf, wenn der Aufruf zugelassen ist.
+
+    Abgelehnte und ausgenommene Aufrufe reservieren nichts: der eine laeuft
+    nicht, der andere zahlt aus keinem Topf.
+    """
+    if not verdict.allowed or verdict.pot == "exempt":
+        return nullcontext()
+    return _UNTERWEGS.halten(verdict.pot, voraussichtliche_kosten(bild.daily_for(verdict.pot)))
+
+
 def _budget_lage(telemetry_path: Path | None) -> _Budgetbild:
     """Das Budgetbild vor diesem Aufruf — fail-soft, nie eine Ausnahme.
 
@@ -254,7 +350,9 @@ def _budget_lage(telemetry_path: Path | None) -> _Budgetbild:
     except Exception as exc:  # noqa: BLE001 - siehe Docstring
         logger.warning("ai_reserve_policy_unavailable", error=str(exc))
         reserven = ReservePolicy()
-    return _Budgetbild(status=status, pots=heute.pot_states(), reserves=reserven)
+    # Was unterwegs ist, zaehlt schon — sonst sehen parallele Aufrufe alle
+    # denselben Stand und der letzte Platz wird mehrfach vergeben (MB-06.4).
+    return _Budgetbild(status=status, pots=_UNTERWEGS.fold(heute.pot_states()), reserves=reserven)
 
 
 def _eskalation(route: str, lage: BudgetStatus) -> str:
@@ -436,6 +534,7 @@ async def invoke[T](
         # einen Retry legen. Die harte Rollback-Zusage bleibt unberuehrt.
         _budget_gate(route, bild, verdict)
         with (
+            _reservierung(bild, verdict),
             correlation_scope(correlation_id) as _,
             escalation_scope(_eskalation(route, lage)),
             budget_pot_scope(verdict.pot),
@@ -443,6 +542,9 @@ async def invoke[T](
             return RoutedValue(value=await direct_call(), transport="direct")
 
     with (
+        # Der Topf bleibt gehalten, bis der Aufruf zurueck ist — auch ueber
+        # Retry und Schattenpfad hinweg, die alle aus demselben Topf zahlen.
+        _reservierung(bild, verdict),
         correlation_scope(correlation_id) as active_correlation,
         # Ab hier gehoert alles Telemetrierte zu EINER Auswertung -- auch die
         # Zeile, die der Altpfad ueber `llm_call_scope` selbst schreibt. Ohne
@@ -670,6 +772,8 @@ __all__ = [
     "RoutedValue",
     "environment_settings",
     "inference_settings",
+    "inflight_reservations",
     "invoke",
     "reset_environment_settings",
+    "reset_inflight_reservations",
 ]

@@ -168,6 +168,18 @@ class AIPotState(BaseModel):
     remaining_usd: float | None = None
 
 
+class AIInflightPot(BaseModel):
+    """Laufende, noch nicht verbuchte Aufrufe EINES Topfes (``app.ai.runtime``).
+
+    ``usd`` ist die Summe der Topf-Mittelwerte der laufenden Aufrufe; Aufrufe
+    ohne Mittelwert zählen nur in ``calls`` (``calls - known_calls``).
+    """
+
+    calls: int
+    known_calls: int
+    usd: float
+
+
 class AICostBlock(BaseModel):
     """Kostenlage des AI-Pfads — Schätzung aus Listenpreisen, keine Abrechnung.
 
@@ -211,6 +223,10 @@ class AICostBlock(BaseModel):
     #: Topfes, nicht am Tageslimit — ``blocks_routine`` allein meldet dann noch
     #: "nicht gesperrt", während die Routine bereits steht.
     normal_pot_exhausted: bool = False
+    #: Aufrufe im Flug je Topf (MB-06.4): reserviert, noch keine Zeile. Leer
+    #: im Ruhezustand; ohne Deklaration wuerde ``response_model`` das Feld
+    #: still verwerfen — dieselbe Falle wie bei ``pots``.
+    inflight: dict[str, AIInflightPot] | None = None
     #: Monatshochrechnung aus ENTDOPPELTEN Kosten (2026-09-14). ``None``, wo
     #: nichts Belastbares hochzurechnen ist: in der ersten Stunde des Monats
     #: oder ohne Monatslimit. ``projection_is_lower_bound`` sagt, ob unbepreiste
