@@ -51,12 +51,22 @@ def _read_jsonl_raw(path: Path) -> list[dict[str, Any]]:
     return read_jsonl_tolerant(path)
 
 
-def _rewrite_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    tmp.replace(path)
+def _completed_command_ids(slug: str) -> set[str]:
+    """IDs der bereits ausgefuehrten Kommandos — die Wahrheit ist ``runs.jsonl``.
+
+    MB-02 (15.09.2026): Bis 6e5a7b6e wurde ``commands.jsonl`` nach jedem Tick
+    komplett neu geschrieben, um ``status`` auf ``done`` zu setzen. Ein Kommando,
+    das Dashboard oder Telegram waehrend der Handler-Laufzeit anhaengten, war
+    danach weg (Codex-Reproduktion "MindBlower"; auf dem Pi nie eingetreten).
+    Die Queue ist jetzt append-only; erledigt ist, was ``runs.jsonl`` — das
+    ohnehin je Ausfuehrung geschriebene, append-only Journal — mit ``command_id``
+    kennt. Kein zweiter Zustand, keine Sperre, kein Formatwechsel.
+    """
+    return {
+        str(row["command_id"])
+        for row in _read_jsonl_raw(_agent_dir(slug) / "runs.jsonl")
+        if row.get("command_id")
+    }
 
 
 def _append_finding(slug: str, severity: str, title: str, detail: str) -> None:
@@ -526,14 +536,21 @@ def _process_agent(slug: str, state: dict[str, Any]) -> int:
     if not d.exists():
         return 0
 
-    # 1) Commands: handle all still-queued entries, flip to done.
+    # 1) Commands: run every queued entry that runs.jsonl does not know yet.
+    #    commands.jsonl is append-only (MB-02) — it is never written back here.
     cmd_path = d / "commands.jsonl"
     changed = 0
     if cmd_path.exists():
         rows = _read_jsonl_raw(cmd_path)
-        dirty = False
+        completed = _completed_command_ids(slug)
         for row in rows:
             if row.get("status") != "queued":
+                continue
+            cmd_id = row.get("id")
+            if not cmd_id:
+                logger.warning("command without id in %s — skipped, not executable", cmd_path)
+                continue
+            if str(cmd_id) in completed:
                 continue
             mode = row.get("mode", "")
             note = row.get("note")
@@ -551,22 +568,19 @@ def _process_agent(slug: str, state: dict[str, Any]) -> int:
                     logger.exception("handler failed for %s/%s", slug, mode)
             dur = int((time.monotonic() - t0) * 1000)
 
+            # Run journal first: it is the done marker. A crash between the two
+            # appends loses one report line, never re-executes the command.
+            _append_run(slug, mode, result, dur, command_id=cmd_id, note=note)
+            completed.add(str(cmd_id))
             append_conversation_event(
                 slug,
                 source="agent",
                 role="agent",
                 content=summary,
                 kind="report",
-                meta={"command_id": row.get("id"), "mode": mode, "result": result},
+                meta={"command_id": cmd_id, "mode": mode, "result": result},
             )
-            _append_run(slug, mode, result, dur, command_id=row.get("id"), note=note)
-            row["status"] = "done"
-            row["done_ts"] = _now_iso()
-            row["result"] = result
-            dirty = True
             changed += 1
-        if dirty:
-            _rewrite_jsonl(cmd_path, rows)
 
     # 2) Free-text operator messages without agent reply: auto-ack once per cooldown.
     conv_path = d / "conversation.jsonl"
