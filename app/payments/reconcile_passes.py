@@ -214,32 +214,81 @@ async def backward(
     now: datetime,
     settings: PaymentSettings,
 ) -> tuple[RailPaymentList, tuple[str, ...]]:
-    """Was der Rail bewegt hat, ohne dass ein Intent es beauftragt haette."""
+    """Was der Rail bewegt hat, ohne dass ein Intent es beauftragt haette.
+
+    D-278 (Operator 2026-09-15): solche Settlements sind Zahlungen der
+    Alltags-Wallet am selben Node (D-277 (4)). Sie werden sichtbar
+    journalisiert (``wallet_settlement``, ``status=known``), fordern aber keine
+    Aufmerksamkeit mehr. Vorher hiessen sie ``orphan_settlement`` mit
+    ``attention`` und blieben ungeschlossen stehen.
+    """
     since = now - timedelta(seconds=settings.max_inflight_window_s)
     try:
         listing = await rail.list_payments(since)
     except RailError:
         return RailPaymentList(rail=rail.name, window_enforced=False, complete=False), ()
-    orphans = tuple(sorted(_orphan_keys_from(listing, journal)))
-    for key in orphans:
+    fresh = tuple(sorted(_unattributed_keys_from(listing, journal)))
+    for key in fresh:
         journal.append(
-            f"orphan_{key[:24]}",
-            "orphan_settlement",
-            {"status": "attention", "rail_dedup_key": key, "evidence_source": "rail_lookup"},
+            _wallet_record_id(key),
+            "wallet_settlement",
+            {
+                "status": "known",
+                "classification": "wallet_direct",
+                "rail_dedup_key": key,
+                "evidence_source": "rail_lookup",
+            },
             ts=now,
         )
-        _bump(counts, "ORPHAN_SETTLEMENT")
-    return listing, orphans
+        _bump(counts, "WALLET_SETTLEMENT")
+    return listing, fresh
 
 
-def _orphan_keys_from(listing: RailPaymentList, journal: PaymentJournal) -> set[str]:
-    """Rail-Schluessel ohne Intent und ohne bereits geschriebenen Befund."""
+def close_orphans_as_wallet(
+    journal: PaymentJournal, *, now: datetime, decision_ref: str
+) -> tuple[str, ...]:
+    """Offene Altbefunde ``orphan_settlement`` als Wallet-Zahlung schliessen.
+
+    Append-only: je Altbefund ein ``wallet_settlement`` mit demselben
+    ``rail_dedup_key`` und ``closes`` auf den alten Record. Idempotent: ein
+    zweiter Lauf findet keinen offenen Altbefund mehr. Herkunft ist der
+    Operator-Entscheid (``evidence_source=operator``), nicht der Node.
+    """
+    closed = tuple(sorted(journal.index.open_orphan_keys()))
+    for key in closed:
+        journal.append(
+            _wallet_record_id(key),
+            "wallet_settlement",
+            {
+                "status": "known",
+                "classification": "wallet_direct",
+                "rail_dedup_key": key,
+                "evidence_source": "operator",
+                "closes": f"orphan_{key[:24]}",
+                "decision_ref": decision_ref,
+            },
+            ts=now,
+        )
+    return closed
+
+
+def _wallet_record_id(key: str) -> str:
+    return f"wallet_{key[:24]}"
+
+
+def _unattributed_keys_from(listing: RailPaymentList, journal: PaymentJournal) -> set[str]:
+    """Rail-Schluessel ohne Intent und ohne bereits geschriebenen Record.
+
+    Bereits gesehen heisst: Altbefund (``orphan_settlement``) ODER Wallet-Zahlung
+    (``wallet_settlement``) — sonst wuerde ein Altbefund nach D-278 ein zweites
+    Mal auftauchen.
+    """
     known = {
         key
         for intent_id in journal.index.all_intents()
         if (key := journal.index.dedup_key(intent_id)) is not None
     }
-    reported = journal.index.orphan_keys()
+    reported = journal.index.orphan_keys() | journal.index.wallet_keys()
     return {
         payment.rail_dedup_key
         for payment in listing.payments

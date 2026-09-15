@@ -336,7 +336,8 @@ Fenster geschlossen.
 |---|---|
 | Zahlung hängt in `RECONCILIATION_REQUIRED` | `kai-ln-reconcile.service` starten, `reconcile_state.json` lesen. Nicht senden. |
 | Journal-Kette gebrochen | Server **nicht** neu starten (er verweigert ohnehin den Boot). Journal sichern, `python -c "from app.payments.journal import PaymentJournal; print(PaymentJournal().verify_chain())"`, Backup ziehen, ADR 0018 §5 folgen. |
-| Waisen-Settlement gemeldet | `artifacts/payments/payment_journal.jsonl` nach `orphan_settlement` durchsuchen, `rail_dedup_key` am Node nachschlagen. Bei Erstinbetriebnahme ist eine einmalige Meldung der Alt-Historie erwartbar (`window_enforced=false`). |
+| Wallet-Zahlung gesehen (`wallet_settlement`) | Kein Befund (D-278): Zahlung der Alltags-Wallet am selben Node. Sichtbar im Journal und im Report (`wallet_settlements`), `rail_dedup_key` bei Bedarf am Node nachschlagen. |
+| Altbefund `orphan_settlement` offen (`open_orphans` > 0) | Vor D-278 gemeldete Waisen ohne Wallet-Zuordnung. Pruefen, dann `scripts/ln_close_orphans.py --confirm` (append-only, idempotent, `evidence_source=operator`). |
 | Modus versehentlich `live` | `APP_LN_PAY_ENABLED=false` genügt: der Kill-Switch sitzt ausserhalb des Modus, `LightningRail.pay` verweigert. Danach Modus zurückstellen. |
 | Control Plane nicht verdrahtet | `/health/payment` meldet `degraded` mit Grund, `/payments/*` antwortet 503. Server-Log auf `validate_payment_boot` prüfen. |
 | Server startet nicht: „payment vault line N cannot be opened" | `APP_PAYMENT_VAULT_KEY` passt nicht zu `artifacts/payments/intent_vault.jsonl`. Erst den richtigen Schlüssel suchen (`/health/config` zeigt den Fingerprint des geladenen). Ist er wirklich verloren: **prüfen, dass kein Vorgang offen auf Freigabe wartet** (`GET /payments/audit`), dann die Vault-Datei beiseitelegen und die betroffenen Intents neu anlegen. Das Journal bleibt unangetastet — es ist die Wahrheit, der Vault nur das Material. |

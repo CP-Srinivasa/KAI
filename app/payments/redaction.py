@@ -86,6 +86,13 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "failure_reason",
         "approval_counter",
         "expires_at_unix",
+        # D-278: Wallet-Zahlungen. ``classification`` ist ein festes Wort,
+        # ``closes`` die Record-ID des geschlossenen Altbefunds (``orphan_`` +
+        # 24 Hex, bewusst unter der 32-Hex-Rohmuster-Grenze), ``decision_ref``
+        # die D-Nummer des Operator-Entscheids.
+        "classification",
+        "closes",
+        "decision_ref",
     }
 )
 

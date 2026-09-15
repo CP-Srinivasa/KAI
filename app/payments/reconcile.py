@@ -9,7 +9,8 @@ Node-Evidenz und ueber nichts sonst.
    den Node gehalten. ``SUCCEEDED`` wird ``SETTLED`` (mit Betrag, Gebuehr und
    Proof-Hash), ``FAILED`` wird terminal, alles andere bleibt in der Klaerung.
 2. **Rueckwaerts** — was der Rail bewegt hat, ohne dass ein Intent es
-   beauftragt haette, ist ein ``orphan_settlement``. Genau einmal gemeldet:
+   beauftragt haette, ist seit D-278 ein ``wallet_settlement`` (bekannte
+   Wallet-Zahlung, kein Befund; vorher ``orphan_settlement``). Genau einmal gemeldet:
    ein Alarm, der sich alle fuenf Minuten wiederholt, wird stummgeschaltet.
 3. **Forderungen** — eine ausgestellte Invoice, die der Node als beglichen
    meldet, wird zu ``receivable_settled`` mit der eigenen Bestellreferenz.
@@ -45,7 +46,14 @@ from pathlib import Path
 from app.core.payment_settings import PaymentSettings
 from app.payments.journal import PaymentJournal
 from app.payments.rail import PaymentRail
-from app.payments.reconcile_passes import backward, expire, forward, receivables, unresolved
+from app.payments.reconcile_passes import (
+    backward,
+    close_orphans_as_wallet,
+    expire,
+    forward,
+    receivables,
+    unresolved,
+)
 from app.payments.reconcile_types import (
     DEFAULT_CLOCK_SKEW_TOLERANCE_S,
     STATE_FILENAME,
@@ -100,15 +108,20 @@ async def run(
     checked = await forward(journal, rail, counts=counts, now=now)
     if expiry_enabled:
         expire(journal, counts=counts, now=now)
-    listing, orphans = await backward(journal, rail, counts=counts, now=now, settings=settings)
+    listing, wallet = await backward(journal, rail, counts=counts, now=now, settings=settings)
     checked_receivables = await receivables(journal, rail, counts=counts, now=now)
 
     unresolved_count = unresolved(journal)
-    status = "attention" if (orphans or anomaly or unresolved_count) else "ok"
+    # D-278: Wallet-Zahlungen sind bekannt und kein Befund. Ein Altbefund
+    # (orphan_settlement ohne schliessendes wallet_settlement) bleibt einer,
+    # bis der Operator ihn schliesst (scripts/ln_close_orphans.py).
+    open_orphans = len(journal.index.open_orphan_keys())
+    status = "attention" if (open_orphans or anomaly or unresolved_count) else "ok"
     report = ReconcileReport(
         status=status,
         counts=counts,
-        orphans=orphans,
+        wallet_settlements=wallet,
+        open_orphans=open_orphans,
         clock_anomaly=anomaly,
         expiry_enabled=expiry_enabled,
         checked_intents=checked,
@@ -127,7 +140,8 @@ async def run(
             last_monotonic=mono,
             boot_ref=boot,
             last_status=status,
-            last_orphans=len(orphans),
+            last_orphans=open_orphans,
+            last_wallet_settlements=len(wallet),
             last_clock_anomaly=anomaly,
         ),
     )
@@ -162,4 +176,11 @@ def _clock_verdict(
     return False, True, skew
 
 
-__all__ = ["ReconcileReport", "ReconcileState", "load_state", "run", "save_state"]
+__all__ = [
+    "ReconcileReport",
+    "ReconcileState",
+    "close_orphans_as_wallet",
+    "load_state",
+    "run",
+    "save_state",
+]

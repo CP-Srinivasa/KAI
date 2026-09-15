@@ -42,14 +42,19 @@ class ReconcileReport:
     """Was ein Lauf gesehen und was er daraus gemacht hat.
 
     ``status`` kennt genau zwei Werte. ``attention`` heisst nicht "kaputt",
-    sondern "ein Mensch muss hinsehen": ein Waisen-Settlement, ein Intent, den
-    der Node nicht bestaetigt, oder eine gesprungene Uhr. Alle drei sind
-    Aussagen ueber Geld, deren Klaerung nicht warten kann.
+    sondern "ein Mensch muss hinsehen": ein ungeschlossener Altbefund
+    (``orphan_settlement`` vor D-278), ein Intent, den der Node nicht
+    bestaetigt, oder eine gesprungene Uhr. Alle drei sind Aussagen ueber
+    Geld, deren Klaerung nicht warten kann. Wallet-Zahlungen (D-278) sind
+    sichtbar, aber kein Befund.
     """
 
     status: str = "ok"
     counts: dict[str, int] = field(default_factory=dict)
-    orphans: tuple[str, ...] = ()
+    #: In DIESEM Lauf neu gesehene Wallet-Zahlungen (Rail-Settlement ohne Intent).
+    wallet_settlements: tuple[str, ...] = ()
+    #: Altbefunde, die noch keine Wallet-Zuordnung haben (bleiben ``attention``).
+    open_orphans: int = 0
     clock_anomaly: bool = False
     #: ``False`` heisst: in DIESEM Lauf wurde kein Intent zum Verfallen
     #: gebracht — entweder wegen eines Uhr-Sprungs oder weil es keine
@@ -73,7 +78,8 @@ class ReconcileReport:
         return {
             "status": self.status,
             "counts": dict(sorted(self.counts.items())),
-            "orphans": list(self.orphans),
+            "wallet_settlements": list(self.wallet_settlements),
+            "open_orphans": self.open_orphans,
             "clock_anomaly": self.clock_anomaly,
             "expiry_enabled": self.expiry_enabled,
             "checked_intents": self.checked_intents,
@@ -95,7 +101,9 @@ class ReconcileState:
     last_monotonic: float | None = None
     boot_ref: str = ""
     last_status: str = ""
+    #: Seit D-278: Anzahl der noch OFFENEN Altbefunde (nicht neue Waisen).
     last_orphans: int = 0
+    last_wallet_settlements: int = 0
     last_clock_anomaly: bool = False
 
     def comparable_with(self, boot_ref: str) -> bool:
@@ -116,6 +124,7 @@ class ReconcileState:
             "boot_ref": self.boot_ref,
             "last_status": self.last_status,
             "last_orphans": self.last_orphans,
+            "last_wallet_settlements": self.last_wallet_settlements,
             "last_clock_anomaly": self.last_clock_anomaly,
         }
 
@@ -140,6 +149,7 @@ def load_state(path: Path) -> ReconcileState:
         boot_ref=str(raw.get("boot_ref", "")),
         last_status=str(raw.get("last_status", "")),
         last_orphans=int(raw.get("last_orphans", 0) or 0),
+        last_wallet_settlements=int(raw.get("last_wallet_settlements", 0) or 0),
         last_clock_anomaly=bool(raw.get("last_clock_anomaly", False)),
     )
 

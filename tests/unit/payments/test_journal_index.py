@@ -80,6 +80,22 @@ def test_bereits_gemeldete_waisen_werden_nicht_zweimal_gemeldet(tmp_path: Path) 
     assert journal.index.orphan_keys() == frozenset()
     journal.append("orphan_x", "orphan_settlement", {"rail_dedup_key": key}, ts=NOW)
     assert journal.index.orphan_keys() == frozenset({key})
+    assert journal.index.open_orphan_keys() == frozenset({key})
+
+
+def test_wallet_zahlungen_schliessen_waisen_und_zaehlen_als_gesehen(tmp_path: Path) -> None:
+    """D-278: ``wallet_settlement`` ist ein eigener Schluessel-Satz und schliesst Altbefunde."""
+    journal = _journal(tmp_path)
+    old, fresh = "c" * 64, "d" * 64
+    journal.append("orphan_x", "orphan_settlement", {"rail_dedup_key": old}, ts=NOW)
+    journal.append("wallet_y", "wallet_settlement", {"rail_dedup_key": fresh}, ts=NOW)
+    assert journal.index.wallet_keys() == frozenset({fresh})
+    assert journal.index.open_orphan_keys() == frozenset({old})
+    journal.append(
+        "wallet_x", "wallet_settlement", {"rail_dedup_key": old, "closes": "orphan_x"}, ts=NOW
+    )
+    assert journal.index.open_orphan_keys() == frozenset()
+    assert journal.index.orphan_keys() == frozenset({old}), "die Historie bleibt lesbar"
 
 
 def test_neuaufbau_ergibt_denselben_index(tmp_path: Path) -> None:
@@ -97,6 +113,7 @@ def test_neuaufbau_ergibt_denselben_index(tmp_path: Path) -> None:
         "rcv_1", "intent_created", {"status": "REQUESTED", "invoice_ref_hash": "e" * 64}, ts=NOW
     )
     journal.append("orphan_y", "orphan_settlement", {"rail_dedup_key": "f" * 64}, ts=NOW)
+    journal.append("wallet_z", "wallet_settlement", {"rail_dedup_key": "a" * 64}, ts=NOW)
     live = journal.index.snapshot()
 
     rebuilt = PaymentJournal(path)
@@ -105,3 +122,4 @@ def test_neuaufbau_ergibt_denselben_index(tmp_path: Path) -> None:
     assert rebuilt.index.dedup_key("pi_1") == "d" * 64
     assert [r.ref_hash for r in rebuilt.index.open_receivables()] == ["e" * 64]
     assert rebuilt.index.orphan_keys() == frozenset({"f" * 64})
+    assert rebuilt.index.wallet_keys() == frozenset({"a" * 64})

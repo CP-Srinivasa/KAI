@@ -112,6 +112,8 @@ AUDIT_EVENT_TYPES: frozenset[str] = frozenset(
         "retry_scheduled",
         "reconciled",
         "orphan_settlement",
+        # D-278: Rail-Settlement ohne Intent, als Wallet-Zahlung bekannt (kein Befund).
+        "wallet_settlement",
         "receivable_settled",
         "dual_journal_conflict",
         "clock_anomaly",

@@ -80,7 +80,15 @@ async def test_der_timer_meldet_seinen_befund_weiter(tmp_path: Path) -> None:
     journal = PaymentJournal(journal_path)
     journal.open()
     rail = SimulationRail(now=NOW)
-    rail.inject_payment("a" * 64)
+    # D-278: eine Node-Zahlung ohne Intent ist eine Wallet-Zahlung (kein Befund).
+    # Ein ALTBEFUND ohne Wallet-Zuordnung ist der Befund, den der Health-Check
+    # in seinem eigenen Prozess lesen muss.
+    journal.append(
+        "orphan_" + "a" * 24,
+        "orphan_settlement",
+        {"status": "attention", "rail_dedup_key": "a" * 64, "evidence_source": "rail_lookup"},
+        ts=NOW,
+    )
     state_path = tmp_path / STATE_FILENAME
 
     report = await timer.reconcile_payments(
@@ -92,7 +100,10 @@ async def test_der_timer_meldet_seinen_befund_weiter(tmp_path: Path) -> None:
     )
 
     assert report["status"] == "attention"
-    assert json.loads(state_path.read_text(encoding="utf-8"))["last_status"] == "attention"
+    assert report["open_orphans"] == 1
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_status"] == "attention"
+    assert state["last_orphans"] == 1
 
 
 def test_das_skript_behaelt_seinen_einstiegspunkt() -> None:
