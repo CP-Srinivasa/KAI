@@ -60,6 +60,7 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail. Kanonische 
 - Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder,einstein,xqu,architecture-red-team,data-quality-inspector}/*.jsonl`
 - Status `live` = JSONL in den letzten 24h; `prepared` = Verzeichnis existiert, leer; `unavailable` = kein Verzeichnis
 - Kein Fake-Heartbeat, keine Mock-Daten
+- Queue `commands.jsonl` ist **append-only** (MB-02, 15.09.2026): Dashboard/Telegram hängen an, der Worker schreibt sie nie zurück. Erledigt ist ein Kommando genau dann, wenn `runs.jsonl` seine `command_id` trägt. Der frühere Rewrite konnte ein während der Handler-Laufzeit angehängtes Kommando verschlucken.
 
 **DALI Patch-Proposals (D-152):**
 - `implement`-Modus schreibt **nie direkt** in Code. Output landet als strukturierter Diff-Proposal in `artifacts/agents/dali/proposals.jsonl` (Felder: `target_path`, `diff`, `rationale`, `scope`, `risk`).
