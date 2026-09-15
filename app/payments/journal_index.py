@@ -65,6 +65,9 @@ class JournalIndex:
     _receivables: dict[str, Receivable] = field(default_factory=dict)
     #: Bereits gemeldete Waisen-Settlements — eine Waise wird EINMAL gemeldet.
     _orphans: set[str] = field(default_factory=set)
+    #: D-278: Rail-Settlements ohne Intent, die als Wallet-Zahlung bekannt sind
+    #: (Alltags-Wallet am selben Node, ADR 0018 / D-277 (4)).
+    _wallet: set[str] = field(default_factory=set)
     #: Doppelbefunde beider Geldjournale aus der Uebergangsphase (ADR §12).
     #: Der Pass, der sie schrieb und diese Menge zur Alarm-Entdopplung las, ist
     #: mit PR 2 entfallen. Der INGEST bleibt: das Geld-Journal wird nie
@@ -119,6 +122,10 @@ class JournalIndex:
         if event_type == "orphan_settlement":
             if isinstance(dedup, str) and dedup:
                 self._orphans.add(dedup)
+            return
+        if event_type == "wallet_settlement":
+            if isinstance(dedup, str) and dedup:
+                self._wallet.add(dedup)
             return
         if event_type == "dual_journal_conflict":
             if isinstance(dedup, str) and dedup:
@@ -203,8 +210,24 @@ class JournalIndex:
         return [r for _, r in sorted(self._receivables.items()) if not r.settled]
 
     def orphan_keys(self) -> frozenset[str]:
-        """Waisen, die schon einen Record haben. Zweimal melden waere Laerm."""
+        """Waisen, die schon einen Record haben. Zweimal melden waere Laerm.
+
+        Seit D-278 schreibt der Reconciler keine neuen Waisen mehr; die Menge
+        traegt die Altbefunde (bis 2026-09-04) und bleibt als Historie lesbar.
+        """
         return frozenset(self._orphans)
+
+    def wallet_keys(self) -> frozenset[str]:
+        """Rail-Settlements, die als Wallet-Zahlung bekannt sind (D-278)."""
+        return frozenset(self._wallet)
+
+    def open_orphan_keys(self) -> frozenset[str]:
+        """Altbefunde, die noch niemand einer Wallet-Zahlung zugeordnet hat.
+
+        Ein ``wallet_settlement`` mit demselben ``rail_dedup_key`` schliesst den
+        Altbefund, ohne ihn umzuschreiben: das Journal bleibt append-only.
+        """
+        return frozenset(self._orphans - self._wallet)
 
     def dual_conflict_keys(self) -> frozenset[str]:
         """Doppelbefunde beider Journale aus der Uebergangsphase (ADR §12).
@@ -239,6 +262,7 @@ class JournalIndex:
                 for ref, r in sorted(self._receivables.items())
             },
             "orphans": sorted(self._orphans),
+            "wallet_settlements": sorted(self._wallet),
             "dual_conflicts": sorted(self._dual_conflicts),
         }
 

@@ -74,11 +74,11 @@ class PaymentRail(Protocol):
 
 ## 8. Reconciliation (beide Richtungen)
 
-Vorwärts: jeder nicht-terminale Intent wird per `rail.lookup(rail_dedup_key)` gegen den Node geprüft; Abbildung `SUCCEEDED→SETTLED`, `FAILED→FAILED_FINAL` (mit `failure_reason`), `IN_FLIGHT/UNKNOWN→RECONCILIATION_REQUIRED` (bleibt, bis Evidenz). Rückwärts: Node-Zahlungen im Fenster ohne Intent → `RECONCILIATION_REQUIRED`-Record `orphan_settlement` + Alarm. `attention`-Status löst Telegram-Alarm über den bestehenden Health-Check-Pfad aus (nicht nur `OnFailure=`). Läuft im bestehenden `kai-ln-reconcile.timer` (`scripts/ln_reconcile.py` behält Name/Pfad; Rumpf ruft `payments.reconcile`).
+Vorwärts: jeder nicht-terminale Intent wird per `rail.lookup(rail_dedup_key)` gegen den Node geprüft; Abbildung `SUCCEEDED→SETTLED`, `FAILED→FAILED_FINAL` (mit `failure_reason`), `IN_FLIGHT/UNKNOWN→RECONCILIATION_REQUIRED` (bleibt, bis Evidenz). Rückwärts: Node-Zahlungen im Fenster ohne Intent → seit D-278 `wallet_settlement` (sichtbar, kein Alarm; Alltags-Wallet am selben Node, D-277 (4)); ungeschlossene Altbefunde `orphan_settlement` bleiben `attention`, bis `scripts/ln_close_orphans.py` sie schließt. `attention`-Status löst Telegram-Alarm über den bestehenden Health-Check-Pfad aus (nicht nur `OnFailure=`). Läuft im bestehenden `kai-ln-reconcile.timer` (`scripts/ln_reconcile.py` behält Name/Pfad; Rumpf ruft `payments.reconcile`).
 
 ## 9. Audit-Ereignisse (Mission §11)
 
-`intent_created`, `policy_decided`, `approval_granted`, `approval_denied`, `submitted` (write-ahead), `rail_requested`, `rail_responded`, `settled`, `settlement_reversible`, `reversed`, `failed`, `retry_scheduled`, `reconciled`, `orphan_settlement`, `expired`, `cancelled`, `final`. Payloads redigiert (Allowlist wie `ops_ledger._redact_plan`): Hashes statt BOLT11/Pubkeys/Preimage-Klartext; Preimage als `proof_hash`. Keine Secrets, keine Macaroons.
+`intent_created`, `policy_decided`, `approval_granted`, `approval_denied`, `submitted` (write-ahead), `rail_requested`, `rail_responded`, `settled`, `settlement_reversible`, `reversed`, `failed`, `retry_scheduled`, `reconciled`, `orphan_settlement` (bis D-278; Altbefunde bleiben lesbar), `wallet_settlement` (D-278: Node-Zahlung ohne Intent = bekannte Wallet-Zahlung, `status=known`, schliesst per `closes` einen Altbefund), `expired`, `cancelled`, `final`. Payloads redigiert (Allowlist wie `ops_ledger._redact_plan`): Hashes statt BOLT11/Pubkeys/Preimage-Klartext; Preimage als `proof_hash`. Keine Secrets, keine Macaroons.
 
 ## 10. API und Health
 

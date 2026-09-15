@@ -484,11 +484,18 @@ def test_a_registered_claim_is_supervised_not_an_oversight_gap(tmp_path: Path) -
             "decision_question": "Frist rueckwirkend setzen oder Population verbreitern?",
         },
     )
-    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg)
+    # Feste Uhr: der Termin liegt fuer _NOW (2026-08-26) in der Zukunft. Mit der
+    # Wanduhr kippte der Test am 2026-09-15 von selbst auf "faellig" (rot in
+    # jedem PR) — er prueft die Klassifikation, nicht das Kalenderdatum.
+    (row,) = classify_ledger_entries(root, specs=(), supervision_register=reg, now=_NOW)
     assert row["state"] == RECON_STATE_SUPERVISED
     assert row["supervision"]["decision_state"] == "MANUAL_SCHEDULED_REVIEW"
     assert row["supervision"]["owner"] == "operator"
     assert row["supervision"]["due"] is False
+    (row_due,) = classify_ledger_entries(
+        root, specs=(), supervision_register=reg, now=datetime(2026, 9, 15, 0, 0, tzinfo=UTC)
+    )
+    assert row_due["supervision"]["due"] is True, "am Termin selbst ist die Wiedervorlage faellig"
 
 
 def test_without_the_register_the_same_claim_is_still_an_oversight_gap(tmp_path: Path) -> None:

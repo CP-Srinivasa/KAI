@@ -18,8 +18,9 @@ Prozess), und sie haengt nicht an Disziplin: ``pay`` wird im Payment-Paket an
 genau einer Stelle gerufen (``PaymentService.execute``), und die kommt hier
 nicht vor.
 
-Exit-Code: 0 nur bei ``ok``. Ein ``attention`` (Waisen-Settlement, ungeklaerter
-Send, Uhr-Sprung) ist ein Befund — zusaetzlich zum Health-Check-Pfad, der den
+Exit-Code: 0 nur bei ``ok``. Ein ``attention`` (ungeschlossener Altbefund,
+ungeklaerter Send, Uhr-Sprung) ist ein Befund. Node-Zahlungen ohne Intent sind
+seit D-278 ``wallet_settlement`` (sichtbar, kein Befund) — zusaetzlich zum Health-Check-Pfad, der den
 persistierten Zustand liest und seit PR 2 auch dessen ALTER prueft
 (``check_payment_reconciliation``).
 """

@@ -293,41 +293,96 @@ async def test_der_reconciler_sendet_nie(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rueckwaerts: Waisen
+# Rueckwaerts: Wallet-Zahlungen (D-278; vorher Waisen)
 # --------------------------------------------------------------------------- #
 
 
-async def test_zahlung_ohne_intent_wird_als_waise_gemeldet(tmp_path: Path) -> None:
+async def test_zahlung_ohne_intent_ist_eine_bekannte_wallet_zahlung(tmp_path: Path) -> None:
+    """D-278: Node-Zahlungen ohne Intent sind Wallet-Zahlungen: sichtbar, ohne Aufmerksamkeit."""
     journal, rail, _service, _intent_id = await open_intent(tmp_path)
     rail.inject_payment("f" * 64, amount=sat(500))
 
     report = await run(journal, rail, tmp_path)
 
-    assert "f" * 64 in report.orphans
-    assert report.status == "attention"
-    orphans = [e for e in journal.events() if e.event_type == "orphan_settlement"]
-    assert len(orphans) == 1
-    assert orphans[0].payload["rail_dedup_key"] == "f" * 64
+    assert "f" * 64 in report.wallet_settlements
+    assert report.status == "ok"
+    assert report.counts.get("WALLET_SETTLEMENT") == 1
+    rows = [e for e in journal.events() if e.event_type == "wallet_settlement"]
+    assert len(rows) == 1
+    assert rows[0].payload["rail_dedup_key"] == "f" * 64
+    assert rows[0].payload["status"] == "known"
+    assert rows[0].payload["classification"] == "wallet_direct"
+    assert not [e for e in journal.events() if e.event_type == "orphan_settlement"]
 
 
-async def test_eine_waise_wird_genau_einmal_gemeldet(tmp_path: Path) -> None:
+async def test_eine_wallet_zahlung_wird_genau_einmal_journalisiert(tmp_path: Path) -> None:
     journal, rail, _service, _intent_id = await open_intent(tmp_path)
     rail.inject_payment("f" * 64, amount=sat(500))
 
     await run(journal, rail, tmp_path)
     await run(journal, rail, tmp_path)
 
-    orphans = [e for e in journal.events() if e.event_type == "orphan_settlement"]
-    assert len(orphans) == 1
+    rows = [e for e in journal.events() if e.event_type == "wallet_settlement"]
+    assert len(rows) == 1
 
 
-async def test_eine_eigene_zahlung_ist_keine_waise(tmp_path: Path) -> None:
+async def test_eine_eigene_zahlung_ist_keine_wallet_zahlung(tmp_path: Path) -> None:
     journal, rail, _service, intent_id = await open_intent(tmp_path, "sim:settle:alice")
     assert journal.index.dedup_key(intent_id) is not None
 
     report = await run(journal, rail, tmp_path)
 
-    assert report.orphans == ()
+    assert report.wallet_settlements == ()
+
+
+async def test_eine_alte_waise_wird_nicht_erneut_als_wallet_zahlung_gemeldet(
+    tmp_path: Path,
+) -> None:
+    """Ein Altbefund ``orphan_settlement`` zaehlt als bereits gesehen (Dedup ueber beide)."""
+    journal, rail, _service, _intent_id = await open_intent(tmp_path)
+    journal.append(
+        "orphan_" + "f" * 24,
+        "orphan_settlement",
+        {"status": "attention", "rail_dedup_key": "f" * 64, "evidence_source": "rail_lookup"},
+        ts=NOW,
+    )
+    rail.inject_payment("f" * 64, amount=sat(500))
+
+    report = await run(journal, rail, tmp_path)
+
+    assert report.wallet_settlements == ()
+    assert not [e for e in journal.events() if e.event_type == "wallet_settlement"]
+    assert report.open_orphans == 1
+    assert report.status == "attention", "ein ungeschlossener Altbefund bleibt ein Befund"
+
+
+async def test_alte_waisen_werden_als_wallet_zahlungen_geschlossen(tmp_path: Path) -> None:
+    """Operator-Entscheid 15.09.: die Altbefunde vom 04.09. sind Wallet-Zahlungen."""
+    journal, rail, _service, _intent_id = await open_intent(tmp_path)
+    for ch in ("a", "b"):
+        journal.append(
+            "orphan_" + ch * 24,
+            "orphan_settlement",
+            {"status": "attention", "rail_dedup_key": ch * 64, "evidence_source": "rail_lookup"},
+            ts=NOW,
+        )
+    assert journal.index.open_orphan_keys() == frozenset({"a" * 64, "b" * 64})
+
+    closed = reconcile.close_orphans_as_wallet(journal, now=NOW, decision_ref="D-278")
+
+    assert closed == ("a" * 64, "b" * 64)
+    assert journal.index.open_orphan_keys() == frozenset()
+    rows = [e for e in journal.events() if e.event_type == "wallet_settlement"]
+    assert [r.payload["closes"] for r in rows] == ["orphan_" + "a" * 24, "orphan_" + "b" * 24]
+    assert all(r.payload["evidence_source"] == "operator" for r in rows)
+    assert all(r.payload["decision_ref"] == "D-278" for r in rows)
+
+    again = reconcile.close_orphans_as_wallet(journal, now=NOW, decision_ref="D-278")
+    assert again == (), "Schliessen ist idempotent"
+
+    report = await run(journal, rail, tmp_path)
+    assert report.open_orphans == 0
+    assert report.status == "ok"
 
 
 # --------------------------------------------------------------------------- #
@@ -447,7 +502,7 @@ async def test_ein_journal_ohne_offene_vorgaenge_ist_ok(tmp_path: Path) -> None:
     rail = SpyRail(now=NOW)
     report = await run(journal, rail, tmp_path)
     assert report.status == "ok"
-    assert report.orphans == ()
+    assert report.wallet_settlements == ()
 
 
 async def test_der_zustand_ueberlebt_den_prozess(tmp_path: Path) -> None:
