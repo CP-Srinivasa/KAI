@@ -35,6 +35,7 @@ from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_r
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.alerts.process_runtime_probe import deferred_unit_finding, process_runtime_finding
+from app.alerts.timer_schedule_probe import unscheduled_timer_finding
 from app.alerts.youtube_transcript_coverage import (
     COVERAGE_WINDOW_HOURS,
     TRANSCRIPT_MIN_CHARS,
@@ -741,111 +742,16 @@ def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> l
 def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
     """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
 
-    Vorfall 2026-08-19: ``kai-tv-auto-promote.timer`` stand auf ``enabled`` +
-    ``active`` mit ``NextElapseUSecMonotonic=infinity`` und hatte zuletzt am
-    2026-07-12 gefeuert — fuenf Wochen tot. Er fiel durch BEIDE bestehenden
-    Netze: ``systemctl --failed`` zeigt nichts (nichts ist gescheitert), und
-    ``pi_timer_health_probe.sh`` sammelt ``NON_ACTIVE`` (er war aktiv).
-
-    Die Deutung liegt in reinen, getesteten Funktionen
-    (``app/services/timer_health``); hier steht nur das Einsammeln.
-
-    Fail-soft: laesst sich systemd nicht befragen, gibt es KEINEN Befund — die
-    Probe ist kein Abbruchgrund (Lehre #718).
+    Einsammeln und Bestaetigen stehen in ``timer_schedule_probe`` (V4,
+    2026-09-16: eine einzelne Momentaufnahme meldete zwei feuernde Timer als
+    tot). Fail-soft: laesst sich systemd nicht befragen, gibt es KEINEN Befund.
     """
     if not runs_on_pi:
         return []
-    if os.environ.get("KAI_TIMER_SCHEDULE_PROBE", "").strip().lower() == "off":
+    finding = unscheduled_timer_finding()
+    if finding is None:
         return []
-
-    from app.services.timer_health import (
-        find_unscheduled_recurring_timers,
-        parse_active_units,
-        parse_systemctl_show,
-    )
-
-    timer_dir = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
-    units = sorted(f.name for f in timer_dir.glob("kai-*.timer"))
-    if not units:
-        return []
-    try:
-        proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
-            [
-                "systemctl",
-                "show",
-                *units,
-                "-p",
-                "Id",
-                "-p",
-                "UnitFileState",
-                "-p",
-                "ActiveState",
-                "-p",
-                "NextElapseUSecRealtime",
-                "-p",
-                "NextElapseUSecMonotonic",
-                "-p",
-                "LastTriggerUSec",
-                "-p",
-                "Unit",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            # systemctl rendert Zeitstempel in der Zone des Aufrufers; ``CEST``
-            # ist nicht zurueckparsbar und wuerde jeden LastTrigger als "nie
-            # gelaufen" erscheinen lassen.
-            env={**os.environ, "TZ": "UTC"},
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return []
-
-    facts = parse_systemctl_show(proc.stdout)
-
-    # Zweite Frage: laeuft der ausgeloeste Service gerade? Waehrend ein
-    # ``Type=oneshot`` laeuft, hat ``OnUnitActiveSec`` nichts zum Ankern und
-    # systemd meldet ``infinity`` — ohne diese Runde wuerde jeder laufende
-    # Timer als tot gemeldet (kai-shadow-resolver: 13-14 min von je 30).
-    # Fail-soft wie oben: laesst sich das nicht klaeren, gibt es KEINEN Befund
-    # statt eines geratenen.
-    services = sorted({f.triggered_unit for f in facts if f.triggered_unit})
-    if not services:
-        return []
-    try:
-        svc_proc = subprocess.run(  # noqa: S603 - feste Argumentliste, kein shell
-            ["systemctl", "show", *services, "-p", "Id", "-p", "ActiveState"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            env={**os.environ, "TZ": "UTC"},
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if svc_proc.returncode != 0 or not svc_proc.stdout.strip():
-        return []
-    running = parse_active_units(svc_proc.stdout)
-    facts = [f.with_triggered_state(running) for f in facts]
-
-    stuck = find_unscheduled_recurring_timers(facts)
-    if not stuck:
-        return []
-    return [
-        HealthIssue(
-            severity="critical",
-            component="timer_scheduleability",
-            message=(
-                f"{len(stuck)} wiederkehrende Timer laufen ohne naechsten Termin "
-                f"(enabled+active, aber kein NextElapse): {', '.join(sorted(stuck))} "
-                "— sie feuern nie wieder. Reparatur: Unit neu starten, nachdem der "
-                "zugehoerige Service einmal gelaufen ist, und auf einen "
-                "restart-sicheren Trigger umstellen (OnCalendar oder OnActiveSec)."
-            ),
-        )
-    ]
+    return [HealthIssue(severity="critical", component="timer_scheduleability", message=finding)]
 
 
 def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
