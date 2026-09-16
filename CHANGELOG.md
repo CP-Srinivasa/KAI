@@ -1,3 +1,12 @@
+## 2026-09-16 - Dashboard: /health-Polling-Schleife im Backend-Health-Hook (System-Audit P0-2)
+
+`useBackendHealth` gab `useSyncExternalStore` bei jedem Render eine neue subscribe-Funktion; React meldete ab und
+wieder an, der Sofort-Ping beim 0->1-Uebergang und ein Snapshot-Objekt je Antwort schlossen die Schleife: ~20
+/health-Anfragen pro Sekunde aus einem Browser-Tab (1,8 Mio/Tag, 200 MB Logs/Tag auf dem Pi). Jetzt stabile
+subscribe-Identitaet je Intervall, Snapshot nur bei echter Aenderung, Sofort-Ping fruehestens 5 s nach der letzten
+Antwort. Der neue Testfall brachte die alte Fassung zum Absturz des Test-Workers. Befund und Sprint:
+`docs/audit/kai_system_audit_20260916.md`.
+
 ## 2026-09-15 - Dashboard UI v2.1 „DALI meets Leonardo da Vinci" (Facelift, Frontend + eine Backend-Zeile)
 
 Die Uebersicht ordnet sich jetzt nach Prioritaet statt nach Bau-Chronologie: Lage-Leiste (Backend / Datenalter /
