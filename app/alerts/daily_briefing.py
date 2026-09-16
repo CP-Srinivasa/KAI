@@ -67,6 +67,9 @@ class BriefingData:
     # Die gemeinsame Zahl bestand im Fenster ab 19.08. zu ~99 % aus TradingView
     # (am Eligibility-Gate vorbei); additiv, fertig gerenderte Zeilen.
     episode_by_path_lines: list[str] = field(default_factory=list)
+    # S2 (2026-09-16): Praezision neben naiver Basisrate, aus dem taeglich von der
+    # Daily Strategy abgelegten Bericht — nur wenn frisch, kein Netz im Briefing.
+    baseline_lines: list[str] = field(default_factory=list)
 
     # Trading loop stats (24h window)
     cycles_total: int = 0
@@ -145,6 +148,7 @@ class BriefingData:
             if self.episode_by_path_lines:
                 lines.append("  By path (episode-dedup):")
                 lines.extend(self.episode_by_path_lines)
+            lines.extend(self.baseline_lines)
         if self.precision_pct is not None:
             lines.append(f"  Precision (raw): {self.precision_pct:.1f}%")
         if self.p10_resolved_7d > 0:
@@ -310,6 +314,15 @@ def build_daily_briefing(
             )
         except Exception:
             data.episode_by_path_lines = []
+        try:
+            from app.observability.precision_baseline_report import (
+                format_baseline_en,
+                load_fresh_report,
+            )
+
+            data.baseline_lines = format_baseline_en(load_fresh_report(adir, now=datetime.now(UTC)))
+        except Exception:
+            data.baseline_lines = []
 
     # ── Trading loop cycles ──────────────────────────────────────────
     try:

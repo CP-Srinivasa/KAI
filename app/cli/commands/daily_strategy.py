@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
@@ -339,6 +340,27 @@ def _build_skeleton(
         path_precision_line = format_path_precision_de(build_episode_reports_by_path())
     except Exception:  # pragma: no cover — best-effort metric
         path_precision_line = "—"
+    # S2 (2026-09-16): dieselbe Praezision neben ihrer naiven Basisrate. S1 mass
+    # Signal == Basis (TradingView 55,6 vs 56,0 %, Technical 60,8 vs 60,5 %); ohne
+    # die Basis ist die Zahl als Qualitaet unlesbar. Berechnet hier einmal taeglich
+    # (Binance-Kerzen), abgelegt fuer das Briefing. Best-effort, abschaltbar.
+    baseline_line = "—"
+    if os.environ.get("KAI_PRECISION_BASELINE", "").strip().lower() != "off":
+        try:
+            from app.observability.precision_baseline_report import (
+                binance_series_fetcher,
+                build_precision_baseline_report,
+                format_baseline_de,
+                write_report,
+            )
+
+            baseline_report = build_precision_baseline_report(
+                now=datetime.now(UTC), fetch_series=binance_series_fetcher()
+            )
+            write_report(baseline_report, Path("artifacts"))
+            baseline_line = format_baseline_de(baseline_report)
+        except Exception:  # pragma: no cover — best-effort metric
+            baseline_line = "—"
 
     tv_pending = _tv_pending_count()
     # Cumulative count feeds the Re-Entry-Gate (historical ">=10 fills" fact).
@@ -437,6 +459,7 @@ Horizont-Anker: {horizon_line}
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
 | Episoden-Precision (Cross-Path-Cluster) | {episode_line} |
 | Episoden-Precision je Signalpfad | {path_precision_line} |
+| Präzision vs. naive Basisrate (30 d, reif) | {baseline_line} |
 | Deduped Precision (latest per document_id) | {deduped_line} |
 | Baseline-Precision (raw, nicht einzeln zitieren) | {precision_line} |
 | TV pending events (unpromoted) | {tv_pending} |

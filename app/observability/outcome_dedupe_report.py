@@ -342,6 +342,41 @@ def build_episode_reports_by_path(
     }
 
 
+def build_episode_reports_by(
+    *,
+    key_of: Callable[[str, dict[str, object], datetime | None, str | None], str | None],
+    audit_path: str | Path = _DEFAULT_AUDIT,
+    alert_audit_path: str | Path = _DEFAULT_ALERT_AUDIT,
+) -> dict[str, EpisodeDedupeReport]:
+    """Ein Episoden-Bericht je frei gewaehltem Schluessel, aus EINEM Lesedurchgang.
+
+    ``key_of(document_id, outcome_row, anchor, sentiment)`` ordnet jede aufgeloeste
+    Zeile einer Gruppe zu; ``None`` schliesst sie aus. ``anchor`` ist dieselbe
+    Zeitmarke, nach der geclustert wird (Dispatch, sonst Annotation). Gebraucht fuer
+    S2 (2026-09-16): Pfad x Basiswert x Fenster, damit die naive Basisrate nach
+    genau den Basiswerten eines Pfads gewichtet werden kann.
+    """
+    outcomes_path = Path(audit_path)
+    dispatch_path = Path(alert_audit_path)
+    resolved, anchors = _load_resolved_with_anchors(outcomes_path, dispatch_path)
+    groups: dict[str, dict[str, dict[str, object]]] = {}
+    for doc_id, rec in resolved.items():
+        dispatched_at, sentiment = anchors.get(doc_id, (None, None))
+        anchor = dispatched_at if dispatched_at is not None else _parse_ts(rec.get("annotated_at"))
+        key = key_of(doc_id, rec, anchor, sentiment)
+        if key is not None:
+            groups.setdefault(key, {})[doc_id] = rec
+    return {
+        key: _cluster_episodes(rows, anchors, outcomes_path, dispatch_path)
+        for key, rows in sorted(groups.items())
+    }
+
+
+def episode_direction(rec: dict[str, object], sentiment: str | None) -> str:
+    """Richtung einer Outcome-Zeile nach derselben Regel wie die Episoden-Clusterung."""
+    return _direction(rec, sentiment)
+
+
 def _wilson_pct(hit: int, total: int) -> tuple[float, float] | None:
     from app.alerts.provenance_metrics import wilson_ci
 
@@ -484,8 +519,10 @@ __all__ = [
     "EpisodeDedupeReport",
     "OutcomeDedupeReport",
     "build_episode_dedupe_report",
+    "build_episode_reports_by",
     "build_episode_reports_by_path",
     "build_outcome_dedupe_report",
+    "episode_direction",
     "format_path_precision_de",
     "format_path_precision_en",
     "signal_path_of",

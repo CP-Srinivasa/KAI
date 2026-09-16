@@ -681,3 +681,12 @@ def test_bootstrap_skeleton_includes_path_precision_row(runner: CliRunner, repo_
     assert text.index("Episoden-Precision (Cross-Path-Cluster)") < text.index(
         "Episoden-Precision je Signalpfad"
     )
+
+
+def test_bootstrap_skeleton_includes_baseline_row(runner: CliRunner, repo_cwd: Path) -> None:
+    """S2 (2026-09-16): Praezision neben naiver Basisrate; im Test ohne Netz
+    (KAI_PRECISION_BASELINE=off via conftest) steht ein Gedankenstrich."""
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "| Präzision vs. naive Basisrate (30 d, reif) | — |" in text
