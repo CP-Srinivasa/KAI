@@ -89,6 +89,9 @@ class TVBridgeScheduler:
                 persist_tv_events_as_alert_audits,
                 tv_pending_path=self._artifacts_dir / "tradingview_pending_signals.jsonl",
                 alert_audit_path=self._artifacts_dir / "alert_audit.jsonl",
+                # V10 (2026-09-16): der Blocked-Strom schaltet die Entprellung
+                # scharf und haelt fest, was sie unterdrueckt hat.
+                blocked_alerts_path=self._artifacts_dir / "blocked_alerts.jsonl",
                 include_smoke=self._include_smoke,
                 hmac_secret=self._hmac_secret,
             )

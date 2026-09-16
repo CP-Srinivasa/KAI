@@ -1105,6 +1105,7 @@ def alerts_tv_bridge(
     counts = persist_tv_events_as_alert_audits(
         tv_pending_path=artifacts_path / "tradingview_pending_signals.jsonl",
         alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        blocked_alerts_path=artifacts_path / "blocked_alerts.jsonl",  # V10
         include_smoke=include_smoke,
         hmac_secret=tv_settings.bridge_hmac_secret,
     )
@@ -1115,7 +1116,8 @@ def alerts_tv_bridge(
         f"skipped_unsupported={counts['skipped_unsupported']} "
         f"skipped_invalid={counts['skipped_invalid']} "
         f"skipped_unsigned={counts['skipped_unsigned']} "
-        f"skipped_tampered={counts['skipped_tampered']}"
+        f"skipped_tampered={counts['skipped_tampered']} "
+        f"skipped_debounced={counts['skipped_debounced']}"
     )
 
 
