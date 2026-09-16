@@ -300,6 +300,8 @@ Pflicht:
 - saubere Reihenfolge beim Rollout
 - kleine, kontrollierte Schritte
 - Post-Deploy-Verifikation
+- `.env` vor Änderungen nur per `scripts/env_backup.sh <label>` sichern (behält die
+  drei neuesten, Rechte 600) — nie per `cp`, nie außerhalb des Checkouts
 
 Grundsatz:
 Stabilität > Geschwindigkeit  
