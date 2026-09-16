@@ -230,10 +230,91 @@ def issues_fingerprint(issues: Any) -> str:
     Minuten, Zykluszahlen). Zwei Läufe mit demselben Problem müssen denselben
     Fingerprint ergeben, sonst bremst das Gate die Wiederholung nicht.
     """
-    keys = sorted(f"{getattr(i, 'severity', '')}:{getattr(i, 'component', '')}" for i in issues)
+    return _fingerprint_of_keys(_severity_keys(issues))
+
+
+def _severity_keys(issues: Any) -> set[str]:
+    return {f"{getattr(i, 'severity', '')}:{getattr(i, 'component', '')}" for i in issues}
+
+
+def _fingerprint_of_keys(keys: set[str]) -> str:
     if not keys:
         return ""
-    return hashlib.sha256("|".join(keys).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256("|".join(sorted(keys)).encode("utf-8")).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# V5 (Daily Review 2026-09-16) — SERIEN VERDICHTEN
+# ---------------------------------------------------------------------------
+# Gemessen im Journal, 2026-09-15 03:00 bis 2026-09-16 08:30: 43 gesendete
+# Health-Alerts und 16 Recovery-Nachrichten. Von 99 Befundzeilen in den Alerts
+# standen 82 (83 %) unveraendert schon in der vorigen Sendung;
+# ``deferred_unit_active`` kam 42 Mal im Volltext. 12 der 43 Sendungen hatten als
+# einzigen Anlass, dass ein Befund VERSCHWAND — der dafuer ohnehin einzeln als
+# RECOVERED gemeldet wurde.
+#
+# Der Fingerprint entscheidet weiter, WANN gesprochen wird. Neu ist nur, WIE:
+#
+#   * Eine Menge, die nur schrumpft, loest keine volle Meldung mehr aus, wenn jeder
+#     verschwundene Befund seine RECOVERED-Nachricht bekam und der Operator die
+#     vorige Menge tatsaechlich gesehen hat. Der Takt der Wiederholung bleibt am
+#     letzten Volltext verankert.
+#   * Ein Befund, dessen Volltext innerhalb seines Klassenfensters schon beim
+#     Operator ankam, steht als eine Zeile da. Ist das Fenster abgelaufen, kommt
+#     der Volltext zurueck. Jede gesendete Meldung traegt mindestens einen
+#     Volltext — eine Meldung nur aus Einzeilern sagte nichts.
+#
+# Der Zeitpunkt des letzten Volltexts lebt im vorhandenen Befundzustand
+# (``last_full_sent_ts``/``last_full_severity``), nicht in einer weiteren Datei.
+
+
+def _full_text_ids(
+    issues: Any,
+    findings: dict[str, dict[str, Any]],
+    *,
+    now_ts: float,
+    default_minutes: float,
+) -> set[str]:
+    """Welche Befunde im Volltext stehen muessen. Rein: kein I/O, keine Uhr."""
+    full: set[str] = set()
+    for issue in issues:
+        fid = finding_id_for(issue)
+        entry = findings.get(fid) or {}
+        last_full = entry.get("last_full_sent_ts")
+        window_sec = reassert_minutes_for([issue], default_minutes=default_minutes) * 60.0
+        recent = (
+            isinstance(last_full, (int, float))
+            and not isinstance(last_full, bool)
+            and 0.0 <= now_ts - float(last_full) < window_sec
+            and entry.get("last_full_severity") == str(getattr(issue, "severity", ""))
+        )
+        if not recent:
+            full.add(fid)
+    if not full:
+        return {finding_id_for(i) for i in issues}
+    return full
+
+
+def _short_utc(ts: float, *, now_ts: float) -> str:
+    moment = datetime.fromtimestamp(ts, tz=UTC)
+    same_day = moment.date() == datetime.fromtimestamp(now_ts, tz=UTC).date()
+    return moment.strftime("%H:%MZ") if same_day else moment.strftime("%d.%m. %H:%MZ")
+
+
+def _compact_line(tag: str, component: str, entry: dict[str, Any], *, now_ts: float) -> str:
+    first = entry.get("first_seen_ts")
+    last_full = entry.get("last_full_sent_ts")
+    since = (
+        datetime.fromtimestamp(float(first), tz=UTC).strftime("%d.%m. %H:%MZ")
+        if isinstance(first, (int, float))
+        else "unbekannt"
+    )
+    seen = (
+        _short_utc(float(last_full), now_ts=now_ts)
+        if isinstance(last_full, (int, float))
+        else "unbekannt"
+    )
+    return f"[{tag}] {component} — unveraendert seit {since} (Volltext {seen})"
 
 
 def reassert_minutes_for(issues: Any, *, default_minutes: float) -> float:
@@ -273,13 +354,24 @@ def _dashboard_link(trigger_id: str) -> str:
     return f"{base}{separator}{TRIGGER_QUERY_PARAM}={trigger_id}"
 
 
-def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
+def build_health_alert_text(
+    report: Any,
+    *,
+    lookback_hours: int,
+    compact: dict[str, dict[str, Any]] | None = None,
+    now_ts: float | None = None,
+) -> str:
     """Alarmtext aus dem Report. Rein, damit der Inhalt prüfbar ist.
 
     Nach Klassen getrennt statt in EINEM Block: bis hierher reisten bis zu 35
     Komponenten in einer Nachricht, ein kritischer ``privilege_broker`` mit
     derselben Dringlichkeit wie ein ``annotations``-Rueckstand (A4-005).
+
+    ``compact`` nennt die Befunde (nach ``finding_id_for``), die als Einzeiler
+    stehen, mit ihrem Befundzustand (V5). Ohne ``compact`` alles im Volltext.
     """
+    compact = compact or {}
+    moment = time.time() if now_ts is None else now_ts
     from app.alerts.alert_classes import partition
     from app.observability.operator_feedback import new_trigger_id
 
@@ -306,7 +398,11 @@ def build_health_alert_text(report: Any, *, lookback_hours: int) -> str:
         lines.append(f"== {alert_class.value} ({len(items)}) ==")
         for item in items:
             tag = "CRITICAL" if item.severity == "critical" else "WARNING"
-            lines.append(f"[{tag}] {item.component}: {item.message}")
+            entry = compact.get(finding_id_for(item))
+            if entry is not None:
+                lines.append(_compact_line(tag, item.component, entry, now_ts=moment))
+            else:
+                lines.append(f"[{tag}] {item.component}: {item.message}")
     return "\n".join(lines)
 
 
@@ -456,10 +552,13 @@ def dispatch_health_notification(
     prior_findings = _read_finding_state(finding_path)
     recovered, next_findings = resolve_recoveries(report.issues, prior_findings, now_ts=now)
     announced_recovery = False
+    unannounced = False
     for fid, entry in recovered:
         if _send(build_recovery_text(fid, entry, recovered_at=now), sender=sender):
             announced_recovery = True
             console.print(f"[green]Telegram recovery notice sent: {fid}[/green]")
+        else:
+            unannounced = True
     _write_finding_state(finding_path, next_findings)
 
     if not fingerprint:
@@ -503,10 +602,42 @@ def dispatch_health_notification(
                 )
                 return False
 
+    # V5: eine Menge, die NUR schrumpft, ist keine Neuigkeit mehr, sobald jeder
+    # verschwundene Befund einzeln als RECOVERED gemeldet ist. Voraussetzung ist,
+    # dass die letzte volle Meldung genau die vorige Menge zeigte — sonst hat der
+    # Operator nie gesehen, wovon hier "unveraendert" die Rede waere. Der
+    # Zeitstempel bleibt der des letzten Volltexts, damit die Wiederholung eines
+    # Dauerbefunds nicht mit jedem Weglassen weiter nach hinten rutscht.
+    prior_keys = {
+        f"{entry.get('last_severity', '')}:{fid}"
+        for fid, entry in prior_findings.items()
+        if entry.get("last_state") == "ACTIVE"
+    }
+    if (
+        last_ts is not None
+        and last_fingerprint
+        and fingerprint != last_fingerprint
+        and recovered
+        and not unannounced
+        and _severity_keys(report.issues) < prior_keys
+        and _fingerprint_of_keys(prior_keys) == last_fingerprint
+    ):
+        _write_state(path, now_ts=last_ts, fingerprint=fingerprint)
+        console.print(
+            "[dim]Notification suppressed (Befund nur weggefallen, Recovery gemeldet).[/dim]"
+        )
+        return True
+
     # Geänderte Befundmenge ist Neuigkeit und wartet auf keinen Cooldown: der
     # frühere Zeit-Cooldown hätte einen NEUEN kritischen Befund bis zu 30 Minuten
     # zurückgehalten. Genau das darf nicht passieren.
-    text = build_health_alert_text(report, lookback_hours=lookback_hours)
+    full_ids = _full_text_ids(
+        report.issues, next_findings, now_ts=now, default_minutes=reassert_minutes
+    )
+    compact = {fid: entry for fid, entry in next_findings.items() if fid not in full_ids}
+    text = build_health_alert_text(
+        report, lookback_hours=lookback_hours, compact=compact, now_ts=now
+    )
     ok = _send(text, sender=sender)
     if ok:
         _record_emitted(
@@ -516,6 +647,13 @@ def dispatch_health_notification(
             artifacts_dir=path.parent,
         )
         _write_state(path, now_ts=now, fingerprint=fingerprint)
+        # Erst NACH erfolgreichem Versand gilt ein Volltext als gesehen.
+        for issue in report.issues:
+            fid = finding_id_for(issue)
+            if fid in full_ids and fid in next_findings:
+                next_findings[fid]["last_full_sent_ts"] = now
+                next_findings[fid]["last_full_severity"] = str(getattr(issue, "severity", ""))
+        _write_finding_state(finding_path, next_findings)
         console.print("[green]Telegram notification sent.[/green]")
     else:
         console.print("[yellow]Telegram not configured or send failed.[/yellow]")
