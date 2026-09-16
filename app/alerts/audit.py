@@ -339,6 +339,16 @@ def latest_provenance_by_document_id(
     return out
 
 
+def iter_alert_audit_rows(input_path: str | Path) -> list[dict[str, Any]]:
+    """Rohe Audit-Zeilen als dicts, ohne Record-Instanzen zu bauen.
+
+    Fuer Aufrufer, die mehr brauchen als die ``document_id``, aber nicht die
+    Kosten von ``load_alert_audits`` zahlen wollen. Fehlerhafte Zeilen werden
+    uebergangen — dieselbe Politik wie bei den beiden Nachbarn.
+    """
+    return _read_jsonl_tolerant(_resolve_audit_path(Path(input_path)))
+
+
 def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:
     """Stream ``document_id`` values without instantiating AlertAuditRecord per row.
 

@@ -24,14 +24,26 @@ TV events to ever be annotated hit/miss and the Wilson-CI split verdict
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import structlog
 
+from app.alerts.alert_debounce import (
+    DEBOUNCE_BLOCK_REASON,
+    AlertDebouncer,
+    debounce_window_from_env,
+    seed_debouncer_from_audit_rows,
+)
 from app.alerts.audit import (
     AlertAuditRecord,
     append_alert_audit,
-    iter_alert_audit_document_ids,
+    iter_alert_audit_rows,
+)
+from app.alerts.blocked_audit import (
+    BlockedAlertRecord,
+    append_blocked_alert,
+    load_blocked_alerts,
 )
 from app.market_data.coingecko_adapter import _BASE_ASSET_TO_COINGECKO
 from app.signals.models import SignalProvenance
@@ -54,6 +66,22 @@ _DEFAULT_MAX_EVENTS_PER_TICK: int = 500
 # and cap length so an attacker-controlled `note` can't forge fake log
 # lines or blow up line-based log shippers.
 _LOG_NOTE_MAX_LEN: int = 200
+
+
+def _parse_received_at(raw: object) -> datetime | None:
+    """``received_at`` als Zeitpunkt, oder ``None``.
+
+    ``None`` heisst fuer den Entpreller: nicht vergleichbar, also durchlassen.
+    Ein unlesbarer Zeitstempel darf kein Ereignis verschlucken.
+    """
+    if isinstance(raw, datetime):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _sanitize_for_log(value: object) -> str | None:
@@ -104,6 +132,8 @@ def persist_tv_events_as_alert_audits(
     include_smoke: bool = False,
     max_events_per_tick: int = _DEFAULT_MAX_EVENTS_PER_TICK,
     hmac_secret: str = "",
+    blocked_alerts_path: Path | None = None,
+    debounce_window_minutes: int | None = None,
 ) -> dict[str, int]:
     """Append synthetic AlertAuditRecords for TV-webhook events. Idempotent.
 
@@ -130,7 +160,24 @@ def persist_tv_events_as_alert_audits(
     unparseable), ``skipped_invalid`` (missing required event fields),
     ``skipped_smoke`` (filtered by smoke heuristic), ``skipped_overflow``
     (deferred to next tick by per-tick cap), ``skipped_unsigned`` (missing
-    HMAC when secret active), ``skipped_tampered`` (HMAC mismatch).
+    HMAC when secret active), ``skipped_tampered`` (HMAC mismatch),
+    ``skipped_debounced`` und ``skipped_blocked`` (V10, siehe unten).
+
+    **V10 — Entprellung (Daily Review 2026-09-16).** Gemessen ueber 09.-16.09.:
+    293 der 355 dispatchten Alerts kamen aus diesem Pfad, alle bullish, auf zwei
+    Basiswerten, mit einem Median-Abstand von 1,08 min. Die Trefferquote faellt
+    monoton mit der Position in der Serie (erster Alert 51,9 %, ab dem 21. noch
+    13,7 %). Mit ``blocked_alerts_path`` wird je ``(kanal, wert, richtung)``
+    entprellt. Das Fenster kommt aus ``KAI_ALERT_DEBOUNCE_WINDOW_MIN`` (Default
+    60), sofern ``debounce_window_minutes`` nichts anderes sagt; ``0`` schaltet
+    die Entprellung ab, ein fehlender ``blocked_alerts_path`` ebenfalls — ohne
+    den Blocked-Strom gaebe es keinen Ort, an dem eine Unterdrueckung
+    nachweisbar bliebe.
+
+    Entschieden wird in EREIGNISZEIT (``received_at``): die Bruecke raeumt die
+    Pending-Datei nicht ab, also muss dasselbe Ereignis bei jedem Takt dieselbe
+    Antwort bekommen. ``skipped_blocked`` zaehlt die Ereignisse, die in einem
+    frueheren Takt bereits entprellt wurden.
     """
     counts = {
         "written": 0,
@@ -141,13 +188,44 @@ def persist_tv_events_as_alert_audits(
         "skipped_overflow": 0,
         "skipped_unsigned": 0,
         "skipped_tampered": 0,
+        "skipped_debounced": 0,
+        "skipped_blocked": 0,
     }
     if not tv_pending_path.exists():
         return counts
 
-    # NEO-F-002: stream document_ids instead of allocating AlertAuditRecord
-    # per audit row — bridge only needs the dedup-key set.
-    existing_ids = iter_alert_audit_document_ids(alert_audit_path)
+    # NEO-F-002: stream raw rows instead of allocating AlertAuditRecord per
+    # audit row. Ein Durchgang, zwei Ergebnisse: die Dedup-Schluessel und der
+    # Wiederanlauf des Entprellers (V10) lesen dieselben Zeilen.
+    audit_rows = iter_alert_audit_rows(alert_audit_path)
+    existing_ids = {
+        doc_id
+        for row in audit_rows
+        if isinstance(row, dict) and isinstance(doc_id := row.get("document_id"), str)
+    }
+
+    # V10 (Daily Review 2026-09-16): Entprellung wiederholter Meldungen. Nur
+    # aktiv, wenn ein Blocked-Strom mitgegeben wurde — ohne ihn gaebe es keinen
+    # Ort, an dem eine Unterdrueckung nachweisbar bliebe, und ein Aufrufer
+    # wuerde still Alerts verlieren.
+    # ``debounce_window_minutes=None`` heisst "nimm die Umgebung" -- so bleibt
+    # KAI_ALERT_DEBOUNCE_WINDOW_MIN der eine Schalter, den ein Operator ohne
+    # Deploy umlegen kann. Ein ausdruecklich uebergebenes Fenster gewinnt.
+    window = (
+        debounce_window_from_env()
+        if debounce_window_minutes is None
+        else timedelta(minutes=debounce_window_minutes)
+    )
+    debouncer: AlertDebouncer | None = None
+    blocked_ids: set[str] = set()
+    if blocked_alerts_path is not None and window > timedelta(0):
+        debouncer = AlertDebouncer(window=window)
+        blocked_ids = {
+            rec.document_id
+            for rec in load_blocked_alerts(blocked_alerts_path)
+            if rec.block_reason == DEBOUNCE_BLOCK_REASON
+        }
+        seed_debouncer_from_audit_rows(debouncer, audit_rows, channel=_TV_CHANNEL)
 
     for raw in tv_pending_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -205,6 +283,13 @@ def persist_tv_events_as_alert_audits(
             counts["skipped_existing"] += 1
             continue
 
+        # V10: Die Bruecke raeumt die Pending-Datei nicht ab (siehe Modulkopf).
+        # Ein einmal entprelltes Ereignis wuerde sonst bei jedem Takt erneut
+        # geprueft und spaeter, nach Ablauf des Fensters, verspaetet gesendet.
+        if doc_id in blocked_ids:
+            counts["skipped_blocked"] += 1
+            continue
+
         # SENTR-F-005: cap writes per tick. Remaining rows that would
         # otherwise be written contribute to skipped_overflow and are
         # picked up next tick.
@@ -230,6 +315,43 @@ def persist_tv_events_as_alert_audits(
             continue
 
         note = event.get("note")
+
+        # V10: entprellen, bevor die Zeile in den Audit-Trail geht. Entschieden
+        # wird in EREIGNISZEIT (``received_at``), nicht nach der Wanduhr -- so
+        # faellt fuer dasselbe Ereignis bei jedem Takt dieselbe Entscheidung.
+        received_moment = _parse_received_at(received_at)
+        if (
+            debouncer is not None
+            and blocked_alerts_path is not None
+            and received_moment is not None
+        ):
+            decision = debouncer.decide(_TV_CHANNEL, base, sentiment, now=received_moment)
+            if not decision.emit:
+                append_blocked_alert(
+                    BlockedAlertRecord(
+                        document_id=doc_id,
+                        block_reason=DEBOUNCE_BLOCK_REASON,
+                        blocked_at=str(received_at),
+                        sentiment_label=sentiment,
+                        blocked_assets=[base],
+                        actionable=True,
+                        normalized_title=note if isinstance(note, str) else None,
+                        source_name=_TV_SOURCE,
+                    ),
+                    blocked_alerts_path,
+                )
+                blocked_ids.add(doc_id)
+                counts["skipped_debounced"] += 1
+                log.info(
+                    "tv_bridge.debounced",
+                    document_id=doc_id,
+                    base=base,
+                    sentiment=sentiment,
+                    repeat_index=decision.repeat_index,
+                    window_minutes=int(window.total_seconds() // 60),
+                )
+                continue
+
         event_prov = event.get("provenance") or {}
         prov_version = (
             event_prov.get("version") if isinstance(event_prov, dict) else None
