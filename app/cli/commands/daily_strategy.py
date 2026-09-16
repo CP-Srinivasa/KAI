@@ -328,6 +328,17 @@ def _build_skeleton(
         episode_report = build_episode_dedupe_report()
     except Exception:  # pragma: no cover — best-effort metric
         episode_report = None
+    # V7 Option B (2026-09-16): dieselbe Episoden-Praezision je Signalpfad —
+    # die gemeinsame Zahl bestand ab 19.08. zu ~99 % aus TradingView.
+    try:
+        from app.observability.outcome_dedupe_report import (
+            build_episode_reports_by_path,
+            format_path_precision_de,
+        )
+
+        path_precision_line = format_path_precision_de(build_episode_reports_by_path())
+    except Exception:  # pragma: no cover — best-effort metric
+        path_precision_line = "—"
 
     tv_pending = _tv_pending_count()
     # Cumulative count feeds the Re-Entry-Gate (historical ">=10 fills" fact).
@@ -425,6 +436,7 @@ Horizont-Anker: {horizon_line}
 |---|---|
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
 | Episoden-Precision (Cross-Path-Cluster) | {episode_line} |
+| Episoden-Precision je Signalpfad | {path_precision_line} |
 | Deduped Precision (latest per document_id) | {deduped_line} |
 | Baseline-Precision (raw, nicht einzeln zitieren) | {precision_line} |
 | TV pending events (unpromoted) | {tv_pending} |

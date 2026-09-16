@@ -22,7 +22,11 @@ from app.alerts.audit import (
     load_alert_audits,
     load_outcome_annotations,
 )
-from app.observability.outcome_dedupe_report import build_episode_dedupe_report
+from app.observability.outcome_dedupe_report import (
+    build_episode_dedupe_report,
+    build_episode_reports_by_path,
+    format_path_precision_en,
+)
 from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
@@ -59,6 +63,10 @@ class BriefingData:
     episode_count: int = 0
     episode_hits: int = 0
     episode_precision_pct: float | None = None
+    # V7 Option B (2026-09-16): dieselbe Episoden-Praezision je Signalpfad.
+    # Die gemeinsame Zahl bestand im Fenster ab 19.08. zu ~99 % aus TradingView
+    # (am Eligibility-Gate vorbei); additiv, fertig gerenderte Zeilen.
+    episode_by_path_lines: list[str] = field(default_factory=list)
 
     # Trading loop stats (24h window)
     cycles_total: int = 0
@@ -134,6 +142,9 @@ class BriefingData:
                 f"({self.episode_hits}/{self.episode_count} episodes "
                 f"from {self.episode_rows} resolved rows)"
             )
+            if self.episode_by_path_lines:
+                lines.append("  By path (episode-dedup):")
+                lines.extend(self.episode_by_path_lines)
         if self.precision_pct is not None:
             lines.append(f"  Precision (raw): {self.precision_pct:.1f}%")
         if self.p10_resolved_7d > 0:
@@ -290,6 +301,15 @@ def build_daily_briefing(
         data.episode_count = episode.episode_total
         data.episode_hits = episode.episode_hit
         data.episode_precision_pct = episode.episode_hit / episode.episode_total * 100
+        try:
+            data.episode_by_path_lines = format_path_precision_en(
+                build_episode_reports_by_path(
+                    audit_path=adir / ALERT_OUTCOMES_JSONL_FILENAME,
+                    alert_audit_path=adir / ALERT_AUDIT_JSONL_FILENAME,
+                )
+            )
+        except Exception:
+            data.episode_by_path_lines = []
 
     # ── Trading loop cycles ──────────────────────────────────────────
     try:

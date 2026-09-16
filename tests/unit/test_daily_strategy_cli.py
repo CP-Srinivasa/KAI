@@ -669,3 +669,15 @@ def test_reminder_surfaces_staleness_in_output(runner: CliRunner, repo_cwd: Path
     assert result.exit_code == 1
     assert "Letzter ausgefüllter Review: 2025-01-01" in result.stdout
     assert "vor" in result.stdout
+
+
+def test_bootstrap_skeleton_includes_path_precision_row(runner: CliRunner, repo_cwd: Path) -> None:
+    """V7 Option B (2026-09-16): die Episoden-Praezision steht zusaetzlich je
+    Signalpfad unter der gemeinsamen Zahl; ohne Artefakte ein Gedankenstrich."""
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "| Episoden-Precision je Signalpfad | — |" in text
+    assert text.index("Episoden-Precision (Cross-Path-Cluster)") < text.index(
+        "Episoden-Precision je Signalpfad"
+    )

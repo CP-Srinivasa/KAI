@@ -130,7 +130,7 @@
     "app/observability/momentum_universe.py::rank_universe",
     "app/observability/momentum_universe_builder.py::candidate_from_ohlcv",
     "app/observability/n_overview.py::build_n_overview",
-    "app/observability/outcome_dedupe_report.py::build_episode_dedupe_report",
+    "app/observability/outcome_dedupe_report.py::_cluster_episodes",
     "app/observability/outcome_dedupe_report.py::build_outcome_dedupe_report",
     "app/observability/outcome_dedupe_report.py::to_dict",
     "app/observability/position_risk.py::build_positions_risk_snapshot",

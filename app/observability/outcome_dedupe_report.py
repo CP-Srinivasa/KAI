@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -236,6 +237,7 @@ def build_episode_dedupe_report(
     *,
     audit_path: str | Path = _DEFAULT_AUDIT,
     alert_audit_path: str | Path = _DEFAULT_ALERT_AUDIT,
+    doc_filter: Callable[[str], bool] | None = None,
 ) -> EpisodeDedupeReport:
     """Cluster doc-deduped hit/miss rows into market episodes.
 
@@ -247,10 +249,140 @@ def build_episode_dedupe_report(
     timestamp fall back to ``annotated_at`` (counted in
     ``unanchored_rows``); rows without any parseable anchor become
     singleton episodes.
+
+    ``doc_filter`` restricts the population by ``document_id`` BEFORE
+    clustering (V7 Option B, 2026-09-16). Without it the report counts
+    exactly as before.
     """
     outcomes_path = Path(audit_path)
     dispatch_path = Path(alert_audit_path)
+    resolved, anchors = _load_resolved_with_anchors(outcomes_path, dispatch_path)
+    if doc_filter is not None:
+        resolved = {d: r for d, r in resolved.items() if doc_filter(d)}
+    return _cluster_episodes(resolved, anchors, outcomes_path, dispatch_path)
 
+
+# ---------------------------------------------------------------------------
+# V7 Option B (Daily Review 2026-09-16) — PRAEZISION JE SIGNALPFAD
+# ---------------------------------------------------------------------------
+# Die gemeinsame Episoden-Praezision mischt Pfade, die das Eligibility-Gate
+# unterschiedlich (oder gar nicht) passieren. Gemessen am 16.09. auf dem Pi,
+# 3 998 aufgeloeste Zeilen: ``tv:`` 3 284 (82 %, am Gate vorbei),
+# ``technical_paper_…`` 336 (umgeht die Narrativ-Gates), UUID-Dokumente 378
+# (Nachrichten, durch das Gate). Im Fenster ab 19.08. bestand die gemeinsame
+# Zahl zu ~99 % aus TradingView, und das Gate liess ausserhalb davon nur 14
+# direktionale Alerts durch — die Qualitaet der Nachrichten war ungemessen.
+#
+# Die Aufteilung ist ADDITIV und nutzt dieselbe Episoden-Regel. Zugeordnet wird
+# ueber die ``document_id``, die jeder Pfad selbst vergibt (``tv:`` deckte sich
+# 3 284 : 3 284 mit ``provenance.source``). Ein unbekanntes Praefix landet in
+# ``other`` — nie still in den Nachrichten.
+
+SIGNAL_PATH_TRADINGVIEW = "tradingview"
+SIGNAL_PATH_NEWS = "news"
+SIGNAL_PATH_TECHNICAL = "technical"
+SIGNAL_PATH_OTHER = "other"
+SIGNAL_PATH_ORDER: tuple[str, ...] = (
+    SIGNAL_PATH_TRADINGVIEW,
+    SIGNAL_PATH_NEWS,
+    SIGNAL_PATH_TECHNICAL,
+    SIGNAL_PATH_OTHER,
+)
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+_LABEL_DE = {
+    SIGNAL_PATH_TRADINGVIEW: "TradingView",
+    SIGNAL_PATH_NEWS: "Nachrichten",
+    SIGNAL_PATH_TECHNICAL: "Technical",
+    SIGNAL_PATH_OTHER: "sonstige",
+}
+_LABEL_EN = {
+    SIGNAL_PATH_TRADINGVIEW: "TradingView",
+    SIGNAL_PATH_NEWS: "News",
+    SIGNAL_PATH_TECHNICAL: "Technical",
+    SIGNAL_PATH_OTHER: "Other",
+}
+
+
+def signal_path_of(document_id: str) -> str:
+    """Signalpfad eines Alerts, abgeleitet aus seiner ``document_id``. Rein."""
+    doc = (document_id or "").strip()
+    if doc.startswith("tv:"):
+        return SIGNAL_PATH_TRADINGVIEW
+    if doc.startswith("technical_paper"):
+        return SIGNAL_PATH_TECHNICAL
+    if _UUID_RE.match(doc):
+        return SIGNAL_PATH_NEWS
+    return SIGNAL_PATH_OTHER
+
+
+def build_episode_reports_by_path(
+    *,
+    audit_path: str | Path = _DEFAULT_AUDIT,
+    alert_audit_path: str | Path = _DEFAULT_ALERT_AUDIT,
+) -> dict[str, EpisodeDedupeReport]:
+    """Ein Episoden-Bericht je Signalpfad, aus EINEM Lesedurchgang.
+
+    Nur Pfade mit mindestens einer aufgeloesten Zeile erscheinen. Die Zeilen der
+    Teile summieren sich zur gemeinsamen Zahl; die Episoden nicht, weil die
+    gemeinsame Zaehlung pfaduebergreifende Bewegungen zusammenlegt.
+    """
+    outcomes_path = Path(audit_path)
+    dispatch_path = Path(alert_audit_path)
+    resolved, anchors = _load_resolved_with_anchors(outcomes_path, dispatch_path)
+    by_path: dict[str, dict[str, dict[str, object]]] = {}
+    for doc_id, rec in resolved.items():
+        by_path.setdefault(signal_path_of(doc_id), {})[doc_id] = rec
+    return {
+        path: _cluster_episodes(by_path[path], anchors, outcomes_path, dispatch_path)
+        for path in SIGNAL_PATH_ORDER
+        if by_path.get(path)
+    }
+
+
+def _wilson_pct(hit: int, total: int) -> tuple[float, float] | None:
+    from app.alerts.provenance_metrics import wilson_ci
+
+    ci = wilson_ci(hit, total)
+    return None if ci is None else (100.0 * ci[0], 100.0 * ci[1])
+
+
+def format_path_precision_de(reports: dict[str, EpisodeDedupeReport]) -> str:
+    """Eine Tabellenzelle fuer die Daily-Strategy: Pfade mit ``·`` getrennt."""
+    parts: list[str] = []
+    for path in SIGNAL_PATH_ORDER:
+        rep = reports.get(path)
+        if rep is None or rep.episode_total == 0:
+            continue
+        pct = 100.0 * rep.episode_hit / rep.episode_total
+        ci = _wilson_pct(rep.episode_hit, rep.episode_total)
+        rng = f", Wilson95 {ci[0]:.1f}–{ci[1]:.1f} %" if ci else ""
+        parts.append(
+            f"{_LABEL_DE[path]} {pct:.1f} % ({rep.episode_hit}/{rep.episode_total} Episoden{rng})"
+        )
+    return " · ".join(parts) if parts else "—"
+
+
+def format_path_precision_en(reports: dict[str, EpisodeDedupeReport]) -> list[str]:
+    """Eingerueckte Zeilen fuer das Daily Briefing (englisch wie der Rest)."""
+    lines: list[str] = []
+    for path in SIGNAL_PATH_ORDER:
+        rep = reports.get(path)
+        if rep is None or rep.episode_total == 0:
+            continue
+        pct = 100.0 * rep.episode_hit / rep.episode_total
+        ci = _wilson_pct(rep.episode_hit, rep.episode_total)
+        rng = f", CI {ci[0]:.1f}–{ci[1]:.1f}%" if ci else ""
+        label = f"{_LABEL_EN[path]}:".ljust(13)
+        lines.append(f"    {label}{pct:.1f}% ({rep.episode_hit}/{rep.episode_total} episodes{rng})")
+    return lines
+
+
+def _load_resolved_with_anchors(
+    outcomes_path: Path, dispatch_path: Path
+) -> tuple[dict[str, dict[str, object]], dict[str, tuple[datetime | None, str | None]]]:
     # Latest row per document_id (same append-order rule as
     # build_outcome_dedupe_report), then keep resolved outcomes only.
     latest: dict[str, dict[str, object]] = {}
@@ -273,7 +405,15 @@ def build_episode_dedupe_report(
                 _parse_ts(rec.get("dispatched_at")),
                 sentiment if isinstance(sentiment, str) else None,
             )
+    return resolved, anchors
 
+
+def _cluster_episodes(
+    resolved: dict[str, dict[str, object]],
+    anchors: dict[str, tuple[datetime | None, str | None]],
+    outcomes_path: Path,
+    dispatch_path: Path,
+) -> EpisodeDedupeReport:
     unanchored_rows = 0
     groups: dict[tuple[str, str, float], list[tuple[datetime | None, str]]] = {}
     for doc_id, rec in resolved.items():
@@ -336,8 +476,17 @@ def build_episode_dedupe_report(
 
 
 __all__ = [
+    "SIGNAL_PATH_NEWS",
+    "SIGNAL_PATH_ORDER",
+    "SIGNAL_PATH_OTHER",
+    "SIGNAL_PATH_TECHNICAL",
+    "SIGNAL_PATH_TRADINGVIEW",
     "EpisodeDedupeReport",
     "OutcomeDedupeReport",
     "build_episode_dedupe_report",
+    "build_episode_reports_by_path",
     "build_outcome_dedupe_report",
+    "format_path_precision_de",
+    "format_path_precision_en",
+    "signal_path_of",
 ]
