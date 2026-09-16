@@ -14,8 +14,11 @@ Der Flag-Flip ist Kapital-relevant und wird NICHT aus einer Claude-Sitzung ausge
 ## 1. Konfiguration (`.env`, Sicherung zuerst)
 
 ```
-cp /home/ubuntu/current/.env /home/ubuntu/.env.bak-$(date -u +%Y%m%d)-prearm
+bash /home/ubuntu/ai_analyst_trading_bot/scripts/env_backup.sh prearm
 ```
+
+Legt `.env.bak-<UTC>-prearm` neben der `.env` an (Rechte 600) und behaelt nur
+die drei neuesten Sicherungen — nie per `cp` sichern.
 
 Setzen bzw. pruefen:
 
