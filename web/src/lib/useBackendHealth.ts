@@ -13,7 +13,7 @@ const INITIAL: BackendStatus = { state: "checking", version: null, detail: null 
  * EIN /health-Poller fuer alle Abonnenten.
  *
  * 2026-09-09: Der Hook startete pro Komponente einen eigenen Poller. Auf der
- * Uebersicht haengen zwei daran (BackendStatusBanner, CommandHeader), also zwei
+ * Uebersicht haengen zwei daran (damals BackendStatusBanner, CommandHeader), also zwei
  * Anfragen alle 30 s auf ausgerechnet den Endpunkt, der in der Messung mit
  * 12,44 s fuer 322 Bytes der langsamste war — nicht weil der Handler teuer ist
  * (er macht ein paar stat-Aufrufe), sondern weil der Single-Worker-Event-Loop

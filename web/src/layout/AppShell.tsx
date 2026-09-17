@@ -2,7 +2,7 @@ import { useState, lazy, Suspense } from "react";
 import { Bell, Briefcase, LayoutDashboard, MoreHorizontal, Radio } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
-import { BackendStatusBanner } from "./BackendStatusBanner";
+import { AppFooter } from "./AppFooter";
 import { CommandPalette } from "@/components/CommandPalette";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { useRouter, type Route } from "@/state/Router";
@@ -56,17 +56,18 @@ export function AppShell() {
             entfernt. Sie haing am localStorage-Schalter `mode`, nicht an der
             Backend-Wahrheit (`execution_enabled`) — ein Klick im Browser liess
             das Dashboard Live-Handel behaupten, den es nicht gibt. Die echte
-            Freigabe steht im Lage-Streifen der Uebersicht. */}
-        <BackendStatusBanner />
+            Freigabe steht im Lage-Streifen der Uebersicht.
+            2026-09-17 (SP-8 Teil 2): Auch der BackendStatusBanner ist weg —
+            Zustand als Pille in der Topbar, Version im Footer. */}
         <Topbar onMobileMenuToggle={() => setMobileNavOpen((v) => !v)} />
         {/* overflow-x-clip statt -hidden: `hidden` macht aus <main> einen
             Scroll-Container und damit jeden `sticky top-0`-Nachfahren wirkungslos
             (gemessen bei scrollY=800: CommandHeader auf top=-700px, die
             "nie wegscrollende Lage-Leiste" war weggescrollt). `clip` beschneidet
             genauso, erzeugt aber KEINEN Scroll-Container — sticky funktioniert.
-            Das untere Padding haelt Inhalt frei von der mobilen Bottom-Nav. */}
+            Das untere Padding fuer die mobile Bottom-Nav traegt jetzt der Footer. */}
         <main
-          className="flex-1 min-w-0 overflow-x-clip pb-[calc(env(safe-area-inset-bottom)+4.25rem)] md:pb-0"
+          className="flex-1 min-w-0 overflow-x-clip"
           key={route}
         >
           {/* Boundary OUTSIDE Suspense so it catches both lazy-load and render
@@ -77,6 +78,7 @@ export function AppShell() {
             <Suspense fallback={<RouteFallback />}>{renderRoute(route)}</Suspense>
           </PanelErrorBoundary>
         </main>
+        <AppFooter />
       </div>
       <MobileBottomNav onMore={() => setMobileNavOpen(true)} />
       <CommandPalette />
