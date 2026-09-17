@@ -23,6 +23,8 @@ set -uo pipefail
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/pi_release_guard.sh
 . "$_here/lib/pi_release_guard.sh"
+# shellcheck source=scripts/lib/pi_wait_until.sh
+. "$_here/lib/pi_wait_until.sh"
 
 SHA=""; EXPECT=""; DRY=0
 REPO="${KAI_PI_REPO:-/home/ubuntu/ai_analyst_trading_bot}"
@@ -30,6 +32,10 @@ RELEASES="${KAI_PI_RELEASES:-/home/ubuntu/releases}"
 CURRENT="${KAI_PI_CURRENT:-/home/ubuntu/current}"
 BROKER="${PI_DEPLOY_BROKER:-sudo -n /usr/local/sbin/kai-service-control}"
 HEALTH_URL="${KAI_PI_HEALTH_URL:-http://127.0.0.1:8000/health}"
+# Frist fuer die Verifikation nach den Restarts. 180 s tragen einen Kaltstart
+# von kai-server samt entry-watch-Zyklus (Unit startet alle ~69 s neu).
+VERIFY_TIMEOUT_S="${KAI_PI_VERIFY_TIMEOUT_S:-180}"
+VERIFY_INTERVAL_S="${KAI_PI_VERIFY_INTERVAL_S:-5}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -92,25 +98,41 @@ units="$(units_of "$RELEASES/$SHA")"
 for u in $units; do
     $BROKER restart "$u.service" >/dev/null 2>&1 || echo "RESTART_FAILED $u"
 done
-sleep 20
+# Verifikation: EIN Satz Kriterien, zweimal benutzt -- still im Warten, laut im
+# Bericht. Vorher: feste 20 s Pause und genau ein Versuch; beim Deploy ff93050c
+# (17.09.) war /health da noch leer -> DEPLOY_NOT_VERIFIED fuer einen gesunden
+# Deploy. Jetzt wird gewartet, bis alles besteht, hoechstens VERIFY_TIMEOUT_S.
+verify_release() {  # $1 = quiet|loud ; Exit 0 = alles erfuellt
+    local mode="$1" ok=0 health pid cwd state failed
+    say() { [ "$mode" = loud ] && echo "$@"; return 0; }
+    say "current=$(readlink -f "$CURRENT")"
+    [ "$(readlink -f "$CURRENT")" = "$RELEASES/$SHA" ] || { say "FAIL current zeigt nicht auf $SHA"; ok=1; }
+    health="$(curl -s --max-time 8 "$HEALTH_URL" || true)"
+    say "health=$health"
+    printf '%s' "$health" | grep -q "\"runtime_commit\":\"$SHA\"" || { say "FAIL /health meldet nicht runtime_commit=$SHA"; ok=1; }
+    printf '%s' "$health" | grep -q '"drift_commits":0' || { say "FAIL drift_commits != 0"; ok=1; }
+    for u in $units; do
+        pid="$(systemctl show -p MainPID --value "$u")"
+        cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || echo '?')"
+        state="$(systemctl is-active "$u")"
+        say "$u active=$state cwd=$cwd"
+        { [ "$state" = "active" ] && [ "$cwd" = "$RELEASES/$SHA" ]; } || { say "FAIL $u nicht aktiv im neuen Release"; ok=1; }
+    done
+    failed="$(systemctl --failed --no-legend | wc -l)"
+    say "failed_units=$failed"
+    [ "$failed" -eq 0 ] || ok=1
+    return "$ok"
+}
+
+started=$(date +%s)
+if pi_wait_until "$VERIFY_TIMEOUT_S" "$VERIFY_INTERVAL_S" verify_release quiet; then
+    echo "verifiziert nach $(( $(date +%s) - started )) s"
+else
+    echo "Frist ${VERIFY_TIMEOUT_S} s abgelaufen -- Stand zum Fristende:"
+fi
 
 echo "== Verifikation"
 rc=0
-echo "current=$(readlink -f "$CURRENT")"
-[ "$(readlink -f "$CURRENT")" = "$RELEASES/$SHA" ] || { echo "FAIL current zeigt nicht auf $SHA"; rc=1; }
-health="$(curl -s --max-time 8 "$HEALTH_URL" || true)"
-echo "health=$health"
-printf '%s' "$health" | grep -q "\"runtime_commit\":\"$SHA\"" || { echo "FAIL /health meldet nicht runtime_commit=$SHA"; rc=1; }
-printf '%s' "$health" | grep -q '"drift_commits":0' || { echo "FAIL drift_commits != 0"; rc=1; }
-for u in $units; do
-    pid="$(systemctl show -p MainPID --value "$u")"
-    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || echo '?')"
-    state="$(systemctl is-active "$u")"
-    echo "$u active=$state cwd=$cwd"
-    { [ "$state" = "active" ] && [ "$cwd" = "$RELEASES/$SHA" ]; } || { echo "FAIL $u nicht aktiv im neuen Release"; rc=1; }
-done
-failed="$(systemctl --failed --no-legend | wc -l)"
-echo "failed_units=$failed"
-[ "$failed" -eq 0 ] || rc=1
+verify_release loud || rc=1
 [ "$rc" -eq 0 ] && echo "DEPLOY_VERIFIED $SHA" || echo "DEPLOY_NOT_VERIFIED $SHA"
 exit "$rc"
