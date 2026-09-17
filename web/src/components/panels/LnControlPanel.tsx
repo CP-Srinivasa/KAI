@@ -3,20 +3,14 @@ import { useState } from "react";
 import { ShieldAlert, ShieldCheck, Play, Send } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
-import {
-  fetchLightningStatus,
-  lnValueAction,
-  type LightningStatus,
-  type LnActionResult,
-} from "@/lib/api";
-import { usePolling } from "@/lib/usePolling";
+import { lnValueAction, type LightningStatus, type LnActionResult } from "@/lib/api";
+import type { AsyncState } from "@/lib/useApi";
 
 // Steuer-Cockpit für die gegatete Wert-Schicht (Sprint 5). Zeigt EHRLICH den
 // Kill-Switch-Zustand (pay_enabled) und erlaubt Plan-Vorschau (Policy-Verdikt +
 // inerter Zustand) + B-005-Confirm-Ausführung. Alles bleibt inert, solange
 // pay_enabled=false (Node wird nie berührt). Kein Service-Token (Email-Allowlist).
 
-const POLL_MS = 60_000;
 // ADR 0018 §12: keysend/send_coins/open_channel/close_channel sind entfallen.
 // Sie standen im Menü, obwohl die Regelkette sie mit unsupported_action abgelehnt
 // hätte — ein Eintrag, der nur existiert, um abgelehnt zu werden, sieht aus wie
@@ -35,12 +29,10 @@ function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
   return "muted";
 }
 
-export function LnControlPanel() {
-  const polling = usePolling<LightningStatus>((s) => fetchLightningStatus(s), {
-    intervalMs: POLL_MS,
-    pauseWhenHidden: true,
-    retry: { maxAttempts: 3, baseMs: 2_000 },
-  });
+/** Der Lightning-Status kommt von der Seite herein: die Node-Seite holt ihn
+ *  EINMAL fuer Lightning-Karte und LN-Steuerung (2026-09-17, SP-8 / T6 —
+ *  vorher je ein eigener Poller auf denselben Endpunkt). */
+export function LnControlPanel({ status: polling }: { status: AsyncState<LightningStatus> }) {
   const ln = polling.state === "ready" ? polling.data : null;
   const payOn = ln?.pay_enabled === true;
 

@@ -22,6 +22,8 @@ import { LnControlPanel } from "@/components/panels/LnControlPanel";
 import { BlitzInfoPanel } from "@/components/panels/BlitzInfoPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
+import { fetchLightningStatus } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 
 // Node & Chain — KAIs souveräne Bitcoin/Lightning-Schicht, ehrlich phasiert.
@@ -126,6 +128,10 @@ function UseCase({
 }
 
 export function NodePage() {
+  // 2026-09-17 (SP-8 / T6): EIN Abruf von /dashboard/api/lightning fuer
+  // Lightning-Karte und LN-Steuerung — wie auf der Uebersicht. Vorher pollten
+  // beide Karten denselben Endpunkt getrennt, zwei Anfragen alle 60 s.
+  const lightning = useApi(fetchLightningStatus, 60_000, [], { maxAttempts: 3, baseMs: 2_000 });
   return (
     <div className="p-5 xl:p-6 space-y-6 max-w-[1680px] mx-auto">
       <PageHeader
@@ -241,7 +247,7 @@ export function NodePage() {
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-3">
             <ChainPanel />
-            <LightningPanel />
+            <LightningPanel status={lightning} />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">
                 <Network size={11} /> Wiring-Stand (verifiziert · 2026-07-02)
@@ -279,7 +285,7 @@ export function NodePage() {
               roadmapNote="Phase-2 (Resilienz-Sprint): SCB-Monitoring + B2-Recovery-Status (operator-exekutiert)."
             />
             <NodeReputationPanel />
-            <LnControlPanel />
+            <LnControlPanel status={lightning} />
           </div>
         </div>
       </section>

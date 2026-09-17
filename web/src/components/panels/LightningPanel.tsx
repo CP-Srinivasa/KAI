@@ -2,8 +2,7 @@
 import { Zap, ShieldCheck, ShieldAlert, Power } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
-import { fetchLightningStatus, type LightningStatus } from "@/lib/api";
-import { usePolling } from "@/lib/usePolling";
+import type { LightningStatus } from "@/lib/api";
 import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 
@@ -11,8 +10,6 @@ import { cn } from "@/lib/utils";
 // greifbar OHNE Fake: zeigt ehrlich disabled / unavailable / ok und — wenn der
 // Node erreichbar ist — die getinfo-Detailfelder. Kein schreibender Pfad.
 // 80er-Neon: synthwave-pulse-edge, glow-Badges, Mono-Zahlen, Zap-Glyph.
-
-const POLL_MS = 60_000;
 
 function Stat({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -37,19 +34,10 @@ type LightningView = {
   error: { kind: string; message: string } | null;
 };
 
-/** Die Uebersicht reicht ihren EINEN Abruf herein (`status`); die Node-Seite
- *  pollt selbst. Kein bedingter Hook: zwei Komponenten, eine Ansicht. */
-export function LightningPanel({ status }: { status?: AsyncState<LightningStatus> }) {
-  if (status) return <LightningPanelView polling={status} />;
-  return <LightningPanelSelf />;
-}
-
-function LightningPanelSelf() {
-  const polling = usePolling<LightningStatus>(
-    (signal) => fetchLightningStatus(signal),
-    { intervalMs: POLL_MS, pauseWhenHidden: true, retry: { maxAttempts: 3, baseMs: 2_000 } },
-  );
-  return <LightningPanelView polling={polling} />;
+/** Uebersicht und Node-Seite reichen ihren EINEN Abruf herein (`status`) —
+ *  2026-09-17 (SP-8 / T6): auch die Node-Seite pollt nicht mehr doppelt. */
+export function LightningPanel({ status }: { status: AsyncState<LightningStatus> }) {
+  return <LightningPanelView polling={status} />;
 }
 
 function LightningPanelView({ polling }: { polling: LightningView }) {

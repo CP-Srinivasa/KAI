@@ -91,7 +91,7 @@ type Props = {
   qualityState: "loading" | "ready" | "error";
 };
 
-function TruthStatusBarImpl({ quality, regime, priorityGate, qualityState }: Props) {
+function TruthStatusBarImpl({ quality, regime, priorityGate }: Props) {
   const [showDiag, setShowDiag] = useState(false);
   const chips = useMemo(
     () => deriveTruthChips(quality, regime, priorityGate),
@@ -102,11 +102,6 @@ function TruthStatusBarImpl({ quality, regime, priorityGate, qualityState }: Pro
 
   const buildHash =
     (import.meta.env.VITE_BUILD_HASH as string | undefined) ?? "dev";
-  const reportTs = quality?.generated_at
-    ? quality.generated_at.substring(0, 19).replace("T", " ")
-    : qualityState === "error"
-      ? "Endpoint-Fehler"
-      : "lädt …";
   const paperStale = staleStatusLabel(quality?.paper_evidence?.stale_status);
   const lifetimeFills = quality?.paper_evidence?.fills_total ?? quality?.paper_fills_with_pnl ?? 0;
   const recentFills = quality?.paper_evidence?.fills_recent_24h ?? 0;
@@ -147,7 +142,8 @@ function TruthStatusBarImpl({ quality, regime, priorityGate, qualityState }: Pro
       {showDiag && (
         <div className="mt-3 pt-3 border-t border-line-subtle grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-2xs font-mono text-fg-subtle">
           <DiagRow label="Truth-Contract" value={contractVersion != null ? `v${contractVersion}` : "nicht instrumentiert"} />
-          <DiagRow label="Report-Stand" value={reportTs} />
+          {/* Report-Stand steht nur noch in der Lage-Leiste (CommandHeader) —
+              Plan v2.1 §6: Report-Zeit genau 1x. */}
           <DiagRow label="Build-Hash" value={buildHash} />
           <DiagRow label="Paper-Frische" value={paperStale} />
           <DiagRow

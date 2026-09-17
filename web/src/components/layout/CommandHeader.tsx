@@ -84,15 +84,12 @@ export function CommandHeader({
       <span className="text-2xs font-bold uppercase tracking-widest text-fg-subtle">KAI</span>
 
       {/* KAI-Live-Zustand — kompakter Status statt Dauerschleifen-Text.
-          Phase-1-Stub wird ehrlich als Platzhalter gekennzeichnet, nicht als
-          „Live ·"-Status getarnt (sonst stünde dort dauerhaft „Live · IDLE",
-          obwohl der Zustand gar nicht aus echten System-Inputs abgeleitet ist). */}
+          2026-09-17 (SP-8, Plan v2.1 T1): Der Phase-1-Stub bekommt KEINE Pille
+          mehr. "KAI · Stub (P1)" stand dauerhaft in der knappsten Leiste der
+          Seite und sagte nur, dass hier nichts abgeleitet wird — ein Platz ohne
+          Aussage. Ein echter (nicht-Stub-)Zustand erscheint weiterhin. */}
       {kai ? (
-        kai.is_stub ? (
-          <span title="Phase-1-Platzhalter: KAI-Laufzeit-Zustand ist noch nicht an echte System-Inputs (Loop/Alerts/Exposure) verdrahtet und steht konstant auf IDLE — kein live abgeleiteter Status.">
-            <StatusPill kind="pending" label={`KAI · Stub (P${kai.phase ?? 1})`} />
-          </span>
-        ) : (
+        kai.is_stub ? null : (
           <StatusPill kind={kaiStateToStatus(kai.state)} label={`Live · ${kai.state}`} />
         )
       ) : kaiError ? (
