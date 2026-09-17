@@ -14,6 +14,7 @@ fail-closed status so the trading loop is never blocked by Lightning.
 
 from __future__ import annotations
 
+import base64
 import binascii
 import json
 from dataclasses import dataclass, field
@@ -255,6 +256,25 @@ class LndRestClient:
         confs) plus force-close/waiting-close limbo — without this an open that
         was JUST funded is invisible to every channel view."""
         return await self._get("/v1/channels/pending")
+
+    async def export_channel_backup(self) -> dict[str, Any]:
+        """GET /v1/channels/backup — multi-channel SCB of all open channels.
+
+        Scope ``offchain:read`` (``readonly.macaroon`` genuegt). Die Bytes sind
+        bei jedem Aufruf neu verschluesselt; stabil ist nur ``chan_points``."""
+        return await self._get("/v1/channels/backup")
+
+    async def verify_channel_backup(self, multi_chan_backup: bytes) -> dict[str, Any]:
+        """POST /v1/channels/backup/verify — laesst lnd ein SCB entschluesseln.
+
+        Rein pruefend (``offchain:read``): lnd aendert nichts und stellt nichts
+        wieder her. Antwortet mit den Kanalpunkten, die das Backup abdeckt."""
+        body = {
+            "multi_chan_backup": {
+                "multi_chan_backup": base64.b64encode(multi_chan_backup).decode("ascii")
+            }
+        }
+        return await self._post("/v1/channels/backup/verify", body)
 
     async def list_payments(
         self,

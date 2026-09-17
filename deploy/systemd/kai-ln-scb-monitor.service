@@ -13,6 +13,13 @@ Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONIOENCODING=utf-8
 EnvironmentFile=/home/ubuntu/ai_analyst_trading_bot/.env
 
+# 2026-09-17 (System-Audit P0-1): erst den SCB ueber die lnd-REST-API holen
+# (Read-only-Macaroon, offchain:read, kein SSH zum Node), dann pruefen. Ohne
+# "-"-Praefix: ein gescheiterter Export macht die Unit failed -> OnFailure-Alarm.
+# Idle (Exit 0), solange APP_LN_SCB_PATH ungesetzt ist. Details:
+# app/lightning/scb_export.py.
+ExecStartPre=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.lightning.scb_export
+
 # Read-only SCB inspection plus the local artifacts/scb_baseline.json state.
 # Exit 1 is intentional for missing/changed/stale conditions so systemctl --failed
 # remains a redundant signal if Telegram delivery is unavailable.
@@ -20,7 +27,8 @@ ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.lightning.
 
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=30
+# Export + zwei Verify-Aufrufe ueber WireGuard: 10 s Client-Timeout je Aufruf.
+TimeoutStartSec=60
 MemoryMax=128M
 CPUQuota=25%
 UMask=0077
