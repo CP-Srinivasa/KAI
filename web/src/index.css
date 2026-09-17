@@ -13,18 +13,23 @@
   --line-strong: 208 212 218;
   --fg: 18 23 32;
   --fg-muted: 92 102 118;
-  --fg-subtle: 140 150 165;
+  --fg-subtle: 100 111 128;    /* #646F80 (vorher #8C96A5, 2,7-3,0:1) */
   /* Operator-Folge 2026-05-08 (dritter Pass): Mittelweg zwischen vollem
-     KAI-Neon und WCAG-Doctrine. Mehr Neon-Pop als der vorherige Stand,
-     aber noch nicht 100% Vollsaettigung. Sub-WCAG-Body wird bewusst
-     akzeptiert (Vibe vor Lesbarkeit) — Glow-Klassen verstaerken zusaetzlich. */
-  --accent: 35 130 250;       /* electric blue    #2382FA */
+     KAI-Neon und WCAG-Doctrine; "Sub-WCAG-Body bewusst akzeptiert".
+     2026-09-17 (SP-8 Teil 2, Operator-Entscheid) aufgehoben: gemessen
+     (docs/ui/kontrast_neon_tokens_20260916.md) lagen pos/info/fg-subtle unter
+     3:1. Jetzt erreichen alle Text-Toene >= 4,5:1 (WCAG AA) auf bg-0 bis bg-3,
+     die Statusfarben auch auf ihrer eigenen Badge-Toenung (bg-X/10).
+     Nur die HSL-Helligkeit ist gesenkt — Farbton und Saettigung bleiben, das
+     Neon traegt weiter ueber die Glow-Klassen. Waechter:
+     src/theme/lightContrast.test.ts. Dark-Theme unveraendert. */
+  --accent: 5 96 212;         /* electric blue    #0560D4 (vorher #2382FA) */
   --accent-soft: 224 235 255;
-  --pos: 0 215 135;           /* giftgruen-pop    #00D787 */
-  --neg: 235 30 75;           /* magenta-rot      #EB1E4B */
-  --warn: 240 75 5;           /* magma-glow       #F04B05 */
-  --info: 0 180 220;          /* cyber-cyan       #00B4DC */
-  --ai: 132 90 240;           /* violet-glow      #845AF0 */
+  --pos: 0 117 74;            /* giftgruen        #00754A (vorher #00D787) */
+  --neg: 199 18 58;           /* magenta-rot      #C7123A (vorher #EB1E4B) */
+  --warn: 184 58 4;           /* magma            #B83A04 (vorher #F04B05) */
+  --info: 0 112 137;          /* cyber-cyan       #007089 (vorher #00B4DC) */
+  --ai: 112 64 238;           /* violet-glow      #7040EE (vorher #845AF0) */
 }
 
 .dark {
