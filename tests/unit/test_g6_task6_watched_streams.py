@@ -12,6 +12,7 @@ from app.alerts.alert_classes import AlertClass, classify
 from app.alerts.health_check import (
     _FRESHNESS_PER_FILE_MIN,
     _G6_TASK6_WATCHED,
+    SYSTEM_STREAM_COMPONENTS,
     _check_data_freshness,
 )
 
@@ -28,12 +29,27 @@ MEASURED_MAX_GAP_HOURS = {
     "kai_audit.jsonl": 24.0,
     "timer_health_audit.jsonl": 24.0,
     "onchain_fee_shadow.jsonl": 52.2,
+    # C5 (Pi, 2026-09-17): llm_telemetry volle Historie seit 11.07.;
+    # api_request_audit nach dem /health-Flut-Fix #991.
+    "llm_telemetry.jsonl": 2.37,
+    "api_request_audit.jsonl": 0.04,
 }
 
 
 def test_every_new_stream_has_a_threshold() -> None:
     for fname, _component in _G6_TASK6_WATCHED:
         assert fname in _FRESHNESS_PER_FILE_MIN, fname
+
+
+def _fresh_required_streams(adir, now) -> None:
+    """Die zwei Pflicht-Stroeme frisch anlegen — fehlen sie, setzt schon das
+    ``stale``, und jede Aussage ueber ``is_stale`` waere trivial wahr."""
+    import os
+
+    for name in ("alert_audit.jsonl", "trading_loop_audit.jsonl"):
+        path = adir / name
+        path.write_text("{}\n", encoding="utf-8")
+        os.utime(path, (now.timestamp(), now.timestamp()))
 
 
 def test_every_threshold_is_actually_evaluated(tmp_path) -> None:
@@ -46,6 +62,7 @@ def test_every_threshold_is_actually_evaluated(tmp_path) -> None:
     from datetime import UTC, datetime, timedelta
 
     now = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    _fresh_required_streams(tmp_path, now)
     for fname, component in _G6_TASK6_WATCHED:
         path = tmp_path / fname
         path.write_text("{}\n", encoding="utf-8")
@@ -60,7 +77,30 @@ def test_every_threshold_is_actually_evaluated(tmp_path) -> None:
             f"{fname}: Schwelle vorhanden, aber nie ausgewertet — sie steht in "
             "keiner files_to_check-Zeile"
         )
-        assert is_stale
+        assert is_stale is (component not in SYSTEM_STREAM_COMPONENTS)
+        path.unlink()
+
+
+def test_system_streams_report_but_never_abort_the_probe(tmp_path) -> None:
+    """Eine stille LLM-Kette ist ein Systembefund bei verlaesslicher Probe:
+    Befund ja, ``stale`` nein — sonst verschluckt --exit-on-stale den Report."""
+    import os
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
+    assert SYSTEM_STREAM_COMPONENTS == {"llm_telemetry", "api_request_audit"}
+    _fresh_required_streams(tmp_path, now)
+    for fname, component in _G6_TASK6_WATCHED:
+        if component not in SYSTEM_STREAM_COMPONENTS:
+            continue
+        path = tmp_path / fname
+        path.write_text("{}\n", encoding="utf-8")
+        old = (now - timedelta(minutes=_FRESHNESS_PER_FILE_MIN[fname] + 60)).timestamp()
+        os.utime(path, (old, old))
+        issues, is_stale = _check_data_freshness(tmp_path, now)
+        finding = next(i for i in issues if i.component == f"{component}_freshness")
+        assert "NICHT Pi-Sync" in finding.message
+        assert is_stale is False
         path.unlink()
 
 

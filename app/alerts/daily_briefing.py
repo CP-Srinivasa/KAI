@@ -27,7 +27,7 @@ from app.observability.outcome_dedupe_report import (
     build_episode_reports_by_path,
     format_path_precision_en,
 )
-from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
+from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles_since
 
 _ARTIFACTS = Path("artifacts")
 
@@ -326,7 +326,7 @@ def build_daily_briefing(
 
     # ── Trading loop cycles ──────────────────────────────────────────
     try:
-        cycles = load_trading_loop_cycles(adir / "trading_loop_audit.jsonl")
+        cycles = load_trading_loop_cycles_since(adir / "trading_loop_audit.jsonl", cutoff)
     except Exception:
         cycles = []
 

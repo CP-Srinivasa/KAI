@@ -10,11 +10,33 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from app.storage.jsonl_io import iter_jsonl_since
 
 _AUDIT_LOG = Path("artifacts") / "trading_loop_audit.jsonl"
 
-__all__ = ["load_trading_loop_cycles"]
+#: Vorlauf vor ``since``: der Fensterleser vergleicht Zeitstempel als Text. Ein
+#: Satz mit abweichendem Offset-Format darf an der Grenze nicht verloren gehen —
+#: die Aufrufer filtern danach ohnehin exakt auf ihr Fenster.
+_WINDOW_MARGIN = timedelta(hours=24)
+
+__all__ = ["load_trading_loop_cycles", "load_trading_loop_cycles_since"]
+
+
+def load_trading_loop_cycles_since(
+    audit_path: str | Path, since: datetime
+) -> list[dict[str, object]]:
+    """Nur die Zyklen ab ``since`` (minus Vorlauf) — I/O proportional zum Fenster.
+
+    Fuer Leser, die ohnehin nur ein Zeitfenster auswerten (Briefing 24 h,
+    /status heute + 24 h). Sie luden bis C5 (17.09.) die volle Historie: am Pi
+    96 MB / 149 000 Saetze, um rund 1 200 davon zu zaehlen. Leser mit
+    Voll-Historie-Zaehlern bleiben bewusst auf :func:`load_trading_loop_cycles`.
+    """
+    start = (since - _WINDOW_MARGIN).isoformat()
+    return list(iter_jsonl_since(Path(audit_path), since=start, key="started_at"))
 
 
 def load_trading_loop_cycles(
