@@ -295,13 +295,15 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
             toter Button mit Hover-Affordance). Identität kommt via Cloudflare
             Access am Edge. */}
         <div
-          className="flex items-center gap-2 h-8 pl-1 pr-1 xl:pr-2.5 rounded-sm border border-line-subtle bg-bg-2"
+          className="flex items-center gap-2 h-8 pl-1 pr-1 2xl:pr-2.5 rounded-sm border border-line-subtle bg-bg-2"
           title="Operator-Identität (via Cloudflare Access)"
         >
           <div className="h-6 w-6 rounded-xs bg-gradient-to-br from-accent to-ai grid place-items-center text-[10px] font-semibold text-white">
             SK
           </div>
-          <span className="hidden xl:inline text-xs font-medium">Sascha</span>
+          {/* Name erst ab 2xl: bei 1280 px lief die Leiste schon vor der Pille
+              15 px ueber den Rand (CDP-Messung 17.09., Stand d27e708d). */}
+          <span className="hidden 2xl:inline text-xs font-medium">Sascha</span>
         </div>
       </div>
     </header>
