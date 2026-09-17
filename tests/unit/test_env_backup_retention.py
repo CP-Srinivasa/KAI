@@ -143,3 +143,27 @@ def test_backup_is_owner_only(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     (new,) = _backups(tmp_path)
     assert new.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-Symlinks")
+def test_symlinked_env_is_backed_up_next_to_its_target_not_in_the_release(
+    tmp_path: Path,
+) -> None:
+    """Vorfall 2026-09-17: aus /home/kai/current (Release, .env ist Symlink auf den
+    Checkout) aufgerufen, landete die Klartextkopie im Release-Verzeichnis."""
+    _require_bash()
+    checkout = tmp_path / "checkout"
+    release = tmp_path / "release"
+    checkout.mkdir()
+    release.mkdir()
+    old = _fixture(checkout, n_old=3)
+    (release / ".env").symlink_to(checkout / ".env")
+
+    proc = _run(release, "prearm")
+
+    assert proc.returncode == 0, proc.stderr
+    assert _backups(release) == []
+    kept = _backups(checkout)
+    assert len(kept) == 3
+    assert old[0] not in kept
+    assert any(p.name.endswith("-prearm") for p in kept)
