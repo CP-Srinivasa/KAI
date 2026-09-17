@@ -74,4 +74,19 @@ describe("BackendStatusPill", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("status").textContent).toContain("Backend offline · Failed to fetch");
   });
+
+  // Gemessen 17.09. per CDP-Emulation gegen das ausgelieferte Bundle: ab `xl`
+  // (1280 px) blendet die Topbar alle Steuerelemente ein; mit dem Pillen-Text lief
+  // die Leiste bei 1280-1535 px um bis zu 143 px ueber den Rand (vorher 15 px).
+  // Zwischen xl und 2xl traegt deshalb nur der Punkt den Zustand; Tooltip, Detail
+  // und Live-Region bleiben unveraendert.
+  it("Kurztext nur sm-lg und ab 2xl sichtbar, im engen xl-Bereich nur der Punkt", () => {
+    renderWith({ state: "offline", version: null, detail: "Failed to fetch" });
+    const btn = screen.getByRole("button", { name: /Backend/ });
+    const label = [...btn.querySelectorAll("span")].find((s) => s.textContent === "Backend offline");
+    expect(label).toBeDefined();
+    const cls = label!.className.split(/\s+/);
+    expect(cls).toEqual(expect.arrayContaining(["hidden", "sm:inline", "xl:hidden", "2xl:inline"]));
+    expect(btn.getAttribute("title")).toContain("Backend offline · Failed to fetch");
+  });
 });

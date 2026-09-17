@@ -75,14 +75,17 @@ export function BackendStatusPill() {
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         className={cn(
-          "h-11 min-w-[44px] lg:h-8 lg:min-w-0 inline-flex items-center justify-center gap-1.5 rounded-sm border border-line-subtle bg-bg-2 px-2 text-2xs font-medium hover:bg-bg-3 transition-colors",
+          "h-11 min-w-[44px] lg:h-8 lg:min-w-0 xl:min-w-8 2xl:min-w-0 inline-flex items-center justify-center gap-1.5 rounded-sm border border-line-subtle bg-bg-2 px-2 text-2xs font-medium hover:bg-bg-3 transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
           v.text,
         )}
       >
         <span className={cn("inline-block h-1.5 w-1.5 rounded-full shrink-0", v.dot)} aria-hidden />
-        {/* Auf schmalen Schirmen nur der Punkt; Text in Tooltip und Detail. */}
-        <span className="hidden sm:inline font-mono whitespace-nowrap">{v.short}</span>
+        {/* Auf schmalen Schirmen nur der Punkt; Text in Tooltip und Detail.
+            Ebenso zwischen xl und 2xl: dort blendet die Topbar alle Steuerelemente
+            ein, und mit Text lief die Leiste bei 1280-1535 px ueber den Rand
+            (CDP-Messung 17.09.). */}
+        <span className="hidden sm:inline xl:hidden 2xl:inline font-mono whitespace-nowrap">{v.short}</span>
       </button>
 
       {/* Live-Region wie beim Banner: Zustandswechsel werden angesagt. */}
