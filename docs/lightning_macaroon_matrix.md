@@ -39,12 +39,13 @@ Send-Gate) gegated.
 
 | Credential | Env-Paar (`_PATH` / `_HEX`) | Scope in `macaroon_credentials()` | Permissions |
 |---|---|---|---|
-| `kai-readonly.macaroon` | `APP_LN_MACAROON_*` | `read` (Default) | `info:read offchain:read onchain:read` — keine Write-Rechte |
-| `kai-invoice.macaroon` | `APP_LN_INVOICE_MACAROON_*` | `invoice` | `invoices:read invoices:write` — Rechnungen erstellen und eigene Settlements lesen, **kein** Spend |
+| `readonly.macaroon` (lnd-Standard; auf dem Pi `kai-secrets/lnd/readonly.macaroon`) | `APP_LN_MACAROON_*` | `read` (Default) | am Node gelesen 2026-09-16: `address:read info:read invoices:read macaroon:read message:read offchain:read onchain:read peers:read signer:read` — keine Write-Rechte |
+| `kai-invoice.macaroon` | `APP_LN_INVOICE_MACAROON_*` | `invoice` | am Node gelesen 2026-09-16: `info:read invoices:read invoices:write offchain:read onchain:read` — Rechnungen erstellen und Settlements lesen, **kein** Spend |
 | `kai-payment.macaroon` | `APP_LN_PAYMENT_MACAROON_*` | `payment` | `offchain:read offchain:write` — ausschließlich BOLT11/Keysend |
 | `kai-onchain.macaroon` | `APP_LN_ONCHAIN_MACAROON_*` | `onchain` | `onchain:write` — ausschließlich Withdraw; nur baken, wenn der Pfad wirklich geöffnet wird |
 | `kai-channel.macaroon` | `APP_LN_CHANNEL_MACAROON_*` | `channel` | `offchain:write onchain:write` — Channel-Operationen, separat widerrufbar, standardmäßig nicht provisioniert |
 
+- **`kai-cockpit.macaroon`** (154 B, gebacken 2026-07-01) liegt auf dem Pi unter `kai-secrets/lnd/`, ist aber in keiner `.env`-Variable und in keinem Code-Pfad referenziert; Scopes am Node nicht auffindbar (nicht im Standard-Macaroon-Verzeichnis). **Operator-Entscheid offen:** dokumentieren oder vom Pi entfernen. Gleiches gilt für den Ablageort der Scopes von `kai-payment.macaroon` (Pi: 91 B, 2026-08-06).
 - **`admin.macaroon`** verlässt die Node NIE.
 - **Kein Write-Fallback:** `macaroon_credentials()` promotet ein fehlendes
   Capability-Credential niemals auf das Read-Credential. Ein nicht provisionierter

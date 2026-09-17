@@ -1,3 +1,13 @@
+## 2026-09-17 - Doku: System-Audit 16.09., Kontrastmessung, Risikoregister R8-R10, Korrekturen (Sprint S-0917 C6)
+
+Der Audit-Bericht (`docs/audit/kai_system_audit_20260916.md`, mit P0-Stand 17.09.) und die WCAG-Messung der
+Neon-Tokens (`docs/ui/kontrast_neon_tokens_20260916.md`) kommen ins Repo. Risikoregister: R8 Lightning-Wiederherstellung
+(SCB), R9 Light-Theme-Kontrast, R10 Backup-Archive ohne MAC. Korrekturen gegen den Baum geprueft: Macaroon-Matrix nannte
+`kai-readonly.macaroon` (Datei heisst `readonly.macaroon`) und zu enge Scopes (am Node gelesen), `kai-cockpit.macaroon`
+liegt unreferenziert auf dem Pi (Operator-Entscheid offen); Facelift-Plan §3a (Dropbox inzwischen geschrieben) und T7
+(`breakpoint-harness.html`); Reconciliation-Runbook fuehrte "Verdikt PASS", die Prae-Registrierung verlangt
+"PASS - SAFETY_AXIS_ONLY" (Transitions-Achse INSUFFICIENT_N).
+
 ## 2026-09-17 - Lightning: SCB-Erzeuger auf dem Pi ueber lnd-REST (System-Audit P0-1, Sprint S-0917 C3)
 
 Der SCB-Monitor pruefte eine lokale Kopie, die auf dem Pi nie jemand erzeugte; das einzige Off-Node-SCB lag 74 Tage
