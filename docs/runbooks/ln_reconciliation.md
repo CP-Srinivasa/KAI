@@ -42,7 +42,7 @@ Jeder Lauf schrieb eine fsync-te, streng gelockte und redigierte Zeile nach
 Prä-Reg `ln_reconciliation_shadow_integrity_v1`, Familie `money_path_integrity`,
 Fenster 2026-08-08 → 2026-08-15, Stichprobenziel 96.
 
-**Verdikt `PASS`, gezogen am 2026-08-27, Fenster geschlossen, `attested: true`.**
+**Verdikt `PASS - SAFETY_AXIS_ONLY`, gezogen am 2026-08-27, Fenster geschlossen, `attested: true` (truth_seq 105).** Nur die Safety-/Tip-Achse hat bestanden; die Transitions-Achse blieb bei null berechtigten Open-Intent-Vorfällen `INSUFFICIENT_N` (`config/prereg_supervision.json`, `verdict_text_requirement`). Nicht als „LN-Reconciliation voll bestanden" zitieren.
 Es steht in `artifacts/research/ln_reconciliation_verdict.jsonl`, wird von
 `app/research/prereg_reconciliation.py` gelesen und ist in
 `config/prereg_supervision.json` archiviert. Der stündliche Evaluator

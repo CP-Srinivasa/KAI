@@ -1,6 +1,6 @@
 # RISK_REGISTER.md — Aktive Risiken (lebend)
 
-**Stand:** 2026-07-02 · **Status:** reaktiviert als lebendes Top-Level-Register.
+**Stand:** 2026-09-17 (R8–R10 aus System-Audit 2026-09-16) · **Status:** reaktiviert als lebendes Top-Level-Register.
 Historischer Phase-4/5-Stand (2026-03-24) bleibt unverändert in [`docs/archive/RISK_REGISTER.md`](docs/archive/RISK_REGISTER.md).
 
 **Pflege-Regel:** Einträge werden bei Statuswechsel aktualisiert und geschlossen, nie gelöscht. Neue strukturelle Risiken bekommen die nächste freie `R`-Nummer. Schema: `risk_id · einstufung · beschreibung · auswirkung · gegenmassnahme · status`.
@@ -13,6 +13,9 @@ Historischer Phase-4/5-Stand (2026-03-24) bleibt unverändert in [`docs/archive/
 | **R4** | mittel | **LN-Wert-Schicht armiert** — Zahlungs-Infrastruktur ist gebaut und auf dem Zielsystem vorhanden, nur durch Policy-Flags inert | Fehl-Flip oder Lücke könnte echte Sats bewegen | Restrisiko begrenzt durch Policy-Gate (pay disabled), HOTP-Kapital-Confirm, Reserve-Floor; Härtung läuft (LN value-layer hardening, siehe `SECURITY.md`) | in Arbeit |
 | **R5** | mittel | **God-File-/Typ-Schulden-Zone im Zubringer-Pfad** (settings, bridge, engine — große gewachsene Module im Messinstrument-Pfad) | erhöhtes Regressions-/Wartungsrisiko genau dort, wo die Mess-Wahrheit entsteht | God-File-Ratchet in CI (Dateien dürfen nur schrumpfen), mypy-Gate, Feature-Freeze auf Alpha-Schichten (nur Pflege, siehe `ARCHITECTURE.md` § Messinstrument) | offen |
 | **R6** | mittel | **Flag-Komplexität** — ~114 Bool-Flags; kombinatorische Zustände sind nicht vollständig prüfbar | Fehlkonfiguration kann Gates entwerten oder Messungen verfälschen | fail-closed-Defaults, mehrarmige Scharfschaltung (Triple-Flag + ACK-Sentinels), `docs/feature_flags.md`, Preflight + Post-Deploy-Smoke | offen |
+| **R8** | hoch | **Lightning-Wiederherstellung hing an einem einzigen, veralteten Off-Node-SCB** — kein Erzeuger auf dem Pi, Laptop-Pull seit der Key-Rotation 31.08. gescheitert, Monitor `not_configured` und damit stumm (Audit P0-1) | Bei Node-Verlust Kanalguthaben nur mit dem SCB rettbar; ein veraltetes SCB deckt neue Kanäle nicht ab | 16.09.: SCB vom Node verifiziert (deckt den einzigen offenen Kanal), Laptop-Pull repariert; C3 (#1003): Erzeuger auf dem Pi über lnd-REST mit Node-Verify, Monitor meldet `changed`/`stale`. Rest: Pi-Kopie aktivieren (`APP_LN_SCB_PATH`, Timer), zweite Kopie bleibt Laptop | in Arbeit |
+| **R9** | niedrig | **Statusfarben im Light-Theme unter WCAG 3:1** — `pos` 1,8:1, `info` 2,3:1, `fg-subtle` 2,7–3,0:1; Dark (Betriebs-Default) erreicht AA, nur `fg-subtle` auf AA-Large-Niveau | Light-Nutzer lesen Status schlechter; Status wird nie nur über Farbe transportiert | Messung `docs/ui/kontrast_neon_tokens_20260916.md`; Light-Token-Anhebung als Facelift-Rest (SP-8) | offen |
+| **R10** | mittel | **Backup-Archive ohne Authentizitätsschutz** — Laptop-Backups AES-CBC ohne MAC, Schlüssel (DPAPI) neben dem Chiffrat | Manipulation eines Archivs wäre beim Restore nicht erkennbar; bei Rechnerzugriff ist der Schlüssel mit erreichbar | Bekannte Lücke, Formatwechsel bewusst zurückgestellt; Restore-Proben vergleichen Inhalte | akzeptiert (bewusst) |
 | **R7** | niedrig | **Supply-Chain** — kompromittierte oder verwundbare Dependencies | Code-Ausführung im Truth-/Betriebs-Pfad | CI-mitigiert: `pip-audit` + `bandit` + Lock-File-Workflow (`docs/security/lock_file_workflow.md`); MAL-Advisories werden nie ignoriert | mitigiert |
 
 ## Verweise
