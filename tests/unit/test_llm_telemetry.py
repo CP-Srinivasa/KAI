@@ -51,6 +51,62 @@ def test_summary_window_filters_old_rows(tmp_path: Path) -> None:
     assert s["n"] == 1 and s["failures"] == 0
 
 
+def test_summary_counts_each_physical_call_once(tmp_path: Path) -> None:
+    """Audit P0-3 (DQ-A-001): eine Ensemble-Kette schreibt eine aeussere Zeile
+    (``chain_position=-1``) UND je Versuch eine Zeile (``>= 0``) mit derselben
+    ``correlation_id``. Ohne Entdopplung zaehlte das Dashboard am 17.09. 338
+    statt 185 Aufrufe und halbierte damit die Fehlerquote (9,47 statt 17,3 %).
+    """
+    p = tmp_path / "t.jsonl"
+    # Kette A: aeussere Huelle + zwei Versuche (erster scheitert, zweiter ok).
+    record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        ok=True,
+        latency_ms=900.0,
+        correlation_id="doc_a",
+        chain_position=-1,
+        path=p,
+    )
+    record_llm_call(
+        provider="openai",
+        model="gpt-4o",
+        ok=False,
+        latency_ms=300.0,
+        correlation_id="doc_a",
+        chain_position=0,
+        path=p,
+    )
+    record_llm_call(
+        provider="gemini",
+        model="gemini-2.5-flash",
+        ok=True,
+        latency_ms=500.0,
+        correlation_id="doc_a",
+        chain_position=1,
+        path=p,
+    )
+    # Lokale Abweisung: nur eine aeussere Zeile, kein Versuch -> bleibt.
+    record_llm_call(
+        provider="",
+        model="gpt-4o",
+        ok=False,
+        latency_ms=1.0,
+        correlation_id="doc_b",
+        chain_position=-1,
+        path=p,
+    )
+    # v1-Zeile ohne Korrelation -> bleibt.
+    record_llm_call(provider="openai", model="gpt-4o", ok=True, latency_ms=100.0, path=p)
+
+    s = llm_telemetry_summary(path=p)
+
+    assert s["n"] == 4  # Huelle von doc_a entfaellt
+    assert s["failures"] == 2
+    assert s["failure_rate_pct"] == 50.0
+    assert s["latency_p95_ms"] == 500.0  # die 900 ms der Huelle zaehlen nicht
+
+
 def test_record_never_raises_on_bad_path() -> None:
     record_llm_call(
         provider="x",
