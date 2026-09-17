@@ -8,6 +8,7 @@ import { useAppState, TIMEFRAMES, nextDensity } from "@/state/AppState";
 import { useRouter, type Route } from "@/state/Router";
 import { cn } from "@/lib/utils";
 import { NotificationsBell } from "./NotificationsBell";
+import { BackendStatusPill } from "./BackendStatusPill";
 
 const CONTEXT: Record<Route, string> = {
   dashboard: "nav.dashboard",
@@ -226,6 +227,8 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
           {langSwitch}
           {themeButton}
         </div>
+
+        <BackendStatusPill />
 
         <NotificationsBell />
 
