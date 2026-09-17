@@ -37,6 +37,13 @@ RestartSec=10
 # Backstop: kappt den Stop hart bei 20s, falls uvicorn doch mal nicht sauber
 # beendet (App-State ist append-only/JSONL → SIGKILL ist seit jeher survivable).
 TimeoutStopSec=20s
+# Audit 16.09. P1-11 (S-0917 C4): Schutz des Pi gegen einen OOM-Kollaps, kein
+# Sparziel. Gemessen: VmHWM 1,50 GB / cgroup-Peak 1,74 GB nach 43 h (16.09.),
+# nach Reboot 17.09. Peak 0,94 GB; Pi 16 GB. 3 G = ~1,7x des hoechsten Peaks —
+# ein Wachstum darueber endet als OOM-Kill + Restart=on-failure, nicht als
+# eingefrorener Pi mit allen Diensten.
+MemoryAccounting=true
+MemoryMax=3G
 StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/server.log
 StandardError=append:/home/kai/ai_analyst_trading_bot/logs/server.err.log
 # Hardening (RPi OS Bookworm supports all of these)
