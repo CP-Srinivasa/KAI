@@ -331,10 +331,20 @@ def _percentile(sorted_values: list[float], pct: float) -> float | None:
 def llm_telemetry_summary(
     window_hours: float = 24.0, path: Path = DEFAULT_TELEMETRY_PATH
 ) -> dict[str, Any]:
-    """Failure-rate + latency percentiles over the window. Honest n=0 when empty."""
+    """Failure-rate + latency percentiles over the window. Honest n=0 when empty.
+
+    Gezaehlt wird EINE Zeile je physischem Aufruf: die aeussere Kettenzeile
+    (``chain_position=-1``) entfaellt, wo Versuchszeilen derselben
+    ``correlation_id`` existieren -- dieselbe Regel wie Budget und
+    ``/health/ai`` (:func:`app.ai.spend.dedupe_chain_levels`). Ohne sie
+    verdoppelte sich ``n`` fuer jede Ensemble-Analyse und die Fehlerquote
+    halbierte sich (Audit P0-3, 17.09.: 338 statt 185, 9,47 statt 17,3 %).
+    """
+    # Lazy: app.ai.spend importiert dieses Modul auf Modulebene.
+    from app.ai.spend import dedupe_chain_levels
+
     cutoff = datetime.now(UTC) - timedelta(hours=window_hours)
-    n = failures = 0
-    latencies: list[float] = []
+    rows: list[dict[str, Any]] = []
     if path.exists():
         for row in iter_jsonl_tolerant(path):
             try:
@@ -343,13 +353,16 @@ def llm_telemetry_summary(
                 continue
             if ts < cutoff:
                 continue
-            n += 1
-            if not row.get("ok", False):
-                failures += 1
-            try:
-                latencies.append(float(row.get("latency_ms", 0.0)))
-            except (TypeError, ValueError):
-                continue
+            rows.append(row)
+    rows = dedupe_chain_levels(rows)
+    n = len(rows)
+    failures = sum(1 for row in rows if not row.get("ok", False))
+    latencies: list[float] = []
+    for row in rows:
+        try:
+            latencies.append(float(row.get("latency_ms", 0.0)))
+        except (TypeError, ValueError):
+            continue
     latencies.sort()
     return {
         "implemented": True,  # B-002 landed 2026-07-11 (Audit F-5)

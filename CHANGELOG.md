@@ -1,3 +1,13 @@
+## 2026-09-17 - Dashboard-Telemetrie zaehlt jeden LLM-Aufruf einmal (System-Audit P0-3)
+
+`llm_telemetry_summary` (Dashboard-Block `telemetry`) zaehlte die aeussere Kettenzeile (`chain_position=-1`) und die
+Versuchszeilen derselben `correlation_id` beide. Am Pi ueber 24 h: 338 statt 185 Aufrufe, Fehlerquote 9,47 statt
+17,3 % (halbiert), p95 aus Huellen- statt Anbieterlatenz. Die Zusammenfassung nutzt jetzt dieselbe Entdopplung wie
+Budget und `/health/ai` (`app.ai.spend.dedupe_chain_levels`). Kosten-Leser im Produktivcode waren nicht betroffen
+(seit #970 entdoppelt); roh summierte `cost_usd` verdoppeln sich weiterhin (24 h: 2,57 statt 1,30 USD) -- Ad-hoc-
+Auswertungen muessen `dedupe_chain_levels` nutzen. Ein Integrationstest pinnte die Doppelzaehlung fest und ist
+korrigiert.
+
 ## 2026-09-16 - Dashboard: /health-Polling-Schleife im Backend-Health-Hook (System-Audit P0-2)
 
 `useBackendHealth` gab `useSyncExternalStore` bei jedem Render eine neue subscribe-Funktion; React meldete ab und

@@ -196,8 +196,11 @@ async def test_rate_limited_primary_falls_through_to_gemini(telemetry: Path) -> 
     assert "Bearer" not in blob
 
     # --- v1 reader must not choke on v2 ---
+    # Eine Zeile je physischem Aufruf (Audit P0-3): die aeussere Huelle
+    # entfaellt, weil Versuchszeilen derselben correlation_id existieren.
+    # Vorher stand hier ``len(rows)`` und pinnte die Doppelzaehlung fest.
     summary = llm_telemetry_summary(window_hours=1.0, path=telemetry)
-    assert summary["n"] == len(rows)
+    assert summary["n"] == len(attempts)
     assert summary["failures"] == 1
 
 
