@@ -898,6 +898,8 @@ export type DashboardQuality = {
     outcome: string;
     /** Lesbare Herkunft (AlertAuditRecord.source_name); null bei alten Records. */
     source_name?: string | null;
+    /** Woher `priority` kommt: Analysewert, per Konstruktion keiner (Webhook) oder unbekannt. */
+    priority_basis?: "analysis" | "webhook" | "unknown" | null;
   }>;
   generated_at: string;
 };

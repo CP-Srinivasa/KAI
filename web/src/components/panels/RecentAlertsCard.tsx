@@ -43,8 +43,29 @@ function priorityBand(p: number): { label: string; tone: "muted" | "info" | "war
   return { label: "niedrig", tone: "muted" };
 }
 
-function PriorityCell({ p }: { p: number | null | undefined }) {
+// Audit P0-4 (17.09.): TradingView-Webhooks tragen per Konstruktion keinen
+// Analysewert. "—" sah fuer 77 % der Zeilen wie ein Datenfehler aus; jetzt
+// steht dort, dass die Skala fuer diese Quelle nicht gilt.
+const WEBHOOK_PRIORITY_TOOLTIP =
+  "Webhook-Signal: TradingView liefert keinen Analysewert, deshalb gibt es hier " +
+  "keine Prioritaet 1–10. Absichtlich nicht geschaetzt — ein Platzhalter wuerde " +
+  "die Trefferquote je Prioritaet verfaelschen.";
+
+function PriorityCell({
+  p,
+  basis,
+}: {
+  p: number | null | undefined;
+  basis?: "analysis" | "webhook" | "unknown" | null;
+}) {
   if (p == null) {
+    if (basis === "webhook") {
+      return (
+        <Badge tone="muted" title={WEBHOOK_PRIORITY_TOOLTIP}>
+          <span>Webhook</span>
+        </Badge>
+      );
+    }
     return <span className="text-fg-subtle" title="Keine Prioritaet im Datensatz">—</span>;
   }
   const band = priorityBand(p);
@@ -169,7 +190,7 @@ function RecentAlertsCardImpl({ data, state, generatedAt }: Props) {
                     <SentimentBadge s={a.sentiment} />
                   </td>
                   <td className="py-2 pr-3">
-                    <PriorityCell p={a.priority} />
+                    <PriorityCell p={a.priority} basis={a.priority_basis} />
                   </td>
                   <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">
                     {a.assets.length ? a.assets.join(", ") : "—"}

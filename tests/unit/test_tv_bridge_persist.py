@@ -188,3 +188,23 @@ def test_bare_unsupported_ticker_is_still_skipped(tmp_path: Path) -> None:
     assert counts["written"] == 0
     assert counts["skipped_unsupported"] == 1
     assert not audit.exists() or audit.read_text(encoding="utf-8").strip() == ""
+
+
+def test_bridge_never_invents_a_priority(tmp_path: Path) -> None:
+    """Audit P0-4 (17.09.): der Webhook liefert keinen Analysewert. Die Bridge
+    darf keine Prioritaet setzen -- ``hold_metrics`` korreliert ``priority`` mit
+    Treffern, ein Platzhalter wuerde diese Kennzahl still verfaelschen."""
+    pending = tmp_path / "pending.jsonl"
+    audit = tmp_path / "audit.jsonl"
+    _write_pending(pending, [_event("e1"), _event("e2", note="breakout")])
+
+    counts = persist_tv_events_as_alert_audits(
+        tv_pending_path=pending,
+        alert_audit_path=audit,
+    )
+
+    assert counts["written"] == 2
+    for line in audit.read_text(encoding="utf-8").strip().splitlines():
+        row = json.loads(line)
+        assert row["channel"] == "tradingview_webhook"
+        assert "priority" not in row

@@ -1,3 +1,12 @@
+## 2026-09-17 - Dashboard: Prioritaet bei TradingView-Alerts ehrlich als "Webhook" (System-Audit P0-4)
+
+Der Audit-Befund lautete "`priority` fehlt bei 0/3301 TradingView-Audit-Zeilen". Das Fehlen ist kein Datenverlust:
+`priority` ist ein Analysewert (1-10), der Webhook liefert keinen, und `hold_metrics` korreliert Prioritaet mit
+Treffern -- ein gesetzter Platzhalter wuerde diese Kennzahl faelschen. Statt einen Wert zu erfinden, liefert der
+Vertrag der Karte "Letzte Directional Alerts" jetzt `priority_basis` (`analysis` / `webhook` / `unknown`), und die
+Karte zeigt fuer Webhook-Zeilen ein Badge "Webhook" mit Erklaerung statt eines stummen Strichs (am Pi 2192 von
+3000 juengsten Zeilen). Ein Guard-Test pinnt, dass die Bridge nie eine Prioritaet schreibt.
+
 ## 2026-09-17 - Dashboard-Telemetrie zaehlt jeden LLM-Aufruf einmal (System-Audit P0-3)
 
 `llm_telemetry_summary` (Dashboard-Block `telemetry`) zaehlte die aeussere Kettenzeile (`chain_position=-1`) und die
