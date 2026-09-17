@@ -1,3 +1,15 @@
+## 2026-09-17 - Lightning: SCB-Erzeuger auf dem Pi ueber lnd-REST (System-Audit P0-1, Sprint S-0917 C3)
+
+Der SCB-Monitor pruefte eine lokale Kopie, die auf dem Pi nie jemand erzeugte; das einzige Off-Node-SCB lag 74 Tage
+alt auf dem Laptop, dessen Pull seit der Key-Rotation vom 31.08. scheiterte. Neu: `app/lightning/scb_export.py`
+holt das Multi-Channel-Backup ueber die lnd-REST-API mit dem Read-only-Macaroon (`offchain:read`, kein SSH zum
+Node, Entscheidung "Weg A" unberuehrt) und laesst es vom Node verifizieren. Weil jeder Export neu verschluesselt
+ist, schreibt er nur bei geaenderter Kanalmenge neu (sonst nur mtime) -- sonst meldete der Monitor stuendlich
+`changed`. Laeuft als `ExecStartPre` im bestehenden `kai-ln-scb-monitor.service`; ein gescheiterter Export macht
+die Unit `failed` (OnFailure-Alarm). Idle ohne `APP_LN_SCB_PATH`. Probelauf gegen den echten Node 17.09.: schreibt
+757 B (0600), bestaetigt ohne Neuschreiben, ersetzt eine beschaedigte Kopie. Aktivierung (Pfad in der `.env`,
+Timer `enable`) ist ein eigener Betriebsschritt.
+
 ## 2026-09-17 - Dashboard: Prioritaet bei TradingView-Alerts ehrlich als "Webhook" (System-Audit P0-4)
 
 Der Audit-Befund lautete "`priority` fehlt bei 0/3301 TradingView-Audit-Zeilen". Das Fehlen ist kein Datenverlust:
