@@ -45,7 +45,8 @@ Send-Gate) gegated.
 | `kai-onchain.macaroon` | `APP_LN_ONCHAIN_MACAROON_*` | `onchain` | `onchain:write` — ausschließlich Withdraw; nur baken, wenn der Pfad wirklich geöffnet wird |
 | `kai-channel.macaroon` | `APP_LN_CHANNEL_MACAROON_*` | `channel` | `offchain:write onchain:write` — Channel-Operationen, separat widerrufbar, standardmäßig nicht provisioniert |
 
-- **`kai-cockpit.macaroon`** (154 B, gebacken 2026-07-01) liegt auf dem Pi unter `kai-secrets/lnd/`, ist aber in keiner `.env`-Variable und in keinem Code-Pfad referenziert; Scopes am Node nicht auffindbar (nicht im Standard-Macaroon-Verzeichnis). **Operator-Entscheid offen:** dokumentieren oder vom Pi entfernen. Gleiches gilt für den Ablageort der Scopes von `kai-payment.macaroon` (Pi: 91 B, 2026-08-06).
+- **`kai-cockpit.macaroon` — ENTFERNT 2026-09-17 (Operator-Entscheid).** 154 B, gebacken 2026-07-01 für die erste Armierung der Wert-Schicht (laut Hinweistext in `web/src/pages/Node.tsx`: `invoices` + `channel-write`, erster Channel 400k über diesen Pfad). Vor dem Löschen read-only geprüft: keine systemd-Unit, kein Broker, kein Cron, keine `.env`-Variable (auch nicht in den Sicherungen), kein Code-Pfad, kein Skript, kein offener Handle — einzige Erwähnung ist der historische UI-Text. **Nicht ersetzt**, keine neue Datei. Die Datei-Entfernung widerruft das Macaroon am Node NICHT; ein Widerruf der Root-Key-ID würde alle Macaroons mit derselben ID (typisch 0, also auch `readonly`/`invoice`) mit ungültig machen und ist deshalb nur nach Prüfung am Node vorzunehmen.
+- Ablageort und Scopes von `kai-payment.macaroon` (Pi: 91 B, 2026-08-06) sind am Node nicht im Standard-Macaroon-Verzeichnis auffindbar — offen.
 - **`admin.macaroon`** verlässt die Node NIE.
 - **Kein Write-Fallback:** `macaroon_credentials()` promotet ein fehlendes
   Capability-Credential niemals auf das Read-Credential. Ein nicht provisionierter

@@ -84,6 +84,7 @@ Spalten: ID(s) der Agenten-Dropboxen · Ebene · Beleg · Wirkung · Maßnahme �
 | P0-1 SCB 74 d alt, kein Erzeuger | **erledigt** — Off-Node-SCB vom Node verifiziert und byte-identisch zur Live-Datei, Laptop-Pull seit 16.09. 18:33Z wieder grün, alter Key-Eintrag am Node entfernt; Erzeuger auf dem Pi gebaut (Aktivierung offen) | §Nachtrag unten, PR #1003 |
 | P0-2 `/health`-Flut 20/s | **behoben und deployt** — `useBackendHealth` stabil, Rate nach Deploy 0/10 s | #991, Runtime `6659f7ae` seit 17.09. 05:26Z |
 | P0-3 Kostenverdopplung Telemetrie | **behoben (gemergt, nicht deployt)** — Budget und `/health/ai` entdoppelten bereits seit #970; einziger Produktivleser ohne Entdopplung war die Dashboard-Telemetrie (338 statt 185 Aufrufe, Fehlerquote halbiert) | #998 |
+| P1-5 `kai-cockpit.macaroon` undokumentiert | **erledigt 17.09.** — Referenzsuche leer (nur historischer UI-Text), Datei vom Operator entfernt, nicht ersetzt; kein Widerruf am Node | `docs/lightning_macaroon_matrix.md` |
 | P0-4 `priority` fehlt bei TV-Alerts | **behoben (gemergt, nicht deployt)** — kein Datenverlust: der Webhook trägt keinen Analysewert; ein Platzhalter hätte `hold_metrics` gefälscht. Anzeige jetzt „Webhook" über `priority_basis` | #999 |
 
 ---
