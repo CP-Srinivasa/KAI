@@ -1,3 +1,12 @@
+## 2026-09-17 - Lightning: `kai-cockpit.macaroon` vom Pi entfernt (Audit P1-5, Operator-Entscheid)
+
+Das Macaroon (gebacken 01.07., `invoices` + `channel-write`) war seit der ersten Armierung ungenutzte
+Credential-Flaeche. Referenzsuche vor dem Loeschen read-only leer (Units, Broker, Cron, `.env` und Sicherungen,
+Code, Skripte, Handles); die einzige Erwaehnung ist der historische Hinweistext in `web/src/pages/Node.tsx`.
+Operator hat die Datei entfernt, nichts ersetzt; Dienste, `/health`, Node-Panel und Reconcile danach unveraendert
+gruen. Korrektur zur PR-Beschreibung von #1004: dort hiess es, `Node.tsx` erwaehne das Macaroon nicht -- das war falsch
+(Suche war case-sensitiv). Kein Widerruf am Node (geteilte Root-Key-ID).
+
 ## 2026-09-17 - Doku: System-Audit 16.09., Kontrastmessung, Risikoregister R8-R10, Korrekturen (Sprint S-0917 C6)
 
 Der Audit-Bericht (`docs/audit/kai_system_audit_20260916.md`, mit P0-Stand 17.09.) und die WCAG-Messung der
