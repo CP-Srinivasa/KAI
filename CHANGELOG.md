@@ -1,3 +1,12 @@
+## 2026-09-17 - Ops: Deploy-Verifikation wartet auf gesunde Dienste statt fester 20-s-Pause
+
+`scripts/pi_release_deploy.sh` schlief nach den Restarts fest 20 s und pruefte dann einmal. Beim Deploy `ff93050c`
+war /health in diesem Moment noch leer -> `DEPLOY_NOT_VERIFIED`/Exit 1 fuer einen gesunden Deploy (manuell
+nachgeprueft); bei `d27e708d` reichte es nur knapp (`uptime_s` 3,86). Jetzt wartet das Skript ueber
+`scripts/lib/pi_wait_until.sh`, bis dieselben Kriterien (current, runtime_commit, drift 0, jede Unit aktiv im neuen
+Release, 0 failed) erfuellt sind -- hoechstens `KAI_PI_VERIFY_TIMEOUT_S` (Default 180 s) -- und berichtet danach
+einmal ausfuehrlich wie bisher.
+
 ## 2026-09-17 - Lightning: `kai-cockpit.macaroon` vom Pi entfernt (Audit P1-5, Operator-Entscheid)
 
 Das Macaroon (gebacken 01.07., `invoices` + `channel-write`) war seit der ersten Armierung ungenutzte
