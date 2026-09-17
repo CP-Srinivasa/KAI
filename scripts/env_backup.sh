@@ -12,7 +12,8 @@
 #   scripts/env_backup.sh --prune-only nur kuerzen
 #
 # Umgebung:
-#   KAI_ENV_BACKUP_ROOT  Verzeichnis mit der .env (Default: Repo-Wurzel)
+#   KAI_ENV_BACKUP_ROOT  Verzeichnis mit der .env (Default: Repo-Wurzel; ist die
+#                        .env dort ein Symlink, gilt der Ordner ihres Ziels)
 #   KAI_ENV_BACKUP_KEEP  Anzahl behaltener Sicherungen (Default 3, mindestens 1)
 #
 # Exit: 0 ok · 2 Aufruf/Konfiguration falsch · 3 keine .env · 4 Kopie gescheitert
@@ -21,6 +22,12 @@
 set -uo pipefail
 
 ROOT="${KAI_ENV_BACKUP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Im Release (/home/kai/current) ist die .env ein Symlink auf den Checkout.
+# Gesichert und gekuerzt wird neben dem ZIEL, nie im Release-Verzeichnis
+# (Vorfall 2026-09-17: Klartextkopie landete in releases/<sha>/).
+if [[ -L "$ROOT/.env" ]]; then
+    ROOT="$(dirname "$(readlink -f "$ROOT/.env")")"
+fi
 KEEP="${KAI_ENV_BACKUP_KEEP:-3}"
 ARG="${1:-}"
 
