@@ -33,6 +33,12 @@ Environment=PYTHONIOENCODING=utf-8
 ExecStart=/home/kai/current/.venv/bin/python -m app.cli.main trading runtime-exec --unit %n --repo /home/kai/current -- /home/kai/current/.venv/bin/python -m app.cli.main trading operator-signal-entry-watch --duration-seconds 55 --poll-interval-seconds 5
 Restart=always
 RestartSec=5
+# Audit 16.09. P1-10 (S-0917 C4): ohne Zeitgrenze bleibt ein Haenger in run_tick()
+# unsichtbar — die Deadline des Watchers greift erst NACH dem await. Gemessen
+# (Pi, 7 Tage bis 17.09., n=8 281 Laeufe): p50 63,7 s, p99 68,3 s, Maximum 81,1 s.
+# 120 s liegt rund 50 % ueber dem Maximum; ein Abbruch endet als Fehlschlag und
+# loest OnFailure aus — genau das Signal, das bisher fehlte.
+RuntimeMaxSec=120
 StandardOutput=journal
 StandardError=journal
 
