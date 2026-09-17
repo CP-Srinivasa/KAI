@@ -178,18 +178,24 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
         <span className="text-sm font-semibold tracking-tight text-fg truncate">{t(CONTEXT[route])}</span>
       </div>
 
+      {/* min-w-0: der Suchknopf ist das einzige flexible Element der Leiste und
+          muss unter seine Inhaltsbreite schrumpfen koennen — sonst lief der
+          rechte Cluster (shrink-0) bei 1280 px mit Scrollbar 8 px ueber den Rand
+          (CDP-Messung 17.09. gegen 74b33cd3). Zwischen xl und 2xl zusaetzlich
+          ohne ⌘K-Hinweis und mit kleinem rechten Innenabstand: dort stand der
+          Knopf sonst schon auf seiner Padding-Untergrenze von 98 px. */}
       <button
         type="button"
         onClick={() => window.dispatchEvent(new CustomEvent("kai:command-palette:open"))}
         className={cn(
-          "relative hidden lg:flex items-center ml-4 flex-1 max-w-md h-8 pl-8 pr-16 rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg-subtle hover:bg-bg-1 hover:border-line-strong transition-colors text-left",
+          "relative hidden lg:flex items-center ml-4 flex-1 min-w-0 max-w-md h-8 pl-8 pr-16 xl:pr-3 2xl:pr-16 rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg-subtle hover:bg-bg-1 hover:border-line-strong transition-colors text-left",
           FOCUS_RING,
         )}
         aria-label={t("topbar.search")}
       >
         <Search size={14} className="absolute left-2.5 text-fg-subtle" />
         <span className="truncate">{t("topbar.search")}</span>
-        <kbd className="absolute right-2 text-2xs font-mono text-fg-subtle border border-line-subtle bg-bg-1 rounded-xs px-1 py-0.5">
+        <kbd className="absolute right-2 xl:hidden 2xl:block text-2xs font-mono text-fg-subtle border border-line-subtle bg-bg-1 rounded-xs px-1 py-0.5">
           ⌘K
         </kbd>
       </button>
