@@ -10,6 +10,7 @@ CONTRACT_KEYS = {
     "priority",
     "assets",
     "source_name",
+    "priority_basis",
     "dispatched_at",
     "outcome",
 }
@@ -51,3 +52,28 @@ def test_missing_source_name_is_none_not_absent() -> None:
 
 def test_empty_input_yields_empty_list() -> None:
     assert recent_alert_rows([], {}) == []
+
+
+def test_priority_basis_separates_analysis_webhook_and_unknown() -> None:
+    """Audit P0-4: TradingView-Webhooks tragen KEINE Prioritaet -- by design.
+
+    ``priority`` ist ein Analysewert (1-10); ``hold_metrics`` korreliert ihn mit
+    Treffern. Ein erfundener Wert fuer TV wuerde diese Kennzahlen faelschen.
+    Das Dashboard soll deshalb "nicht anwendbar (Webhook)" von "fehlt" trennen,
+    statt fuer 77 % der Zeilen einen stummen Strich zu zeigen.
+    """
+    records = [
+        {"document_id": "news-1", "channel": "telegram", "priority": 8},
+        {"document_id": "tv:tvsig_1", "channel": "tradingview_webhook"},
+        {"document_id": "old-1", "channel": "telegram"},
+        {"document_id": "tv:tvsig_2", "channel": "tradingview_webhook", "priority": 7},
+    ]
+    rows = {r["doc_id"]: r for r in recent_alert_rows(records, {})}
+
+    assert rows["news-1"]["priority_basis"] == "analysis"
+    assert rows["tv:tvsig_1"]["priority_basis"] == "webhook"
+    assert rows["tv:tvsig_1"]["priority"] is None
+    assert rows["old-1"]["priority_basis"] == "unknown"
+    # Traegt eine Webhook-Zeile doch einen Wert, wird er gezeigt, nicht versteckt.
+    assert rows["tv:tvsig_2"]["priority_basis"] == "analysis"
+    assert rows["tv:tvsig_2"]["priority"] == 7
