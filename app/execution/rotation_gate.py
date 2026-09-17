@@ -10,10 +10,9 @@ ist der fehlende Konsument, bewusst dreistufig und route-scoped:
   ``rotation_gate_would_block``-Audit-Event (Counterfactual-Zählung für die
   Prä-Reg ``rotation_gated_universe_v1``, Phase F).
 * ``enforce`` — blockt Öffnungen auf ``archived``-Symbolen, aber NUR für
-  Routen in ``asset_rotation_gate_routes``. **H1/H2-Doktrin:** die Prä-Regs
-  ``fd6f5f7842f49244``/``0c7ead764621dd17`` messen die versiegelte
-  ``technical_paper``-Population — diese Route darf bis zu deren Abschluss
-  NIE im Enforce-Scope stehen (Zweig-A-Entscheid des Operators 08-08).
+  Routen in ``asset_rotation_gate_routes``. **H1/H2-Doktrin (erledigt):** die
+  Prä-Regs ``fd6f5f7842f49244``/``0c7ead764621dd17`` sind abgeschlossen (H1
+  FAILED, H2 CLOSED_UNMEASURABLE); ``technical_paper`` ist seit D-279 abgeschaltet.
 
 Fail-open-Grundsätze: fehlender/korrupter State blockt nie; eine leere oder
 unbekannte ``source`` blockt nie (``rotation_gate_unattributed``-Event, nur
@@ -130,8 +129,8 @@ def evaluate_rotation_gate(
     in_scope = route.value in parse_gate_routes(routes_csv)
     if mode == "enforce" and in_scope:
         return RotationGateDecision("block", symbol, status, route.value, mode)
-    # shadow-Modus ODER Route außerhalb des Enforce-Scopes (z. B. die
-    # H1-versiegelte technical_paper-Route): Counterfactual-Event, Fill läuft.
+    # shadow-Modus ODER Route außerhalb des Enforce-Scopes: Counterfactual-
+    # Event, Fill läuft.
     return RotationGateDecision("would_block", symbol, status, route.value, mode)
 
 
