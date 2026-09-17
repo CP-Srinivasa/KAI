@@ -1304,7 +1304,7 @@ async def get_daily_operator_summary(
     """
     from app.alerts.audit import load_alert_audits, load_outcome_annotations
     from app.alerts.blocked_audit import load_blocked_alerts
-    from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles
+    from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles_since
 
     now_utc = (now or datetime.now(UTC)).astimezone(UTC)
     cutoff_24h = now_utc - timedelta(hours=24)
@@ -1407,7 +1407,7 @@ async def get_daily_operator_summary(
             label="Loop audit",
             allowed_suffixes=frozenset({".jsonl"}),
         )
-        cycles = load_trading_loop_cycles(loop_path)
+        cycles = load_trading_loop_cycles_since(loop_path, cutoff_24h)
         cycle_count_today_int = 0
         breakdown: dict[str, int] = {}
         breakdown_total = 0

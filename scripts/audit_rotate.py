@@ -27,8 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -45,6 +46,12 @@ class RotationRule:
     max_bytes: int
     keep_lines: int
     rationale: str
+    #: Zeitfenster statt fester Zeilenzahl (C5, 17.09.): bleiben alle Zeilen der
+    #: letzten ``keep_hours`` im Live-File, hoechstens ``keep_lines``. Eine reine
+    #: Zeilenzahl haengt an der Schreibrate — bei der /health-Flut (P0-2, ~44 000
+    #: Zeilen/h) deckten 20 000 Zeilen nur 27 Minuten.
+    keep_hours: float | None = None
+    timestamp_key: str | None = None
 
 
 # Conservative allowlist. A stream earns its place here ONLY when every known
@@ -82,17 +89,17 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
     RotationRule(
         filename="api_request_audit.jsonl",
         max_bytes=20 * _MB,
-        keep_lines=20_000,
-        rationale="HTTP request audit — the ONLY stream with zero programmatic "
-        "readers (verified 2026-07-30: written by "
-        "RequestGovernanceMiddleware._write_audit, otherwise referenced only in "
-        "scripts/pi_transfer_artifacts.sh as a backup target; no endpoint, report, "
-        "verdict or learning path parses it). Was the largest artifact on the Pi at "
-        "127MB and the fastest-growing, since it logs EVERY request while the "
-        "dashboard polls ~15 panels. Safe against the writer: it opens with "
-        "open('a') per record and closes again, so a rename is picked up on the next "
-        "append — no held handle, no restart needed. 20k lines keeps recent forensics "
-        "in the live file; older history stays in archive/",
+        keep_lines=50_000,
+        keep_hours=168,
+        timestamp_key="timestamp_utc",
+        rationale="HTTP request audit. Programmatic reader (corrected 2026-09-17): "
+        "app/research/back_edge_evaluator.py reads the LIVE file (not archive/) "
+        "for dashboard actions inside REACTION_WINDOW_HOURS=24 — so the live tail "
+        "must cover a time window, not a line count: during the /health flood "
+        "(P0-2, 16.09., ~44k lines/h) the old 20k-line tail covered 27 minutes. "
+        "7 days (>= 7x the reaction window), capped at 50k lines so a new flood "
+        "cannot turn the live file into the archive. Safe against the writer: "
+        "open('a') per record, a rename is picked up on the next append",
     ),
 )
 
@@ -115,6 +122,8 @@ def rotate_stream(
     archive_dir: Path,
     apply: bool,
     now: datetime | None = None,
+    keep_hours: float | None = None,
+    timestamp_key: str | None = None,
 ) -> RotationResult:
     """Rotate one stream if oversized. Archive-first, tail-preserving, atomic-ish:
 
@@ -142,25 +151,31 @@ def rotate_stream(
             size_bytes=size,
         )
 
+    cutoff = None
+    if keep_hours is not None and timestamp_key:
+        cutoff = ((now or datetime.now(UTC)) - timedelta(hours=keep_hours)).isoformat()
     with path.open("r", encoding="utf-8", errors="replace") as fh:
-        tail: list[str] = []
+        tail: deque[str] = deque(maxlen=keep_lines)
         total_lines = 0
         for line in fh:
             total_lines += 1
+            if cutoff is not None and _stamp_before(line, timestamp_key or "", cutoff):
+                # Append-only und zeitsortiert: alles bisher Gesammelte ist
+                # ebenfalls aelter als das Fenster.
+                tail.clear()
+                continue
             tail.append(line)
-            if len(tail) > keep_lines:
-                tail.pop(0)
 
     # No-shrink guard (calibration finding, first live run 2026-06-11): when the
     # tail covers the WHOLE file, rotating would archive a full copy every run
     # without shrinking the live file — archive bloat instead of hygiene. Skip
     # and tell the operator to lower keep_lines for this stream.
-    if total_lines <= keep_lines:
+    if len(tail) >= total_lines:
         return RotationResult(
             path.name,
             False,
             f"tail_covers_whole_file:lines={total_lines}<=keep_lines={keep_lines}"
-            " — lower keep_lines for this stream",
+            " — lower keep_lines/keep_hours for this stream",
             size_bytes=size,
         )
 
@@ -178,6 +193,15 @@ def rotate_stream(
     )
 
 
+def _stamp_before(line: str, key: str, cutoff: str) -> bool:
+    """True nur bei lesbarem Zeitstempel VOR ``cutoff`` — Unlesbares bleibt."""
+    try:
+        stamp = json.loads(line).get(key)
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(stamp, str) and stamp < cutoff
+
+
 def run(artifacts_dir: Path, *, apply: bool) -> list[RotationResult]:
     archive_dir = artifacts_dir / "archive"
     results = []
@@ -188,6 +212,8 @@ def run(artifacts_dir: Path, *, apply: bool) -> list[RotationResult]:
             keep_lines=rule.keep_lines,
             archive_dir=archive_dir,
             apply=apply,
+            keep_hours=rule.keep_hours,
+            timestamp_key=rule.timestamp_key,
         )
         results.append(result)
         logger.info(

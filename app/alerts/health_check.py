@@ -149,6 +149,11 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     "kai_audit.jsonl": 3000,  # groesster Abstand 24,0 h
     "timer_health_audit.jsonl": 3000,  # groesster Abstand 24,0 h
     "onchain_fee_shadow.jsonl": 6480,  # groesster Abstand 52,2 h
+    # C5 (17.09.): Systemstroeme, siehe freshness_exemptions. llm_telemetry groesster
+    # Abstand 142 min (volle Historie ab 11.07.); api_request_audit nach dem
+    # Flut-Fix #991 2 min — 60 min decken Neustart/Reboot.
+    "llm_telemetry.jsonl": 300,
+    "api_request_audit.jsonl": 60,
 }
 
 # Der Dokumenten-Eingang (RSS/OKX/NewsData) schreibt in KEINE Datei, sondern
@@ -158,26 +163,12 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
 # Abstand 31 min. 240 min ist rund das Achtfache — spaet, aber nicht flatternd.
 DOCUMENT_INGEST_MAX_AGE_MIN = 240
 
-_INGRESS_COMPONENTS: frozenset[str] = frozenset(
-    {"tradingview_ingress", "liquidation_ingress", "document_ingest"}
+from app.alerts.freshness_exemptions import (  # noqa: E402 — re-export, Aufrufer unveraendert
+    _INGRESS_COMPONENTS,
+    _PROBE_RELIABILITY_EXEMPT,
+    SYSTEM_STREAM_COMPONENTS,
 )
 
-# Komponenten, deren Veralterung NICHTS ueber die Verlaesslichkeit der Probe
-# aussagt und darum `data_sources_stale` (und damit --exit-on-stale) nicht
-# ausloesen darf. Zwei Faelle, ein Prinzip:
-#   * Eingangsstroeme  — die Quelle schweigt (Systembefund).
-#   * Ereignisgetriebene Ausgaenge — der Kanal hat nichts zu sagen gehabt.
-# `alert_audit` gehoerte bis 2026-08-18 faelschlich in die Abbruch-Kategorie.
-# Folge (Pi-Journal): 66 Abbrueche in 14 Tagen mit "stale data", WAEHREND im
-# selben Lauf cycles=1111..1117 standen und `trading_loop_audit` (30-min-
-# Schwelle, taktgetrieben) still blieb — die Probe las beweisbar Live-Daten.
-# Jeder Abbruch verschluckte den ganzen Report und loeste 5-Minuten-Watchdog-
-# Spam aus: der Waechter verstummte genau dann, wenn er melden sollte.
-#
-# Was den Abbruch WEITERHIN ausloest, ist der taktgetriebene Beweis: schreibt
-# `trading_loop_audit` (~1200 Zyklen/Tag) nicht mehr, liest die Probe wirklich
-# gespiegelte/veraltete Artefakte. Das ist die Frage, die das Flag beantwortet.
-_PROBE_RELIABILITY_EXEMPT: frozenset[str] = _INGRESS_COMPONENTS | frozenset({"alerts"})
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
 # Wieviel vom Ende der Audit-Datei gelesen wird, um den letzten ANGENOMMENEN
@@ -241,6 +232,8 @@ _G6_TASK6_WATCHED: tuple[tuple[str, str], ...] = (
     ("kai_audit.jsonl", "kai_audit"),
     ("timer_health_audit.jsonl", "timer_health_audit"),
     ("onchain_fee_shadow.jsonl", "onchain_fee_shadow"),
+    ("llm_telemetry.jsonl", "llm_telemetry"),
+    ("api_request_audit.jsonl", "api_request_audit"),
 )
 
 _AUDIT_STREAM_SCHEMA_FILES: tuple[tuple[AuditStreamName, str], ...] = (
@@ -432,6 +425,8 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
                     "abgelaufene TradingView-Alerts), NICHT die "
                     "Pi-Synchronisation"
                 )
+            elif component in SYSTEM_STREAM_COMPONENTS:
+                hint = "Schreiber still — kai-server/LLM-Kette pruefen, NICHT Pi-Sync"
             elif component in _PROBE_RELIABILITY_EXEMPT:
                 # Ereignisgetriebener Ausgang: Stille ist eine Aussage ueber
                 # den Kanal, nicht ueber die Probe. Den Operator hier auf

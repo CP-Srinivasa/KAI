@@ -13,7 +13,7 @@ sein, und wo das Fenster nicht reicht, muss ungekuerzt nachgelesen werden.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.alerts.health_check import CYCLE_PROBE_TAIL, _load_cycles_for_window
@@ -112,3 +112,28 @@ def test_tail_is_measured_against_the_observed_daily_rate() -> None:
     (2.178 am dichtesten von 149 Tagen; Median 1.126)."""
     assert CYCLE_PROBE_TAIL == 10_000
     assert CYCLE_PROBE_TAIL / 2178 > 4.0
+
+
+def test_window_loader_loses_no_cycle_inside_the_window(tmp_path: Path) -> None:
+    """C5 (17.09.): Briefing und /status lesen nur noch das Fenster. Zusage: nach
+    dem exakten Fensterfilter des Aufrufers sind die Saetze identisch mit dem
+    Vollread — auch fuer eine Zeile mit abweichendem Offset-Format an der Grenze."""
+    from app.orchestrator.trading_loop_audit_io import load_trading_loop_cycles_since
+
+    path = tmp_path / "trading_loop_audit.jsonl"
+    # 5 Tage im Minutentakt: der Fensterleser muss wirklich rueckwaerts abbrechen.
+    _write_cycles(path, 5 * 24 * 60)
+    cutoff = NOW - timedelta(hours=24)
+    boundary = (cutoff + timedelta(minutes=30)).astimezone(timezone(timedelta(hours=-5)))
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"cycle_id": "offset", "started_at": boundary.isoformat()}) + "\n")
+
+    def _inside(rows: list[dict[str, object]]) -> list[object]:
+        return [
+            r["cycle_id"] for r in rows if datetime.fromisoformat(str(r["started_at"])) >= cutoff
+        ]
+
+    windowed = load_trading_loop_cycles_since(path, cutoff)
+    assert _inside(windowed) == _inside(load_trading_loop_cycles(path))
+    assert "offset" in _inside(windowed)
+    assert len(windowed) < 3 * 24 * 60  # nicht still wieder die volle Historie
