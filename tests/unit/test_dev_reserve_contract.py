@@ -218,7 +218,24 @@ def test_opencode_darf_weder_mergen_noch_deployen_noch_geheimnisse_lesen() -> No
 
 # --- der Start, ausgefuehrt --------------------------------------------------
 
-_BASH = shutil.which("bash")
+def _find_bash() -> str | None:
+    """Prefer Git Bash on Windows; ``System32/bash.exe`` is a WSL launcher.
+
+    The path adapter below intentionally emits MSYS paths (``/c/...``). Feeding
+    those to WSL made the two executable contract tests fail before the script
+    under test was reached.
+    """
+    if os.name == "nt":
+        for candidate in (
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git/bin/bash.exe",
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git/usr/bin/bash.exe",
+        ):
+            if candidate.is_file():
+                return str(candidate)
+    return shutil.which("bash")
+
+
+_BASH = _find_bash()
 _ALLE_DEV_NAMEN = (
     "LITELLM_DEV_MASTER_KEY",
     "KAI_DEV_LITELLM_ECONOMY_MODEL",
