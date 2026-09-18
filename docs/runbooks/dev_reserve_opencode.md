@@ -33,7 +33,7 @@ bewusst getrennte Oberflächen:
   Cloud-Reserve; Hermes' vorgeschaltete Key-/Kostenprüfung benötigt eine
   LiteLLM-Datenbank und ist mit dem bewusst datenbanklosen Dev-Proxy inkompatibel.
 - **Kimi + Kontextpaket:** öffnet Kimi und erzeugt/markiert
-  `%LOCALAPPDATA%\KAI\DeveloperHub\KAI_CONTEXT_FOR_KIMI.md` zum Anhängen. Kimi
+  `%USERPROFILE%\.kai\developer-hub\KAI_CONTEXT_FOR_KIMI.md` zum Anhängen. Kimi
   bleibt eine Beratungsoberfläche; garantierter lokaler Schreibzugriff besteht
   nur über OpenCode oder Hermes.
 
@@ -44,7 +44,7 @@ Handoff-Regel unten erhalten.
 ### Nachweisbare Übergaben
 
 Die Hub-Oberfläche schreibt strukturierte Übergaben nach
-`%LOCALAPPDATA%\KAI\DeveloperHub\handoffs\ledger.jsonl`. Jeder Beleg enthält
+`%USERPROFILE%\.kai\developer-hub\handoffs\ledger.jsonl`. Jeder Beleg enthält
 Agenten, Auftrag, Branch, exakten HEAD, Worktree-Status, Erledigtes, Offenes,
 Annahmen, nächsten Schritt und Tests. SHA-256 und `previous_sha256` bilden eine
 append-only Prüfkette. Das weist nachträgliche Veränderung und Reihenfolge nach,

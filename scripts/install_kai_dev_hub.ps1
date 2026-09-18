@@ -10,8 +10,15 @@ if (-not (Test-Path -LiteralPath $source)) {
     throw "KAI Developer Hub fehlt: $source"
 }
 
-$pythonw = (Get-Command pythonw.exe -ErrorAction Stop).Source
-$installDir = Join-Path $env:LOCALAPPDATA 'KAI\DeveloperHub'
+$pythonExe = (& python -c 'import sys; print(sys.executable)').Trim()
+if (-not $pythonExe) {
+    throw 'Python-Interpreter konnte nicht aufgelöst werden.'
+}
+$pythonw = Join-Path (Split-Path -Parent $pythonExe) 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $pythonw)) {
+    throw "pythonw.exe fehlt neben dem aktiven Interpreter: $pythonw"
+}
+$installDir = Join-Path $env:USERPROFILE '.kai\developer-hub\app'
 $installedScript = Join-Path $installDir 'kai_dev_hub.py'
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 Copy-Item -LiteralPath $source -Destination $installedScript -Force

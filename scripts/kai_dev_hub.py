@@ -36,7 +36,9 @@ DEV_MODELS = {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
 REMOTE_ENV = "/home/kai/ai_analyst_trading_bot/.env"
 REMOTE_PROXY = "/home/kai/current/scripts/dev_reserve.sh"
 REMOTE_PID_FILE = "/tmp/kai-dev-hub-proxy.pid"
-STATE_ROOT = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local")) / "KAI" / "DeveloperHub"
+STATE_ROOT = Path(
+    os.environ.get("KAI_DEV_HUB_HOME", Path.home() / ".kai" / "developer-hub")
+).expanduser()
 
 
 class HubError(RuntimeError):
