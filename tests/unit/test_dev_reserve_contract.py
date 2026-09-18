@@ -218,6 +218,7 @@ def test_opencode_darf_weder_mergen_noch_deployen_noch_geheimnisse_lesen() -> No
 
 # --- der Start, ausgefuehrt --------------------------------------------------
 
+
 def _find_bash() -> str | None:
     """Prefer Git Bash on Windows; ``System32/bash.exe`` is a WSL launcher.
 

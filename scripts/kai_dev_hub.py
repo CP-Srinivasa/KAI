@@ -229,8 +229,7 @@ def start_cloud() -> str:
         remote_open = _remote_proxy_is_open()
         no_command = ["-N"] if remote_open else []
         remote_command = (
-            f"echo $$ > {shlex.quote(REMOTE_PID_FILE)}; "
-            f"exec bash {shlex.quote(REMOTE_PROXY)} proxy"
+            f"echo $$ > {shlex.quote(REMOTE_PID_FILE)}; exec bash {shlex.quote(REMOTE_PROXY)} proxy"
         )
         remote_args = [] if remote_open else ["sh", "-c", shlex.quote(remote_command)]
         log = (_state_dir() / "cloud-ssh.log").open("a", encoding="utf-8")
@@ -371,10 +370,10 @@ Worktree status:
 ```
 
 Read these files before advising or changing anything:
-1. `{repo / 'AGENTS.md'}`
-2. `{repo / 'CLAUDE.md'}`
-3. `{repo / 'docs/AI_HANDOFF.md'}`
-4. `{repo / 'ARCHITECTURE.md'}`
+1. `{repo / "AGENTS.md"}`
+2. `{repo / "CLAUDE.md"}`
+3. `{repo / "docs/AI_HANDOFF.md"}`
+4. `{repo / "ARCHITECTURE.md"}`
 
 Rules: do not read `.env` or credentials; do not deploy, merge, push, change
 trading gates, or work in the shared main checkout. For code changes use a new
