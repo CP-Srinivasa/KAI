@@ -304,6 +304,8 @@ def _cloud_inference_probe(key: str, route: str) -> dict[str, Any]:
 
 
 def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
+    if mode not in {"offline", "local-inference", "cloud"}:
+        raise HubError(f"Unbekannter Diagnosemodus: {mode}")
     report: dict[str, Any] = {
         "schema_version": 1,
         "hub_version": HUB_VERSION,
@@ -313,6 +315,11 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         "checks": {},
     }
     checks = report["checks"]
+    if mode in {"offline", "local-inference"} and not _port_open(OLLAMA_PORT):
+        try:
+            ensure_ollama()
+        except (HubError, OSError, subprocess.SubprocessError) as exc:
+            checks["ollama_start_error"] = str(exc)
     checks["opencode_installed"] = bool(_command("opencode.cmd") or _command("opencode"))
     checks["hermes_installed"] = bool(_command("hermes"))
     checks["kimi_installed"] = bool(_command("kimi"))
@@ -331,8 +338,6 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         checks["dev_routes"] = [
             _cloud_inference_probe(key, route) for route in ("kai-dev-economy", "kai-dev-code")
         ]
-    elif mode != "offline":
-        raise HubError(f"Unbekannter Diagnosemodus: {mode}")
     checks["offline_ready"] = all(
         checks[name]
         for name in (
@@ -858,6 +863,7 @@ def status(repo: Path) -> dict[str, Any]:
         "litellm_tunnel_online": _port_open(DEV_PORT),
         "handoff_chain_valid": verify_handoffs()[0],
         "handoff_state": handoff_state(repo),
+        "handoff_state_global": handoff_state(),
         "managed_workspaces": len(workflow.list_sessions(STATE_ROOT)),
         "last_independent_check": last_health["checked_at"] if last_health else "NOT_RUN",
         "last_independent_result": (

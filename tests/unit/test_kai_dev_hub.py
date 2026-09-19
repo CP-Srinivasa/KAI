@@ -194,6 +194,8 @@ def test_handoff_ack_requires_recipient_challenge_and_preserves_chain(
     )
     assert ack["handoff_sha256"] == receipt["payload_sha256"]
     assert hub.handoff_state(kai_repo)["pending"] == []
+    monkeypatch.setattr(hub, "_port_open", lambda _port: False)
+    assert hub.status(kai_repo)["handoff_state_global"]["acknowledged"] == 1
     assert hub.verify_handoffs()[0] is True
     with pytest.raises(hub.HubError, match="bereits bestätigt"):
         hub.acknowledge_handoff(
@@ -313,6 +315,48 @@ def test_local_diagnostics_survive_cloud_and_pi_outage(
     assert report["checks"]["offline_ready"] is True
     assert report["checks"]["cloud_tunnel_open"] is False
     assert report["checks"]["local_inference"]["response_proven"] is True
+
+
+def test_offline_doctor_cold_starts_ollama_before_readiness(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    online = {"value": False}
+    monkeypatch.setattr(
+        hub,
+        "_port_open",
+        lambda port: online["value"] if port == hub.OLLAMA_PORT else False,
+    )
+    monkeypatch.setattr(hub, "ensure_ollama", lambda: online.update(value=True))
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.LOCAL_MODEL, hub.HERMES_LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_command", lambda _name: "installed")
+    monkeypatch.setattr(hub, "automation_inventory", lambda: {"available": True, "tasks": []})
+    monkeypatch.setattr(
+        hub, "_fetch_dev_key", lambda: pytest.fail("offline mode must never contact Pi")
+    )
+
+    report = hub.doctor(kai_repo, "offline")
+
+    assert online["value"] is True
+    assert report["checks"]["ollama_online"] is True
+    assert report["checks"]["offline_ready"] is True
+
+
+def test_offline_doctor_reports_failed_cold_start(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_port_open", lambda _port: False)
+    monkeypatch.setattr(
+        hub, "ensure_ollama", lambda: (_ for _ in ()).throw(hub.HubError("start failed"))
+    )
+    monkeypatch.setattr(hub, "_command", lambda _name: "installed")
+    monkeypatch.setattr(hub, "automation_inventory", lambda: {"available": True, "tasks": []})
+
+    report = hub.doctor(kai_repo, "offline")
+
+    assert report["checks"]["offline_ready"] is False
+    assert report["checks"]["ollama_start_error"] == "start failed"
 
 
 def test_new_task_branches_from_fresh_authoritative_remote(kai_repo: Path, tmp_path: Path) -> None:
