@@ -4,6 +4,58 @@ Gehört zu [ADR 0020](../adr/0020-developer-independence-reserve.md) und D-CORE-
 Alles hier ist Operator-Handarbeit. Nichts davon läuft ungefragt, nichts davon
 berührt `app/ai`, die Laufzeit-Fallback-Kette oder eine systemd-Unit.
 
+## Laptop: KAI Developer Hub (empfohlener Einstieg)
+
+Auf Windows bündelt der lokale Hub die bislang manuellen Schritte, ohne die
+Architekturgrenze aufzuweichen:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_kai_dev_hub.ps1
+python scripts/kai_dev_hub.py status
+python scripts/kai_dev_hub.py ui
+```
+
+Der Installer erzeugt **KAI Developer Hub** auf dem Desktop. Dort gibt es vier
+bewusst getrennte Oberflächen:
+
+- **OpenCode lokal (offline):** startet das vorhandene Ollama-Modell
+  `kai-qwen3-coder:30b-16k`; kein Internet und kein Anbieter-Schlüssel nötig.
+- **OpenCode Cloud-Reserve:** öffnet in einem neuen, auf `kai-dev-code`
+  gepinnten Prozess. Der Hub holt ausschließlich den Dev-Proxy-Schlüssel über
+  den bereits autorisierten SSH-Zugang in den Prozessspeicher, startet
+  Dev-Proxy plus Loopback-Tunnel und prüft den authentifizierten Modellkatalog.
+  Der Schlüssel wird weder in eine Laptop-Datei noch in ein Log geschrieben.
+- **Hermes lokal:** startet Hermes TUI mit dem KAI-Checkout als
+  Arbeitsverzeichnis und gepinntem lokalem Provider. Hermes nutzt wegen seiner
+  Mindestanforderung das vorhandene `kai-qwen3-coder:30b-64k`, lädt dadurch
+  `AGENTS.md` und arbeitet nicht mehr als projektloser Chat. Die globale Hermes-
+  Konfiguration wird nicht verändert. Der LiteLLM-Dev-Proxy bleibt OpenCodes
+  Cloud-Reserve; Hermes' vorgeschaltete Key-/Kostenprüfung benötigt eine
+  LiteLLM-Datenbank und ist mit dem bewusst datenbanklosen Dev-Proxy inkompatibel.
+- **Kimi + Kontextpaket:** öffnet Kimi und erzeugt/markiert
+  `%USERPROFILE%\.kai\developer-hub\KAI_CONTEXT_FOR_KIMI.md` zum Anhängen. Kimi
+  bleibt eine Beratungsoberfläche; garantierter lokaler Schreibzugriff besteht
+  nur über OpenCode oder Hermes.
+
+Der Hub schaltet niemals das Modell innerhalb einer schreibenden Sitzung um.
+Jeder Button startet eine neue, explizit gepinnte Sitzung. Damit bleibt die
+Handoff-Regel unten erhalten.
+
+### Nachweisbare Übergaben
+
+Die Hub-Oberfläche schreibt strukturierte Übergaben nach
+`%USERPROFILE%\.kai\developer-hub\handoffs\ledger.jsonl`. Jeder Beleg enthält
+Agenten, Auftrag, Branch, exakten HEAD, Worktree-Status, Erledigtes, Offenes,
+Annahmen, nächsten Schritt und Tests. SHA-256 und `previous_sha256` bilden eine
+append-only Prüfkette. Das weist nachträgliche Veränderung und Reihenfolge nach,
+nicht jedoch die reale Identität eines externen Modells.
+
+```powershell
+python scripts/kai_dev_hub.py handoff --from-agent OpenCode --to-agent Hermes `
+  --task "..." --completed "..." --open-items "..." --next-action "..." --tests "..."
+python scripts/kai_dev_hub.py verify-handoffs
+```
+
 ## 0. Voraussetzungen
 
 - Ein Release auf der Pi, das `config/litellm_dev.yaml` und `scripts/dev_reserve.sh`

@@ -104,6 +104,13 @@ Modell: OpenCode → LiteLLM-**Dev**-Proxy (`config/litellm_dev.yaml`, 127.0.0.1
 nur per SSH-Tunnel) → `kai-dev-economy` / `kai-dev-code` (Standard) / `kai-dev-frontier`
 (nur nach Freigabe je Aufgabe). Runbook: `docs/runbooks/dev_reserve_opencode.md`.
 
+**Laptop-Einstieg:** `scripts/kai_dev_hub.py` stellt die explizit getrennten
+OpenCode-Routen (lokales Ollama oder LiteLLM-Dev-Proxy), Hermes mit diesem
+Checkout als Arbeitsverzeichnis und ein Kimi-Kontextpaket bereit. Der Desktop-
+Shortcut entsteht mit `scripts/install_kai_dev_hub.ps1`. Übergaben werden lokal
+als SHA-256-verkettete Belege geführt; sie dürfen keine Secrets oder Diff-Inhalte
+enthalten. Diese Bedienebene ist kein Teil von `app/ai` und keine KAI-Route.
+
 **Status (Operator-Einstufung 2026-09-14, nach drei Kontrollaufgaben):** `kai-dev-code`
 (Kimi K2.7 Code) ist **freigegebene Entwicklerreserve**, `kai-dev-economy` (DeepSeek V4.1
 Flash) **freigegebene Analyse-Reserve** (nur lesend), `kai-dev-frontier` ist geprobt (Smoke PASS
