@@ -7,8 +7,17 @@ Der Flag-Flip ist Kapital-relevant und wird NICHT aus einer Claude-Sitzung ausge
 ## 0. Vorbedingungen (ohne die kein Schritt 1)
 
 - Runtime enthaelt S1 (`/v2/router/send`) und S2 (`/pay`, armierte Preflight-Fakten) — Deploy 17./18.09.
-- Wallet-App (Zeus/Blixt) mit Budget-Macaroon am selben Node eingerichtet — die Alltags-UX
-  (Saldo, QR, Historie) wird NICHT in KAI gebaut (D-277 (4)).
+- Wallet-App (Zeus/Blixt) am selben Node eingerichtet — die Alltags-UX
+  (Saldo, QR, Historie) wird NICHT in KAI gebaut (D-277 (4)). Das Credential
+  muss tatsächlich ein Ausgabenbudget **durchsetzen**: ein auf RPC-Rechte
+  eingeschränktes lnd-Macaroon allein begrenzt keine Satoshi-Summe (D-278:
+  Budgetdurchsetzung noch offen). Budgetmechanismus, Grenze und Negativprobe
+  dokumentieren; bis dahin ist die Wallet-Vorbedingung nicht erfüllt.
+- `APP_LN_SCB_PATH` zeigt auf eine aktuelle, vom Node verifizierte Kopie;
+  `kai-ln-scb-monitor.timer` ist aktiviert und liefert `stable`. Der SCB-Exporter
+  aus #1003 läuft erst nach Konfiguration und Timer-Aktivierung dauerhaft.
+- Für den Sendetest eine **Rechnung eines anderen Nodes** bereithalten. Eine
+  Wallet-App am selben lnd-Node ist kein unabhängiger Zahlungsempfänger.
 - Inbound-Liquiditaet ist fuer den Sendepfad irrelevant; fuer Empfang siehe `ln_inbound_swap.md`.
 
 ## 1. Konfiguration (`.env`, Sicherung zuerst)
@@ -59,16 +68,29 @@ Telegram: `/pay` ohne Argument muss die Usage zeigen; `/pay status` „Kein /pay
 
 ## 4. Die drei Beweise (in dieser Reihenfolge, jeder ins DECISION_LOG)
 
-1. **1-sat-Send an eine externe Rechnung** (eigene Wallet-App erzeugt `lnbc10n...`):
+1. **1-sat-Send an eine externe Rechnung** (Empfänger liegt auf einem anderen
+   Lightning-Node; dessen Wallet erzeugt `lnbc10n...`):
    `/pay <bolt11>` → Vorschau zeigt Betrag 1 sat, Gebuehr-Limit, `AWAITING_APPROVAL` →
    `/pay ok <hotp>` → `✅ Bezahlt … SETTLED`. Journal: `artifacts/payments/payment_journal.jsonl`
    traegt `rail_responded` + `settled` mit `proof_hash`.
 2. **Send ueber Cap wird geblockt**: Rechnung ueber `APP_PAYMENT_PER_PAYMENT_MAX_SAT` →
    `/pay <bolt11>` → `⛔ Policy lehnt ab (…)`, kein Intent im Zustand AUTHORIZED, Node unberuehrt.
-3. **Send ueber Fee-Limit wird abgelehnt**: `APP_PAYMENT_FEE_LIMIT_MAX_SAT=0` temporaer setzen,
-   Restart, `/pay <bolt11>` → Preflight/Policy `fee_limit_required` verweigert; danach Wert
-   zuruecksetzen und Restart. (Alternative ohne Restart: Preflight Schritt 2 zeigt
-   `fee_cap_configured` rot.)
+3. **Gebührengrenze mit positivem Limit belegen**: Für eine neue externe Rechnung
+   eine Route ermitteln, deren geschätzte Gebühr über einem bewusst niedrigen,
+   aber **positiven** Limit liegt. Das Limit mit dem bestehenden Config-Backup-
+   und Restart-Verfahren setzen, Preflight erneut GO, dann `/pay` ausführen.
+   Als Ablehnungsbeweis zählt nur ein vom Node bestätigter Gebühren-/Routenfehler
+   ohne Settlement; Journal und Node müssen übereinstimmen. Findet der Node eine
+   günstigere Route und settlet, darf die tatsächliche Gebühr das Limit nicht
+   überschreiten — das belegt die Obergrenze, **nicht** die geforderte Ablehnung.
+   Ohne geeignete Route bleibt Beweis 3 offen. Limit anschließend zurücksetzen,
+   Restart und Preflight wiederholen. Der Unit-Test
+   `tests/unit/test_ln_router_send.py` belegt zusätzlich, dass der positive
+   `fee_limit_sat` an `SendPaymentV2` übergeben wird.
+
+`APP_PAYMENT_FEE_LIMIT_MAX_SAT=0` ist eine **separate Konfigurations-Negativprobe**:
+Boot-/Preflight-/Policy-Deny ist korrekt, beweist aber keine Durchsetzung eines
+gültigen Gebührenlimits am Node.
 
 Fehlt ein Beweis oder faellt einer anders aus: `APP_LN_PAY_ENABLED=false`, Restart, Eintrag
 mit dem Befund. Kein zweiter Versuch am selben Tag ohne Ursache.
@@ -77,7 +99,11 @@ mit dem Befund. Kein zweiter Versuch am selben Tag ohne Ursache.
 
 Taeglich: ein echter `/pay`-Send (Kleinbetrag), `kai-ln-reconcile` laeuft (Timer pruefen:
 `systemctl list-timers | grep kai-ln`), `kai-ln-scb-monitor` meldet `stable`. Ergebnisse als
-eine Zeile pro Tag ins DECISION_LOG (D-277-Nachtrag). Erst danach Trading-Rails thematisieren.
+eine Zeile pro Tag ins DECISION_LOG (D-277-Nachtrag): Betrag, Gebührenlimit und
+tatsächliche Gebühr, Ergebnis (`SETTLED`/`FAILED_FINAL`/ungeklärt), Dauer,
+Reconcile-Status und SCB-Status. Fehler und unbekannte Ergebnisse zählen mit;
+bei sieben Tagen mit wenigen Sends entsteht ein Pilotnachweis, noch keine
+statistisch belastbare Erfolgsquote. Erst danach Trading-Rails thematisieren.
 
 ## Rollback
 
