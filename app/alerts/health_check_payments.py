@@ -13,16 +13,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.payments.reconcile_types import RECONCILE_STALE_AFTER_MIN
+
 if TYPE_CHECKING:
     from app.alerts.health_check import HealthIssue
-
-#: Wie alt der letzte Reconcile-Lauf werden darf, bevor er als tot gilt.
-#: ``kai-ln-reconcile.timer`` laeuft ``OnCalendar=*-*-* *:00/15:00`` mit
-#: ``RandomizedDelaySec=2min``; 45 min sind drei verpasste Laeufe und damit
-#: klar jenseits der legitimen Stille, aber eng genug, um einen toten Timer
-#: binnen einer Stunde aufzudecken. Woertlich die Schwelle, die bis PR 2 auf
-#: ``ln_reconciliation.jsonl`` lag — der Wert ist umgezogen, nicht gelockert.
-RECONCILE_STALE_AFTER_MIN = 45
 
 
 def _issue(severity: str, component: str, message: str) -> HealthIssue:

@@ -32,7 +32,7 @@ from app.payments.health_metrics import JournalMetrics, collect
 from app.payments.journal import PaymentJournal
 from app.payments.journal_chain import JournalIntegrityError
 from app.payments.rail import PaymentRail
-from app.payments.reconcile_types import STATE_FILENAME, load_state
+from app.payments.reconcile_types import RECONCILE_STALE_AFTER_MIN, STATE_FILENAME, load_state
 
 DEFAULT_WINDOW_HOURS = 24.0
 
@@ -54,10 +54,17 @@ async def payment_health_snapshot(
 
     chain = _chain(journal)
     metrics = _metrics(journal, cutoff=cutoff)
-    reconciliation = _reconciliation(journal, state_path)
+    reconciliation = _reconciliation(journal, state_path, now=moment)
     rail_state = await _rail(rail, settings)
 
-    degraded = chain["chain"] != "ok" or reconciliation["status"] not in ("ok", "unknown")
+    degraded = (
+        chain["chain"] != "ok"
+        or reconciliation["status"] not in ("ok", "unknown")
+        or (
+            settings.mode != "simulation"
+            and (reconciliation["status"] != "ok" or rail_state["state"] != "ok")
+        )
+    )
     return {
         "status": "degraded" if degraded else "ok",
         "mode": settings.mode,
@@ -115,15 +122,26 @@ def _metrics(journal: PaymentJournal, *, cutoff: datetime) -> JournalMetrics:
     return collect(events, cutoff=cutoff)
 
 
-def _reconciliation(journal: PaymentJournal, state_path: Path | None) -> dict[str, Any]:
+def _reconciliation(
+    journal: PaymentJournal, state_path: Path | None, *, now: datetime
+) -> dict[str, Any]:
     path = state_path or (journal.path.parent / STATE_FILENAME)
     if not path.is_file():
         return {"status": "unknown", "last_run": None, "orphans": 0, "clock_anomaly": False}
     state = load_state(path)
     if not state.last_run_utc:
         return {"status": "attention", "last_run": None, "orphans": 0, "clock_anomaly": False}
+    try:
+        last_run = datetime.fromisoformat(state.last_run_utc)
+    except ValueError:
+        return {"status": "attention", "last_run": None, "orphans": 0, "clock_anomaly": False}
+    if last_run.tzinfo is None:
+        last_run = last_run.replace(tzinfo=UTC)
+    status = state.last_status or "unknown"
+    if now - last_run >= timedelta(minutes=RECONCILE_STALE_AFTER_MIN):
+        status = "stale"
     return {
-        "status": state.last_status or "unknown",
+        "status": status,
         "last_run": state.last_run_utc,
         "orphans": state.last_orphans,
         "clock_anomaly": state.last_clock_anomaly,

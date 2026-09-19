@@ -113,6 +113,42 @@ async def test_ein_stummer_node_macht_den_zustand_unbekannt_nicht_gruen(tmp_path
 
     assert snapshot["rail"]["state"] == "unknown"
     assert snapshot["rail"]["reachable"] is False
+    assert snapshot["status"] == "degraded"
+
+
+async def test_shadow_ohne_reconcile_beleg_ist_nicht_gruen(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    snapshot = await _snapshot(tmp_path, journal, settings=PaymentSettings(mode="shadow"))
+
+    assert snapshot["rail"]["state"] == "ok"
+    assert snapshot["reconciliation"]["status"] == "unknown"
+    assert snapshot["status"] == "degraded"
+
+
+async def test_shadow_mit_frischem_reconcile_und_rail_ist_gruen(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    save_state(
+        tmp_path / "payments" / STATE_FILENAME,
+        ReconcileState(last_run_utc=NOW.isoformat(), last_status="ok"),
+    )
+
+    snapshot = await _snapshot(tmp_path, journal, settings=PaymentSettings(mode="shadow"))
+
+    assert snapshot["reconciliation"]["status"] == "ok"
+    assert snapshot["status"] == "ok"
+
+
+async def test_alter_reconcile_lauf_ist_trotz_letztem_ok_nicht_gruen(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    save_state(
+        tmp_path / "payments" / STATE_FILENAME,
+        ReconcileState(last_run_utc=(NOW - timedelta(minutes=45)).isoformat(), last_status="ok"),
+    )
+
+    snapshot = await _snapshot(tmp_path, journal, settings=PaymentSettings(mode="shadow"))
+
+    assert snapshot["reconciliation"]["status"] == "stale"
+    assert snapshot["status"] == "degraded"
 
 
 # --------------------------------------------------------------------------- #

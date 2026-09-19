@@ -34,6 +34,11 @@ DEFAULT_CLOCK_SKEW_TOLERANCE_S = 300.0
 
 STATE_FILENAME = "reconcile_state.json"
 
+# Der Timer laeuft viertelstuendlich (+ maximal 2 Minuten Jitter). Nach drei
+# verpassten Laeufen ist ein altes "ok" kein aktueller Geldpfad-Beleg mehr.
+# Gleiche Schwelle fuer Alert und /health/payment, ohne sie zu lockern.
+RECONCILE_STALE_AFTER_MIN = 45
+
 STATE_SCHEMA = "payment-reconcile-state/v1"
 
 
@@ -177,6 +182,7 @@ def boot_reference() -> str:
 
 __all__ = [
     "DEFAULT_CLOCK_SKEW_TOLERANCE_S",
+    "RECONCILE_STALE_AFTER_MIN",
     "STATE_FILENAME",
     "ReconcileReport",
     "ReconcileState",
