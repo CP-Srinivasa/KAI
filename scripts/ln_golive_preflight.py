@@ -9,6 +9,7 @@ action (see docs/runbooks/ln_g0_golive.md).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 from pathlib import Path
@@ -26,39 +27,68 @@ _DEMAND_DIR = Path("artifacts")
 
 
 async def _spend_probe_denied(cfg: LightningSettings, scope: CredentialScope) -> bool | None:
-    """Raw ``pay_invoice`` probe on one capability credential.
+    """Check the exact SendPaymentV2 permissions without making a payment request.
 
-    Returns True when the node PERMISSION-DENIED the attempt (credential carries no
-    spend scope), False only when lnd rejected the deliberately invalid invoice AFTER
-    the permission layer (credential CAN spend), and ``None`` when the credential is
-    unavailable or transport/TLS/timeout makes the result unproven. Unknown is never
-    silently folded into a pass. The payment request is deliberately garbage, so even
-    a spend-capable macaroon moves no capital.
-
-    This helper deliberately does not call a value-layer operation, but it does not
-    bypass the central client choke point: ``scope="payment"`` cannot be built while
-    ``APP_LN_PAY_ENABLED=false``.
+    True means this credential cannot send, False means it can, None means unknown.
+    The payment client is built first so the central disarmed guard remains effective.
+    Both LND RPCs below are read-only; malformed or missing facts fail closed.
     """
     try:
-        client = _build_client(cfg, credential_scope=scope)
-    except LightningUnavailableError:
-        return None  # capability not provisioned → nothing probed (fail-closed upstream)
-    try:
-        # fee_limit_sat=1: der Client verweigert 0 vor jedem Node-Kontakt (D-277); die
-        # Rechnung ist Muell, also bewegt auch ein sendefaehiges Macaroon nichts.
-        await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=1)
-        return False  # node ACCEPTED a spend attempt → macaroon too broad
-    except LightningUnavailableError as exc:
-        text = str(exc).lower()
-        if "permission denied" in text or "lnd returned 403" in text:
-            return True
-        if (
-            "invalid payment request" in text
-            or "lnd returned 400" in text
-            or "checksum failed" in text
-            or "lnd stream error" in text
+        candidate = _build_client(cfg, credential_scope=scope)
+        observer = _build_client(cfg, credential_scope="read")
+        methods = (await observer._get("/v1/macaroon/permissions")).get("method_permissions")
+        if not isinstance(methods, dict):
+            return None
+        method = methods.get("/routerrpc.Router/SendPaymentV2")
+        required = method.get("permissions") if isinstance(method, dict) else None
+        if not isinstance(required, list) or not required:
+            return None
+        if not all(
+            isinstance(p, dict)
+            and isinstance(p.get("entity"), str)
+            and isinstance(p.get("action"), str)
+            for p in required
         ):
-            return False
+            return None
+        if {"entity": "offchain", "action": "write"} not in required:
+            return None
+        # Positive control: lnd 0.19 returns HTTP 400/code 3 for a candidate
+        # WITHOUT the permission rather than {"valid": false}. Verify that the
+        # observer itself can use this RPC before interpreting that denial.
+        observer_macaroon = base64.b64encode(bytes.fromhex(observer._macaroon_hex)).decode("ascii")
+        self_check = await observer._post(
+            "/v1/macaroon/checkpermissions",
+            {
+                "macaroon": observer_macaroon,
+                "permissions": [{"entity": "macaroon", "action": "read"}],
+            },
+        )
+        if self_check.get("valid") is not True:
+            return None
+        macaroon = base64.b64encode(bytes.fromhex(candidate._macaroon_hex)).decode("ascii")
+        try:
+            result = await observer._post(
+                "/v1/macaroon/checkpermissions",
+                {"macaroon": macaroon, "permissions": required},
+            )
+        except LightningUnavailableError as exc:
+            prefix = "lnd returned 400 for /v1/macaroon/checkpermissions: "
+            if not str(exc).startswith(prefix):
+                return None
+            try:
+                error = json.loads(str(exc)[len(prefix) :])
+            except ValueError:
+                return None
+            return (
+                True
+                if isinstance(error, dict)
+                and error.get("code") == 3
+                and error.get("message") == "permission denied"
+                else None
+            )
+        valid = result.get("valid")
+        return not valid if isinstance(valid, bool) else None
+    except (LightningUnavailableError, ValueError):
         return None
 
 
@@ -73,7 +103,7 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool | None, bool, 
       A readonly macaroon passes the no-spend check but cannot mint, which would 503
       the paid path — this catches that trap. The probe invoice is 1 sat, 60s expiry,
       capital-free, and expires unpaid;
-    - ``pay_invoice`` MUST be permission-denied on BOTH receive-side credentials
+    - ``SendPaymentV2`` MUST be permission-denied on BOTH receive-side credentials
       (read + invoice) while the layer is unarmed (satoshi auflage 4) — the read
       credential remains the read-only production credential after PR-C, so dropping
       it from the probe would silently retire the invariant. Once armed, the probe

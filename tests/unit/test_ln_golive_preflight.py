@@ -95,8 +95,7 @@ def test_receive_only_no_go_when_pay_enabled_off_violated() -> None:
 
 
 def test_no_go_when_macaroon_not_scope_minimal() -> None:
-    """satoshi auflage 4: a pay_invoice probe that is NOT permission-denied means the
-    macaroon carries spend scope → hard NO-GO."""
+    """A receive-side macaroon with send permission is a hard NO-GO."""
     out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "macaroon_scope_minimal": False})
     assert out["verdict"] == "NO-GO" and "macaroon_scope_minimal" in out["blocking"]
 
@@ -172,25 +171,40 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
 
 
 class _FakeClient:
-    """lnd stand-in for one credential scope. ``spends`` decides whether a raw
-    pay_invoice attempt gets past the node's permission layer."""
+    """lnd stand-in for scoped credentials and read-only permission RPCs."""
 
     def __init__(self, scope: str, *, spends: bool, mints: bool = True) -> None:
         self.scope = scope
         self._spends = spends
         self._mints = mints
         self.calls: list[str] = []
+        self._macaroon_hex = scope.encode("ascii").hex()
+        self._spends_by_scope: dict[str, bool] = {}
 
     async def get_info(self) -> dict[str, Any]:
         self.calls.append("get_info")
         return {}
 
-    async def pay_invoice(self, **_: Any) -> dict[str, Any]:
-        self.calls.append("pay_invoice")
-        if self._spends:
-            # got past permissions; the garbage payment request then fails on parsing
-            raise LightningUnavailableError("lnd returned 400: invalid payment request")
-        raise LightningUnavailableError("lnd returned 403: permission denied")
+    async def _get(self, path: str) -> dict[str, Any]:
+        self.calls.append(path)
+        assert path == "/v1/macaroon/permissions"
+        return {
+            "method_permissions": {
+                "/routerrpc.Router/SendPaymentV2": {
+                    "permissions": [{"entity": "offchain", "action": "write"}]
+                }
+            }
+        }
+
+    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        import base64
+
+        self.calls.append(path)
+        assert path == "/v1/macaroon/checkpermissions"
+        if body["permissions"] == [{"entity": "macaroon", "action": "read"}]:
+            return {"valid": True}
+        scope = base64.b64decode(body["macaroon"]).decode("ascii")
+        return {"valid": self._spends_by_scope[scope]}
 
     async def add_invoice(self, **_: Any) -> dict[str, Any]:
         self.calls.append("add_invoice")
@@ -217,6 +231,9 @@ def _patch_clients(
         return client
 
     monkeypatch.setattr(cli, "_build_client", _build)
+    clients.get("read", _FakeClient("read", spends=False))._spends_by_scope = {
+        scope: client._spends for scope, client in clients.items()
+    }
     return clients
 
 
@@ -234,8 +251,8 @@ async def test_probe_measures_read_and_invoice_credentials_separately(monkeypatc
     )
     reachable, scope_minimal, can_mint, inbound = await cli._probe_node(_ready_cfg())
     assert (reachable, scope_minimal, can_mint, inbound) == (True, True, True, 5000)
-    assert "pay_invoice" in clients["read"].calls  # invariant not silently retired
-    assert clients["invoice"].calls.count("pay_invoice") == 1
+    assert clients["read"].calls.count("/v1/macaroon/checkpermissions") == 4
+    assert "pay_invoice" not in clients["read"].calls
     assert "add_invoice" in clients["invoice"].calls
     assert "add_invoice" not in clients["read"].calls
 
@@ -286,8 +303,97 @@ async def test_armed_probe_targets_the_payment_credential(monkeypatch) -> None:
     cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
     _, scope_minimal, _, _ = await cli._probe_node(cfg)
     assert scope_minimal is False  # payment credential CAN spend → macaroon_send_capable
-    assert "pay_invoice" in clients["payment"].calls
-    assert "pay_invoice" not in clients["read"].calls
+    assert clients["read"].calls.count("/v1/macaroon/checkpermissions") == 2
+    assert "pay_invoice" not in clients["payment"].calls
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        {},
+        {"method_permissions": {}},
+        {"method_permissions": {"/routerrpc.Router/SendPaymentV2": {"permissions": []}}},
+        {
+            "method_permissions": {
+                "/routerrpc.Router/SendPaymentV2": {
+                    "permissions": [{"entity": "offchain", "action": "read"}]
+                }
+            }
+        },
+    ],
+)
+async def test_armed_probe_missing_or_malformed_permissions_are_unknown(
+    monkeypatch, permissions: dict[str, Any]
+) -> None:
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "payment": _FakeClient("payment", spends=True),
+        },
+    )
+    clients["read"]._get = AsyncMock(return_value=permissions)
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+
+    assert await cli._spend_probe_denied(cfg, "payment") is None
+    assert "/v1/macaroon/checkpermissions" not in clients["read"].calls
+
+
+@pytest.mark.parametrize("response", [{}, {"valid": "true"}, {"valid": None}])
+async def test_armed_probe_requires_boolean_permission_verdict(monkeypatch, response) -> None:
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "payment": _FakeClient("payment", spends=True),
+        },
+    )
+    clients["read"]._post = AsyncMock(side_effect=[{"valid": True}, response])
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+
+    assert await cli._spend_probe_denied(cfg, "payment") is None
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            "lnd returned 400 for /v1/macaroon/checkpermissions: "
+            '{"code":3,"message":"permission denied","details":[]}',
+            True,
+        ),
+        (
+            "lnd returned 400 for /v1/macaroon/checkpermissions: "
+            '{"code":3,"message":"invalid macaroon","details":[]}',
+            None,
+        ),
+        (
+            "lnd returned 500 for /v1/macaroon/checkpermissions: "
+            '{"code":2,"message":"permission denied","details":[]}',
+            None,
+        ),
+    ],
+)
+async def test_credential_denial_only_for_exact_lnd_error(monkeypatch, error, expected) -> None:
+    import scripts.ln_golive_preflight as cli
+
+    clients = _patch_clients(
+        monkeypatch,
+        {
+            "read": _FakeClient("read", spends=False),
+            "payment": _FakeClient("payment", spends=True),
+        },
+    )
+    clients["read"]._post = AsyncMock(
+        side_effect=[{"valid": True}, LightningUnavailableError(error)]
+    )
+    cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+
+    assert await cli._spend_probe_denied(cfg, "payment") is expected
 
 
 @pytest.mark.parametrize(
@@ -310,7 +416,7 @@ async def test_armed_probe_failure_is_unknown_and_blocks_go(monkeypatch, probe_e
             "payment": _FakeClient("payment", spends=True),
         },
     )
-    clients["payment"].pay_invoice = AsyncMock(side_effect=LightningUnavailableError(probe_error))
+    clients["read"]._post = AsyncMock(side_effect=LightningUnavailableError(probe_error))
     cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
 
     reachable, send_probe, can_mint, inbound = await cli._probe_node(cfg)
@@ -332,15 +438,11 @@ async def test_armed_probe_failure_is_unknown_and_blocks_go(monkeypatch, probe_e
 async def test_disarmed_preflight_cannot_build_or_probe_the_payment_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The raw preflight helper must inherit the central payment-credential guard.
-
-    Even a deliberately invalid invoice is still a node call; while disarmed the
-    helper must fail before constructing a spend-capable client or touching lnd.
-    """
+    """The read-only permission probe also inherits the payment-credential guard."""
     import scripts.ln_golive_preflight as cli
 
-    pay_invoice = AsyncMock(return_value={})
-    monkeypatch.setattr(LndRestClient, "pay_invoice", pay_invoice)
+    permission_check = AsyncMock(return_value={"valid": True})
+    monkeypatch.setattr(LndRestClient, "_post", permission_check)
 
     assert await cli._spend_probe_denied(_ready_cfg(), "payment") is None
-    pay_invoice.assert_not_awaited()
+    permission_check.assert_not_awaited()

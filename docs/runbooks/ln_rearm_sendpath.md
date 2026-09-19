@@ -7,12 +7,12 @@ Der Flag-Flip ist Kapital-relevant und wird NICHT aus einer Claude-Sitzung ausge
 ## 0. Vorbedingungen (ohne die kein Schritt 1)
 
 - Runtime enthaelt S1 (`/v2/router/send`) und S2 (`/pay`, armierte Preflight-Fakten) — Deploy 17./18.09.
-- Wallet-App (Zeus/Blixt) am selben Node eingerichtet — die Alltags-UX
-  (Saldo, QR, Historie) wird NICHT in KAI gebaut (D-277 (4)). Das Credential
-  muss tatsächlich ein Ausgabenbudget **durchsetzen**: ein auf RPC-Rechte
-  eingeschränktes lnd-Macaroon allein begrenzt keine Satoshi-Summe (D-278:
-  Budgetdurchsetzung noch offen). Budgetmechanismus, Grenze und Negativprobe
-  dokumentieren; bis dahin ist die Wallet-Vorbedingung nicht erfüllt.
+- Die externe Wallet-App ist ein **getrenntes** D-277-(4)-Alltags-UX-Ziel,
+  keine Voraussetzung fuer den KAI-`/pay`-Self-Use-Pilot. Ihre direkte Nutzung
+  am selben Node darf bis zur nachgewiesenen Budgetdurchsetzung nicht als
+  Daily-Driver freigegeben werden:
+  ein auf RPC-Rechte eingeschraenktes lnd-Macaroon begrenzt keine Satoshi-Summe
+  (D-278). Budgetmechanismus, Grenze und Negativprobe separat dokumentieren.
 - `APP_LN_SCB_PATH` zeigt auf eine aktuelle, vom Node verifizierte Kopie;
   `kai-ln-scb-monitor.timer` ist aktiviert und liefert `stable`. Der SCB-Exporter
   aus #1003 läuft erst nach Konfiguration und Timer-Aktivierung dauerhaft.
@@ -96,6 +96,12 @@ Fehlt ein Beweis oder faellt einer anders aus: `APP_LN_PAY_ENABLED=false`, Resta
 mit dem Befund. Kein zweiter Versuch am selben Tag ohne Ursache.
 
 ## 5. Betriebsnachweis (7 Tage)
+
+Der erste **72-Stunden-Self-Use-Pilot** beginnt erst mit dem ersten extern
+nachgewiesenen `SETTLED` aus Schritt 4. Drei Tage echte Nutzung und Reconcile-/
+SCB-Beobachtung sind ein Zwischenbefund, keine vorgezogene Freigabe fuer Trading,
+L2-Shadow oder autonome L5-Aktionen. Ohne Zahlung kein T0; fehlende Tage zaehlen
+nicht als erfolgreiche Nutzung.
 
 Taeglich: ein echter `/pay`-Send (Kleinbetrag), `kai-ln-reconcile` laeuft (Timer pruefen:
 `systemctl list-timers | grep kai-ln`), `kai-ln-scb-monitor` meldet `stable`. Ergebnisse als
