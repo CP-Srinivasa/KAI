@@ -89,6 +89,16 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
     ph = delegate.plan_hash(body.action, body.params)
 
     if body.action == "pay_invoice":
+        if body.confirm is not None:
+            if body.confirm.plan_hash != ph:
+                raise HTTPException(
+                    status_code=403,
+                    detail="confirm rejected: plan hash mismatch (plan changed since preview)",
+                )
+            if not body.confirm.idempotency_key:
+                raise HTTPException(
+                    status_code=403, detail="confirm rejected: idempotency key required"
+                )
         # Der Betrag steht NICHT in den Params — er ist im BOLT11 kodiert. Ohne
         # ihn saehe die Regelkette 0 und jede Betrags-Regel liefe ins Leere.
         amount_sat = bolt11_amount_sat(str(body.params.get("payment_request", "")))

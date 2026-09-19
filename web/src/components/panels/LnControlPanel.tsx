@@ -17,14 +17,9 @@ import type { AsyncState } from "@/lib/useApi";
 // eine Fähigkeit, die man nur freischalten müsste.
 const ACTIONS = ["create_invoice", "pay_invoice"] as const;
 
-const PARAM_HINT: Record<string, string> = {
-  create_invoice: '{"value_sat": 1000, "memo": "test"}',
-  pay_invoice: '{"payment_request": "lnbc...", "purpose": "operator_pay_invoice"}',
-};
-
 function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
-  if (d === "auto_execute") return "pos";
-  if (d === "needs_confirm") return "warn";
+  if (d === "receive_gate") return "pos";
+  if (d === "payment_control_plane") return "warn";
   if (d === "denied") return "neg";
   return "muted";
 }
@@ -36,30 +31,53 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
   const ln = polling.state === "ready" ? polling.data : null;
   const payOn = ln?.pay_enabled === true;
 
-  const [action, setAction] = useState<string>("create_invoice");
-  const [paramsText, setParamsText] = useState<string>(PARAM_HINT["create_invoice"]);
+  const [action, setAction] = useState<(typeof ACTIONS)[number]>("create_invoice");
+  const [valueSat, setValueSat] = useState("1000");
+  const [memo, setMemo] = useState("");
+  const [paymentRequest, setPaymentRequest] = useState("");
+  const [purpose, setPurpose] = useState("operator_pay_invoice");
   const [hotp, setHotp] = useState<string>("");
-  const [idemKey, setIdemKey] = useState<string>("");
+  const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
   const [result, setResult] = useState<LnActionResult | null>(null);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState(false);
+
+  const changeInput = (update: () => void) => {
+    update();
+    setResult(null);
+    setError("");
+    setHotp("");
+    setIdemKey(crypto.randomUUID());
+  };
 
   const run = async (execute: boolean) => {
     setBusy(true);
     setError("");
     let params: Record<string, unknown>;
-    try {
-      params = JSON.parse(paramsText || "{}");
-    } catch {
-      setError("Params sind kein gültiges JSON");
+    if (action === "create_invoice") {
+      if (!/^[1-9]\d*$/.test(valueSat) || !Number.isSafeInteger(Number(valueSat))) {
+        setError("Betrag muss eine positive ganze Sat-Zahl sein");
+        setBusy(false);
+        return;
+      }
+      params = { value_sat: Number(valueSat), memo };
+    } else {
+      if (!paymentRequest.trim() || !purpose.trim()) {
+        setError("Rechnung und Zweck sind erforderlich");
+        setBusy(false);
+        return;
+      }
+      params = { payment_request: paymentRequest.trim(), purpose: purpose.trim() };
+    }
+    if (execute && (!result?.plan_hash || result.mode !== "plan")) {
+      setError("Bitte zuerst den aktuellen Vorgang prüfen");
       setBusy(false);
       return;
     }
     try {
-      const confirm =
-        execute && result?.plan_hash
-          ? { hotp, plan_hash: result.plan_hash, idempotency_key: idemKey }
-          : undefined;
+      const confirm = execute && result?.plan_hash
+        ? { hotp, plan_hash: result.plan_hash, idempotency_key: idemKey }
+        : undefined;
       const r = await lnValueAction({ action, params, ...(confirm ? { confirm } : {}) });
       setResult(r);
     } catch (e) {
@@ -78,7 +96,7 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
             LN-Steuerung (Wert-Schicht)
           </span>
         }
-        subtitle="Plan → Policy → Confirm · inert bis pay_enabled · read+control"
+        subtitle="Vorschau → prüfen → freigeben · PaymentService für Zahlungen"
         right={
           <div className="flex items-center gap-2">
             <LiveDot state={polling.state} generatedAt={ln ? ln.generated_at : null} staleAfterMs={90_000} downAfterMs={240_000} />
@@ -88,7 +106,7 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
               </Badge>
             ) : (
               <Badge tone="pos" dot>
-                <ShieldCheck size={10} /> Kill-Switch AN (inert)
+                <ShieldCheck size={10} /> Kill-Switch AN (Senden aus)
               </Badge>
             )}
           </div>
@@ -104,15 +122,14 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
       >
         {payOn ? (
           <span>
-            <span className="font-semibold text-warn">pay_enabled=true</span> — kapital-wirksame
-            Aktionen KÖNNEN ausführen (innerhalb der Payment-Regelkette). Confirm = HOTP + Plan-Hash.
+            <span className="font-semibold text-warn">pay_enabled=true</span> — Zahlungen können
+            innerhalb der Payment-Regelkette ausgeführt werden. Die Freigabe bindet den geprüften Plan.
           </span>
         ) : (
           <span>
-            <span className="font-semibold text-pos">Kill-Switch aktiv</span> (
-            <span className="font-mono">pay_enabled=false</span>): jede Ausführung bleibt{" "}
-            <span className="font-mono">disabled</span> — die Node wird nie berührt. Vorschau (Plan)
-            zeigt trotzdem das Policy-Verdikt.
+            <span className="font-semibold text-pos">Sendepfad gesperrt</span> (
+            <span className="font-mono">pay_enabled=false</span>). Das Erstellen von Rechnungen
+            hängt separat vom Empfangs-Gate ab.
           </span>
         )}
       </div>
@@ -120,11 +137,10 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
       <div className="mt-3 space-y-2">
         <div className="flex flex-wrap gap-2">
           <select
+            aria-label="Aktion"
             value={action}
             onChange={(e) => {
-              setAction(e.target.value);
-              setParamsText(PARAM_HINT[e.target.value] ?? "{}");
-              setResult(null);
+              changeInput(() => setAction(e.target.value as (typeof ACTIONS)[number]));
             }}
             className="rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono text-fg"
           >
@@ -142,25 +158,65 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
             <Play size={11} /> Plan
           </button>
         </div>
-        <textarea
-          value={paramsText}
-          onChange={(e) => setParamsText(e.target.value)}
-          rows={2}
-          spellCheck={false}
-          className="w-full rounded-sm border border-line-subtle bg-bg-2/60 px-2 py-1 font-mono text-2xs text-fg"
-        />
+        {action === "create_invoice" ? (
+          <div className="flex flex-wrap gap-2">
+            <label className="text-2xs text-fg-muted">
+              Betrag in sat
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={valueSat}
+                onChange={(e) => changeInput(() => setValueSat(e.target.value))}
+                className="mt-1 block w-32 rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs text-fg"
+              />
+            </label>
+            <label className="text-2xs text-fg-muted">
+              Memo
+              <input
+                value={memo}
+                onChange={(e) => changeInput(() => setMemo(e.target.value))}
+                className="mt-1 block w-64 rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs text-fg"
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label className="block text-2xs text-fg-muted">
+              Lightning-Rechnung
+              <textarea
+                value={paymentRequest}
+                onChange={(e) => changeInput(() => setPaymentRequest(e.target.value))}
+                rows={2}
+                spellCheck={false}
+                className="mt-1 w-full rounded-sm border border-line-subtle bg-bg-2/60 px-2 py-1 font-mono text-2xs text-fg"
+              />
+            </label>
+            <label className="block text-2xs text-fg-muted">
+              Zweck
+              <input
+                value={purpose}
+                onChange={(e) => changeInput(() => setPurpose(e.target.value))}
+                className="mt-1 w-full rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs text-fg"
+              />
+            </label>
+          </div>
+        )}
 
         {result?.policy && (
           <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 space-y-1">
             <div className="flex items-center gap-2 text-2xs">
-              <span className="text-fg-subtle">Policy:</span>
+              <span className="text-fg-subtle">Ausführungspfad:</span>
               <Badge tone={decisionTone(result.policy.decision)}>{result.policy.decision}</Badge>
               <span className="text-fg-muted">{result.policy.reason}</span>
             </div>
             {result.plan && (
               <div className="font-mono text-2xs text-fg-subtle">
-                Plan-Zustand: <span className="text-fg">{result.plan.state}</span>
+                Plan-Zustand: <span className="text-fg">{result.plan.state ?? result.plan.status ?? "unbekannt"}</span>
                 {result.plan.detail ? ` (${result.plan.detail})` : ""}
+                {result.plan.amount_sat != null ? ` · ${result.plan.amount_sat} sat` : ""}
+                {result.plan.fee_limit_sat != null ? ` · Gebührengrenze ${result.plan.fee_limit_sat} sat` : ""}
+                {result.plan.mode ? ` · ${result.plan.mode}` : ""}
               </div>
             )}
             {result.plan_hash && (
@@ -171,34 +227,37 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
           </div>
         )}
 
-        {result?.mode === "plan" && result.policy && result.policy.decision !== "denied" && (
+        {result?.mode === "plan" && result.plan_hash && result.policy &&
+          result.policy.decision !== "denied" &&
+          result.plan?.state !== "disabled" && result.plan?.state !== "error" &&
+          result.plan?.status !== "unavailable" &&
+          !(action === "pay_invoice" && (result.plan?.mode === "shadow" || (!payOn && result.plan?.mode === "live"))) && (
           <div className="rounded-sm border border-warn/25 bg-warn/5 px-2.5 py-2 space-y-1.5">
             <div className="text-2xs text-fg-muted">
-              Ausführen{result.policy.decision === "needs_confirm" ? " (Confirm nötig: HOTP)" : " (auto)"}:
+              {action === "pay_invoice"
+                ? "Zahlung freigeben (HOTP, wenn vom Dienst verlangt):"
+                : "Rechnung nach geprüfter Vorschau erstellen:"}
             </div>
             <div className="flex flex-wrap gap-2">
-              {result.policy.decision === "needs_confirm" && (
-                <>
+              {action === "pay_invoice" && (
+                <label className="text-2xs text-fg-muted">
+                  HOTP-Freigabe
                   <input
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
                     value={hotp}
                     onChange={(e) => setHotp(e.target.value)}
-                    placeholder="HOTP"
-                    className="w-24 rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono"
+                    className="mt-1 block w-28 rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono text-fg"
                   />
-                  <input
-                    value={idemKey}
-                    onChange={(e) => setIdemKey(e.target.value)}
-                    placeholder="idempotency-key"
-                    className="w-40 rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono"
-                  />
-                </>
+                </label>
               )}
               <button
                 onClick={() => run(true)}
                 disabled={busy}
                 className="flex items-center gap-1 rounded-sm border border-warn/40 bg-warn/10 px-2.5 py-1 text-xs text-warn disabled:opacity-50"
               >
-                <Send size={11} /> Ausführen
+                <Send size={11} /> {result.plan?.mode === "simulation" ? "Simulieren" : "Ausführen"}
               </button>
             </div>
           </div>
@@ -206,8 +265,9 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
 
         {result?.mode === "execute" && result.result && (
           <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 font-mono text-2xs">
-            Ergebnis: <span className="text-fg">{result.result.state}</span>
+            Ergebnis: <span className="text-fg">{result.result.state ?? result.result.status ?? "unbekannt"}</span>
             {result.result.detail ? ` (${result.result.detail})` : ""}
+            {result.result.replayed ? " · bereits bekannt" : ""}
           </div>
         )}
 

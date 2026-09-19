@@ -195,6 +195,33 @@ def test_execute_laeuft_durch_den_control_plane(
     assert [e.event_type for e in events][-1] == "settled"
 
 
+def test_veralteter_plan_oder_leerer_schluessel_sendet_nicht(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch(monkeypatch)
+    app = _app(tmp_path)
+    client = TestClient(app)
+    original = {"payment_request": DESTINATION}
+    changed = {"payment_request": "lnbc1different"}
+    plan = client.post(URL, json={"action": "pay_invoice", "params": original}).json()
+
+    for params, key in ((changed, "stable-key"), (original, "")):
+        response = client.post(
+            URL,
+            json={
+                "action": "pay_invoice",
+                "params": params,
+                "confirm": {
+                    "hotp": "123456",
+                    "plan_hash": plan["plan_hash"],
+                    "idempotency_key": key,
+                },
+            },
+        )
+        assert response.status_code == 403
+    assert app.state.payment_service._journal.events() == []
+
+
 def test_der_schluessel_wird_an_den_plan_gebunden() -> None:
     """Der Cockpit-Schluessel allein waere zu kurz UND nicht plan-gebunden."""
     first = delegate.bind_idempotency_key("plan-a", "key-1")
