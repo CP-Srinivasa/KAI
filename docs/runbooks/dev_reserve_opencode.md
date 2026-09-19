@@ -15,25 +15,44 @@ python scripts/kai_dev_hub.py status
 python scripts/kai_dev_hub.py ui
 ```
 
-Der Installer erzeugt **KAI Developer Hub** auf dem Desktop. Dort gibt es vier
-bewusst getrennte Oberflächen:
+Der Installer kopiert Hub und Workflow in
+`%USERPROFILE%\.kai\developer-hub\app\v0.2.0`, schreibt `install.json` mit
+Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
+Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
+`python scripts/kai_dev_hub.py --version` zeigt die Version. Vor Installation
+den geprüften Donor-Commit verwenden; ein lokaler Shortcut ersetzt weder
+Claudes unabhängigen Review noch einen Mainline-Merge.
+
+Jede schreibende Aufgabe beginnt mit **Neue Aufgabe**. Der Hub holt die
+autoritative Remote-Base und erzeugt dafür einen eigenen `codex/dev-task-*`-
+Worktree. Ein Client-Start im gemeinsamen Checkout wird abgewiesen. Alle
+Oberflächen bleiben auf ihr gewähltes Modell für die jeweilige Sitzung gepinnt:
 
 - **OpenCode lokal (offline):** startet das vorhandene Ollama-Modell
   `kai-qwen3-coder:30b-16k`; kein Internet und kein Anbieter-Schlüssel nötig.
+  Das kompakte KAI-Kontextpaket wird im Startprompt mitgegeben, weil das
+  OpenCode-Profil externe Verzeichnisse nicht lesen darf.
 - **OpenCode Cloud-Reserve:** öffnet in einem neuen, auf `kai-dev-code`
   gepinnten Prozess. Der Hub holt ausschließlich den Dev-Proxy-Schlüssel über
   den bereits autorisierten SSH-Zugang in den Prozessspeicher, startet
-  Dev-Proxy plus Loopback-Tunnel und prüft den authentifizierten Modellkatalog.
+  Dev-Proxy plus Loopback-Tunnel und prüft Katalog und eine echte kurze
+  `kai-dev-code`-Antwort mit positiver Kostenmessung.
   Der Schlüssel wird weder in eine Laptop-Datei noch in ein Log geschrieben.
-- **Hermes lokal:** startet Hermes TUI mit dem KAI-Checkout als
+- **Hermes lokal:** startet Hermes TUI mit dem Aufgaben-Worktree als
   Arbeitsverzeichnis und gepinntem lokalem Provider. Hermes nutzt wegen seiner
   Mindestanforderung das vorhandene `kai-qwen3-coder:30b-64k`, lädt dadurch
-  `AGENTS.md` und arbeitet nicht mehr als projektloser Chat. Die globale Hermes-
+  `AGENTS.md` und arbeitet nicht mehr als projektloser Chat. Der Hub setzt
+  Reasoning auf `none` (andernfalls antwortet das lokale Modell mit HTTP 400)
+  und legt den ersten Kontextprompt in die Zwischenablage: **einmal in Hermes
+  einfügen und absenden**. Die globale Hermes-
   Konfiguration wird nicht verändert. Der LiteLLM-Dev-Proxy bleibt OpenCodes
   Cloud-Reserve; Hermes' vorgeschaltete Key-/Kostenprüfung benötigt eine
   LiteLLM-Datenbank und ist mit dem bewusst datenbanklosen Dev-Proxy inkompatibel.
-- **Kimi + Kontextpaket:** öffnet Kimi und erzeugt/markiert
-  `%USERPROFILE%\.kai\developer-hub\KAI_CONTEXT_FOR_KIMI.md` zum Anhängen. Kimi
+- **Kimi + Kontextpaket:** öffnet Kimi und markiert das vollständige
+  `%USERPROFILE%\.kai\developer-hub\context\<session>\KAI_CONTEXT_*.md` zum
+  Anhängen. Die Datei enthält tatsächliche Auszüge der versionierten Regeln,
+  Architektur und Übergabe mit Quell-Hashes und ist ohne Windows-Dateizugriff
+  verständlich. Kimi
   bleibt eine Beratungsoberfläche; garantierter lokaler Schreibzugriff besteht
   nur über OpenCode oder Hermes.
 
@@ -43,18 +62,41 @@ Handoff-Regel unten erhalten.
 
 ### Nachweisbare Übergaben
 
-Die Hub-Oberfläche schreibt strukturierte Übergaben nach
+Die Hub-Oberfläche sichert zunächst einen Snapshot (binärer Patch für
+getrackte Änderungen plus sichere ungetrackte Dateien und Hash-Manifest) und
+schreibt dann strukturierte Übergaben nach
 `%USERPROFILE%\.kai\developer-hub\handoffs\ledger.jsonl`. Jeder Beleg enthält
 Agenten, Auftrag, Branch, exakten HEAD, Worktree-Status, Erledigtes, Offenes,
 Annahmen, nächsten Schritt und Tests. SHA-256 und `previous_sha256` bilden eine
 append-only Prüfkette. Das weist nachträgliche Veränderung und Reihenfolge nach,
-nicht jedoch die reale Identität eines externen Modells.
+nicht jedoch die reale Identität eines externen Modells. Der Empfänger muss
+die individuelle `ACK:`-Challenge und die offene Aufgabe in seiner Antwort
+bestätigen. Diese Antwort wird als verkettetes Ack-Ereignis erfasst. Ohne Ack
+bleibt die Übergabe im Hub-Status sichtbar offen. Ein Ack ist ein dokumentierter
+Empfangsbeleg, keine kryptographische Modell-Authentisierung.
 
 ```powershell
 python scripts/kai_dev_hub.py handoff --from-agent OpenCode --to-agent Hermes `
   --task "..." --completed "..." --open-items "..." --next-action "..." --tests "..."
 python scripts/kai_dev_hub.py verify-handoffs
+python scripts/kai_dev_hub.py --repo <aufgaben-worktree> ack `
+  --handoff-id <id> --agent Hermes --response-file <antwort.txt>
 ```
+
+Bei Anbieterausfall: Arbeit im Aufgaben-Worktree stoppen, `git status --short`
+prüfen, im Hub **Übergabe** samt Snapshot erzeugen, neuen Client auf derselben
+Aufgabe starten, Kontext übernehmen und die Antwort mit Challenge als Ack
+erfassen. Kein Modellwechsel innerhalb einer schreibenden Sitzung.
+
+Diagnose ohne Pi/Anbieter: `doctor --mode local-inference` prüft eine echte
+Ollama-Antwort. `doctor --mode cloud` prüft Economy und Code mit echter kurzer
+Antwort, Modellfeld und positivem Kostenkopf; Frontier wird nicht automatisch
+aufgerufen. `automations` zeigt lokale KAI-Tasks mit Zustand, letztem Lauf,
+Ergebnis und nächstem Termin; Pi-systemd und Codex-Automationen sind dort
+ausdrücklich *nicht geprüft*. Der Installer registriert einen stündlichen,
+kostenfreien, offline-lesenden `KAI-Developer-Reserve-Health`-Task. Ein
+`last_result` ungleich 0 bleibt sichtbar, auch wenn `StartWhenAvailable` für
+einen verpassten Lauf korrigiert wurde; Erfolg erst nach tatsächlich grünem Lauf.
 
 ## 0. Voraussetzungen
 
