@@ -985,8 +985,7 @@ export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningSta
   return apiGet<LightningStatus>("/dashboard/api/lightning", { signal });
 }
 
-// Value-layer control (Sprint 5). plan-mode previews; execute-mode runs (inert
-// until pay_enabled). Confirm (B-005) only needed for needs_confirm decisions.
+// Cockpit: pay_invoice delegates to PaymentService; create_invoice uses receive_gate.
 export type LnActionConfirm = { hotp: string; plan_hash: string; idempotency_key: string };
 export type LnActionRequest = {
   action: string;
@@ -996,10 +995,20 @@ export type LnActionRequest = {
 export type LnActionResult = {
   mode: "plan" | "execute";
   action: string;
-  policy?: { decision: "auto_execute" | "needs_confirm" | "denied"; reason: string };
+  policy?: { decision: "payment_control_plane" | "receive_gate" | "denied"; reason: string };
   plan_hash?: string;
-  plan?: { action: string; state: string; detail: string; plan: Record<string, unknown> };
-  result?: { action: string; state: string; detail: string };
+  plan?: {
+    action: string;
+    state?: string;
+    status?: string;
+    detail?: string;
+    mode?: string;
+    route?: string;
+    amount_sat?: number;
+    fee_limit_sat?: number | null;
+    plan?: Record<string, unknown>;
+  };
+  result?: { action: string; state?: string; status?: string; detail?: string; intent_id?: string; replayed?: boolean };
 };
 
 export function lnValueAction(req: LnActionRequest): Promise<LnActionResult> {
