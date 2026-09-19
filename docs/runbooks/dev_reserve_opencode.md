@@ -94,7 +94,9 @@ Antwort, Modellfeld und positivem Kostenkopf; Frontier wird nicht automatisch
 aufgerufen. `automations` zeigt lokale KAI-Tasks mit Zustand, letztem Lauf,
 Ergebnis und nächstem Termin; Pi-systemd und Codex-Automationen sind dort
 ausdrücklich *nicht geprüft*. Der Installer registriert einen stündlichen,
-kostenfreien, offline-lesenden `KAI-Developer-Reserve-Health`-Task. Ein
+anbieterfreien `KAI-Developer-Reserve-Health`-Task: Nach einem Neustart startet
+er Ollama lokal bei Bedarf und prüft Modelle, Übergaben und Automationen, ohne
+eine Inferenz- oder Pi-Anfrage auszulösen. Ein
 `last_result` ungleich 0 bleibt sichtbar, auch wenn `StartWhenAvailable` für
 einen verpassten Lauf korrigiert wurde; Erfolg erst nach tatsächlich grünem Lauf.
 
