@@ -359,6 +359,36 @@ def test_offline_doctor_reports_failed_cold_start(
     assert report["checks"]["ollama_start_error"] == "start failed"
 
 
+def test_cloud_doctor_refreshes_tunnel_status_after_on_demand_start(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    tunnel = {"open": False}
+    monkeypatch.setattr(
+        hub,
+        "_port_open",
+        lambda port: tunnel["open"] if port == hub.DEV_PORT else False,
+    )
+    monkeypatch.setattr(hub, "_command", lambda _name: "installed")
+    monkeypatch.setattr(hub, "automation_inventory", lambda: {"available": True, "tasks": []})
+
+    def start() -> str:
+        tunnel["open"] = True
+        return "dev-test-key"
+
+    monkeypatch.setattr(hub, "start_cloud", start)
+    monkeypatch.setattr(
+        hub,
+        "_cloud_inference_probe",
+        lambda _key, route: {"route": route, "response_proven": True, "cost_usd": 0.0001},
+    )
+
+    report = hub.doctor(kai_repo, "cloud")
+
+    assert report["checks"]["cloud_tunnel_open"] is True
+    assert len(report["checks"]["dev_routes"]) == 2
+
+
 def test_new_task_branches_from_fresh_authoritative_remote(kai_repo: Path, tmp_path: Path) -> None:
     state = tmp_path / "state"
     remote = tmp_path / "remote.git"

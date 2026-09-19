@@ -335,6 +335,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         checks["local_inference"] = _local_inference_probe()
     elif mode == "cloud":
         key = start_cloud()
+        checks["cloud_tunnel_open"] = _port_open(DEV_PORT)
         checks["dev_routes"] = [
             _cloud_inference_probe(key, route) for route in ("kai-dev-economy", "kai-dev-code")
         ]
