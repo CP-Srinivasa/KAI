@@ -104,6 +104,10 @@ async def test_ein_stummer_node_macht_den_zustand_unbekannt_nicht_gruen(tmp_path
             raise RuntimeError("node unreachable")
 
     journal = _journal(tmp_path)
+    save_state(
+        tmp_path / "payments" / STATE_FILENAME,
+        ReconcileState(last_run_utc=NOW.isoformat(), last_status="ok"),
+    )
     snapshot = await _snapshot(
         tmp_path,
         journal,
