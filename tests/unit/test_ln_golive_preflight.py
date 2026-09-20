@@ -45,6 +45,27 @@ def _all_node_ok() -> dict:
     }
 
 
+def test_permission_check_description_matches_read_only_probe() -> None:
+    receive = golive_preflight(_ready_cfg(), **_all_node_ok())
+    receive_detail = next(
+        check["detail"] for check in receive["checks"] if check["name"] == "macaroon_scope_minimal"
+    )
+    assert "CheckMacaroonPermissions" in receive_detail
+    assert "pay_invoice" not in receive_detail
+
+    armed_cfg = _ready_cfg().model_copy(update={"pay_enabled": True})
+    armed = golive_preflight(
+        armed_cfg,
+        **{**_all_node_ok(), "macaroon_scope_minimal": False},
+        **_armed_send_facts(),
+    )
+    armed_detail = next(
+        check["detail"] for check in armed["checks"] if check["name"] == "macaroon_send_capable"
+    )
+    assert "CheckMacaroonPermissions" in armed_detail
+    assert "pay_invoice" not in armed_detail
+
+
 def _armed_send_facts() -> dict:
     """D-277: im armierten Regime muessen die Sende-Fakten bewiesen sein (fail-closed)."""
     return {
@@ -56,6 +77,7 @@ def _armed_send_facts() -> dict:
             fee_limit_default_ppm=3000,
             fee_limit_max_sat=200,
             purposes_allowed="data_subscription,operator_pay_invoice",
+            destination_allowlist="a" * 64,
         ),
     }
 

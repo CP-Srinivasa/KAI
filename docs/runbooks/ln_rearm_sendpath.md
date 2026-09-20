@@ -39,6 +39,7 @@ Setzen bzw. pruefen:
 | `APP_PAYMENT_APPROVAL_THRESHOLD_SAT` | z. B. `1` | HOTP ab 1 sat fuer die Beweisphase |
 | `APP_PAYMENT_FEE_LIMIT_DEFAULT_PPM` / `_MAX_SAT` | `3000` / `200` | Client verweigert Send ohne Fee-Grenze |
 | `APP_PAYMENT_PURPOSES_ALLOWED` | enthaelt `operator_pay_invoice` | sonst lehnt die Policy `/pay` ab |
+| `APP_PAYMENT_DESTINATION_ALLOWLIST` | SHA-256 des `destination`-Pubkeys aus `lncli decodepayreq <bolt11>` der externen Testrechnung (UTF-8-Text, lowercase Hex) | leer oder ohne passenden Hash lehnt die Policy jede `/pay`-Rechnung ab; **nicht** den Hash der BOLT11-Rechnung oder den `payment_hash` eintragen |
 | `APP_LN_PAYMENT_MACAROON_PATH` | Macaroon mit `offchain:write` | eigenes Credential, nie das Read-Macaroon |
 | `APP_LN_SCB_PATH` | Pfad der SCB-Kopie | Preflight verlangt Alter <= `APP_LN_SCB_MAX_AGE_SECONDS` |
 | `APP_LN_PAY_ENABLED` | **noch `false`** | erst nach Schritt 2 |
@@ -48,14 +49,16 @@ Setzen bzw. pruefen:
 Erst mit `APP_LN_PAY_ENABLED=false` (Empfangs-Regime, Bestand):
 
 ```
-cd /home/ubuntu/current && python scripts/ln_golive_preflight.py; echo exit=$?
+cd /home/ubuntu/current && .venv/bin/python -m scripts.ln_golive_preflight; echo exit=$?
 ```
 
 Dann `APP_LN_PAY_ENABLED=true` setzen (noch KEIN Restart) und erneut laufen lassen. Im armierten
 Regime muessen zusaetzlich gruen sein: `macaroon_send_capable`, `router_send_supported`
 (lnd >= 0.11, Version aus `getinfo`), `scb_backup_fresh`, `payment_mode_live`,
-`fee_cap_configured`, `pay_purpose_allowed`. Ein `blocking` != `[]` heisst: Flag zurueck auf
+`fee_cap_configured`, `pay_purpose_allowed`, `pay_destination_allowlisted`. Ein `blocking` != `[]` heisst: Flag zurueck auf
 `false`, Ursache beheben, von vorn.
+Der Preflight belegt nur, dass die Allowlist nicht leer und syntaktisch gueltig ist;
+ob die konkrete Rechnung zum Hash passt, prueft erst die Zahlungs-Policy.
 
 ## 3. Restart und Smoke
 
