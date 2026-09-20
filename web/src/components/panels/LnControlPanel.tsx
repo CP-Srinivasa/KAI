@@ -1,8 +1,9 @@
 // @data-source: /dashboard/api/lightning + POST /dashboard/api/ln/value-action
 import { useState } from "react";
-import { ShieldAlert, ShieldCheck, Play, Send } from "lucide-react";
+import { Copy, ShieldAlert, ShieldCheck, Play, Send } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
+import { PayQr } from "@/components/panels/PayQr";
 import { lnValueAction, type LightningStatus, type LnActionResult } from "@/lib/api";
 import type { AsyncState } from "@/lib/useApi";
 
@@ -15,7 +16,8 @@ import type { AsyncState } from "@/lib/useApi";
 // Sie standen im Menü, obwohl die Regelkette sie mit unsupported_action abgelehnt
 // hätte — ein Eintrag, der nur existiert, um abgelehnt zu werden, sieht aus wie
 // eine Fähigkeit, die man nur freischalten müsste.
-const ACTIONS = ["create_invoice", "pay_invoice"] as const;
+const ACTIONS = ["pay_invoice", "create_invoice"] as const;
+const ACTION_LABELS = { pay_invoice: "Senden · Rechnung bezahlen", create_invoice: "Empfangen · Rechnung erstellen" };
 
 function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
   if (d === "receive_gate") return "pos";
@@ -31,7 +33,7 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
   const ln = polling.state === "ready" ? polling.data : null;
   const payOn = ln?.pay_enabled === true;
 
-  const [action, setAction] = useState<(typeof ACTIONS)[number]>("create_invoice");
+  const [action, setAction] = useState<(typeof ACTIONS)[number]>("pay_invoice");
   const [valueSat, setValueSat] = useState("1000");
   const [memo, setMemo] = useState("");
   const [paymentRequest, setPaymentRequest] = useState("");
@@ -41,12 +43,18 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
   const [result, setResult] = useState<LnActionResult | null>(null);
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const invoice = result?.mode === "execute" && result.action === "create_invoice" && result.result?.state === "executed"
+    ? result.result.response?.payment_request
+    : undefined;
+  const sendReady = payOn && result?.plan?.mode === "live";
 
   const changeInput = (update: () => void) => {
     update();
     setResult(null);
     setError("");
     setHotp("");
+    setCopyError("");
     setIdemKey(crypto.randomUUID());
   };
 
@@ -74,6 +82,11 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
       setBusy(false);
       return;
     }
+    if (execute && action === "pay_invoice" && !sendReady) {
+      setError("Senden ist gesperrt: Live-Modus und pay_enabled müssen freigegeben sein.");
+      setBusy(false);
+      return;
+    }
     try {
       const confirm = execute && result?.plan_hash
         ? { hotp, plan_hash: result.plan_hash, idempotency_key: idemKey }
@@ -84,6 +97,16 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
       setError((e as Error).message || "Fehler");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const copyInvoice = async () => {
+    if (!invoice) return;
+    try {
+      await navigator.clipboard.writeText(invoice);
+      setCopyError("");
+    } catch {
+      setCopyError("Kopieren fehlgeschlagen — Rechnung bitte manuell markieren.");
     }
   };
 
@@ -128,8 +151,9 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
         ) : (
           <span>
             <span className="font-semibold text-pos">Sendepfad gesperrt</span> (
-            <span className="font-mono">pay_enabled=false</span>). Das Erstellen von Rechnungen
-            hängt separat vom Empfangs-Gate ab.
+            <span className="font-mono">pay_enabled=false</span>). Du kannst eine externe
+            BOLT11-Rechnung zur Vorschau einfügen, aber erst nach dem D-277-Operator-Go senden.
+            Empfangen bleibt separat möglich.
           </span>
         )}
       </div>
@@ -146,7 +170,7 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
           >
             {ACTIONS.map((a) => (
               <option key={a} value={a}>
-                {a}
+                {ACTION_LABELS[a]}
               </option>
             ))}
           </select>
@@ -192,6 +216,7 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
                 className="mt-1 w-full rounded-sm border border-line-subtle bg-bg-2/60 px-2 py-1 font-mono text-2xs text-fg"
               />
             </label>
+            <p className="text-2xs text-fg-subtle">Für den unabhängigen Sendebeweis muss die Rechnung von einer Wallet auf einem anderen Node kommen.</p>
             <label className="block text-2xs text-fg-muted">
               Zweck
               <input
@@ -227,11 +252,22 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
           </div>
         )}
 
+        {action === "pay_invoice" && result?.mode === "plan" && (
+          <p className="text-2xs text-fg-subtle">Die Vorschau zeigt Betrag und Gebührengrenze, aber prüft weder Empfänger-Allowlist noch Route. Darüber entscheidet erst der PaymentService beim Ausführen.</p>
+        )}
+
+        {action === "pay_invoice" && result?.mode === "plan" && !sendReady && (
+          <div role="status" className="rounded-sm border border-warn/30 bg-warn/5 px-2.5 py-2 text-2xs text-warn">
+            Vorschau ist keine Zahlungsfreigabe. Senden bleibt gesperrt, bis pay_enabled und
+            Payment-Modus live sind; die Empfänger-Allowlist wird erst im Zahlungsdienst geprüft.
+          </div>
+        )}
+
         {result?.mode === "plan" && result.plan_hash && result.policy &&
           result.policy.decision !== "denied" &&
           result.plan?.state !== "disabled" && result.plan?.state !== "error" &&
           result.plan?.status !== "unavailable" &&
-          !(action === "pay_invoice" && (result.plan?.mode === "shadow" || (!payOn && result.plan?.mode === "live"))) && (
+          (action !== "pay_invoice" || sendReady) && (
           <div className="rounded-sm border border-warn/25 bg-warn/5 px-2.5 py-2 space-y-1.5">
             <div className="text-2xs text-fg-muted">
               {action === "pay_invoice"
@@ -268,6 +304,21 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
             Ergebnis: <span className="text-fg">{result.result.state ?? result.result.status ?? "unbekannt"}</span>
             {result.result.detail ? ` (${result.result.detail})` : ""}
             {result.result.replayed ? " · bereits bekannt" : ""}
+            {result.result.intent_id ? ` · Vorgang ${result.result.intent_id}` : ""}
+          </div>
+        )}
+
+        {invoice && (
+          <div className="space-y-2 rounded-sm border border-pos/30 bg-pos/5 px-2.5 py-2">
+            <div className="text-xs text-fg">Rechnung für den Rückweg: in der externen Wallet bezahlen.</div>
+            <textarea aria-label="Erstellte Lightning-Rechnung" readOnly value={invoice} rows={3}
+              className="w-full rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 font-mono text-2xs text-fg" />
+            <button type="button" onClick={copyInvoice}
+              className="flex items-center gap-1 rounded-sm border border-pos/40 px-2.5 py-1 text-xs text-fg">
+              <Copy size={11} /> Rechnung kopieren
+            </button>
+            {copyError && <span role="alert" className="text-2xs text-neg">{copyError}</span>}
+            <PayQr lightningUri={`lightning:${invoice}`} size={180} />
           </div>
         )}
 

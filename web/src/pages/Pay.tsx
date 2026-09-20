@@ -111,6 +111,11 @@ export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
         right={<HealthBadge health={health} />}
       />
 
+      <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2 text-xs text-fg-muted">
+        KAI PAY fordert Zahlungen an. Für eine Zahlung an deine externe Wallet nutze die
+        Operator-Funktion <a href="#node" className="text-ai underline">Node → LN-Steuerung → Senden</a>.
+      </div>
+
       {health.state === "error" && (
         <ErrorLine
           label="/pay/health nicht erreichbar"
@@ -162,6 +167,9 @@ function PayDisabled({ detail }: { detail: string }) {
         tone="warn"
         icon={<QrCode size={18} />}
       />
+      <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2 text-xs text-fg-muted">
+        Senden ist eine getrennte Operator-Funktion: <a href="#node" className="text-ai underline">Node → LN-Steuerung → Senden</a>.
+      </div>
       <EmptyState
         icon={<AlertTriangle size={18} />}
         title="KAI PAY ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)"

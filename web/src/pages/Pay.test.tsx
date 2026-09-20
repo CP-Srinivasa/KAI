@@ -104,6 +104,7 @@ describe("PayPage — deaktiviert", () => {
     expect(await screen.findByText(/nicht aktiviert/)).toBeTruthy();
     expect(screen.getByText("KAI PAY ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)")).toBeTruthy();
     expect(screen.getByText(/kai pay disabled/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Node.*LN-Steuerung.*Senden/ }).getAttribute("href")).toBe("#node");
     expect(screen.queryByRole("button", { name: "CREATE PAYMENT" })).toBeNull();
   });
 
@@ -127,6 +128,7 @@ describe("PayPage — Zahlung anfordern", () => {
     fetchPayRequest.mockResolvedValue(waiting);
     render(<PayPage pollMs={1_000_000} />);
     await screen.findByText(/offen 1 · settled 7/);
+    expect(screen.getByRole("link", { name: /Node.*LN-Steuerung.*Senden/ }).getAttribute("href")).toBe("#node");
 
     fillAndSubmit();
 
