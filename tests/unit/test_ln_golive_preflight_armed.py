@@ -1,9 +1,9 @@
 """D-277 — Preflight-Fakten fuer den ARMIERTEN Betrieb (Sendepfad).
 
 Im Empfangs-Regime (``pay_enabled=false``) aendert sich nichts. Armiert kommen
-fuenf Fakten dazu, alle fail-closed: Node-Version traegt ``/v2/router/send``,
+sechs Fakten dazu, alle fail-closed: Node-Version traegt ``/v2/router/send``,
 SCB-Kopie ist frisch, Payment-Modus ist ``live``, Fee-Cap ist gesetzt, der
-``/pay``-Purpose ist erlaubt.
+``/pay``-Purpose ist erlaubt und mindestens ein gueltiger Payee-Hash freigegeben.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ ARMED_NAMES = {
     "payment_mode_live",
     "fee_cap_configured",
     "pay_purpose_allowed",
+    "pay_destination_allowlisted",
 }
 
 
@@ -51,6 +52,7 @@ def _payments(**overrides) -> PaymentSettings:
         "fee_limit_default_ppm": 3000,
         "fee_limit_max_sat": 200,
         "purposes_allowed": f"data_subscription,{PAY_PURPOSE}",
+        "destination_allowlist": "a" * 64,
     }
     return PaymentSettings(_env_file=None, **{**base, **overrides})
 
@@ -188,6 +190,18 @@ def test_the_pay_purpose_must_be_allowed() -> None:
         payments=_payments(purposes_allowed="data_subscription"),
     )
     assert "pay_purpose_allowed" in _blocking(out)
+
+
+@pytest.mark.parametrize("allowlist", ["", "not-a-sha256-hash", "a" * 64 + ",bad"])
+def test_missing_or_malformed_destination_allowlist_blocks(allowlist: str) -> None:
+    out = golive_preflight(
+        _cfg(armed=True),
+        **_node_ok(armed=True),
+        **_armed_ok(),
+        payments=_payments(destination_allowlist=allowlist),
+    )
+    assert "pay_destination_allowlisted" in _blocking(out)
+    assert out["verdict"] == "NO-GO"
 
 
 def test_the_purpose_constant_is_the_one_telegram_uses() -> None:

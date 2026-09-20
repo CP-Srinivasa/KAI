@@ -10,7 +10,7 @@ Fail-closed: an un-probed node fact (``None``) counts as NOT ok → NO-GO.
 Two regimes (auto-detected from ``cfg.pay_enabled``):
   * **receive-only** (``pay_enabled=false``, the original G0 probe): ``pay_enabled_off``
     is a NEGATIVE invariant — the spend kill-switch must stay off — and the receive-side
-    credentials must be scope-minimal (a ``pay_invoice`` probe MUST be permission-denied).
+    credentials must be scope-minimal (a read-only permission check MUST deny send).
   * **armed** (``pay_enabled=true``, operator has deliberately armed the value layer):
     those two receive-only invariants no longer apply — arming spend and using a
     send-capable PAYMENT macaroon is the INTENDED state, so the preflight checks the
@@ -26,6 +26,7 @@ Pure + side-effect-free → fully testable; the CLI supplies the live node facts
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -115,6 +116,17 @@ def _armed_send_checks(
                 f"APP_PAYMENT_PURPOSES_ALLOWED must contain {PAY_PURPOSE!r} "
                 "or /pay is policy-denied",
             ),
+            PreflightCheck(
+                "pay_destination_allowlisted",
+                bool(payments.destination_allowlist_hashes)
+                and all(
+                    re.fullmatch(r"[0-9a-f]{64}", payee_hash)
+                    for payee_hash in payments.destination_allowlist_hashes
+                ),
+                "APP_PAYMENT_DESTINATION_ALLOWLIST must contain valid SHA-256 payee "
+                "hashes; an empty list makes every /pay invoice policy-denied. "
+                "The actual invoice payee must match an entry before sending.",
+            ),
         ]
     )
     return checks
@@ -158,13 +170,13 @@ def golive_preflight(
             ),
             PreflightCheck(
                 # In armed mode the PAYMENT macaroon SHOULD carry spend scope, so the
-                # pay_invoice probe must NOT be permission-denied (scope_minimal=False).
+                # Read-only permission check must show send rights (scope_minimal=False).
                 # A True here would mean the macaroon cannot spend — a broken armed setup.
                 "macaroon_send_capable",
                 payment_credential_configured and macaroon_scope_minimal is False,
                 "armed mode: the dedicated APP_LN_PAYMENT_MACAROON_* credential MUST be "
-                "configured and carry offchain:write (a pay_invoice probe must NOT be "
-                "permission-denied). The read/invoice credential is never promoted to "
+                "configured and carry offchain:write (CheckMacaroonPermissions must "
+                "confirm send rights). The read/invoice credential is never promoted to "
                 "send scope.",
             ),
             *_armed_send_checks(
@@ -181,7 +193,7 @@ def golive_preflight(
             PreflightCheck(
                 "macaroon_scope_minimal",
                 macaroon_scope_minimal is True,
-                "a pay_invoice probe MUST be permission-denied (macaroon carries NO spend scope)",
+                "CheckMacaroonPermissions MUST deny send (macaroon carries NO spend scope)",
             ),
         ]
 

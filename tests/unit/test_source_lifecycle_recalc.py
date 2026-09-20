@@ -259,6 +259,8 @@ def test_rotation_flag_requires_min_n_when_not_silent() -> None:
 def test_main_writes_ranking_and_audit(tmp_path: Path, monkeypatch) -> None:
     import scripts.source_lifecycle_recalc as mod
 
+    # main() uses the real clock; fixed 2026-06 timestamps eventually leave its window.
+    recent = datetime.now(UTC) - timedelta(hours=2)
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     monitor = tmp_path / "monitor"
@@ -268,7 +270,7 @@ def test_main_writes_ranking_and_audit(tmp_path: Path, monkeypatch) -> None:
             "channel": "telegram",
             "message_id": "m",
             "is_digest": False,
-            "dispatched_at": "2026-06-22T10:00:00+00:00",
+            "dispatched_at": recent.isoformat(),
             "source_name": "decrypt",
         },
         {
@@ -276,7 +278,7 @@ def test_main_writes_ranking_and_audit(tmp_path: Path, monkeypatch) -> None:
             "channel": "telegram",
             "message_id": "m",
             "is_digest": False,
-            "dispatched_at": "2026-06-22T11:00:00+00:00",
+            "dispatched_at": (recent + timedelta(hours=1)).isoformat(),
             "source_name": "decrypt",
         },
     ]
@@ -286,7 +288,11 @@ def test_main_writes_ranking_and_audit(tmp_path: Path, monkeypatch) -> None:
     (artifacts / "alert_outcomes.jsonl").write_text(
         "\n".join(
             json.dumps(
-                {"document_id": doc, "outcome": oc, "annotated_at": "2026-06-22T12:00:00+00:00"}
+                {
+                    "document_id": doc,
+                    "outcome": oc,
+                    "annotated_at": (recent + timedelta(hours=2)).isoformat(),
+                }
             )
             for doc, oc in (("d1", "hit"), ("d2", "miss"))
         )

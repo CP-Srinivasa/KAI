@@ -27,13 +27,14 @@ credential now so the preflight can PROVE the split; the switch is PR-C. See
 
 ## 2. Run the preflight (must be GO)
 
-    python scripts/ln_golive_preflight.py
+    cd /home/ubuntu/current && .venv/bin/python -m scripts.ln_golive_preflight
 
 It probes: node reachable (`getinfo`, read credential); **credential split**
 (`APP_LN_MACAROON_*` and `APP_LN_INVOICE_MACAROON_*` are checked separately — one
 macaroon for everything can no longer return GO); **macaroon scope** (a raw
-`pay_invoice` probe MUST be permission-denied on **both** receive-side credentials —
-proving no spend scope); **macaroon can mint** (a raw `add_invoice` probe on the
+`CheckMacaroonPermissions` check MUST deny send on **both** receive-side credentials —
+proving no spend scope without attempting a payment); **macaroon can mint** (an
+`add_invoice` probe on the
 INVOICE credential MUST succeed; a `readonly.macaroon` has no spend scope BUT also
 cannot receive, which would `503` the paid path, so this check catches that trap);
 **inbound liquidity** (the node's `remote_balance` must be >= the price — 0 inbound
