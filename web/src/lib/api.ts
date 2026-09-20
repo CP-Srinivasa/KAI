@@ -1008,7 +1008,15 @@ export type LnActionResult = {
     fee_limit_sat?: number | null;
     plan?: Record<string, unknown>;
   };
-  result?: { action: string; state?: string; status?: string; detail?: string; intent_id?: string; replayed?: boolean };
+  result?: {
+    action: string;
+    state?: string;
+    status?: string;
+    detail?: string;
+    intent_id?: string;
+    replayed?: boolean;
+    response?: { payment_request?: string };
+  };
 };
 
 export function lnValueAction(req: LnActionRequest): Promise<LnActionResult> {

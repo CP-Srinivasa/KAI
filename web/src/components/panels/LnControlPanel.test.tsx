@@ -6,6 +6,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return { ...actual, lnValueAction: (request: unknown) => lnValueAction(request) };
 });
+vi.mock("@/components/panels/PayQr", () => ({
+  PayQr: ({ lightningUri }: { lightningUri: string }) => <div data-testid="invoice-qr">{lightningUri}</div>,
+}));
 
 import { LnControlPanel } from "./LnControlPanel";
 import type { LightningStatus } from "@/lib/api";
@@ -22,6 +25,7 @@ describe("LnControlPanel", () => {
   afterEach(() => {
     cleanup();
     lnValueAction.mockReset();
+    vi.unstubAllGlobals();
   });
 
   it("zeigt für den Payment-Control-Plane-Plan HOTP, bindet die Freigabe und hält den Schlüssel beim Retry", async () => {
@@ -91,20 +95,54 @@ describe("LnControlPanel", () => {
       .mockResolvedValueOnce({
         mode: "execute",
         action: "create_invoice",
-        result: { action: "create_invoice", state: "executed" },
+        result: { action: "create_invoice", state: "executed", response: { payment_request: "lnbc1return" } },
       });
     render(<LnControlPanel status={{ ...status, data: { ...status.data, pay_enabled: false } }} />);
+    fireEvent.change(screen.getByLabelText("Aktion"), { target: { value: "create_invoice" } });
     fireEvent.change(screen.getByLabelText("Betrag in sat"), { target: { value: "321" } });
     fireEvent.change(screen.getByLabelText("Memo"), { target: { value: "Beleg" } });
     fireEvent.click(screen.getByRole("button", { name: "Plan" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Ausführen" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Ausführen" }));
     await waitFor(() => expect(screen.getByText(/executed/)).toBeTruthy());
+    expect((screen.getByLabelText("Erstellte Lightning-Rechnung") as HTMLTextAreaElement).value).toBe("lnbc1return");
+    expect(screen.getByRole("button", { name: "Rechnung kopieren" })).toBeTruthy();
+    expect(screen.getByTestId("invoice-qr").textContent).toBe("lightning:lnbc1return");
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Rechnung kopieren" }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("lnbc1return"));
+    } finally {
+      if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
     expect(lnValueAction.mock.calls[0][0]).toMatchObject({
       action: "create_invoice",
       params: { value_sat: 321, memo: "Beleg" },
     });
     expect(lnValueAction.mock.calls[1][0].confirm).toMatchObject({ plan_hash: "invoice-plan", hotp: "" });
     expect(lnValueAction.mock.calls[1][0].confirm.idempotency_key).toBeTruthy();
+  });
+
+  it.each([
+    { payEnabled: false, mode: "live" },
+    { payEnabled: true, mode: "shadow" },
+  ])("zeigt Senden bei pay_enabled=$payEnabled und Modus=$mode, sperrt aber Ausführen", async ({ payEnabled, mode }) => {
+    lnValueAction.mockResolvedValue({
+      mode: "plan",
+      action: "pay_invoice",
+      policy: { decision: "payment_control_plane", reason: "ADR 0018 §12" },
+      plan_hash: "plan",
+      plan: { mode, amount_sat: 1, fee_limit_sat: 1 },
+    });
+    render(<LnControlPanel status={{ ...status, data: { ...status.data, pay_enabled: payEnabled } }} />);
+    expect(screen.getByRole("option", { name: "Senden · Rechnung bezahlen" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Lightning-Rechnung"), { target: { value: "lnbc1invoice" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    await waitFor(() => expect(screen.getByText(/Vorschau ist keine Zahlungsfreigabe/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Ausführen" })).toBeNull();
+    expect(lnValueAction).toHaveBeenCalledTimes(1);
   });
 });
