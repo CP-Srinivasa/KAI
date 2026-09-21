@@ -1,4 +1,4 @@
-// @data-source: /pay/health + POST /pay/requests + /pay/requests/{id} (+ /receipt) + /pay/requests?limit=10
+// @data-source: /dashboard/api/lightning + POST /dashboard/api/ln/value-action + /pay/health + POST /pay/requests + /pay/requests/{id} (+ /receipt) + /pay/requests?limit=10
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, Check, Copy, QrCode, Receipt, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/layout/PageHeader";
@@ -6,10 +6,12 @@ import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { Field, Input } from "@/components/ui/Form";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PayQr } from "@/components/panels/PayQr";
+import { LnControlPanel } from "@/components/panels/LnControlPanel";
 import { useApi, type AsyncState } from "@/lib/useApi";
 import { PAY_POLL_MS, usePayRequestPolling } from "@/lib/usePayRequestPolling";
 import {
   createPayRequest,
+  fetchLightningStatus,
   fetchPayHealth,
   fetchPayReceipt,
   fetchPayRequests,
@@ -17,6 +19,7 @@ import {
   type PayReceipt,
   type PayRequest,
   type PayRequestCreated,
+  type LightningStatus,
 } from "@/lib/api";
 import {
   PAY_DESCRIPTION_MAX,
@@ -36,7 +39,11 @@ import {
 import { formatDayTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
-// KAI PAY v0.1 — EINE funktionale Seite (Operator-Vorgabe):
+// KAI PAY: Empfang bleibt /pay mit QR, Status und Receipt. Der Operator-Send
+// nutzt unveraendert den PaymentService aus der LN-Steuerung (kein neuer Rail).
+// Das ist die vom Operator gewuenschte KAI-PAY-Bedienung, kein Budget-Macaroon
+// und keine Umgehung von D-277-Re-Arm, Allowlist, Caps oder HOTP.
+// Empfangsvertrag v0.1 (Operator-Vorgabe):
 //
 //   KAI PAY
 //   Amount:      [ 5000 ]   (sat, Ganzzahl — keine EUR-Anzeige)
@@ -61,6 +68,7 @@ const HEALTH_REFRESH_MS = 30_000;
 
 export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
   const health = useApi(fetchPayHealth, HEALTH_REFRESH_MS);
+  const lightning = useApi(fetchLightningStatus, HEALTH_REFRESH_MS);
   const disabled =
     (health.state === "error" && isPayDisabledError(health.error)) ||
     (health.state === "ready" && health.data.enabled === false);
@@ -98,23 +106,23 @@ export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
   }, [bumpList]);
 
   if (disabled) {
-    return <PayDisabled detail={health.state === "error" ? health.error.message : "enabled=false"} />;
+    return <PayDisabled
+      detail={health.state === "error" ? health.error.message : "enabled=false"}
+      lightning={lightning}
+    />;
   }
 
   return (
     <div className="p-5 xl:p-6 space-y-6 max-w-[1680px] mx-auto">
       <PageHeader
         title="KAI PAY"
-        sub="Zahlung anfordern · Lightning-Invoice · Status live aus der API"
+        sub="Lightning senden und empfangen · Status live aus der API"
         tone="pos"
         icon={<QrCode size={18} />}
         right={<HealthBadge health={health} />}
       />
 
-      <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2 text-xs text-fg-muted">
-        KAI PAY fordert Zahlungen an. Für eine Zahlung an deine externe Wallet nutze die
-        Operator-Funktion <a href="#node" className="text-ai underline">Node → LN-Steuerung → Senden</a>.
-      </div>
+      <LnControlPanel status={lightning} sendOnly />
 
       {health.state === "error" && (
         <ErrorLine
@@ -124,6 +132,7 @@ export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
         />
       )}
 
+      <h2 className="text-sm font-semibold text-fg">Empfangen · Rechnung und Status</h2>
       <div className="grid gap-4 lg:grid-cols-2">
         <PayForm onCreated={onCreated} />
         {selection ? (
@@ -158,21 +167,19 @@ export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
 
 /* ---------- Deaktiviert (404 auf /pay/health oder enabled=false) ---------- */
 
-function PayDisabled({ detail }: { detail: string }) {
+function PayDisabled({ detail, lightning }: { detail: string; lightning: AsyncState<LightningStatus> }) {
   return (
     <div className="p-5 xl:p-6 space-y-6 max-w-[1680px] mx-auto">
       <PageHeader
         title="KAI PAY"
-        sub="Zahlung anfordern über Lightning"
+        sub="Lightning senden und empfangen"
         tone="warn"
         icon={<QrCode size={18} />}
       />
-      <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2 text-xs text-fg-muted">
-        Senden ist eine getrennte Operator-Funktion: <a href="#node" className="text-ai underline">Node → LN-Steuerung → Senden</a>.
-      </div>
+      <LnControlPanel status={lightning} sendOnly />
       <EmptyState
         icon={<AlertTriangle size={18} />}
-        title="KAI PAY ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)"
+        title="Empfangen ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)"
         hint={
           <>
             Der Server antwortet auf <span className="font-mono">GET /pay/health</span> mit{" "}

@@ -26,10 +26,16 @@ function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
   return "muted";
 }
 
-/** Der Lightning-Status kommt von der Seite herein: die Node-Seite holt ihn
- *  EINMAL fuer Lightning-Karte und LN-Steuerung (2026-09-17, SP-8 / T6 —
- *  vorher je ein eigener Poller auf denselben Endpunkt). */
-export function LnControlPanel({ status: polling }: { status: AsyncState<LightningStatus> }) {
+/** Der Lightning-Status kommt von der Seite herein. KAI PAY zeigt nur Senden,
+ *  weil sein eigener /pay-Empfang bereits QR, Polling und Beleg abdeckt. Beide
+ *  Seiten nutzen denselben gegateten PaymentService, keinen zweiten Geldpfad. */
+export function LnControlPanel({
+  status: polling,
+  sendOnly = false,
+}: {
+  status: AsyncState<LightningStatus>;
+  sendOnly?: boolean;
+}) {
   const ln = polling.state === "ready" ? polling.data : null;
   const payOn = ln?.pay_enabled === true;
 
@@ -116,14 +122,18 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
         title={
           <span className="flex items-center gap-1.5">
             <Send size={14} className="text-ai shrink-0" />
-            LN-Steuerung (Wert-Schicht)
+            {sendOnly ? "Senden" : "LN-Steuerung (Wert-Schicht)"}
           </span>
         }
-        subtitle="Vorschau → prüfen → freigeben · PaymentService für Zahlungen"
+        subtitle={sendOnly
+          ? "Externe BOLT11-Rechnung → Vorschau → kontrollierte Freigabe"
+          : "Vorschau → prüfen → freigeben · PaymentService für Zahlungen"}
         right={
           <div className="flex items-center gap-2">
             <LiveDot state={polling.state} generatedAt={ln ? ln.generated_at : null} staleAfterMs={90_000} downAfterMs={240_000} />
-            {ln == null ? null : payOn ? (
+            {ln == null ? (
+              <Badge tone="warn" dot>Status unbekannt</Badge>
+            ) : payOn ? (
               <Badge tone="warn" dot>
                 <ShieldAlert size={10} /> pay_enabled AN
               </Badge>
@@ -138,12 +148,17 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
 
       <div
         className={
-          payOn
+          ln == null || payOn
             ? "rounded-sm border border-warn/40 bg-warn/10 px-3 py-2 text-2xs text-fg-muted"
             : "rounded-sm border border-pos/30 bg-pos/5 px-3 py-2 text-2xs text-fg-muted"
         }
       >
-        {payOn ? (
+        {ln == null ? (
+          <span>
+            <span className="font-semibold text-warn">Lightning-Status nicht verfügbar</span> —
+            Senden bleibt gesperrt, bis der aktuelle Kill-Switch-Zustand lesbar ist.
+          </span>
+        ) : payOn ? (
           <span>
             <span className="font-semibold text-warn">pay_enabled=true</span> — Zahlungen können
             innerhalb der Payment-Regelkette ausgeführt werden. Die Freigabe bindet den geprüften Plan.
@@ -160,20 +175,22 @@ export function LnControlPanel({ status: polling }: { status: AsyncState<Lightni
 
       <div className="mt-3 space-y-2">
         <div className="flex flex-wrap gap-2">
-          <select
-            aria-label="Aktion"
-            value={action}
-            onChange={(e) => {
-              changeInput(() => setAction(e.target.value as (typeof ACTIONS)[number]));
-            }}
-            className="rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono text-fg"
-          >
-            {ACTIONS.map((a) => (
-              <option key={a} value={a}>
-                {ACTION_LABELS[a]}
-              </option>
-            ))}
-          </select>
+          {!sendOnly && (
+            <select
+              aria-label="Aktion"
+              value={action}
+              onChange={(e) => {
+                changeInput(() => setAction(e.target.value as (typeof ACTIONS)[number]));
+              }}
+              className="rounded-sm border border-line-subtle bg-bg-2 px-2 py-1 text-xs font-mono text-fg"
+            >
+              {ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {ACTION_LABELS[a]}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             onClick={() => run(false)}
             disabled={busy}
