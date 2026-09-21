@@ -12,6 +12,8 @@ const createPayRequest = vi.fn();
 const fetchPayRequest = vi.fn();
 const fetchPayRequests = vi.fn();
 const fetchPayReceipt = vi.fn();
+const fetchLightningStatus = vi.fn();
+const lnValueAction = vi.fn();
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -21,6 +23,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchPayRequest: (id: string, s?: AbortSignal) => fetchPayRequest(id, s),
     fetchPayRequests: (limit: number, s?: AbortSignal) => fetchPayRequests(limit, s),
     fetchPayReceipt: (id: string, s?: AbortSignal) => fetchPayReceipt(id, s),
+    fetchLightningStatus: (s?: AbortSignal) => fetchLightningStatus(s),
+    lnValueAction: (request: unknown) => lnValueAction(request),
   };
 });
 
@@ -92,19 +96,20 @@ beforeEach(() => {
   vi.clearAllMocks();
   fetchPayHealth.mockResolvedValue(health);
   fetchPayRequests.mockResolvedValue([]);
+  fetchLightningStatus.mockResolvedValue({ pay_enabled: false, generated_at: "2026-09-21T10:00:00Z" });
   toDataURL.mockResolvedValue("data:image/png;base64,QR");
 });
 afterEach(cleanup);
 
-describe("PayPage — deaktiviert", () => {
-  it("404 auf /pay/health → Hinweisseite mit APP_PAY_ENABLED, kein Formular", async () => {
+describe("PayPage — deaktivierter Empfang", () => {
+  it("404 auf /pay/health → Empfangshinweis, Sendepfad bleibt sichtbar", async () => {
     fetchPayHealth.mockRejectedValue(new ApiError("not_found", 404, "/pay/health", "kai pay disabled"));
     fetchPayRequests.mockRejectedValue(new ApiError("not_found", 404, "/pay/requests", "kai pay disabled"));
     render(<PayPage pollMs={20} />);
     expect(await screen.findByText(/nicht aktiviert/)).toBeTruthy();
-    expect(screen.getByText("KAI PAY ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)")).toBeTruthy();
+    expect(screen.getByText("Empfangen ist auf diesem Server nicht aktiviert (APP_PAY_ENABLED)")).toBeTruthy();
     expect(screen.getByText(/kai pay disabled/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Node.*LN-Steuerung.*Senden/ }).getAttribute("href")).toBe("#node");
+    expect(screen.getByLabelText("Lightning-Rechnung")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "CREATE PAYMENT" })).toBeNull();
   });
 
@@ -128,7 +133,7 @@ describe("PayPage — Zahlung anfordern", () => {
     fetchPayRequest.mockResolvedValue(waiting);
     render(<PayPage pollMs={1_000_000} />);
     await screen.findByText(/offen 1 · settled 7/);
-    expect(screen.getByRole("link", { name: /Node.*LN-Steuerung.*Senden/ }).getAttribute("href")).toBe("#node");
+    expect(screen.getByLabelText("Lightning-Rechnung")).toBeTruthy();
 
     fillAndSubmit();
 
@@ -160,6 +165,65 @@ describe("PayPage — Zahlung anfordern", () => {
     fillAndSubmit();
     expect(await screen.findByText(/HTTP 503 · server · journal locked/)).toBeTruthy();
     expect(screen.queryByTestId("pay-qr")).toBeNull();
+  });
+});
+
+describe("PayPage — Senden ueber denselben PaymentService", () => {
+  it("meldet bei fehlendem Lightning-Status keinen falschen Kill-Switch-Zustand", async () => {
+    fetchLightningStatus.mockRejectedValue(new ApiError("server", 503, "/dashboard/api/lightning", "unavailable"));
+    render(<PayPage pollMs={1_000_000} />);
+    expect(await screen.findByText(/Lightning-Status nicht verfügbar/)).toBeTruthy();
+    expect(screen.getByText("Status unbekannt")).toBeTruthy();
+    expect(screen.queryByText(/pay_enabled=false/)).toBeNull();
+    expect(screen.getByRole("button", { name: "CREATE PAYMENT" })).toBeTruthy();
+  });
+
+  it("zeigt den Plan fuer eine externe Rechnung, ohne im Shadow-Modus Ausfuehren anzubieten", async () => {
+    lnValueAction.mockResolvedValue({
+      mode: "plan",
+      action: "pay_invoice",
+      policy: { decision: "payment_control_plane", reason: "ADR 0018 §12" },
+      plan_hash: "shadow-plan",
+      plan: { state: "planned", mode: "shadow", amount_sat: 1, fee_limit_sat: 1 },
+    });
+    render(<PayPage pollMs={1_000_000} />);
+    await screen.findByText(/Empfangen · Rechnung und Status/);
+    fireEvent.change(screen.getByLabelText("Lightning-Rechnung"), { target: { value: "lnbc1external" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    await waitFor(() => expect(lnValueAction).toHaveBeenCalledWith({
+      action: "pay_invoice",
+      params: { payment_request: "lnbc1external", purpose: "operator_pay_invoice" },
+    }));
+    expect(await screen.findByText(/Vorschau ist keine Zahlungsfreigabe/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Ausführen" })).toBeNull();
+    expect(screen.getByRole("button", { name: "CREATE PAYMENT" })).toBeTruthy();
+    expect(screen.queryByLabelText("Aktion")).toBeNull();
+  });
+
+  it("kann nach Live-Plan und HOTP die vorhandene PaymentService-Ausfuehrung anfordern", async () => {
+    fetchLightningStatus.mockResolvedValue({ pay_enabled: true, generated_at: "2026-09-21T10:00:00Z" });
+    lnValueAction
+      .mockResolvedValueOnce({
+        mode: "plan",
+        action: "pay_invoice",
+        policy: { decision: "payment_control_plane", reason: "ADR 0018 §12" },
+        plan_hash: "live-plan",
+        plan: { state: "planned", mode: "live", amount_sat: 1, fee_limit_sat: 1 },
+      })
+      .mockResolvedValueOnce({ mode: "execute", action: "pay_invoice", result: { state: "settled" } });
+    render(<PayPage pollMs={1_000_000} />);
+    await screen.findByText(/pay_enabled AN/);
+    fireEvent.change(screen.getByLabelText("Lightning-Rechnung"), { target: { value: "lnbc1external" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    await waitFor(() => expect(screen.getByLabelText("HOTP-Freigabe")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("HOTP-Freigabe"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ausführen" }));
+    await waitFor(() => expect(lnValueAction).toHaveBeenCalledTimes(2));
+    expect(lnValueAction.mock.calls[1][0]).toMatchObject({
+      action: "pay_invoice",
+      params: { payment_request: "lnbc1external", purpose: "operator_pay_invoice" },
+      confirm: { hotp: "123456", plan_hash: "live-plan" },
+    });
   });
 });
 
