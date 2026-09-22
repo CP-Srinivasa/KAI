@@ -25,4 +25,6 @@ ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_a
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=300
-MemoryMax=512M
+# 20./21.09. Peak 511.6/511.8M; 22.09. cgroup-OOM am 512M-Limit.
+# 768M gibt dem einmal taeglichen Digest Luft; kein globales Pi-OOM (13GiB verfuegbar).
+MemoryMax=768M
