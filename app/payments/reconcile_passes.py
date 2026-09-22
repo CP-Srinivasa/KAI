@@ -141,21 +141,22 @@ def _record(
             rail_evidence=evidence,
         ),
     )
+    payload = {
+        "status": target.value,
+        "rail_dedup_key": lookup.rail_dedup_key,
+        "observed_status": lookup.outcome.value,
+        "evidence_source": "rail_lookup",
+        "amount_settled_minor_units": lookup.amount_sent.minor_units if lookup.amount_sent else 0,
+        "fee_actual_minor_units": lookup.fee_actual.minor_units if lookup.fee_actual else 0,
+        "proof_hash": lookup.proof.ref_hash if lookup.proof else "",
+        "failure_reason": lookup.failure_reason,
+    }
+    if lookup.fee_actual_msat is not None:
+        payload["fee_actual_msat"] = lookup.fee_actual_msat
     journal.append(
         intent_id,
         _event_for(target),
-        {
-            "status": target.value,
-            "rail_dedup_key": lookup.rail_dedup_key,
-            "observed_status": lookup.outcome.value,
-            "evidence_source": "rail_lookup",
-            "amount_settled_minor_units": (
-                lookup.amount_sent.minor_units if lookup.amount_sent else 0
-            ),
-            "fee_actual_minor_units": (lookup.fee_actual.minor_units if lookup.fee_actual else 0),
-            "proof_hash": lookup.proof.ref_hash if lookup.proof else "",
-            "failure_reason": lookup.failure_reason,
-        },
+        payload,
         ts=now,
     )
 

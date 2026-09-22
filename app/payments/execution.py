@@ -122,18 +122,19 @@ def apply_rail_result(
             rail_evidence=rail_evidence_from(result),
         ),
     )
+    payload = {
+        "status": target.value,
+        "amount_settled_minor_units": result.amount_sent.minor_units if result.amount_sent else 0,
+        "fee_actual_minor_units": result.fee_actual.minor_units if result.fee_actual else 0,
+        "proof_hash": result.proof.ref_hash if result.proof else "",
+        "failure_reason": result.failure_reason,
+    }
+    if result.fee_actual_msat is not None:
+        payload["fee_actual_msat"] = result.fee_actual_msat
     journal.append(
         tracked.intent.intent_id,
         event_name_for(target),
-        {
-            "status": target.value,
-            "amount_settled_minor_units": (
-                result.amount_sent.minor_units if result.amount_sent else 0
-            ),
-            "fee_actual_minor_units": (result.fee_actual.minor_units if result.fee_actual else 0),
-            "proof_hash": result.proof.ref_hash if result.proof else "",
-            "failure_reason": result.failure_reason,
-        },
+        payload,
         ts=moment,
     )
     return IntentView(intent_id=tracked.intent.intent_id, status=target, decision=tracked.decision)

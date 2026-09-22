@@ -49,17 +49,28 @@ def _int_field(raw: Any) -> int:
         return 0
 
 
+def _optional_nonnegative_int(raw: Any) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def _normalise_payment(result: dict[str, Any]) -> dict[str, Any]:
     """One flat view of lnrpc.Payment — enums and numbers only, no route/hop data.
 
     ``failure_reason`` is lnd's enum (``FAILURE_REASON_NO_ROUTE`` …), never free
     text, so the journal may keep it verbatim. ``FAILURE_REASON_NONE`` becomes "".
     """
+    fee_msat = _optional_nonnegative_int(result.get("fee_msat"))
     fee_sat = _int_field(result.get("fee_sat"))
     if fee_sat == 0:
-        fee_sat = _int_field(result.get("fee_msat")) // 1000
+        fee_sat = (fee_msat or 0) // 1000
     failure = str(result.get("failure_reason") or "").strip().upper()
-    return {
+    normalized = {
         "status": str(result.get("status") or "").strip().upper(),
         "payment_hash": str(result.get("payment_hash") or "").strip(),
         "payment_preimage": str(result.get("payment_preimage") or "").strip(),
@@ -67,6 +78,9 @@ def _normalise_payment(result: dict[str, Any]) -> dict[str, Any]:
         "value_sat": _int_field(result.get("value_sat")),
         "failure_reason": "" if failure in _NO_FAILURE else failure,
     }
+    if fee_msat is not None:
+        normalized["fee_msat"] = fee_msat
+    return normalized
 
 
 def _stream_error_text(message: dict[str, Any]) -> str:
@@ -104,6 +118,7 @@ class LndPayment:
     value_sat: int
     fee_sat: int
     payment_index: int
+    fee_msat: int | None = None
 
 
 @dataclass(frozen=True)
@@ -340,13 +355,18 @@ class LndRestClient:
                     )
                 return value
 
+            fee_msat = _optional_nonnegative_int(raw.get("fee_msat"))
+            fee_sat = _nonnegative_int("fee_sat")
+            if fee_sat == 0 and fee_msat is not None:
+                fee_sat = fee_msat // 1000
             return LndPayment(
                 payment_hash=payment_hash,
                 status=status,
                 failure_reason=str(raw.get("failure_reason") or "").strip().upper(),
                 value_sat=_nonnegative_int("value_sat"),
-                fee_sat=_nonnegative_int("fee_sat"),
+                fee_sat=fee_sat,
                 payment_index=_nonnegative_int("payment_index"),
+                fee_msat=fee_msat,
             )
 
         def _offset(field_name: str, *, optional: bool = False) -> int | None:

@@ -161,6 +161,7 @@ class RailResult(BaseModel):
     observed_at: datetime
     amount_sent: Money | None = None
     fee_actual: Money | None = None
+    fee_actual_msat: int | None = Field(default=None, ge=0)
     proof: Proof | None = None
     failure_reason: str = Field(default="", max_length=64)
     #: Der rohe Status des Rails, nur zur Diagnose — nie Entscheidungsgrundlage.
@@ -184,6 +185,7 @@ class RailLookup(BaseModel):
     observed_at: datetime
     amount_sent: Money | None = None
     fee_actual: Money | None = None
+    fee_actual_msat: int | None = Field(default=None, ge=0)
     proof: Proof | None = None
     failure_reason: str = Field(default="", max_length=64)
 
@@ -209,6 +211,7 @@ class RailPayment(BaseModel):
     observed_at: datetime
     amount_sent: Money | None = None
     fee_actual: Money | None = None
+    fee_actual_msat: int | None = Field(default=None, ge=0)
 
     @field_validator("observed_at")
     @classmethod

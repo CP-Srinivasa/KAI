@@ -121,6 +121,8 @@ def result_from_send(
             raw_status=(status or "NO_STATUS") if status != "SUCCEEDED" else "NO_PREIMAGE",
         )
     fee_sat = int(response.get("fee_sat") or 0)
+    fee_msat = response.get("fee_msat")
+    exact_fee = int(fee_msat) if fee_msat is not None and str(fee_msat).isdigit() else None
     return RailResult(
         rail=rail,
         outcome=RailOutcome.SETTLED,
@@ -128,6 +130,7 @@ def result_from_send(
         observed_at=moment,
         amount_sent=attempt.amount_sent,
         fee_actual=sat(fee_sat),
+        fee_actual_msat=exact_fee,
         proof=Proof(kind=ProofKind.PREIMAGE, ref_hash=normalise_payment_hash(preimage)),
         raw_status="SUCCEEDED",
     )
@@ -150,6 +153,7 @@ def payments_from_rows(
             observed_at=moment,
             amount_sent=sat(row.value_sat),
             fee_actual=sat(row.fee_sat),
+            fee_actual_msat=getattr(row, "fee_msat", None),
         )
         for row in rows
     )
@@ -169,6 +173,7 @@ def lookup_from_payment(payment: Any, *, rail: str, moment: datetime) -> RailLoo
         observed_at=moment,
         amount_sent=sat(payment.value_sat) if payment.value_sat else None,
         fee_actual=sat(payment.fee_sat),
+        fee_actual_msat=getattr(payment, "fee_msat", None),
         proof=(
             Proof(kind=ProofKind.PREIMAGE, ref_hash=payment.payment_hash)
             if outcome is RailOutcome.SETTLED

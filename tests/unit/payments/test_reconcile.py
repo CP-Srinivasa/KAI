@@ -84,6 +84,7 @@ def answer(
     failure_reason: str = "",
     amount: int = 0,
     fee: int = 0,
+    fee_msat: int | None = None,
     with_proof: bool = False,
 ) -> RailLookup:
     return RailLookup(
@@ -94,6 +95,7 @@ def answer(
         observed_at=NOW,
         amount_sent=sat(amount) if amount else None,
         fee_actual=sat(fee) if fee else None,
+        fee_actual_msat=fee_msat,
         proof=Proof(kind=ProofKind.PREIMAGE, ref_hash="a" * 64) if with_proof else None,
         failure_reason=failure_reason,
     )
@@ -173,7 +175,9 @@ async def test_succeeded_wird_settled_mit_evidenz(tmp_path: Path) -> None:
     journal, rail, _service, intent_id = await open_intent(tmp_path)
     key = journal.index.dedup_key(intent_id)
     assert key is not None
-    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000, fee=3, with_proof=True)
+    rail.lookup_answers[key] = answer(
+        key, RailOutcome.SETTLED, amount=1000, fee=3, fee_msat=3050, with_proof=True
+    )
 
     report = await run(journal, rail, tmp_path)
 
@@ -182,6 +186,7 @@ async def test_succeeded_wird_settled_mit_evidenz(tmp_path: Path) -> None:
     settled = [e for e in journal.events(intent_id) if e.event_type == "settled"]
     assert settled[-1].payload["amount_settled_minor_units"] == 1000
     assert settled[-1].payload["fee_actual_minor_units"] == 3
+    assert settled[-1].payload["fee_actual_msat"] == 3050
     assert settled[-1].payload["proof_hash"] == "a" * 64
 
 

@@ -262,6 +262,25 @@ async def test_happy_path_settles(tmp_path: Path) -> None:
     ]
 
 
+async def test_exact_fee_is_journalled_without_changing_sat_accounting(tmp_path: Path) -> None:
+    rail = SimulationRail(now=NOW)
+    original_pay = rail.pay
+
+    async def pay_with_exact_fee(intent, attempt):  # type: ignore[no-untyped-def]
+        result = await original_pay(intent, attempt)
+        return result.model_copy(update={"fee_actual": sat(1), "fee_actual_msat": 1050})
+
+    rail.pay = pay_with_exact_fee  # type: ignore[method-assign]
+    service = a_service(tmp_path, rail=rail)
+    view = await service.create_intent(a_request(), "idem-exact-fee-0123456789abcdef")
+    executed = await service.execute(view.intent_id)
+
+    assert executed.status is PaymentStatus.SETTLED
+    settled = [event for event in service.audit(view.intent_id) if event.event_type == "settled"]
+    assert settled[-1].payload["fee_actual_minor_units"] == 1
+    assert settled[-1].payload["fee_actual_msat"] == 1050
+
+
 async def test_submitted_is_written_before_the_rail_is_called(tmp_path: Path) -> None:
     """Write-ahead (ADR §4): ohne diesen Record ist ein Crash spurlos."""
     seen: list[list[str]] = []

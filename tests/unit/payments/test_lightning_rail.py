@@ -43,12 +43,14 @@ class FakeLndPayment:
         *,
         value_sat: int = 1000,
         fee_sat: int = 2,
+        fee_msat: int | None = None,
         failure_reason: str = "",
     ) -> None:
         self.payment_hash = payment_hash
         self.status = status
         self.value_sat = value_sat
         self.fee_sat = fee_sat
+        self.fee_msat = fee_msat
         self.failure_reason = failure_reason
         self.payment_index = 1
 
@@ -391,6 +393,21 @@ async def test_a_preimage_is_a_settlement() -> None:
     assert result.outcome is RailOutcome.SETTLED
     assert result.proof is not None
     assert result.fee_actual == sat(3)
+    assert result.fee_actual_msat is None
+
+
+async def test_exact_fee_survives_send_mapping() -> None:
+    client = FakeClient(
+        pay={
+            "status": "SUCCEEDED",
+            "payment_preimage": PREIMAGE_HASH,
+            "fee_sat": 1,
+            "fee_msat": 1050,
+        }
+    )
+    result = await a_rail(client).pay(an_intent(), an_attempt())
+    assert result.fee_actual == sat(1)
+    assert result.fee_actual_msat == 1050
 
 
 async def test_a_timeout_is_unknown_never_failed() -> None:
@@ -438,12 +455,13 @@ async def test_a_200_without_preimage_is_unknown() -> None:
 
 
 async def test_lookup_finds_a_succeeded_payment() -> None:
-    client = FakeClient(payments=[FakeLndPayment(PAYMENT_HASH, "SUCCEEDED")])
+    client = FakeClient(payments=[FakeLndPayment(PAYMENT_HASH, "SUCCEEDED", fee_msat=2050)])
     lookup = await a_rail(client).lookup(PAYMENT_HASH)
     assert lookup.found is True
     assert lookup.outcome is RailOutcome.SETTLED
     assert lookup.amount_sent == sat(1000)
     assert lookup.fee_actual == sat(2)
+    assert lookup.fee_actual_msat == 2050
     assert lookup.proof is not None
 
 

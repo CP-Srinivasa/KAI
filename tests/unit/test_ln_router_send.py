@@ -136,6 +136,7 @@ async def test_fee_falls_back_to_msat_when_sat_is_absent() -> None:
     )
     result = await _client(handler).pay_invoice(payment_request=BOLT11, fee_limit_sat=5)
     assert result["fee_sat"] == 2
+    assert result["fee_msat"] == 2500
 
 
 async def test_the_last_streamed_state_wins() -> None:
