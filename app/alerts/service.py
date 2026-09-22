@@ -119,7 +119,15 @@ class AlertService:
         """Seed in-memory sets from recent audit records (cross-run dedup)."""
         try:
             records = load_alert_audits(self._audit_dir)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # Ohne Seed sind die Alerts der letzten 24 h nach einem Neustart
+            # wieder frei — das darf nicht stumm passieren (Audit 16.09. S2-11).
+            log.warning(
+                "alert_dedup_seed_failed",
+                error=f"{type(exc).__name__}: {exc}",
+                audit_dir=str(self._audit_dir),
+                lookback_hours=self._dedup_lookback_hours,
+            )
             return
         cutoff = datetime.now(UTC) - timedelta(hours=self._dedup_lookback_hours)
         rate_cutoff = datetime.now(UTC) - timedelta(hours=_ASSET_RATE_LIMIT_HOURS)
