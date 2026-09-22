@@ -1,3 +1,16 @@
+## 2026-09-22 - Konfiguration: `.env.example` laedt wieder, Sicherheits-Schluessel dokumentiert, Alias-Dubletten im Ratchet (S2-9b)
+
+Der neue Test `test_vorlage_laedt_in_jede_settings_klasse` kopiert die Vorlage in die Umgebung und instanziiert alle 39
+Settings-Klassen -- und fand zwei alte Defekte: `APP_CORS_ALLOWED_ORIGINS` stand kommagetrennt in der Vorlage (und im
+Code-Kommentar), das Feld ist aber `list[str]` und pydantic-settings dekodiert komplexe Felder als JSON, bevor ein
+Validator greift; `KAI_INFERENCE_ROUTE_REASONING_BUDGET=` und `..._EFFORT=` standen leer, die Felder sind `dict`. Wer die
+Vorlage 1:1 kopierte, bekam beim Start einen `SettingsError`. Jetzt JSON-Liste bzw. `{}`; Kommentar in
+`app/core/settings.py` zeilenneutral korrigiert (God-File 1883/1883). Neu in der Vorlage: `APP_API_BIND_HOST`, die fuenf
+`APP_SECURITY_HEADERS_*` (SENTR-F-007), `APP_AUTH_RATE_LIMIT_*` (SENTR-F-003) und der Exchange-Adapter (`EXCHANGE_*`,
+Secrets leer, `EXCHANGE_WHITELIST` bewusst auskommentiert -- ein leerer Listenwert waere ungueltig). Der Drift-Ratchet
+zaehlt ein Feld mit `AliasChoices` jetzt als dokumentiert, sobald EIN Name in der Vorlage steht (z. B.
+`CF_ACCESS_ALLOWED_EMAILS`), und fuehrt es unter dem kanonischen Namen; Baseline 409 -> 388.
+
 ## 2026-09-22 - Konfiguration: Drift-Ratchet `.env.example` gegen die Settings-Klassen (System-Audit 16.09., P1-20, S2-9)
 
 Die Pi-`.env` fuehrte 204 Schluessel, die Vorlage deckte 121; `TRADINGVIEW_WEBHOOK_SHARED_TOKEN` (Pflicht in den

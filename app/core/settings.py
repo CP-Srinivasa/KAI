@@ -1446,8 +1446,8 @@ class AppSettings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("APP_ALLOW_NON_LOOPBACK_BIND"),
     )
-    # CORS allowed origins. Comma-separated list. Override in production.
-    # Example: APP_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+    # CORS allowed origins. list[str] -> the env value must be JSON (a comma-
+    # separated string fails at load). Example: APP_CORS_ALLOWED_ORIGINS=["https://app.example.com"]
     cors_allowed_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:8000"]
     )

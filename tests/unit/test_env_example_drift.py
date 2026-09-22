@@ -47,6 +47,21 @@ def test_vorlage_parser_zaehlt_aktive_und_auskommentierte_zeilen(tmp_path: Path)
     }
 
 
+def test_alias_feld_gilt_als_dokumentiert_sobald_ein_name_steht(tmp_path: Path) -> None:
+    # AppSettings.cf_access_allowed_emails akzeptiert APP_CF_ACCESS_ALLOWED_EMAILS
+    # und CF_ACCESS_ALLOWED_EMAILS; die Vorlage braucht nur einen der Namen.
+    example = tmp_path / ".env.example"
+    example.write_text("CF_ACCESS_ALLOWED_EMAILS=\n", encoding="utf-8")
+    missing = drift.missing_names(example)
+    assert "APP_CF_ACCESS_ALLOWED_EMAILS" not in missing
+    assert "CF_ACCESS_ALLOWED_EMAILS" not in missing
+    # Ohne beide Namen fehlt das Feld genau EINMAL, unter dem kanonischen Namen.
+    example.write_text("\n", encoding="utf-8")
+    missing = drift.missing_names(example)
+    assert missing["APP_CF_ACCESS_ALLOWED_EMAILS"] == "AppSettings.cf_access_allowed_emails"
+    assert "CF_ACCESS_ALLOWED_EMAILS" not in missing
+
+
 def test_keine_neue_luecke_gegenueber_der_baseline() -> None:
     missing = set(drift.missing_names())
     baseline = drift.load_baseline()
@@ -82,3 +97,19 @@ def test_audit_luecke_shared_token_bleibt_geschlossen() -> None:
     entries = drift.example_entries()
     assert "TRADINGVIEW_WEBHOOK_SHARED_TOKEN" in entries
     assert entries["TRADINGVIEW_WEBHOOK_SHARED_TOKEN"] == (True, "")
+
+
+def test_vorlage_laedt_in_jede_settings_klasse(monkeypatch) -> None:
+    # Wer .env.example 1:1 kopiert, muss starten koennen. Bis 22.09. stand
+    # APP_CORS_ALLOWED_ORIGINS kommagetrennt in der Vorlage — fuer ein
+    # list[str]-Feld ein SettingsError beim Laden.
+    for name, (active, value) in drift.example_entries().items():
+        if active:
+            monkeypatch.setenv(name, value)
+    failures: list[str] = []
+    for cls in drift.settings_classes():
+        try:
+            cls(_env_file=None)
+        except Exception as exc:  # noqa: BLE001 — jede Ursache ist ein Vorlagenfehler
+            failures.append(f"{cls.__name__}: {type(exc).__name__}: {str(exc).splitlines()[0]}")
+    assert failures == [], "Vorlage laedt nicht:\n  " + "\n  ".join(failures)

@@ -81,9 +81,11 @@ def _is_nested_settings(annotation: object) -> bool:
     return inspect.isclass(annotation) and issubclass(annotation, BaseSettings)
 
 
-def expected_env_names() -> dict[str, str]:
-    """Env-Name -> ``Klasse.feld`` (erster Treffer gewinnt bei Alias-Dubletten)."""
-    names: dict[str, str] = {}
+def expected_fields() -> dict[str, list[str]]:
+    """``Klasse.feld`` -> Env-Namen; der erste ist der kanonische (Prefix + Feld
+    bzw. erste ``AliasChoices``-Wahl). Ein Feld gilt als dokumentiert, sobald
+    EINER seiner Namen in der Vorlage steht."""
+    fields: dict[str, list[str]] = {}
     for cls in settings_classes():
         prefix = str(cls.model_config.get("env_prefix") or "")
         for field_name, info in cls.model_fields.items():
@@ -96,8 +98,17 @@ def expected_env_names() -> dict[str, str]:
                 candidates = [alias]
             else:
                 candidates = [(prefix + field_name).upper()]
-            for name in candidates:
-                names.setdefault(name, f"{cls.__name__}.{field_name}")
+            if candidates:
+                fields[f"{cls.__name__}.{field_name}"] = candidates
+    return fields
+
+
+def expected_env_names() -> dict[str, str]:
+    """Env-Name -> ``Klasse.feld`` (erster Treffer gewinnt bei Alias-Dubletten)."""
+    names: dict[str, str] = {}
+    for origin, candidates in expected_fields().items():
+        for name in candidates:
+            names.setdefault(name, origin)
     return names
 
 
@@ -130,9 +141,14 @@ def example_entries(path: Path = EXAMPLE_PATH) -> dict[str, tuple[bool, str]]:
 
 
 def missing_names(path: Path = EXAMPLE_PATH) -> dict[str, str]:
-    expected = expected_env_names()
+    """Kanonischer Env-Name -> ``Klasse.feld`` fuer Felder, von denen KEIN Name
+    in der Vorlage steht."""
     documented = example_entries(path)
-    return {name: origin for name, origin in expected.items() if name not in documented}
+    return {
+        candidates[0]: origin
+        for origin, candidates in expected_fields().items()
+        if not any(name in documented for name in candidates)
+    }
 
 
 def load_baseline(path: Path = BASELINE_PATH) -> set[str]:
