@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.core.lightning_settings import LightningSettings
-from app.core.payment_settings import PaymentSettings
+from app.core.payment_settings import PaymentSettings, fee_limit_for_amount
 from app.payments.enums import RailOutcome, SettlementFinality
 from app.payments.models import Invoice, PaymentAttempt, PaymentIntent, Quote
 from app.payments.rail import (
@@ -172,9 +172,14 @@ class LightningRail:
         Messung gehalten.
         """
         amount = intent.amount_requested.minor_units
+        estimate = fee_limit_for_amount(self._payments, amount)
         ppm_fee = amount * self._payments.fee_limit_default_ppm // 1_000_000
-        estimate = min(max(ppm_fee, 1), self._payments.fee_limit_max_sat)
-        source = "settings_ppm"
+        if ppm_fee < self._payments.fee_limit_min_sat:
+            source = "settings_floor"
+        elif ppm_fee > self._payments.fee_limit_max_sat:
+            source = "settings_cap"
+        else:
+            source = "settings_ppm"
 
         estimator = getattr(self._client("read"), "estimate_route_fee", None)
         if callable(estimator):
@@ -183,8 +188,7 @@ class LightningRail:
                 estimate = int(observed)
                 source = "node_estimate_route_fee"
             except Exception:  # noqa: BLE001 - eine Schaetzung darf nichts blockieren
-                estimate = min(max(ppm_fee, 1), self._payments.fee_limit_max_sat)
-                source = "settings_ppm"
+                estimate = fee_limit_for_amount(self._payments, amount)
 
         return Quote(
             rail=self.name,

@@ -164,6 +164,34 @@ def test_plan_mode_nennt_den_control_plane_als_weg(
     assert body["plan"]["fee_limit_sat"] > 0
 
 
+def test_kleinstzahlung_zeigt_und_verwendet_dasselbe_explizite_fee_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lc, "bolt11_amount_sat", lambda _request: 10)
+    app = _app(tmp_path, fee_limit_min_sat=3, fee_limit_max_sat=5)
+    client = TestClient(app)
+    params = {"payment_request": DESTINATION}
+    plan = client.post(URL, json={"action": "pay_invoice", "params": params}).json()
+    assert plan["plan"]["fee_limit_sat"] == 3
+
+    response = client.post(
+        URL,
+        json={
+            "action": "pay_invoice",
+            "params": params,
+            "confirm": {
+                "hotp": "123456",
+                "plan_hash": plan["plan_hash"],
+                "idempotency_key": "cockpit-small-payment-key",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    events = app.state.payment_service.audit(response.json()["result"]["intent_id"])
+    created = next(event for event in events if event.event_type == "intent_created")
+    assert created.payload["fee_limit_minor_units"] == 3
+
+
 def test_execute_laeuft_durch_den_control_plane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

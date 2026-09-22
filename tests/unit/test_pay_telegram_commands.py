@@ -40,6 +40,8 @@ class FakeService:
     """Nur der Vertrag, den ``/pay`` nutzt."""
 
     mode: str = "live"
+    fee_limit_min_sat: int = 1
+    fee_limit_max_sat: int = 200
     first_status: PaymentStatus = PaymentStatus.AWAITING_APPROVAL
     execute_status: PaymentStatus = PaymentStatus.SETTLED
     execute_error: Exception | None = None
@@ -54,7 +56,12 @@ class FakeService:
 
     @property
     def settings(self) -> Any:
-        return SimpleNamespace(mode=self.mode, fee_limit_default_ppm=3_000, fee_limit_max_sat=200)
+        return SimpleNamespace(
+            mode=self.mode,
+            fee_limit_default_ppm=3_000,
+            fee_limit_min_sat=self.fee_limit_min_sat,
+            fee_limit_max_sat=self.fee_limit_max_sat,
+        )
 
     async def create_intent(self, request: PaymentRequest, key: str) -> IntentView:
         self.calls.append(("create_intent", key))
@@ -161,6 +168,16 @@ async def test_preview_creates_the_intent_with_settings_fee_limit_and_shows_the_
     assert "/pay ok <hotp>" in reply
     assert flow.pending[CHAT].intent_id == "pi_test"
     assert flow.pending[CHAT].needs_hotp is True
+
+
+async def test_tiny_invoice_uses_the_same_configured_fee_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pay, "bolt11_amount_sat", lambda _request: 10)
+    service = FakeService(fee_limit_min_sat=3, fee_limit_max_sat=5)
+    reply = await run(PayFlow(), service, BOLT11)
+    assert service.requests[0].fee_limit.minor_units == 3
+    assert "Limit 3 sat" in reply
 
 
 async def test_preview_never_echoes_the_invoice() -> None:

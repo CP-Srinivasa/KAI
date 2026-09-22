@@ -38,6 +38,7 @@ Setzen bzw. pruefen:
 | `APP_PAYMENT_DAILY_HARD_CAP_SAT` | z. B. `25000` | Tages-Cap |
 | `APP_PAYMENT_APPROVAL_THRESHOLD_SAT` | z. B. `1` | HOTP ab 1 sat fuer die Beweisphase |
 | `APP_PAYMENT_FEE_LIMIT_DEFAULT_PPM` / `_MAX_SAT` | `3000` / `200` | Client verweigert Send ohne Fee-Grenze |
+| `APP_PAYMENT_FEE_LIMIT_MIN_SAT` | `3` fuer erneuten 10-sat-Test (Default `1`) | Untergrenze fuer Kleinstzahlungen; nie hoeher als `_MAX_SAT` setzen. Vorher neue Routenschaetzung pruefen; hoeheres Limit garantiert keine Route. |
 | `APP_PAYMENT_PURPOSES_ALLOWED` | enthaelt `operator_pay_invoice` | sonst lehnt die Policy `/pay` ab |
 | `APP_PAYMENT_DESTINATION_ALLOWLIST` | SHA-256 des `destination`-Pubkeys aus `lncli decodepayreq <bolt11>` der externen Testrechnung (UTF-8-Text, lowercase Hex) | leer oder ohne passenden Hash lehnt die Policy jede `/pay`-Rechnung ab; **nicht** den Hash der BOLT11-Rechnung oder den `payment_hash` eintragen |
 | `APP_LN_PAYMENT_MACAROON_PATH` | Macaroon mit `offchain:write` | eigenes Credential, nie das Read-Macaroon |

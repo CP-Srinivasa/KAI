@@ -89,6 +89,7 @@ def test_defaults_are_fail_closed_amounts() -> None:
     assert cfg.per_payment_max_sat > 0
     assert cfg.daily_hard_cap_sat >= cfg.per_payment_max_sat
     assert cfg.fee_limit_default_ppm > 0
+    assert cfg.fee_limit_min_sat == 1  # Bestandsverhalten bis zur bewussten Konfiguration
     assert cfg.fee_limit_max_sat > 0
     assert cfg.approval_threshold_sat > 0
     assert cfg.max_inflight_window_s > 0
@@ -102,6 +103,16 @@ def test_default_destination_allowlist_is_empty_and_that_denies() -> None:
 def test_env_prefix_is_app_payment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_PAYMENT_PER_PAYMENT_MAX_SAT", "4242")
     assert PaymentSettings().per_payment_max_sat == 4242
+
+
+def test_small_payment_fee_floor_is_explicit_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_PAYMENT_FEE_LIMIT_MIN_SAT", "3")
+    cfg = PaymentSettings(fee_limit_max_sat=5)
+    assert cfg.fee_limit_min_sat == 3
+    with pytest.raises(ValueError, match="fee_limit_min_sat"):
+        PaymentSettings(fee_limit_min_sat=6, fee_limit_max_sat=5)
+    with pytest.raises(ValueError):
+        PaymentSettings(fee_limit_min_sat=0)
 
 
 def test_csv_fields_are_parsed_and_normalised() -> None:
