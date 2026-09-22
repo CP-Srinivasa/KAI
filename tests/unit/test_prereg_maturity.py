@@ -91,21 +91,34 @@ async def test_compute_maturity_counts_and_due_flags(session_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_compute_maturity_empty_store(session_factory, tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("now", "conversion_timed_out"),
+    [
+        (datetime(2026, 9, 21, 23, 59, 59, tzinfo=UTC), False),
+        (datetime(2026, 9, 22, tzinfo=UTC), True),
+        (datetime(2026, 9, 23, tzinfo=UTC), True),
+    ],
+    ids=["before-timeout", "at-timeout", "after-timeout"],
+)
+async def test_compute_maturity_empty_store(
+    session_factory, tmp_path, now: datetime, conversion_timed_out: bool
+) -> None:
     # artifacts_dir explizit auf ein leeres Verzeichnis — die Datei-Kinds
     # (tech_precision/exec_translation) duerfen nicht die Repo-Artefakte lesen.
     async with session_factory() as session:
-        rows = await compute_maturity(session, artifacts_dir=tmp_path / "empty")
+        rows = await compute_maturity(session, artifacts_dir=tmp_path / "empty", now=now)
 
-    # Frist-Prae-Regs (kind="deadline") haengen NICHT am Datenbestand: sie
-    # werden mit Ablauf ihres Fensters faellig, auch bei leerem Store — das ist
-    # ihr Zweck. Dieser Test lief bis zum 2026-08-10 gruen und kippte in dem
-    # Moment, als die Analyst-Probe f0e1a3a8 ihr window_end_utc erreichte
-    # (00:13 UTC). Eine Zeitbombe, kein Regress: die Zeile IST korrekt faellig.
-    # Geprueft wird deshalb nur, was vom leeren Store abhaengt.
+    # Leerer Store bedeutet n=0, nicht zwingend due=False: auch n-basierte
+    # Claims werden beim Fensterende faellig. Die echte Uhr liess diesen Test
+    # am 22.09.2026 kippen; feste Zeiten pruefen nun beide Seiten der Frist.
     zaehl_rows = [r for r in rows if r.get("kind") != "deadline"]
     assert zaehl_rows, "Ohne zaehlbasierte Prae-Regs prueft dieser Test nichts mehr"
-    assert all(r["due"] is False and r["n_proxy"] == 0 for r in zaehl_rows)
+    assert all(r["n_proxy"] == 0 for r in zaehl_rows)
+    conversion = next(r for r in zaehl_rows if r["prereg_id"] == "26d3e0eb29f553f3")
+    assert conversion["due"] is conversion_timed_out
+    assert conversion["timed_out"] is conversion_timed_out
+    assert conversion["state_source"] == ("window_timeout" if conversion_timed_out else "proxy")
+    assert all(r["due"] is False for r in zaehl_rows if r is not conversion)
 
     # Die Frist-Zeilen muessen weiterhin erscheinen — nur ihre Faelligkeit
     # richtet sich nach der Uhr, nicht nach dem Store.
