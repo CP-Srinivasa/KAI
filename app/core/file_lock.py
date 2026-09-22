@@ -1,10 +1,13 @@
 """Cross-platform exclusive file-lock context manager.
 
-SAT-F-005 fix: O_APPEND atomicity ist nur für writes ≤ PIPE_BUF
-(typisch 4 KB) garantiert.  Bayes-Reports + Thesis-Audit-Zeilen können
-größer werden — Multi-Process-Append (CLI-Loop + FastAPI-Worker) kann
-interleaved Bytes produzieren, die dann als "malformed" verworfen
-werden (silent data loss).
+SAT-F-005 fix: POSIX garantiert für reguläre Dateien KEINE Atomizität eines
+``write()`` gegenüber anderen Writern — ``O_APPEND`` macht nur die
+Offset-Ermittlung atomar. (Die oft zitierte PIPE_BUF-Grenze gilt für
+Pipes/FIFOs, nicht für Dateien; Korrektur 2026-09-22, Audit NEO-A-014 — sie
+ist also auch KEINE Rechtfertigung, bei kleinen Zeilen auf den Lock zu
+verzichten.) Multi-Process-Append (CLI-Loop + FastAPI-Worker + Timer) kann
+interleaved Bytes produzieren, die dann als "malformed" verworfen werden
+(silent data loss).
 
 Lösung: portabler exclusive-lock auf einem ``.lock``-Sidecar während
 des Append.  Linux nutzt ``fcntl.flock``, Windows nutzt ``msvcrt.locking``.

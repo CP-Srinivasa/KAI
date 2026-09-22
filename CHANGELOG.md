@@ -1,3 +1,20 @@
+## 2026-09-22 - Execution: Bridge-Audit-Append und Rotation unter Lock (System-Audit 16.09., NEO-A-014, S2-13)
+
+`bridge_pending_orders.jsonl` wird aus vier Prozessen beschrieben (kai-server ueber Premium-Router und Telegram-Bot,
+kai-entry-watch, Paper-Cron-Tick, Premium-Healthcheck) -- ueber die einzige Append-Stelle
+`envelope_to_paper_bridge._append_bridge_audit`, bisher ohne Lock. Eine Bridge-Zeile ist ~2,6 kB und kann den 8-kB-Puffer
+von `TextIOWrapper` ueberschreiten; verzahnte Bytes sind kein JSON mehr und fallen beim toleranten Lesen still heraus.
+Der Append liegt jetzt in `app/execution/bridge_audit_log.py` unter dem bestehenden Best-effort-`append_lock` (Lock-Fehler
+blockt keinen Fill, wird geloggt); das God-File schrumpft um fuenf Zeilen. `scripts/audit_rotate.py` nimmt fuer jeden
+Stream denselben Lock ueber Tail-Lesen, Rename und Neuanlage -- vorher konnte eine zwischen Lesen und Rename angehaengte
+Zeile nur im Archiv landen und ein Writer mit offenem Handle ins Archiv-Inode weiterschreiben. Das schuetzt nur Streams,
+deren Writer denselben Lock nehmen (`llm_telemetry`, `bridge_pending_orders`); `telegram_message_envelope`,
+`entry_watcher_audit` und `api_request_audit` haben weiterhin ungelockte Writer. Der Docstring von
+`app/core/file_lock.py` begruendete den Lock mit der PIPE_BUF-Grenze; die gilt fuer Pipes, nicht fuer Dateien -- POSIX
+garantiert fuer regulaere Dateien keine Atomizitaet eines `write()` gegenueber anderen Writern. Dieselbe Fehl-Doktrin
+steht noch als Begruendung fuer den Lock-Verzicht in `app/pay/store.py`, `app/lightning/receive_ledger.py` und
+`app/research/prereg_ledger.py` (bewusst nicht in diesem PR: Codex arbeitet gerade in Pay/Lightning).
+
 ## 2026-09-22 - Alerts: drei stille Handler werden sichtbar (System-Audit 16.09., S2-11)
 
 Drei `except Exception`-Stellen in der Alert-Kette verschluckten Fehler ohne Spur. (1) `AlertService._load_recent_title_hashes`

@@ -27,10 +27,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.file_lock import append_lock  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("audit-rotate")
@@ -154,35 +159,42 @@ def rotate_stream(
     cutoff = None
     if keep_hours is not None and timestamp_key:
         cutoff = ((now or datetime.now(UTC)) - timedelta(hours=keep_hours)).isoformat()
-    with path.open("r", encoding="utf-8", errors="replace") as fh:
-        tail: deque[str] = deque(maxlen=keep_lines)
-        total_lines = 0
-        for line in fh:
-            total_lines += 1
-            if cutoff is not None and _stamp_before(line, timestamp_key or "", cutoff):
-                # Append-only und zeitsortiert: alles bisher Gesammelte ist
-                # ebenfalls aelter als das Fenster.
-                tail.clear()
-                continue
-            tail.append(line)
+    # Lesen, Umbenennen und Neuanlegen unter dem Writer-Lock (Audit 16.09.,
+    # NEO-A-014): sonst landet eine zwischen Tail-Lesen und Rename angehaengte
+    # Zeile nur im Archiv, und ein Writer mit offenem Handle schreibt ins
+    # Archiv-Inode weiter. Wirkt nur fuer Streams, deren Writer denselben
+    # ``append_lock`` nehmen (llm_telemetry, bridge_pending_orders); fuer die
+    # uebrigen ist er harmlos, aber kein Schutz.
+    with append_lock(path):
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            tail: deque[str] = deque(maxlen=keep_lines)
+            total_lines = 0
+            for line in fh:
+                total_lines += 1
+                if cutoff is not None and _stamp_before(line, timestamp_key or "", cutoff):
+                    # Append-only und zeitsortiert: alles bisher Gesammelte ist
+                    # ebenfalls aelter als das Fenster.
+                    tail.clear()
+                    continue
+                tail.append(line)
 
-    # No-shrink guard (calibration finding, first live run 2026-06-11): when the
-    # tail covers the WHOLE file, rotating would archive a full copy every run
-    # without shrinking the live file — archive bloat instead of hygiene. Skip
-    # and tell the operator to lower keep_lines for this stream.
-    if len(tail) >= total_lines:
-        return RotationResult(
-            path.name,
-            False,
-            f"tail_covers_whole_file:lines={total_lines}<=keep_lines={keep_lines}"
-            " — lower keep_lines/keep_hours for this stream",
-            size_bytes=size,
-        )
+        # No-shrink guard (calibration finding, first live run 2026-06-11): when
+        # the tail covers the WHOLE file, rotating would archive a full copy every
+        # run without shrinking the live file — archive bloat instead of hygiene.
+        # Skip and tell the operator to lower keep_lines for this stream.
+        if len(tail) >= total_lines:
+            return RotationResult(
+                path.name,
+                False,
+                f"tail_covers_whole_file:lines={total_lines}<=keep_lines={keep_lines}"
+                " — lower keep_lines/keep_hours for this stream",
+                size_bytes=size,
+            )
 
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    path.rename(archive_path)
-    with path.open("w", encoding="utf-8") as fh:
-        fh.writelines(tail)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        path.rename(archive_path)
+        with path.open("w", encoding="utf-8") as fh:
+            fh.writelines(tail)
     return RotationResult(
         path.name,
         True,
