@@ -1,3 +1,12 @@
+## 2026-09-22 - Execution: `entry_watcher_audit.jsonl` unter Lock (S2-13b)
+
+Drei Prozesse schreiben denselben Strom -- `kai-entry-watch.service` (Dauerlauf), der zweite entry-watch aus
+`scripts/paper_trading_cron.sh` (alle 10 min) und `run_watch_loop` im kai-server nach einer Freigabe -- ueber die eine
+Append-Stelle `operator_entry_watch._append_watch_audit`, bisher ohne Lock. Jetzt Best-effort-`append_lock` mit
+`flush()` im Lock; damit greift auch der Rotationslock aus #1030. `api_request_audit.jsonl` bleibt ohne Lock
+(Single-Writer im uvicorn-Prozess); `telegram_message_envelope.jsonl` (vier Stellen, zwei Prozesse, God-File) folgt
+als eigener PR.
+
 ## 2026-09-22 - Konfiguration: `.env.example` laedt wieder, Sicherheits-Schluessel dokumentiert, Alias-Dubletten im Ratchet (S2-9b)
 
 Der neue Test `test_vorlage_laedt_in_jede_settings_klasse` kopiert die Vorlage in die Umgebung und instanziiert alle 39
