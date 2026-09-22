@@ -92,6 +92,8 @@ class PaymentSettings(BaseSettings):
     daily_hard_cap_sat: int = Field(default=25_000, ge=0)
     #: Voreingestellte Routing-Gebuehrgrenze in ppm des Betrags.
     fee_limit_default_ppm: int = Field(default=3_000, ge=0)
+    #: Absolute Untergrenze fuer Kleinstzahlungen; Default 1 erhaelt das bisherige Verhalten.
+    fee_limit_min_sat: int = Field(default=1, ge=1)
     #: Absolute Kappe fuer die daraus errechnete Gebuehr.
     fee_limit_max_sat: int = Field(default=200, ge=0)
     #: CSV der erlaubten Payee-Hashes (SHA-256 des Ziels, nie das Ziel selbst).
@@ -173,7 +175,23 @@ class PaymentSettings(BaseSettings):
                 f"per_payment_max_sat ({self.per_payment_max_sat}) — the per-payment "
                 "limit would be unreachable, which hides the real cap"
             )
+        if self.fee_limit_max_sat > 0 and self.fee_limit_min_sat > self.fee_limit_max_sat:
+            raise ValueError(
+                f"fee_limit_min_sat ({self.fee_limit_min_sat}) exceeds "
+                f"fee_limit_max_sat ({self.fee_limit_max_sat})"
+            )
         return self
+
+
+def fee_limit_for_amount(settings: PaymentSettings, amount_sat: int) -> int:
+    """Ein Fee-Limit fuer Cockpit, Telegram und Quote — stets unter dem harten Maximum.
+
+    Der 10-sat-Send vom 22.09.2026 scheiterte mit 1 sat Limit, obwohl lnd
+    mindestens 1.050 msat schaetzte. Die Untergrenze ist explizit konfigurierbar;
+    sie ist KEINE Freigabe, mehr als ``fee_limit_max_sat`` zu zahlen.
+    """
+    ppm_fee = amount_sat * settings.fee_limit_default_ppm // 1_000_000
+    return min(max(ppm_fee, settings.fee_limit_min_sat), settings.fee_limit_max_sat)
 
 
 def _check_vault_key(settings: PaymentSettings) -> None:
@@ -304,6 +322,7 @@ __all__ = [
     "SIMULATION_VAULT_KEY",
     "PaymentMode",
     "PaymentSettings",
+    "fee_limit_for_amount",
     "get_payment_settings",
     "validate_payment_boot",
 ]

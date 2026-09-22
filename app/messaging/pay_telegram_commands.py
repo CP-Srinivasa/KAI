@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.bolt11 import bolt11_amount_sat
+from app.core.payment_settings import fee_limit_for_amount
 from app.payments.models import Money
 from app.payments.service_types import PaymentRequest, PaymentServiceError
 
@@ -78,8 +79,7 @@ def _sat(amount: int) -> Money:
 def _fee_limit_sat(service: Any, amount_sat: int) -> int:
     """Wie ``ln_control_delegate.derive_fee_limit``: aus den Settings, nie aus dem Kommando."""
     settings = service.settings
-    ppm = amount_sat * settings.fee_limit_default_ppm // 1_000_000
-    return int(min(max(ppm, 1), settings.fee_limit_max_sat))
+    return fee_limit_for_amount(settings, amount_sat)
 
 
 def _idempotency_key(chat_id: int, payment_request: str) -> str:

@@ -323,12 +323,20 @@ async def test_quote_falls_back_to_settings_ppm_and_says_so() -> None:
     assert quote.fee_estimate.minor_units == 3  # 1000 sat * 3000 ppm
 
 
+async def test_quote_for_tiny_payment_reflects_the_configured_fee_floor() -> None:
+    rail = a_rail(FakeClient(), payments={"fee_limit_min_sat": 3, "fee_limit_max_sat": 5})
+    quote = await rail.quote(an_intent(amount_requested=sat(10)))
+    assert quote.estimate_source == "settings_floor"
+    assert quote.fee_estimate.minor_units == 3
+
+
 async def test_quote_is_capped_by_the_configured_maximum() -> None:
     rail = a_rail(
         FakeClient(), payments={"fee_limit_default_ppm": 900_000, "fee_limit_max_sat": 50}
     )
     quote = await rail.quote(an_intent())
     assert quote.fee_estimate.minor_units == 50
+    assert quote.estimate_source == "settings_cap"
 
 
 async def test_quote_never_touches_the_send_path() -> None:

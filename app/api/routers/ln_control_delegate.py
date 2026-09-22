@@ -34,6 +34,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from app.core.payment_settings import fee_limit_for_amount
 from app.payments.models import Money
 from app.payments.service import PaymentRequest, PaymentService, PaymentServiceError
 
@@ -74,8 +75,7 @@ def derive_fee_limit(service: PaymentService, amount_sat: int) -> int:
     Regel ``fee_limit_required`` gegen dieselbe Konfiguration geprueft.
     """
     settings = service.settings
-    ppm = amount_sat * settings.fee_limit_default_ppm // 1_000_000
-    return min(max(ppm, 1), settings.fee_limit_max_sat)
+    return fee_limit_for_amount(settings, amount_sat)
 
 
 def plan_view(service: PaymentService | None, *, amount_sat: int, purpose: str) -> dict[str, Any]:
