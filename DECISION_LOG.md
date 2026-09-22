@@ -1,6 +1,6 @@
 # DECISION_LOG.md
 
-## Current State (2026-08-26)
+## Current State (Basis 2026-08-26; Lightning aktualisiert 2026-09-22)
 
 - phase: `Research-/Truth-Plattform (ADR-0012 Hybrid), Paper-/Lernbetrieb`
 - status: `ACTIVE` — Pi 5 live; Prozess und Checkout auf demselben Commit (Runtime-Attestation D-236/STAB-02, `/health` nennt `runtime_commit`).
@@ -8,7 +8,7 @@
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
 - edge status: `WIDERLEGT — canonical-edge 2026-08-25: n=208, mean -20,9 bps, median -111 bps, P(mu_net>0)=0,204; ohne Best-Trade -39,6 bps / P=0,014. Keine Ausweitung der Execution.`
 - live execution: `OFF — paper/approval-mode only; Live-Gates ungeoeffnet`
-- lightning: `Empfang live, PAY DISARMED seit 2026-08-06 (D-242); Re-Arm-Weg beschlossen (D-277: Self-Use, /pay, RouterRPC). Externe Einnahmen lifetime = 0 sat.`
+- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt; 10 sat gesendet (1,05 sat Node-Fee), 6 sat zurueck empfangen. 72h-Pilot bis 2026-09-25T09:04:09Z; weitere D-277-Negativbeweise offen. Verifizierte Einnahmen von Dritten lifetime = 0 sat.`
 - policy: `Falsifikation vor Feature. Kein Aggregat ohne Zerlegung (D-244). Jede Schwelle wird gemessen, nicht gesetzt. Kein Auto-Merge bei Architektur-PRs.`
 - Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-268; die Nachtragsbloecke D-237..D-249 und D-250..D-268 sind nach Vergabe, nicht nach Datum sortiert).
 
@@ -23,6 +23,11 @@
 > Vergabereihenfolge, nicht der Chronologie** (D-235/D-236 waren am 25.08. bereits vergeben).
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
+
+### D-281 (2026-09-22)
+**Befund:** KAI PAY Self-Use sendet und empfaengt real: `pi_7e520e56931c4d75` SETTLED, 10 sat an anderen Node, 1050 msat Fee bei 3 sat Limit; `rcv_35783b15732179d2` SETTLED, 6000 msat zurueck. Journal-Kette 89/89 ok, SCB stable, Reconcile ok; Empfaenger bestaetigte den Send.
+**Entscheidung/Limit:** 72h-Pilot T0 `2026-09-22T09:04:09.879472Z` bis `2026-09-25T09:04:09.879472Z`; die 10-sat-Probe ersetzte operatorseitig den 1-sat-Send, aber Ueber-Cap-Deny und positive Fee-Limit-Ablehnung aus D-277 sind noch nicht live belegt. Rueckzahlung aus eigener externer Wallet ist keine Dritt-Einnahme; deren gemeldete 4-sat-Sendegebuehr ist auf KAI nicht verifizierbar. Keine Trading-/L2-/L5-Freigabe aus diesem Zwischenbefund.
+**Beleg:** Pi `artifacts/payments/payment_journal.jsonl` seq 79–89, lnd ListPayments/Invoices, `scripts.ln_golive_preflight` GO, `kai-ln-reconcile.timer`/`kai-ln-scb-monitor.timer` aktiv; D-277 und `docs/runbooks/ln_rearm_sendpath.md`.
 
 ### D-280 (2026-09-17)
 **Der Produktions-LiteLLM-Proxy (127.0.0.1:4000) bleibt `enabled` und darf leerlaufen; er bekommt keinen festen Aufrufer. Der Dev-Proxy (127.0.0.1:4001) laeuft nur bei konkretem Bedarf.**
