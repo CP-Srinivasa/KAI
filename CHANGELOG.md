@@ -1,3 +1,14 @@
+## 2026-09-22 - Konfiguration: Drift-Ratchet `.env.example` gegen die Settings-Klassen (System-Audit 16.09., P1-20, S2-9)
+
+Die Pi-`.env` fuehrte 204 Schluessel, die Vorlage deckte 121; `TRADINGVIEW_WEBHOOK_SHARED_TOKEN` (Pflicht in den
+Token-Modi) stand nirgends. Neu: `scripts/env_example_drift.py` leitet die erwarteten Env-Namen aus allen
+`BaseSettings`-Klassen ab (Prefix + Feld, `AliasChoices`, verschachtelte Settings ausgenommen) und vergleicht mit
+`.env.example` (aktive und auskommentierte `NAME=`-Zeilen). Ergebnis: 526 erwartete Schluessel, 409 fehlen -- mehr als
+im Audit, weil auch die nicht in `AppSettings` komponierten Klassen zaehlen. Der Stand ist als Ratchet eingefroren
+(`tests/unit/env_example_drift_baseline.json`, darf nur schrumpfen); `tests/unit/test_env_example_drift.py` macht neue
+Luecken rot, verlangt leere Secrets (`repr=False`) in der Vorlage und pinnt die geschlossene Audit-Luecke.
+`.env.example`: `TRADINGVIEW_WEBHOOK_SHARED_TOKEN=` ergaenzt, `OPENAI_API_KEY` leer statt `sk-...`.
+
 ## 2026-09-22 - Loop-Audit unter Lock, `trading_loop_audit` explizit ausgeschlossen, Audit-Nachtrag 22.09.
 
 `TradingLoop._write_audit` haengt an `trading_loop_audit.jsonl` jetzt unter dem Best-effort-`append_lock` an (einziger
