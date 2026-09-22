@@ -1,7 +1,7 @@
 {
   "_comment": "Schuldenliste, kein Freibrief. Diese app/-Dateien lesen artifacts/paper_execution_audit.jsonl mit eigenem open()/json.loads statt ueber app/execution/paper_audit_stream.py. Der Ratchet verhindert, dass die Liste WAECHST; migrierte Dateien muessen hier verschwinden.",
   "_frozen_at_utc": "2026-08-17",
-  "count": 32,
+  "count": 31,
   "entries": [
     "app/agents/tools/_helpers.py",
     "app/agents/tools/canonical_read.py",
@@ -18,7 +18,6 @@
     "app/cli/main.py",
     "app/decisions/signal_detail.py",
     "app/execution/entry_policy.py",
-    "app/execution/envelope_to_paper_bridge.py",
     "app/execution/paper_engine.py",
     "app/execution/portfolio_read.py",
     "app/execution/signal_execution_status.py",
