@@ -35,7 +35,6 @@ Audit trails:
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -45,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from app.core.enums import EntryMode
 from app.core.settings import get_settings
+from app.execution.bridge_audit_log import append_bridge_audit
 from app.execution.entry_policy import (
     EntryRoute,
     check_route_limits,
@@ -196,12 +196,7 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 
 
 def _append_bridge_audit(record: dict[str, object]) -> None:
-    _BRIDGE_LOG.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with _BRIDGE_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except OSError as exc:
-        logger.error("[bridge] audit write failed: %s", exc)
+    if not append_bridge_audit(_BRIDGE_LOG, record):
         return
     try:
         from app.observability.premium_event_store import record_bridge_decision
