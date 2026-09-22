@@ -187,3 +187,20 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh admin@192.168.178.51 "cat >> ~/.
 - Force-Close-Altlast: `cf5fe058…:0`, Closing-Tx `58ae2f35…`, 25 815 sat Limbo, Anchor `LIMBO`, Maturity 862481 (vor ~104 800 Blöcken) — Anchor-Output nie gesweept (Wert < Gebühr); mit `lncli wallet listsweeps`/`pendingsweeps` prüfen, sonst hinnehmen.
 - `sudo -n` scheitert stumm (Passwort nötig) — sshd-Härtung bleibt Operator-Handgriff.
 
+## Nachtrag 22.09. — Sprint S2, Stand am Code geprüft, zwei Befunde widerlegt
+
+| Punkt | Stand 22.09. | Beleg |
+|---|---|---|
+| S2-1 SCB-Exporter + Timer + Alarm | **erledigt** — läuft als `ExecStartPre` in `kai-ln-scb-monitor.service`, Timer + OnFailure vorhanden | #1003 |
+| S2-2 Kosten-Ebenenfilter | **erledigt** — `dedupe_chain_levels` in Budget, `/health/ai`, Dashboard; Leseregel in `docs/CODEMAP.md` und `docs/KAI_COST_CONTROL_V0_1.md` | #970, #998 |
+| S2-3 `priority` bei TV-Alerts | **erledigt** (`priority_basis`) | #999 |
+| S2-11 stille Handler (NEO-A-012/013) | **gemergt** — Dedup-Seed, Briefing „nicht erhebbar", Schwellen-Fallback, `alerts status` | #1029 |
+| S2-13 `append_lock` Bridge-Audit (NEO-A-014) | **PR** — einzige Append-Stelle unter Lock (`app/execution/bridge_audit_log.py`), Rotation unter demselben Lock, PIPE_BUF-Doktrin in `file_lock.py` korrigiert | #1030 |
+| S2-12 Health-TOCTOU, S2-14 Freshness/Rotation | **erledigt** | #990, #1002 |
+| P1-10 `RuntimeMaxSec` entry-watch, P1-11 `MemoryMax` kai-server | **erledigt** | #1005 |
+| **DQ-A-010** `message_id="dry_run"` „macht Dedup blind" | **widerlegt** — kein Leser dedupliziert über `message_id` (Dedup läuft über `document_id`, `audit.py::iter_alert_audit_document_ids`); einziger Konsument `web/src/pages/Alerts.tsx::deriveSendStatus` nutzt den Sentinel bewusst. Ein `delivery_mode`-Feld wäre Schema-Hygiene mit Frontend-Anteil, kein Defekt — zurückgestuft | Data-Quality-Inspector 22.09. |
+| **DQ-A-007** `trading_loop_audit.jsonl` 95 MB „ohne Rotation" | **widerlegt als Maßnahme** — bewusste HARD EXCLUSION (`repo_hygiene_policy.md`, `CODEMAP.md`, ADR 0003, Test `test_trading_loop_audit_stays_excluded_despite_its_size`): `hold_metrics`, `build_recent_cycles_summary`, `evidence_window` aggregieren den vollen Stream, kein Leser liest `archive/`. Hebel ist der Fenster-Read (#1002). Nebenbefund: `TradingLoop._write_audit` schrieb ohne `append_lock` — jetzt behoben | Neo 22.09. |
+| S2-4 `spendable_offchain_sat`, PIPE_BUF-Begründungen in `app/pay`, `app/lightning` | **zurückgestellt** — Codex arbeitet in Pay/Lightning (#1027, `codex/ln-fee-floor-20260922`); Kollisionsgate | — |
+| S2-6 Label-Events `technical_paper` | **entfällt vorerst** — `technical_paper` ist abgeschaltet (D-279) | — |
+| S2-8 Registry/`event_hub`, S2-9 `.env.example`-Drift, S2-10 Unit-Pfade | **offen** — S2-9 in Vorbereitung (Drift-Test gegen die Settings-Klassen, bestätigte Lücke `TRADINGVIEW_WEBHOOK_SHARED_TOKEN`); S2-8 Architektur-PR ohne Auto-Merge; S2-10 Operator-Entscheid | — |
+

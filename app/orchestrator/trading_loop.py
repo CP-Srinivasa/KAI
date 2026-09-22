@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import EntryMode, ExecutionMode, SentimentLabel
+from app.core.file_lock import append_lock
 from app.core.settings import AppSettings, get_settings
 from app.execution.models import PaperFill, PaperOrder, PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
@@ -1485,8 +1486,9 @@ class TradingLoop:
                 "notes": list(cycle.notes),
                 **self._regime_stamp_for_audit(cycle),
             }
-            with self._audit_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record) + "\n")
+            with append_lock(self._audit_path):
+                with self._audit_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record) + "\n")
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] Audit write failed: %s", exc)
 

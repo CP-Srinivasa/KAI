@@ -1,3 +1,13 @@
+## 2026-09-22 - Loop-Audit unter Lock, `trading_loop_audit` explizit ausgeschlossen, Audit-Nachtrag 22.09.
+
+`TradingLoop._write_audit` haengt an `trading_loop_audit.jsonl` jetzt unter dem Best-effort-`append_lock` an (einziger
+Writer im Loop-Pfad, aber im selben Prozessgefuege wie entry-watch und liquidation-stream; Zeilen ~600 B, daher bisher
+praktisch atomar -- Konsistenz mit `alert_audit`/`bridge_pending_orders`). `scripts/audit_rotate.py` und
+`docs/runbooks/repo_hygiene_policy.md` fuehren `trading_loop_audit.jsonl` nun ausdruecklich unter den HARD EXCLUSIONS
+(bisher nur in CODEMAP und im Regressionstest): `hold_metrics`, `build_recent_cycles_summary` und `evidence_window`
+aggregieren den vollen Stream, kein Leser liest `archive/`. Der Audit-Bericht 16.09. erhaelt einen Nachtrag 22.09. mit
+dem S2-Stand am Code und zwei widerlegten Befunden (DQ-A-007 Rotation, DQ-A-010 Sentinel/Dedup).
+
 ## 2026-09-22 - Execution: Bridge-Audit-Append und Rotation unter Lock (System-Audit 16.09., NEO-A-014, S2-13)
 
 `bridge_pending_orders.jsonl` wird aus vier Prozessen beschrieben (kai-server ueber Premium-Router und Telegram-Bot,
