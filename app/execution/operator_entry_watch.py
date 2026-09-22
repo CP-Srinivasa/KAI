@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.file_lock import append_lock
 from app.core.settings import get_settings
 from app.execution.entry_watcher import (
     EntryRangeWatcher,
@@ -111,8 +112,10 @@ class EntryWatchResult:
 def _append_watch_audit(record: dict[str, object]) -> None:
     _ENTRY_WATCH_AUDIT.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with _ENTRY_WATCH_AUDIT.open("a", encoding="utf-8") as fh:
+        # Drei Prozesse schreiben diesen Strom (Unit, Cron-Zweitstart, Bot).
+        with append_lock(_ENTRY_WATCH_AUDIT), _ENTRY_WATCH_AUDIT.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fh.flush()
     except OSError as exc:
         logger.error("[entry-watch] audit write failed: %s", exc)
 
