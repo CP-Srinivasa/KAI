@@ -1,3 +1,16 @@
+## 2026-09-22 - Alerts: drei stille Handler werden sichtbar (System-Audit 16.09., S2-11)
+
+Drei `except Exception`-Stellen in der Alert-Kette verschluckten Fehler ohne Spur. (1) `AlertService._load_recent_title_hashes`
+kehrte bei unlesbarem Audit stumm zurueck -- nach einem Neustart waren die Alerts der letzten 24 h wieder frei; jetzt
+`alert_dedup_seed_failed` mit Fehler, Pfad und Fenster. (2) `build_daily_briefing` zaehlte bei unlesbarem Alert-Audit
+oder Annotationen "0" -- das Briefing zeigt fuer den betroffenen Block jetzt `nicht erhebbar [Fehler]` (Felder
+`alerts_source_error`, `annotations_source_error`), im Format von "Paper Portfolio: nicht verfuegbar [REASON]"; das Wort
+"nicht erhebbar" stammt aus dem Audit-Befund. Episode-Dedup-Zeilen entfallen im selben Fall, und `kai alerts status`
+zeigt dieselben Felder statt Nullen.
+(3) `_bullish_confidence_threshold` / `_min_technical_strength_threshold` ersetzten eine nicht lesbare Operator-Schwelle
+still durch den Default; jetzt `alert_threshold_fallback` mit Env-Variable, Default und Ursache. Keine Verhaltensaenderung
+im Erfolgsfall.
+
 ## 2026-09-17 - Ops: Deploy-Verifikation wartet auf gesunde Dienste statt fester 20-s-Pause
 
 `scripts/pi_release_deploy.sh` schlief nach den Restarts fest 20 s und pruefte dann einmal. Beim Deploy `ff93050c`

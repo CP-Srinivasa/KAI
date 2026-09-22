@@ -694,7 +694,13 @@ def _bullish_confidence_threshold() -> float:
         from app.core.settings import get_settings  # lazy to avoid import cycles
 
         return float(get_settings().alerts.min_directional_confidence_bullish)
-    except Exception:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+    except Exception as exc:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+        _log.warning(
+            "alert_threshold_fallback",
+            setting="ALERT_MIN_DIRECTIONAL_CONFIDENCE_BULLISH",
+            default=MIN_DIRECTIONAL_CONFIDENCE_BULLISH,
+            error=f"{type(exc).__name__}: {exc}",
+        )
         return MIN_DIRECTIONAL_CONFIDENCE_BULLISH
 
 
@@ -711,7 +717,13 @@ def _min_technical_strength_threshold() -> float:
         from app.core.settings import get_settings  # lazy to avoid import cycles
 
         return float(get_settings().alerts.min_technical_strength)
-    except Exception:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+    except Exception as exc:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+        _log.warning(
+            "alert_threshold_fallback",
+            setting="ALERT_MIN_TECHNICAL_STRENGTH",
+            default=MIN_TECHNICAL_STRENGTH,
+            error=f"{type(exc).__name__}: {exc}",
+        )
         return MIN_TECHNICAL_STRENGTH
 
 

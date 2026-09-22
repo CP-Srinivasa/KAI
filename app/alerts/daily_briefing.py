@@ -45,6 +45,8 @@ class BriefingData:
     # D-150: P10 high-conviction tier — surfaced separately based on D-149
     # evidence (P10 precision 69.57% vs P7-P9 27.87%).
     p10_dispatched: int = 0
+    # Audit 16.09. S2-11: unlesbares Audit heisst "nicht erhebbar", nicht "0".
+    alerts_source_error: str | None = None
 
     # Outcome annotation stats (all time)
     total_annotations: int = 0
@@ -56,6 +58,7 @@ class BriefingData:
     p10_resolved_7d: int = 0
     p10_hits_7d: int = 0
     p10_precision_pct_7d: float | None = None
+    annotations_source_error: str | None = None
     # V1 (2026-07-07): episode-deduped precision — parallel signal paths
     # resolving on the same market move count as ONE observation. Raw
     # precision stays above; this line keeps it honest.
@@ -115,31 +118,37 @@ class BriefingData:
         # Alerts
         lines.append("")
         lines.append(f"Alerts (last {self.lookback_hours}h)")
-        lines.append(f"  Dispatched:   {self.alerts_dispatched}")
-        lines.append(f"  Directional:  {self.alerts_directional}")
-        lines.append(f"  Blocked:      {self.alerts_blocked}")
-        if self.block_reasons:
-            for reason, count in sorted(
-                self.block_reasons.items(),
-                key=lambda x: x[1],
-                reverse=True,
-            ):
-                lines.append(f"    {reason}: {count}")
-        if self.top_assets:
-            lines.append(f"  Top assets:   {', '.join(self.top_assets[:5])}")
-        lines.append(f"  [P10] tier:   {self.p10_dispatched}")
+        if self.alerts_source_error:
+            lines.append(f"  nicht erhebbar [{self.alerts_source_error}]")
+        else:
+            lines.append(f"  Dispatched:   {self.alerts_dispatched}")
+            lines.append(f"  Directional:  {self.alerts_directional}")
+            lines.append(f"  Blocked:      {self.alerts_blocked}")
+            if self.block_reasons:
+                for reason, count in sorted(
+                    self.block_reasons.items(),
+                    key=lambda x: x[1],
+                    reverse=True,
+                ):
+                    lines.append(f"    {reason}: {count}")
+            if self.top_assets:
+                lines.append(f"  Top assets:   {', '.join(self.top_assets[:5])}")
+            lines.append(f"  [P10] tier:   {self.p10_dispatched}")
 
         # Precision
         lines.append("")
         lines.append("Directional Precision (all time)")
-        lines.append(f"  Annotations:  {self.total_annotations}")
-        lines.append(f"  Hits:         {self.hits}")
-        lines.append(f"  Misses:       {self.misses}")
-        lines.append(f"  Inconclusive: {self.inconclusive}")
+        if self.annotations_source_error:
+            lines.append(f"  nicht erhebbar [{self.annotations_source_error}]")
+        else:
+            lines.append(f"  Annotations:  {self.total_annotations}")
+            lines.append(f"  Hits:         {self.hits}")
+            lines.append(f"  Misses:       {self.misses}")
+            lines.append(f"  Inconclusive: {self.inconclusive}")
         # V2 (2026-07-14): episode-deduped precision is the citeable metric
         # (Sprachregel #579) → render it first; the raw baseline follows,
         # explicitly marked '(raw)' so it is not cited on its own.
-        if self.episode_precision_pct is not None:
+        if self.episode_precision_pct is not None and not self.annotations_source_error:
             lines.append(
                 f"  Episode-dedup: {self.episode_precision_pct:.1f}% "
                 f"({self.episode_hits}/{self.episode_count} episodes "
@@ -220,8 +229,9 @@ def build_daily_briefing(
     # ── Alert audit ──────────────────────────────────────────────────
     try:
         audits = load_alert_audits(adir)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         audits = []
+        data.alerts_source_error = f"{type(exc).__name__}: {exc}"
 
     asset_counter: dict[str, int] = {}
     # D-150: track P10 dispatched-docs (24h) + 7d precision window.
@@ -261,8 +271,9 @@ def build_daily_briefing(
     # ── Outcome annotations ──────────────────────────────────────────
     try:
         annotations = load_outcome_annotations(adir)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         annotations = []
+        data.annotations_source_error = f"{type(exc).__name__}: {exc}"
 
     data.total_annotations = len(annotations)
     data.hits = sum(1 for a in annotations if a.outcome == "hit")

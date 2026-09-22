@@ -2307,14 +2307,14 @@ def alerts_ops_status(
         console.print(f"  Precision:    {data.precision_pct:.1f}% ({data.hits}h / {data.misses}m)")
     else:
         console.print(f"  Precision:    n/a ({data.hits}h / {data.misses}m)")
-    console.print(
-        f"  Alerts {lookback_hours}h:   "
-        f"{data.alerts_dispatched} dispatched, "
-        f"{data.alerts_directional} directional"
-    )
-    console.print(
-        f"  Annotations:  {data.total_annotations} total, {data.inconclusive} inconclusive"
-    )
+    alerts_line = f"{data.alerts_dispatched} dispatched, {data.alerts_directional} directional"
+    if data.alerts_source_error:
+        alerts_line = f"nicht erhebbar [{data.alerts_source_error}]"
+    console.print(f"  Alerts {lookback_hours}h:   {alerts_line}")
+    annotations_line = f"{data.total_annotations} total, {data.inconclusive} inconclusive"
+    if data.annotations_source_error:
+        annotations_line = f"nicht erhebbar [{data.annotations_source_error}]"
+    console.print(f"  Annotations:  {annotations_line}")
 
 
 @alerts_app.command("signal-status")
