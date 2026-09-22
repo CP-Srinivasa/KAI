@@ -48,6 +48,7 @@ Ohne `--apply` ist jeder Lauf ein Dry-Run.
 - `paper_execution_audit.jsonl` — die PaperExecutionEngine **replayed** dieses File bei jedem One-Shot zur State-Recovery; Rotation würde das Paper-Buch wipen.
 - `blocked_outcomes.jsonl` — D-227 aggregiert die volle Historie.
 - `shadow_candidate_ledger` / `bayes_*` / `alert_*` — Resolver-/Lern-Zustand braucht unresolved/Backfill-Historie.
+- `trading_loop_audit.jsonl` — `hold_metrics` (PH5-Hold-Gate), `build_recent_cycles_summary` (`total_cycles`/`status_counts`) und die canonical-edge-Zählungen in `evidence_window` aggregieren den **vollen** Stream; kein Leser liest `archive/`. Gepinnt durch `test_trading_loop_audit_stays_excluded_despite_its_size`; der Hebel gegen die Größe ist der Fenster-Read (`trading_loop_audit_io`), nicht die Rotation (Audit 16.09. DQ-A-007 damit hinfällig, geprüft 22.09.).
 
 Ein neuer Stream kommt NUR auf die Allowlist, wenn alle bekannten Konsumenten
 höchstens ein rezentes Fenster lesen — Konsumenten-Audit im PR dokumentieren.

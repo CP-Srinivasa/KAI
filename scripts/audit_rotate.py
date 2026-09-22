@@ -16,6 +16,12 @@ docs/runbooks/repo_hygiene_policy.md):
 - ``blocked_outcomes.jsonl`` — D-227 reports aggregate the FULL history.
 - ``shadow_candidate_ledger`` / bayes / alert outcome streams — learning and
   resolver state needs unresolved/backfill history.
+- ``trading_loop_audit.jsonl`` — ``hold_metrics`` (PH5-Hold-Gate),
+  ``build_recent_cycles_summary`` (``total_cycles``/``status_counts``) and the
+  canonical-edge counts in ``evidence_window`` aggregate the FULL stream; no
+  reader looks into ``archive/``. Pinned by
+  ``tests/unit/test_audit_rotate.py::test_trading_loop_audit_stays_excluded_despite_its_size``;
+  the lever against its size is windowed reading (``trading_loop_audit_io``).
 
 Default-OFF activation: the systemd timer is installed but not enabled; the
 script itself is also a no-op unless ``--apply`` is passed (dry-run prints the
