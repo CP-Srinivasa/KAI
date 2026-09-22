@@ -148,7 +148,9 @@ def write_baseline(entries: set[str], path: Path = BASELINE_PATH) -> None:
         ),
         "entries": sorted(entries),
     }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # newline="\n": auf Windows sonst CRLF, und Git meldet bei jedem Lauf Normalisierung.
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
