@@ -276,6 +276,25 @@ def test_opencode_start_injects_context_and_pins_model(
     assert "Lies zuerst C:" not in prompt
 
 
+def test_opencode_launches_native_binary_not_cmd_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Killing the cmd.exe wrapper left opencode.exe running as an orphan
+    # (23.09. acceptance). The hub starts the binary the wrapper would call.
+    wrapper = tmp_path / "opencode.cmd"
+    wrapper.write_text("@echo off\n", encoding="utf-8")
+    native = tmp_path / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"MZ")
+    monkeypatch.setattr(
+        hub.shutil, "which", lambda name: str(wrapper) if name == "opencode.cmd" else None
+    )
+    assert hub._opencode_executable() == str(native)
+
+    native.unlink()
+    assert hub._opencode_executable() == str(wrapper)
+
+
 def test_hermes_start_pins_tool_cwd_to_task_worktree(
     kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

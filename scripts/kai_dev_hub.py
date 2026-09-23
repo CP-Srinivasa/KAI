@@ -90,6 +90,19 @@ def _command(name: str) -> str | None:
     return next((str(path) for path in candidates.get(name, []) if path.is_file()), None)
 
 
+def _opencode_executable() -> str | None:
+    """The OpenCode binary itself, not its npm ``opencode.cmd`` wrapper.
+
+    Behind the wrapper the client runs as a child of cmd.exe; if only the
+    wrapper dies, opencode.exe keeps running as an orphan (23.09. acceptance).
+    """
+    wrapper = _command("opencode.cmd")
+    if wrapper:
+        native = Path(wrapper).parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+        return str(native) if native.is_file() else wrapper
+    return _command("opencode")
+
+
 def _port_open(port: int, *, timeout: float = 0.35) -> bool:
     try:
         with socket.create_connection((DEV_HOST, port), timeout=timeout):
@@ -375,7 +388,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
             ensure_ollama()
         except (HubError, OSError, subprocess.SubprocessError) as exc:
             checks["ollama_start_error"] = str(exc)
-    checks["opencode_installed"] = bool(_command("opencode.cmd") or _command("opencode"))
+    checks["opencode_installed"] = bool(_opencode_executable())
     checks["hermes_installed"] = bool(_command("hermes"))
     checks["kimi_installed"] = bool(_command("kimi"))
     checks["ollama_online"] = _port_open(OLLAMA_PORT)
@@ -624,7 +637,7 @@ def _opencode_local_config() -> Path:
 
 def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = None) -> None:
     session = workflow.require_session(repo, STATE_ROOT)
-    executable = _command("opencode.cmd") or _command("opencode")
+    executable = _opencode_executable()
     if not executable:
         raise HubError("OpenCode ist nicht installiert oder nicht im PATH.")
     env = os.environ.copy()
@@ -1011,7 +1024,7 @@ def status(repo: Path) -> dict[str, Any]:
         "head": _git(repo, "rev-parse", "HEAD"),
         "context_contract": (repo / "AGENTS.md").is_file()
         and (repo / "docs/AI_HANDOFF.md").is_file(),
-        "opencode": bool(_command("opencode.cmd") or _command("opencode")),
+        "opencode": bool(_opencode_executable()),
         "hermes": bool(_command("hermes")),
         "kimi": bool(_command("kimi")),
         "ollama_online": ollama_online,
