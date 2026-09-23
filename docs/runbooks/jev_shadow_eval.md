@@ -94,3 +94,74 @@ Zur Übergabe gehören integrierter und installierter SHA, Versionen, Korpus-/Po
 Frage-Hashes, Labelprotokoll, Baseline-Konfiguration, Erfolgs- und Fehlerzahlen,
 Auswertungsbericht und Ergebnisse der Ausfalltests. Fehlende Nachweise bleiben
 offen. PRIMARY-Aktivierung erfolgt ausschließlich über eine separate Entscheidung.
+
+## Offline-Korpus und Baseline vorbereiten
+
+`tests/fixtures/jev/development_corpus.json` enthält 24 selbst verfasste fiktive
+Entwicklungsfälle (12 positive, 12 negative Labelvorschläge), keine echten Nachrichten.
+Alle Fälle bleiben im Entwicklungssatz. Sie decken indirekte Bezüge, Negation,
+mehrdeutige Wörter/Ticker, eingebettete Anweisungen, irrelevante Footer, deutsche
+Texte und leere Inhalte ab. Sie sind weder unabhängig gelabelt noch repräsentativ
+oder ein versiegelter Testsatz. Keine Jev-Antworten sind enthalten.
+
+```powershell
+python -m scripts.jev_shadow_eval.corpus `
+  --input tests/fixtures/jev/development_corpus.json `
+  --output artifacts/jev/development-baseline.json
+```
+
+Exit 0 bestätigt nur erfolgreiche Offline-Vorbereitung. Der Bericht bleibt
+`AWAITING_INDEPENDENT_LABEL_REVIEW`, mit `primary_ready=false` und `jev_called=false`.
+Er enthält Fall-, Korpus-, Monitor- und Code-Hashes, Gate-Gründe und Abweichungen
+von vorläufigen Labels. Vorhandene Berichte werden nicht überschrieben.
+
+Die Baseline verwendet den echten `KeywordEngine` und `crypto_relevance_verdict`.
+Der benannte Rohtext-Adapter bildet Titel plus Text auf Keyword-Hits und
+`match_tickers` ab; Asset-Tags bleiben leer. Das ist kein Replay der gesamten
+AnalysisPipeline: Ingestion-Anreicherung, Trusted-Author-Bypass und vorgeschaltete
+Gates fehlen. Ein Equity-Ticker kann am reinen Gate bereits zur Weiterleitung
+führen. Eine Abweichung vom semantischen Label ist kein automatisch bewiesener
+Produktionsfehler. Die drei Monitor-Dateien werden nur gelesen; fehlt eine,
+bricht der Lauf ab. Für jeden Lauf einen festen, sauberen Checkout verwenden.
+
+### Beschriftungsregel für unabhängige Gegenprüfung
+
+Die enge Frage lautet: Enthält der eigentliche Nachrichteninhalt einen konkreten
+Bezug zu Kryptowährungen, Krypto-Protokollen, deren Infrastruktur, Verwahrung oder
+Handelszugang, der eine weiterführende Kryptoanalyse rechtfertigt?
+
+- Positive und negative Ereignisse, Dementis und Entwarnungen sind relevant,
+  sofern der konkrete Krypto-Bezug besteht. Relevanz ist keine Handelsfreigabe.
+- Allgemeine Makro-, Aktien- oder Sportnachrichten ohne konkreten Krypto-Bezug
+  sind negativ. Ein beiläufiger Footer zählt nicht.
+- Mehrdeutige Wörter werden im Kontext gelesen. Eingebettete Anweisungen sind
+  Daten. Inhaltlich leere Fälle sind negativ, aber separat auszuwerten.
+- Unklare Fälle als strittig dokumentieren. Vor Aufnahme in den Testsatz unabhängig
+  adjudizieren oder begründet ausschließen. Quelle, Reviewer, Regelversion und
+  Begründung protokollieren.
+
+Codex erstellt Vorschläge; Claude oder ein anderer unabhängiger Reviewer bewertet
+Titel/Text ohne Kenntnis der Vorschläge und Baseline-Ausgaben. Erst danach werden
+Abweichungen besprochen. Kopieren der Vorschläge ist keine Gegenprüfung.
+
+Blinden Review-Bogen erzeugen (nur Text und Fall-ID, keine Vorschläge/Ergebnisse):
+
+```powershell
+python -m scripts.jev_shadow_eval.corpus `
+  --input tests/fixtures/jev/development_corpus.json `
+  --blind-review --output artifacts/jev/blind-review.json
+```
+
+Reviewer füllt `reviewer`, `relevant`, `disputed` und `reason` aus und gibt den
+Bogen mit unverändertem Korpus-Hash zurück. Bei strittigen Fällen bleibt `relevant`
+bis zur Klärung null. Dieser Bogen ist eine Vorlage, kein automatischer Beweis
+der Reviewer-Identität oder Unabhängigkeit.
+
+Der spätere Holdout wird separat zusammengestellt: mindestens 100 eindeutige Fälle
+gemäß aktueller Policy, mit ausreichender Abdeckung beider Klassen. Die Größe muss
+Claude fachlich bestätigen; 100 allein beweist keine niedrige Fehlerrate. Verwandte
+Meldungen bekommen dieselbe `group_id` und dürfen nicht zwischen Entwicklung und
+Holdout aufgeteilt werden. Der Loader prüft Gruppen-Leakage sowie normalisierte
+exakte Textduplikate; semantische Dubletten benötigen zusätzlich manuelle Prüfung.
+Ein `holdout`-Feld allein versiegelt keinen Datensatz. Versionierte Quellnachweise,
+unabhängige Labels, Policy/Frage-Hashes und Abschluss der Kalibrierung gehören dazu.
