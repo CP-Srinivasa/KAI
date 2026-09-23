@@ -149,13 +149,27 @@ Blinden Review-Bogen erzeugen (nur Text und Fall-ID, keine Vorschläge/Ergebniss
 ```powershell
 python -m scripts.jev_shadow_eval.corpus `
   --input tests/fixtures/jev/development_corpus.json `
-  --blind-review --output artifacts/jev/blind-review.json
+  --blind-review `
+  --output artifacts/jev/blind-review.json `
+  --blind-map-output artifacts/jev/private-blind-review-map.json
 ```
 
-Reviewer füllt `reviewer`, `relevant`, `disputed` und `reason` aus und gibt den
-Bogen mit unverändertem Korpus-Hash zurück. Bei strittigen Fällen bleibt `relevant`
-bis zur Klärung null. Dieser Bogen ist eine Vorlage, kein automatischer Beweis
-der Reviewer-Identität oder Unabhängigkeit.
+Der Review-Bogen verwendet opake IDs und eine vom Korpus-Hash deterministisch
+gemischte Reihenfolge. Die getrennte Mapping-Datei enthält die Zuordnung zu den
+internen Fall-IDs und darf dem Reviewer erst nach dem festgeschriebenen Review
+zugänglich werden. Reviewer füllt `reviewer`, `relevant`, `disputed` und `reason`
+aus und gibt den Bogen mit unverändertem Korpus-Hash zurück. Bei strittigen Fällen
+bleibt `relevant` bis zur Klärung null. Dieser Bogen ist eine Vorlage, kein
+automatischer Beweis der Reviewer-Identität oder Unabhängigkeit.
+
+Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
+Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
+Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
+ab, damit deren Labels nicht versehentlich im Entwicklungsbericht erscheinen.
+Inhaltlich leere Fälle werden mit `preclassification_empty` vor der binären
+Klassifikation abgewiesen und aus deren Metriken ausgeschlossen. Reine
+Makronachrichten bleiben nach der aktuellen Artikel-Policy negativ, solange ihr
+Text keinen konkreten Bezug zu Kryptowerten, deren Märkten oder Infrastruktur hat.
 
 Der spätere Holdout wird separat zusammengestellt: mindestens 100 eindeutige Fälle
 gemäß aktueller Policy, mit ausreichender Abdeckung beider Klassen. Die Größe muss

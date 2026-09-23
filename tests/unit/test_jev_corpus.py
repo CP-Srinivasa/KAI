@@ -20,6 +20,22 @@ def test_baseline_is_reproducible_and_not_approved() -> None:
     assert report["independent_labels_verified"] is False
     assert report["primary_ready"] is False
     assert report["status"] == "AWAITING_INDEPENDENT_LABEL_REVIEW"
+    assert report["provisional_metrics"] == {
+        "true_positive": 6,
+        "true_negative": 7,
+        "false_positive": 4,
+        "false_negative": 6,
+        "accuracy": 0.565217,
+        "precision": 0.6,
+        "recall": 0.5,
+        "specificity": 0.636364,
+    }
+    assert report["classification_eligible_count"] == 23
+    assert report["preclassification_rejected_ids"] == ["empty"]
+    empty = next(case for case in report["cases"] if case["case_id"] == "empty")
+    assert empty["classification_eligible"] is False
+    assert empty["baseline_relevant"] is None
+    assert empty["baseline_reason"] == "preclassification_empty"
     assert all(len(value) == 64 for value in report["monitor_sha256"].values())
 
 
@@ -52,16 +68,79 @@ def test_missing_monitor_does_not_silently_change_baseline(tmp_path: Path) -> No
 
 def test_blind_review_does_not_disclose_proposed_labels_or_predictions(tmp_path: Path) -> None:
     target = tmp_path / "review.json"
-    assert main(["--input", str(CORPUS), "--output", str(target), "--blind-review"]) == 0
+    mapping_target = tmp_path / "private-map.json"
+    assert (
+        main(
+            [
+                "--input",
+                str(CORPUS),
+                "--output",
+                str(target),
+                "--blind-review",
+                "--blind-map-output",
+                str(mapping_target),
+            ]
+        )
+        == 0
+    )
     report = json.loads(target.read_text(encoding="utf-8"))
+    mapping = json.loads(mapping_target.read_text(encoding="utf-8"))
     assert report["reviewer"] is None
     assert report["corpus_sha256"] == load_corpus(CORPUS)[1]
     assert len(report["cases"]) == 24
+    assert report["schema_version"] == "jev-blind-review/v2"
+    assert mapping["handling"] == "DO_NOT_SHARE_WITH_REVIEWER_BEFORE_REVIEW_IS_FROZEN"
+    assert {case["review_id"] for case in report["cases"]} == {
+        case["review_id"] for case in mapping["cases"]
+    }
+    assert [case["case_id"] for case in mapping["cases"]] != [
+        row["case_id"] for row in load_corpus(CORPUS)[0]
+    ]
     for case in report["cases"]:
-        assert set(case) == {"case_id", "title", "text", "relevant", "disputed", "reason"}
+        assert set(case) == {"review_id", "title", "text", "relevant", "disputed", "reason"}
         assert case["relevant"] is None
         assert case["disputed"] is None
         assert case["reason"] is None
+
+    repeat = tmp_path / "review-repeat.json"
+    repeat_mapping = tmp_path / "private-map-repeat.json"
+    assert (
+        main(
+            [
+                "--input",
+                str(CORPUS),
+                "--output",
+                str(repeat),
+                "--blind-review",
+                "--blind-map-output",
+                str(repeat_mapping),
+            ]
+        )
+        == 0
+    )
+    assert target.read_bytes() == repeat.read_bytes()
+    assert mapping_target.read_bytes() == repeat_mapping.read_bytes()
+
+
+def test_blind_review_requires_a_separate_mapping_file(tmp_path: Path) -> None:
+    target = tmp_path / "review.json"
+    argv = ["--input", str(CORPUS), "--output", str(target), "--blind-review"]
+    assert main(argv) == 2
+    assert not target.exists()
+
+
+def test_case_ids_are_normalized_and_holdout_labels_stay_sealed(tmp_path: Path) -> None:
+    rows, _ = load_corpus(CORPUS)
+    rows = rows[:1]
+    rows[0]["case_id"] = "  normalized-id  "
+    source = tmp_path / "corpus.json"
+    source.write_text(json.dumps(rows), encoding="utf-8")
+    loaded, _ = load_corpus(source)
+    assert loaded[0]["case_id"] == "normalized-id"
+    rows[0]["split"] = "holdout"
+    source.write_text(json.dumps(rows), encoding="utf-8")
+    with pytest.raises(ValueError, match="holdout labels must stay sealed"):
+        prepare(source, ROOT / "monitor")
 
 
 def test_cli_never_overwrites_previous_evidence(tmp_path: Path) -> None:
