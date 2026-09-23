@@ -75,9 +75,26 @@ bestätigen. Diese Antwort wird als verkettetes Ack-Ereignis erfasst. Ohne Ack
 bleibt die Übergabe im Hub-Status sichtbar offen. Ein Ack ist ein dokumentierter
 Empfangsbeleg, keine kryptographische Modell-Authentisierung.
 
+Ab Hub 0.3.0 (Beleg-Schema 2) nennt das Kontextpaket die **Übergabe-ID**
+getrennt von der Session-ID, dazu den Beleg-SHA-256, den Vorgänger-Beleg und den
+Rückverweis auf `ledger.jsonl`. Das Ack muss die Übergabe-ID wörtlich enthalten.
+Eine Session-ID an ihrer Stelle wird abgelehnt (Kimi-Befund vom 22.09.).
+
+Aufgabenspezifischer Quelltext wird nur explizit mitgegeben: `--source <pfad>`
+(wiederholbar, höchstens 12 Dateien). Zugelassen sind nur versionierte UTF-8-Dateien
+im Aufgaben-Worktree. Secret-Namen (`.env`, `*.key`, `*secret*` …) und Inhalte,
+die der gemeinsame Katalog `scripts/secret_guard.py` oder eine Schlüsselzuweisung
+trifft, werden vor Snapshot und Ledger abgelehnt; die Meldung nennt Datei und
+Zeile, nie den Wert. Je Datei stehen im Paket der Git-Blob bei HEAD, der
+SHA-256 der Arbeitsdatei, ob sie von HEAD abweicht, die übernommenen Zeichen
+und ein sichtbares `TRUNCATED`, wenn gekürzt wurde (Budget voll 90 000 Zeichen /
+24 000 je Datei, kompakt 12 000 / 6 000).
+
 ```powershell
 python scripts/kai_dev_hub.py handoff --from-agent OpenCode --to-agent Hermes `
-  --task "..." --completed "..." --open-items "..." --next-action "..." --tests "..."
+  --task "..." --completed "..." --open-items "..." --next-action "..." --tests "..." `
+  --source scripts/dev_reserve.sh --source config/litellm_dev.yaml `
+  --source tests/unit/test_dev_reserve_contract.py
 python scripts/kai_dev_hub.py verify-handoffs
 python scripts/kai_dev_hub.py --repo <aufgaben-worktree> ack `
   --handoff-id <id> --agent Hermes --response-file <antwort.txt>

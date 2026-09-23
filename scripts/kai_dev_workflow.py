@@ -6,13 +6,16 @@ This module is an operator tool. It has no dependency on KAI's runtime or app/ai
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
+import sys
 import uuid
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 BASE_REF = "origin/claude/p7/reentry-ia-codex-cycle"
@@ -29,6 +32,16 @@ MAX_UNTRACKED_FILE_BYTES = 5_000_000
 MAX_SNAPSHOT_BYTES = 20_000_000
 SECRET_NAME = re.compile(
     r"(^|[\\/])(?:\.env(?:\.|$)|.*(?:secret|credential|wallet|macaroon|\.pem$|\.key$))", re.I
+)
+# Task-specific sources: an explicit, bounded selection, never the repository.
+MAX_SOURCE_FILES = 12
+SOURCE_FILE_CHARS = {"full": 24_000, "compact": 6_000}
+SOURCE_BUDGET_CHARS = {"full": 90_000, "compact": 12_000}
+# Assignment of a long literal to a key-like name. Complements the shared
+# catalogue (which knows provider prefixes) for tokens without a known prefix.
+SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(?:api[_-]?key|secret|token|password|passwd|master[_-]?key|macaroon)"
+    r"[\"']?\s*[:=]\s*[\"'][A-Za-z0-9_\-+/=]{24,}[\"']"
 )
 
 
@@ -191,6 +204,140 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
     return {"path": str(root), "manifest_sha256": _sha256(manifest_path.read_bytes())}
 
 
+def _secret_scanner(repo: Path) -> Callable[[str, str], list[Any]]:
+    """Load the repository's single secret catalogue (scripts/secret_guard.py).
+
+    No second pattern list lives here. Without the catalogue, task sources are
+    refused: an unscanned file must not leave the machine.
+    """
+    guard = repo / "scripts" / "secret_guard.py"
+    catalogue = repo / "app" / "security" / "secret_patterns.py"
+    if not guard.is_file() or not catalogue.is_file():
+        raise WorkflowError(
+            "Secret-Prüfung nicht verfügbar (scripts/secret_guard.py fehlt); "
+            "Quelltext wird nicht übertragen."
+        )
+    name = "kai_dev_secret_guard_" + _sha256(str(guard.resolve()).encode())[:12]
+    spec = importlib.util.spec_from_file_location(name, guard)
+    if spec is None or spec.loader is None:
+        raise WorkflowError("Secret-Prüfung nicht ladbar; Quelltext wird nicht übertragen.")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses resolve their module at class creation
+    # Loading must not leave __pycache__ behind in the operator's worktree.
+    previous_flag = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001 - any import failure means: fail closed
+        sys.modules.pop(name, None)
+        raise WorkflowError(
+            f"Secret-Prüfung nicht ladbar ({type(exc).__name__}); Quelltext wird nicht übertragen."
+        ) from exc
+    finally:
+        sys.dont_write_bytecode = previous_flag
+    scan: Callable[[str, str], list[Any]] = module.scan_text
+    return scan
+
+
+def validate_sources(repo: Path, sources: Sequence[str]) -> list[str]:
+    """Normalise and check an explicit source selection before anything is written.
+
+    Only versioned files inside the worktree qualify. Secret-named files and
+    files whose content matches the shared secret catalogue are refused; the
+    error names file and line, never the value.
+    """
+    cleaned: list[str] = []
+    for raw in sources:
+        text = str(raw).strip()
+        if not text:
+            continue
+        relative = PureWindowsPath(text).as_posix() if "\\" in text else text
+        parts = Path(relative).parts
+        if Path(relative).is_absolute() or ".." in parts:
+            raise WorkflowError(f"Quelldatei liegt außerhalb des Arbeitsbereichs: {text}")
+        if SECRET_NAME.search(relative):
+            raise WorkflowError(f"Secret-Datei ist als Quelltext ausgeschlossen: {relative}")
+        if relative not in cleaned:
+            cleaned.append(relative)
+    if len(cleaned) > MAX_SOURCE_FILES:
+        raise WorkflowError(f"Es sind höchstens {MAX_SOURCE_FILES} Quelldateien erlaubt.")
+    if not cleaned:
+        return []
+    root = repo.resolve()
+    scan = _secret_scanner(repo)
+    for relative in cleaned:
+        source = repo / relative
+        if not source.resolve().is_relative_to(root) or source.is_symlink():
+            raise WorkflowError(f"Quelldatei liegt außerhalb des Arbeitsbereichs: {relative}")
+        if not _git(repo, "ls-files", "--", relative) or not source.is_file():
+            raise WorkflowError(f"Quelldatei ist nicht versioniert oder fehlt: {relative}")
+        data = source.read_bytes()
+        try:
+            body = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkflowError(f"Quelldatei ist kein UTF-8-Text: {relative}") from exc
+        if "\0" in body:
+            raise WorkflowError(f"Quelldatei ist binär: {relative}")
+        # Pseudo path: the guard's fixture allowlist must never apply here.
+        findings = [f"{f.secret_type} · {relative}:{f.line}" for f in scan(body, "ctx:" + relative)]
+        findings += [
+            f"secret assignment · {relative}:{number}"
+            for number, line in enumerate(body.splitlines(), start=1)
+            if SECRET_ASSIGNMENT.search(line)
+        ]
+        if findings:
+            raise WorkflowError("Quelldatei enthält mögliche Secrets: " + "; ".join(findings[:5]))
+    return cleaned
+
+
+def _fence(body: str) -> str:
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def _source_sections(repo: Path, sources: Sequence[str], *, compact: bool) -> list[str]:
+    profile = "compact" if compact else "full"
+    per_file = SOURCE_FILE_CHARS[profile]
+    remaining = SOURCE_BUDGET_CHARS[profile]
+    lines = [
+        "",
+        "## Task-specific sources",
+        "Explicitly selected for this task; nothing else from the repository is included.",
+        f"Selection: {len(sources)} file(s), budget {remaining} characters ({profile}).",
+        "Base statements about code only on these sources and name the file you rely on.",
+    ]
+    for relative in sources:
+        data = (repo / relative).read_bytes()
+        body = data.decode("utf-8")
+        try:
+            blob = _git(repo, "rev-parse", f"HEAD:{relative}")
+        except WorkflowError:
+            blob = "not in HEAD (new file)"
+        dirty = bool(_git(repo, "status", "--porcelain", "--", relative))
+        included = body[: min(per_file, remaining)]
+        remaining -= len(included)
+        lines.extend(
+            [
+                "",
+                f"## Task source: {relative}",
+                f"Git blob at HEAD: {blob}",
+                f"SHA-256 of working file: {_sha256(data)}",
+                f"Working file differs from HEAD: {'yes' if dirty else 'no'}",
+                f"Included characters: {len(included)} of {len(body)}",
+            ]
+        )
+        if included:
+            fence = _fence(included)
+            lines.extend([fence + "text", included, fence])
+        if len(included) < len(body):
+            lines.append(
+                "TRUNCATED: only the first characters are included"
+                + (" (budget exhausted)" if remaining <= 0 else "")
+                + "; request the rest by path and hash before relying on it."
+            )
+    return lines
+
+
 def context_pack(
     repo: Path,
     state_root: Path,
@@ -198,9 +345,13 @@ def context_pack(
     task: str,
     handoff: dict[str, Any] | None = None,
     compact: bool = False,
+    sources: Sequence[str] | None = None,
 ) -> Path:
     """Produce a portable document: no local path is required to understand it."""
     session = require_session(repo, state_root)
+    if sources is None:
+        sources = list(handoff.get("context_sources", [])) if handoff else []
+    selected = validate_sources(repo, sources)
     head = _git(repo, "rev-parse", "HEAD")
     status = _git(repo, "status", "--short") or "clean"
     diff_stat = _git(repo, "diff", "--stat", "HEAD") or "none"
@@ -211,7 +362,11 @@ def context_pack(
         "It contains no API key or .env content. External agents must not infer production authority.",
         "",
         f"Generated UTC: {_now()}",
-        f"Session: {session['session_id']}",
+    ]
+    if handoff:
+        lines.append(f"Handoff ID: {handoff['handoff_id']}")
+    lines += [
+        f"Session ID (workspace, not the handoff): {session['session_id']}",
         f"Profile: {'compact' if compact else 'full'}",
         f"Task: {task}",
         f"Branch: {session['branch']}",
@@ -231,9 +386,15 @@ def context_pack(
             [
                 "",
                 "## Current handoff",
+                f"Handoff ID: {handoff['handoff_id']}",
+                "The handoff ID identifies this transfer. The session ID above identifies",
+                "the workspace and is a different value; do not confuse them.",
                 f"From: {handoff['from_agent']}",
                 f"To: {handoff['to_agent']}",
-                f"Receipt: {handoff['payload_sha256']}",
+                f"Handoff receipt SHA-256: {handoff['payload_sha256']}",
+                f"Previous receipt SHA-256: {handoff['previous_sha256']}",
+                "Back-reference: entry with this handoff ID and receipt in the developer hub's",
+                "append-only hash chain handoffs/ledger.jsonl.",
                 f"Acknowledgement challenge: {handoff['ack_challenge']}",
                 f"Completed: {handoff['completed'] or 'none recorded'}",
                 f"Open items: {handoff['open_items'] or 'none recorded'}",
@@ -242,7 +403,8 @@ def context_pack(
                 f"Tests: {handoff['tests'] or 'not recorded'}",
                 f"Snapshot manifest SHA-256: {handoff['snapshot_manifest_sha256']}",
                 "",
-                "Before continuing, restate the open item and reply with the acknowledgement challenge.",
+                "Before continuing, reply with the handoff ID and the acknowledgement challenge,",
+                "restate the open item and name the included sources your statement is based on.",
             ]
         )
     for name in CONTEXT_FILES:
@@ -281,6 +443,8 @@ def context_pack(
             lines.append(
                 "TRUNCATED: consult the versioned source before making changes in this area."
             )
+    if selected:
+        lines.extend(_source_sections(repo, selected, compact=compact))
     target_dir = state_root / "context" / str(session["session_id"])
     target_dir.mkdir(parents=True, exist_ok=True)
     target = (
