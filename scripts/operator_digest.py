@@ -31,6 +31,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections import deque
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -158,12 +159,22 @@ def _save_milestone_state(state: dict[str, Any], path: Path = _MILESTONE_STATE_P
 
 
 def _read_jsonl_tail(path: Path, max_lines: int = 20_000) -> list[dict[str, Any]]:
+    """Die letzten ``max_lines`` Saetze eines JSONL-Stroms.
+
+    ``deque(fh, maxlen=…)`` statt ``fh.readlines()[-max_lines:]``: das alte
+    Schnittmuster las die GANZE Datei in eine Liste und warf danach weg, der
+    Speicherbedarf hing also an der Historie statt am Fenster. Auf dem Pi wuchs
+    der Peak dieses Dienstes dadurch um ~3,4 MB/Tag (494,7 M am 16.09. bis zum
+    cgroup-OOM am 512-M-Limit am 22./23.09.) — und die nicht rotierten Stroeme
+    (`paper_execution_audit`, HARD EXCLUSION) waeren ohne Grenze weitergewachsen.
+    Das Ergebnis ist identisch, der Speicher jetzt O(max_lines).
+    """
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()[-max_lines:]
+            lines = deque(fh, maxlen=max_lines)
         for line in lines:
             line = line.strip()
             if not line:

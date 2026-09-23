@@ -1,3 +1,21 @@
+## 2026-09-23 - Ops: Operator-Digest las ganze Stroeme statt eines Fensters (cgroup-OOM)
+
+`kai-operator-digest` wurde am 22. und 23.09. vom OOM-Killer beendet (`Failed with result 'oom-kill'` am 512-M-Limit).
+Der Peak war zuvor linear gewachsen: 433,9 M (30.08.) → 494,7 M (16.09.) → 511,8 M (21.09.), rund +3,4 MB pro Tag bei
+konstanter CPU-Zeit (~23 s). Kein Leck — ein falscher "tail": `_read_jsonl_tail` machte
+`fh.readlines()[-max_lines:]`, las also die GANZE Datei als Zeilenliste in den Speicher und schnitt erst danach. Der
+Bedarf hing damit an der Historie statt am Fenster, und mehrere der gelesenen Stroeme sind bewusst NICHT rotiert
+(`paper_execution_audit` ist HARD EXCLUSION) — das Wachstum hatte also keine Obergrenze.
+
+Jetzt `deque(fh, maxlen=max_lines)`: identische Ausgabe, Speicher O(Fenster) statt O(Datei). Die Unit-Grenze war mit
+#1028 bereits auf 768 M angehoben; dieser Fix beseitigt die Ursache, statt das Limit erneut zu verschieben. Der neue
+Regressionstest ist mit der alten Implementierung nachweislich rot.
+
+**Ehrliche Grenze:** Zwei vom Digest gestartete Kindprozesse (`generator-edge` → `edge_report.load_audit_events`,
+`promotion-check` → `replay_paper_audit`) parsen den Paper-Strom weiterhin vollstaendig und liegen im selben cgroup.
+Sie sind hier nicht angefasst, weil ihre Kennzahlen die Vollhistorie brauchen (Portfolio-Replay, resolved_count) — ein
+Fenster wuerde sie stillschweigend aendern.
+
 ## 2026-09-23 - Ops: `kai_operator_arm_backup.sh` versioniert — lag nur auf der Pi
 
 Das Skript, das die verschluesselten Artefakt-Backups scharf stellt und mit Backup-Lauf plus Restore-Drill sofort
