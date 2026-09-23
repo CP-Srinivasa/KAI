@@ -162,6 +162,22 @@ aus und gibt den Bogen mit unverändertem Korpus-Hash zurück. Bei strittigen F�
 bleibt `relevant` bis zur Klärung null. Dieser Bogen ist eine Vorlage, kein
 automatischer Beweis der Reviewer-Identität oder Unabhängigkeit.
 
+Nach Festschreiben des ausgefüllten Bogens führt ausschließlich der Integrator die
+private Zuordnung wieder zusammen. Der Befehl prüft Korpus-, Text- und Zuordnungs-
+Hashes sowie Vollständigkeit und schreibt niemals über eine bestehende Datei:
+
+```powershell
+python -m scripts.jev_shadow_eval.review `
+  --corpus tests/fixtures/jev/development_corpus.json `
+  --review artifacts/jev/blind-review-completed.json `
+  --mapping artifacts/jev/private-blind-review-map.json `
+  --output artifacts/jev/reviewed-labels.json
+```
+
+Strittige Fälle ergeben `NEEDS_ADJUDICATION` und Exit 2. Erst ein vollständiger,
+nicht strittiger Bogen ergibt `REVIEW_COMPLETE`; auch dieser Status ist weder eine
+Jev-Freigabe noch ein Nachweis der menschlichen Identität des Reviewers.
+
 Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
 Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
 Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
