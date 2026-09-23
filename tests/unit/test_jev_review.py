@@ -29,7 +29,8 @@ def test_reconcile_seals_complete_review(tmp_path: Path) -> None:
     review_path, mapping_path = _completed_files(tmp_path)
     report = reconcile(CORPUS, review_path, mapping_path)
     assert report["status"] == "REVIEW_COMPLETE"
-    assert report["independent_labels_verified"] is True
+    assert report["review_complete"] is True
+    assert report["independent_labels_verified"] is False
     assert report["primary_ready"] is False
     assert report["jev_called"] is False
     assert report["case_count"] == 24

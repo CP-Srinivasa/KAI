@@ -80,7 +80,8 @@ def reconcile(corpus_path: Path, review_path: Path, mapping_path: Path) -> dict[
     return {
         "schema_version": "jev-reviewed-labels/v1",
         "status": "NEEDS_ADJUDICATION" if disputed_count else "REVIEW_COMPLETE",
-        "independent_labels_verified": disputed_count == 0,
+        "review_complete": disputed_count == 0,
+        "independent_labels_verified": False,
         "primary_ready": False,
         "jev_called": False,
         "reviewer": reviewer.strip(),

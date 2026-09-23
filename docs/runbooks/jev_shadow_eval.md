@@ -215,6 +215,24 @@ Der Bericht enthält Vorhersagen und Gründe, aber keine Referenzlabels und kein
 Qualitätsaussage. Er bildet weiterhin nur den benannten Rohtext-Adapter ab, nicht
 die vollständige Pipeline. Code- und Monitor-Hashes halten den Logikstand fest.
 
+Nach dem eingefrorenen unabhängigen Review werden Labels, private Zuordnung und
+Baseline gemeinsam geprüft und ausgewertet:
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout_score `
+  --review artifacts/jev/real-holdout-reviewed.json `
+  --mapping artifacts/jev/private-real-holdout-map.json `
+  --baseline artifacts/jev/real-holdout-baseline.json `
+  --output artifacts/jev/real-holdout-baseline-score.json
+```
+
+Strittige Fälle werden aus den Metriken ausgeschlossen und führen zu
+`NEEDS_ADJUDICATION`. Weniger als 100 unstrittige Fälle führen zu
+`INSUFFICIENT_REVIEW`. Der Bericht weist Gesamt- und Schichtmetriken aus, setzt
+aber weiterhin `primary_ready=false` und `independent_labels_verified=false`:
+Dateien können Vollständigkeit prüfen, nicht die Identität oder Unabhängigkeit
+des Reviewers beweisen.
+
 Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
 Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
 Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
