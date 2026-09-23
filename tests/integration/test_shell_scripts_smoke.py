@@ -71,6 +71,7 @@ def _repo_bash_path(path: Path) -> str:
         "lib/pi_unit_sync.sh",
         "lib/pi_release_guard.sh",
         "pi_transfer_artifacts.sh",
+        "kai_operator_arm_backup.sh",
         "pi_deploy_web.sh",
         "pi_health_digest.sh",
         "pi_service_watchdog.sh",

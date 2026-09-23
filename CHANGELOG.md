@@ -1,3 +1,16 @@
+## 2026-09-23 - Ops: `kai_operator_arm_backup.sh` versioniert — lag nur auf der Pi
+
+Das Skript, das die verschluesselten Artefakt-Backups scharf stellt und mit Backup-Lauf plus Restore-Drill sofort
+beweist, existierte seit dem 27.08. ausschliesslich im Pi-Checkout (untracked, 103 Zeilen). Ein Skript, das die
+Wiederherstellbarkeit HERSTELLT und selbst nur auf der Maschine liegt, deren Ausfall es abfedern soll, ist ein
+Widerspruch in sich — bei einem Neuaufsetzen waere es weg. Jetzt im Repo, unveraendert in der Mechanik; ergaenzt
+wurde nur der Kopf um den am Geraet geprueften Stand vom 23.09. (beide Timer `enabled`, Passphrase gesetzt, 30
+Tagesarchive mit Manifest, letzter Restore-Drill 01.09. mit archive_sha256). Der Parse-Check in
+`tests/integration/test_shell_scripts_smoke.py` deckt es jetzt mit ab.
+
+Inhaltlich geprueft: Das Skript erzeugt keine Passphrase und schreibt sie nirgends hin ausser in die `.env`; die
+Eingabe laeuft ohne Echo, ohne Shell-History und ohne Prozess-Argument. Keine Secrets im Quelltext.
+
 ## 2026-09-23 - Konfiguration: Direkt gelesene Schalter sichtbar gemacht — Handels-Schwellen standen in keiner Vorlage (S2-9d)
 
 Der Drift-Ratchet leitete seine Erwartung bisher nur aus den `BaseSettings`-Klassen ab. Damit war eine ganze Klasse von
