@@ -1,0 +1,11 @@
+{
+  "maximum_brier_score": 0.15,
+  "maximum_false_negative_rate": 0.02,
+  "minimum_accuracy_gain": 0.0,
+  "minimum_coverage": 0.8,
+  "minimum_sample_count": 100,
+  "negative_below": 0.2,
+  "positive_at": 0.8,
+  "require_all_costs_known": true,
+  "require_single_model_identity": true
+}
