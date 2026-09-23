@@ -18,7 +18,7 @@ from app.core.enums import SentimentLabel
 from app.core.l2_candidate_context import current_candidate
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.mock_adapter import MockMarketDataAdapter
-from app.orchestrator.trading_loop import TradingLoop
+from app.orchestrator.trading_loop import TradingLoop, build_trading_loop
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
@@ -149,3 +149,65 @@ async def test_kontext_wird_auch_bei_fehlgeschlagener_generierung_freigegeben(
     assert any("signal_error" in note for note in cycle.notes)
     # … und der Kontext bleibt nicht stehen.
     assert current_candidate() is None
+
+
+# ── Der schaerfste Ort: im Evidence-Provider selbst ────────────────────────
+#
+# Der L2-Provider laeuft als ``bayes_extra_evidences_provider`` tief in
+# ``_evaluate_bayes``. Ein Spy an GENAU dieser Stelle prueft beides auf einmal:
+# ob der Kontext dort ankommt und ob die Richtung, mit der gemessen wird,
+# dieselbe ist, die der Kandidat traegt. Ohne das zweite Stueck wuerde die
+# Kandidaten-ID eine Identitaet behaupten, die die Richtung nicht deckt.
+
+
+class _EvidenceSpy:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, object]] = []
+
+    def __call__(self, analysis, market_data, direction):  # type: ignore[no-untyped-def]
+        self.calls.append((current_candidate(), direction))
+        return ()
+
+
+@pytest.mark.asyncio
+async def test_der_evidence_provider_misst_mit_der_richtung_des_kandidaten(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APP_MARKET_DATA_PROVIDER", "mock")
+    monkeypatch.setenv("RISK_BAYES_CONFIDENCE_ENABLED", "true")
+    monkeypatch.setenv("RISK_BAYES_CONFIDENCE_SHADOW_ONLY", "true")
+
+    loop = build_trading_loop(
+        loop_audit_path=tmp_path / "loop_audit.jsonl",
+        execution_audit_path=tmp_path / "exec_audit.jsonl",
+        rehydrate_from_audit=False,
+    )
+    generator = loop._signals  # noqa: SLF001
+    spy = _EvidenceSpy()
+    generator._bayes_extra_evidences_provider = spy  # noqa: SLF001
+
+    signale: list[object] = []
+    original = generator.generate
+
+    def _mitschnitt(analysis, market_data, symbol):  # type: ignore[no-untyped-def]
+        signal = original(analysis, market_data, symbol)
+        signale.append(signal)
+        return signal
+
+    generator.generate = _mitschnitt  # type: ignore[method-assign]
+
+    cycle = await loop.run_cycle(_bullish(), "BTC/USDT")
+
+    # Ehrlich bleiben: ohne erreichten Provider beweist der Test nichts.
+    assert spy.calls, "Evidence-Provider wurde nicht erreicht — Test ohne Aussage"
+    # GENAU ein Aufruf: eine Messung, eine Richtung, ein Kandidat.
+    assert len(spy.calls) == 1
+
+    ctx, gemessene_richtung = spy.calls[0]
+    assert ctx is not None, "kein Kandidatenkontext im Provider"
+    assert ctx.candidate_id == cycle.cycle_id
+    assert ctx.decision_ts == cycle.started_at
+
+    signal = signale[0]
+    assert signal is not None, "kein Kandidat erzeugt — Richtung nicht vergleichbar"
+    assert gemessene_richtung == signal.direction
