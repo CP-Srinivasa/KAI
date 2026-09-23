@@ -68,7 +68,7 @@ async def test_get_blockchain_info_happy() -> None:
                 "headers": 953902,
                 "verificationprogress": 0.9999,
                 "initialblockdownload": False,
-                "bestblockhash": "abc",
+                "bestblockhash": "ab" * 32,
             }
         }
     )
@@ -144,7 +144,7 @@ async def test_adapter_ok_full(monkeypatch) -> None:
                 "headers": 953902,
                 "verificationprogress": 0.9999,
                 "initialblockdownload": False,
-                "bestblockhash": "abc",
+                "bestblockhash": "ab" * 32,
             },
             "estimatesmartfee": {"feerate": 0.00002009},
             "getmempoolinfo": {"size": 42},
@@ -160,6 +160,7 @@ async def test_adapter_ok_full(monkeypatch) -> None:
     status = await get_chain_status(ChainSettings(enabled=True, rpc_user="u", rpc_password="p"))
     assert status.state == "ok" and status.reachable is True
     assert status.synced is True
+    assert status.best_block_hash == "ab" * 32
     assert status.fee_sat_vb == pytest.approx(2.009, abs=0.001)
     assert status.mempool_tx == 42
 

@@ -46,6 +46,7 @@ def _healthy_chain(*, blocks: int = 954871) -> SimpleNamespace:
         chain="main",
         blocks=blocks,
         headers=blocks,
+        best_block_hash="ab" * 32,
         synced=True,
         fee_sat_vb=1.2,
         mempool_tx=42,
@@ -105,6 +106,7 @@ def test_paid_token_returns_facts(client: TestClient) -> None:
     body = r.json()
     assert body["block_height"] == 954871 and body["fee_sat_vb"] == 1.2
     assert body["headers"] == 954871 and body["observed_at_utc"].endswith("+00:00")
+    assert body["best_block_hash"] == "ab" * 32
     assert body["source"] == "kai_sovereign_bitcoind"
 
 
@@ -246,6 +248,13 @@ def test_paid_request_logs_access_granted(client: TestClient) -> None:
             SimpleNamespace(
                 state="ok", reachable=True, synced=True, chain="main", blocks=100, headers=100
             ),
+            1.0,
+            "ok",
+        ),
+        (
+            SimpleNamespace(
+                state="ok", reachable=True, synced=True, chain="main", blocks=100, headers=100
+            ),
             61.0,
             "stale",
         ),
@@ -290,6 +299,7 @@ def test_same_paid_token_retries_after_chain_recovers_without_new_invoice(
         chain="main",
         blocks=101,
         headers=101,
+        best_block_hash="cd" * 32,
         fee_sat_vb=None,
         mempool_tx=0,
     )

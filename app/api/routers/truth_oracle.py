@@ -147,6 +147,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
     state = str(getattr(status, "state", "unknown"))
     blocks = getattr(status, "blocks", 0)
     headers = getattr(status, "headers", 0)
+    best_block_hash = getattr(status, "best_block_hash", "")
     chain = getattr(status, "chain", "")
     age_seconds = (
         float(age) if isinstance(age, (int, float)) and not isinstance(age, bool) else None
@@ -163,6 +164,9 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         and isinstance(headers, int)
         and not isinstance(headers, bool)
         and headers == blocks
+        and isinstance(best_block_hash, str)
+        and len(best_block_hash) == 64
+        and all(char in "0123456789abcdef" for char in best_block_hash.lower())
         and age_seconds is not None
         and math.isfinite(age_seconds)
         and 0.0 <= age_seconds <= ONCHAIN_FACTS_MAX_AGE_SECONDS
@@ -194,6 +198,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         "chain": chain,
         "block_height": blocks,
         "headers": headers,
+        "best_block_hash": best_block_hash.lower(),
         "synced": status.synced,
         "fee_sat_vb": status.fee_sat_vb,
         "mempool_tx": status.mempool_tx,

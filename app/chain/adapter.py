@@ -33,6 +33,7 @@ class ChainStatus:
     chain: str = ""
     blocks: int = 0
     headers: int = 0
+    best_block_hash: str = ""
     synced: bool = False
     fee_sat_vb: float | None = None
     mempool_tx: int = 0
@@ -91,6 +92,7 @@ async def get_chain_status(cfg: ChainSettings | None = None) -> ChainStatus:
         chain=info.chain,
         blocks=info.blocks,
         headers=info.headers,
+        best_block_hash=info.best_block_hash,
         synced=synced,
         fee_sat_vb=fee,
         mempool_tx=mempool_tx,
