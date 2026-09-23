@@ -72,6 +72,20 @@ def test_signals_layer_does_not_depend_on_alerts_or_storage() -> None:
     )
 
 
+def test_signals_layer_does_not_depend_on_the_orchestrator() -> None:
+    """Die Schichtrichtung ist einseitig: ``orchestrator`` steuert ``signals``.
+
+    ``app/orchestrator/trading_loop.py`` importiert ``SignalGenerator`` — ein
+    Import in die Gegenrichtung schlösse einen Paketzyklus. Querschnittswerte,
+    die beide Seiten brauchen (``app/core/l2_candidate_context.py``,
+    ``app/core/file_lock.py``), gehören deshalb nach ``app/core``.
+    """
+    _assert_no_import_prefix(
+        APP_ROOT / "signals",
+        ("app.orchestrator",),
+    )
+
+
 def test_alerts_layer_does_not_depend_on_ingestion_or_provider_integrations() -> None:
     _assert_no_import_prefix(
         APP_ROOT / "alerts",

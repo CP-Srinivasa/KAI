@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.l2_candidate_context import current_candidate
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,8 +117,17 @@ def append_l2_shadow_log(
     pre-chosen direction-aligned strength. The contrarian/pro-trend direction is
     learned downstream from the joined outcomes. Fail-soft: a write error is
     logged and swallowed (the measurement must never kill the signal path).
+
+    ``ts`` stays the observation time — the clock at the moment of measurement,
+    never backdated. When the cycle bound a candidate context
+    (``app/core/l2_candidate_context.py``), its fields are added ON TOP:
+    ``candidate_id`` / ``decision_ts`` / ``reference_price_ts`` /
+    ``causality_ok``. They are additive, so older lines without them stay valid
+    and a reader must keep accepting both shapes; the joiner
+    (``l2_evidence_eval.pit_join``) can then pair on the id instead of a
+    symbol + time window. Outside a cycle nothing is added.
     """
-    record = {
+    record: dict[str, Any] = {
         "ts": datetime.now(UTC).isoformat(),
         "symbol": symbol,
         "direction": direction,
@@ -127,6 +138,9 @@ def append_l2_shadow_log(
         "window_n": features.window_n,
         "source_trust": source_trust,
     }
+    candidate = current_candidate()
+    if candidate is not None:
+        record.update(candidate.as_log_fields())
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

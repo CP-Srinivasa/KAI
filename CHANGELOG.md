@@ -1,3 +1,43 @@
+## 2026-09-23 - L2: Kandidatenkontext — Messzeile und Entscheidung haengen jetzt kausal zusammen (vorbereitet, NICHT aktiviert)
+
+Der L2-Provider misst INNERHALB von `SignalGenerator.generate`. Seine Zeile im Shadow-Log trug bisher `symbol`,
+`direction`, die Rohmerkmale und ein `ts` aus `datetime.now()` — sonst nichts. Der Kandidat dagegen entsteht im
+Loop, mit `candidate_id=cycle.cycle_id` und `ts_utc=cycle.started_at`. **Zwei Zeitpunkte ohne Verbindung:** Der
+Evaluator konnte Messung und Kandidat nur ueber `symbol` + Zeitfenster paaren, und wie weit Mess- und
+Entscheidungszeit auseinanderlagen, war aus den Daten nicht rekonstruierbar. IDs allein loesen das nicht — das
+Ledger benutzt den Zyklusbeginn, die Messung entsteht spaeter.
+
+Der Loop bindet jetzt fuer die Dauer der Signalgenerierung einen Kontext mit drei Werten, die zu diesem Zeitpunkt
+alle bereits feststehen:
+
+- `candidate_id` — die Zyklus-ID. Sie entsteht in `run_cycle` als Allererstes, also **vor** der Messung. Nichts
+  wird vorgezogen oder erfunden.
+- `decision_ts` — `started_at` desselben Zyklus.
+- `reference_price_ts` — `MarketDataPoint.timestamp_utc`, der Preis, auf dem die Entscheidung beruht.
+
+`append_l2_shadow_log` haengt diese Felder **additiv** an. `ts` bleibt unveraendert der Beobachtungszeitpunkt —
+**keine Rueckdatierung**, und ein Test pinnt genau das. Historische Zeilen ohne die Felder bleiben gueltig; ein
+Leser muss weiterhin beide Formen akzeptieren. `pit_join` ist unveraendert und liest `dict[str, Any]` per `.get()`,
+nimmt die Zusatzfelder also folgenlos hin. Historische Outcome-Horizonte werden nicht angefasst.
+
+**Kausalitaet wird geprueft, nicht unterstellt.** Ein Referenzpreis, der juenger ist als die Entscheidung, die auf
+ihm beruhen soll, ist Look-ahead — genau der Fehler, gegen den der Point-in-Time-Join gebaut wurde. Solche Faelle
+erscheinen als `causality_ok=false` in der Zeile, statt still mitzulaufen. Verworfen wird nichts: Das Urteil
+gehoert dem Evaluator. Fehlt oder verunglueckt eine der beiden Zeiten, wird gar nichts behauptet (Feld entfaellt) —
+`false` waere eine Aussage, die die Daten nicht hergeben.
+
+**Ort des Moduls.** `app/core/l2_candidate_context.py`, nicht `app/orchestrator`. Gesetzt wird der Kontext im Loop,
+gelesen im Messpfad (`app/signals`) — ein Modul im Orchestrator zwaenge `app/signals` zu einem Import nach oben,
+und `app/orchestrator` importiert `app/signals` bereits. Das waere ein Paketzyklus gewesen. `app/core` importieren
+beide Seiten schon heute (wie `app/core/file_lock.py`). Die Richtung war bisher durch **nichts** geschuetzt; die
+neue Regel `test_signals_layer_does_not_depend_on_the_orchestrator` haelt sie fest.
+
+Nebenbefund: `TradingLoop._write_audit` ist nach `app/orchestrator/loop_audit_log.py` gewandert (`ContextVar`-Block
+haette den God-File-Ratchet gerissen). Satzbau jetzt rein und testbar, das Anhaengen weiter fail-soft unter
+`append_lock` — ein Audit-Problem darf den Loop nie anhalten. Loop 2276 -> 2262 Zeilen, Baseline nachgezogen.
+
+**Status: vorbereitet, nicht aktiviert.** Kein Deploy vor Pilotende (25.09., 09:04Z) und gemeinsamer Abnahme.
+Evaluator, Outcome-Adapter und CLI-Integration liegen bei Codex (Draft #1039) — keine Dateiueberschneidung.
 ## 2026-09-23 - Ops: Operator-Digest las ganze Stroeme statt eines Fensters (cgroup-OOM)
 
 `kai-operator-digest` wurde am 22. und 23.09. vom OOM-Killer beendet (`Failed with result 'oom-kill'` am 512-M-Limit).

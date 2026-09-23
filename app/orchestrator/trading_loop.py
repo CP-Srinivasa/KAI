@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import EntryMode, ExecutionMode, SentimentLabel
-from app.core.file_lock import append_lock
+from app.core.l2_candidate_context import bind_candidate
 from app.core.settings import AppSettings, get_settings
 from app.execution.models import PaperFill, PaperOrder, PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
@@ -24,6 +24,7 @@ from app.execution.real_analysis_paper import (
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.indicators import compute_atr
 from app.market_data.service import create_market_data_adapter
+from app.orchestrator.loop_audit_log import append_cycle_audit
 from app.orchestrator.models import (
     CycleStatus,
     LoopCycle,
@@ -434,7 +435,16 @@ class TradingLoop:
 
         signal = None
         try:
-            signal = self._signals.generate(analysis, market_data, symbol)
+            # Der L2-Provider misst INNERHALB von generate(). Ohne diesen Kontext
+            # traegt seine Zeile nur symbol/direction/now() und muss spaeter ueber
+            # ein Zeitfenster mit dem Kandidaten gepaart werden. Die drei Werte
+            # stehen hier bereits fest — die ID seit dem Zyklusbeginn.
+            with bind_candidate(
+                candidate_id=cycle_id,
+                decision_ts=started_at,
+                reference_price_ts=market_data.timestamp_utc,
+            ):
+                signal = self._signals.generate(analysis, market_data, symbol)
         except Exception as exc:  # noqa: BLE001
             notes.append(f"signal_error:{exc}")
 
@@ -1468,29 +1478,7 @@ class TradingLoop:
             logger.warning("[LOOP] paper trade-label write failed: %s", exc)
 
     def _write_audit(self, cycle: LoopCycle) -> None:
-        try:
-            record = {
-                "cycle_id": cycle.cycle_id,
-                "started_at": cycle.started_at,
-                "completed_at": cycle.completed_at,
-                "symbol": cycle.symbol,
-                "status": cycle.status.value,
-                "market_data_fetched": cycle.market_data_fetched,
-                "signal_generated": cycle.signal_generated,
-                "risk_approved": cycle.risk_approved,
-                "order_created": cycle.order_created,
-                "fill_simulated": cycle.fill_simulated,
-                "decision_id": cycle.decision_id,
-                "risk_check_id": cycle.risk_check_id,
-                "order_id": cycle.order_id,
-                "notes": list(cycle.notes),
-                **self._regime_stamp_for_audit(cycle),
-            }
-            with append_lock(self._audit_path):
-                with self._audit_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(record) + "\n")
-        except Exception as exc:  # noqa: BLE001
-            logger.error("[LOOP] Audit write failed: %s", exc)
+        append_cycle_audit(self._audit_path, cycle, self._regime_stamp_for_audit(cycle))
 
     @staticmethod
     def _entry_regime_label(symbol: str, timestamp: str | None) -> str:

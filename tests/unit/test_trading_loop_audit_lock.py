@@ -4,6 +4,11 @@ Der Loop-Audit war der letzte Multi-Prozess-nahe Audit-Stream ohne Lock
 (``alert_audit``, ``bridge_pending_orders`` haben ihn). Geprueft wird, dass der
 Append durch den Lock geht, die Zeile beim Verlassen des Locks schon auf der
 Platte liegt und ein Lock-Ersatz das Verhalten nicht veraendert.
+
+Der Schreibpfad wohnt seit der Entlastung des God-Files in
+``app/orchestrator/loop_audit_log.py``; der Einstieg bleibt
+``TradingLoop._write_audit``. Gepatcht wird daher dort, wo der Lock jetzt
+gebunden ist — geprueft wird weiterhin der Weg durch den Loop.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from pathlib import Path
 
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.mock_adapter import MockMarketDataAdapter
+from app.orchestrator import loop_audit_log as audit_mod
 from app.orchestrator import trading_loop as loop_mod
 from app.orchestrator.models import CycleStatus, LoopCycle
 from app.risk.engine import RiskEngine
@@ -87,7 +93,7 @@ def _cycle() -> LoopCycle:
 
 def test_loop_audit_append_geht_durch_den_lock(monkeypatch, tmp_path: Path) -> None:
     rec = _LockRecorder()
-    monkeypatch.setattr(loop_mod, "append_lock", rec)
+    monkeypatch.setattr(audit_mod, "append_lock", rec)
     loop = _loop(tmp_path)
     audit_path = tmp_path / "loop_audit.jsonl"
 
