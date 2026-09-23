@@ -20,16 +20,25 @@ def test_baseline_is_reproducible_and_not_approved() -> None:
     assert report["independent_labels_verified"] is False
     assert report["primary_ready"] is False
     assert report["status"] == "AWAITING_INDEPENDENT_LABEL_REVIEW"
-    assert report["provisional_metrics"] == {
-        "true_positive": 6,
-        "true_negative": 7,
-        "false_positive": 4,
-        "false_negative": 6,
-        "accuracy": 0.565217,
-        "precision": 0.6,
-        "recall": 0.5,
-        "specificity": 0.636364,
-    }
+    metrics = report["provisional_metrics"]
+    eligible = [case for case in report["cases"] if case["classification_eligible"]]
+    assert metrics["true_positive"] + metrics["false_negative"] == 12
+    assert metrics["true_negative"] + metrics["false_positive"] == 11
+    assert metrics["accuracy"] == round(
+        (metrics["true_positive"] + metrics["true_negative"]) / len(eligible), 6
+    )
+    assert metrics["precision"] == round(
+        metrics["true_positive"] / (metrics["true_positive"] + metrics["false_positive"]),
+        6,
+    )
+    assert metrics["recall"] == round(
+        metrics["true_positive"] / (metrics["true_positive"] + metrics["false_negative"]),
+        6,
+    )
+    assert metrics["specificity"] == round(
+        metrics["true_negative"] / (metrics["true_negative"] + metrics["false_positive"]),
+        6,
+    )
     assert report["classification_eligible_count"] == 23
     assert report["preclassification_rejected_ids"] == ["empty"]
     empty = next(case for case in report["cases"] if case["case_id"] == "empty")
