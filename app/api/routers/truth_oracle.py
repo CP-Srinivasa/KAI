@@ -17,11 +17,13 @@ decoupled from the spend kill-switch via U1).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import math
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -38,6 +40,7 @@ from app.lightning.demand_ledger import (
 )
 from app.lightning.l402 import (
     L402Error,
+    L402Verdict,
     build_challenge_header,
     mint_token,
     parse_authorization,
@@ -53,6 +56,7 @@ router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 # test seam.
 _mint_limiter: MintLimiter | None = None
 ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
+_timestamp_submit_slots = asyncio.Semaphore(2)
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -102,7 +106,7 @@ def _valid_paid_token(request: Request, scope: str) -> Any | None:
     return verdict if verdict.valid and verdict.scope == scope else None
 
 
-async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
+async def _issue_challenge(scope: str, *, requester_fp: str = "") -> NoReturn:
     """Mint an invoice + token and raise a 402 challenge. Never returns.
 
     On a successful mint, logs a ``challenge_minted`` demand event (the interest
@@ -137,7 +141,7 @@ async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
     )
 
 
-async def _require_paid(request: Request, scope: str) -> None:
+async def _require_paid(request: Request, scope: str) -> L402Verdict:
     """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid."""
     settings = _require_oracle_enabled()
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
@@ -145,9 +149,9 @@ async def _require_paid(request: Request, scope: str) -> None:
     if verdict is None:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         await _issue_challenge(scope, requester_fp=fp)
-        return  # unreachable (challenge raises)
     # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
     append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=verdict.payment_hash)
+    return verdict
 
 
 @router.get("/onchain-facts")
@@ -289,22 +293,44 @@ class TimestampRequest(BaseModel):
 @router.post("/timestamp")
 async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
     """UC-3: anchor a caller hash via OpenTimestamps (L3), return the proof (L402-paid)."""
-    await _require_paid(request, "timestamp")
     digest = body.sha256_hex.strip().lower()
     if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
         raise HTTPException(status_code=422, detail="sha256_hex must be 32-byte hex")
-    import tempfile
-    from pathlib import Path
 
-    from app.integrity.anchor import AnchorUnavailableError, OpenTimestampsStamper
+    # The signed L402 scope binds this payment to exactly one canonical digest.
+    auth = await _require_paid(request, f"timestamp:{digest}")
+    from app.integrity.timestamp_jobs import (
+        TimestampJobConflictError,
+        TimestampJobStore,
+        TimestampJobUnavailableError,
+    )
 
     try:
-        proof_path = OpenTimestampsStamper().stamp(digest, Path(tempfile.mkdtemp()))
-    except AnchorUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=f"anchoring unavailable: {exc}") from exc
-    proof_bytes = Path(proof_path).read_bytes()
+        jobs_root = Path(get_settings().integrity.proofs_dir) / "uc3_timestamp_jobs"
+        async with _timestamp_submit_slots:
+            record, proof_bytes = await asyncio.to_thread(
+                TimestampJobStore(jobs_root).submit,
+                payment_hash=auth.payment_hash,
+                digest=digest,
+            )
+    except TimestampJobConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail="payment already bound to another digest"
+        ) from exc
+    except (TimestampJobUnavailableError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "timestamp_pending_retry", "retriable": True},
+            headers={"Retry-After": "5"},
+        ) from exc
     return {
         "sha256_hex": digest,
         "ots_proof_hex": proof_bytes.hex(),
-        "note": "verify/upgrade with `ots upgrade` once the calendar aggregation is mined",
+        "proof_sha256": record["proof_sha256"],
+        "status": record["state"],
+        "note": (
+            "Bitcoin-confirmed OpenTimestamps proof"
+            if record["state"] == "bitcoin_confirmed"
+            else "calendar commitment only; verify/upgrade after Bitcoin confirmation"
+        ),
     }

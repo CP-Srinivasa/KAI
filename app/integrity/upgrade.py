@@ -22,6 +22,7 @@ upgrade/classification actually runs.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,7 +103,12 @@ def _save_detached(detached: Any, path: Path) -> None:
 
     ctx = BytesSerializationContext()
     detached.serialize(ctx)
-    path.write_bytes(ctx.getbytes())
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("wb") as handle:
+        handle.write(ctx.getbytes())
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
 
 
 def read_proof_info(path: Path) -> ProofInfo:
@@ -170,7 +176,7 @@ def upgrade_pending_proofs(
     """
     out_dir = Path(proofs_dir)
     try:
-        proofs = sorted(out_dir.glob("*.ots"))
+        proofs = sorted(out_dir.rglob("*.ots"))
     except OSError as exc:
         logger.warning("[ots] proofs dir unreadable: %s", exc)
         return UpgradeReport()
@@ -203,6 +209,11 @@ def upgrade_pending_proofs(
         if classify_timestamp(detached.timestamp).state == CONFIRMED:
             try:
                 _save_detached(detached, path)
+                if path.name == "proof.ots":
+                    from app.integrity.timestamp_jobs import mark_timestamp_job_confirmed
+
+                    if not mark_timestamp_job_confirmed(path):
+                        logger.warning("[ots] UC-3 job record not reconciled for %s", path)
                 upgraded += 1
             except OSError as exc:
                 logger.warning("[ots] could not persist upgraded proof %s: %s", path.name, exc)

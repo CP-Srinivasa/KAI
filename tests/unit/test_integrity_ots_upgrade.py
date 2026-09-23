@@ -157,6 +157,36 @@ def test_upgrade_counts_unreadable_as_failed(tmp_path) -> None:
     assert report.upgraded == 0
 
 
+def test_upgrade_discovers_nested_uc3_proof_and_reconciles_job(tmp_path) -> None:
+    job_dir = tmp_path / ("a" * 64)
+    job_dir.mkdir()
+    proof_path = job_dir / "proof.ots"
+    _write_proof(proof_path, digest=b"\x66" * 32)
+    (job_dir / "record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "payment_hash": "a" * 64,
+                "digest": "66" * 32,
+                "state": "pending_bitcoin",
+                "created_at": "2026-09-23T10:00:00+00:00",
+                "updated_at": "2026-09-23T10:00:00+00:00",
+                "attempts": 1,
+                "proof_sha256": "stale-after-upgrade",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900000))
+
+    assert report.scanned == 1 and report.upgraded == 1
+    record = json.loads((job_dir / "record.json").read_text(encoding="utf-8"))
+    assert record["state"] == "bitcoin_confirmed"
+    assert record["confirmed_at"]
+    assert read_proof_info(proof_path).bitcoin_height == 900000
+
+
 # --- status surface: pending vs Bitcoin-confirmed --------------------------------
 
 

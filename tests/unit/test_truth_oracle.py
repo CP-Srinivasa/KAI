@@ -6,15 +6,19 @@ paid token → 200 with the sovereign fact. No network, no funds.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.api.routers import truth_oracle
 from app.lightning.demand_ledger import (
@@ -39,6 +43,7 @@ def _settings(
     mint_budget_per_min: int = 100,
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        integrity=SimpleNamespace(proofs_dir="monitor/integrity"),
         lightning=SimpleNamespace(
             l402_enabled=enabled,
             l402_secret=secret,
@@ -46,7 +51,7 @@ def _settings(
             # S-002 mint caps (generous here so single-request tests never hit them).
             l402_mint_per_min=mint_per_min,
             l402_mint_budget_per_min=mint_budget_per_min,
-        )
+        ),
     )
 
 
@@ -147,6 +152,153 @@ def test_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
             headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
         )
     assert r.status_code == 402  # scope mismatch → re-challenge
+
+
+# --- /oracle/timestamp — digest-bound, durable UC-3 authorization ---------------
+
+
+def test_timestamp_unpaid_challenge_is_bound_to_requested_digest(client: TestClient) -> None:
+    digest = "ab" * 32
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+    ):
+        response = client.post("/oracle/timestamp", json={"sha256_hex": digest.upper()})
+    assert response.status_code == 402
+    header = response.headers["WWW-Authenticate"]
+    token = header.split('token="', 1)[1].split('"', 1)[0]
+    from app.lightning.l402 import verify
+
+    verdict = verify(token, _PREIMAGE, secret=_SECRET)
+    assert verdict.valid and verdict.scope == f"timestamp:{digest}"
+
+
+def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClient) -> None:
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}")
+    proof = b"ots-calendar-commitment"
+    store = MagicMock()
+    store.submit.return_value = (
+        {"proof_sha256": hashlib.sha256(proof).hexdigest(), "state": "pending_bitcoin"},
+        proof,
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_bitcoin"
+    assert "calendar commitment only" in response.json()["note"]
+    store.submit.assert_called_once_with(payment_hash=_PH_HEX, digest=digest)
+
+
+def test_timestamp_token_for_other_digest_cannot_submit(client: TestClient) -> None:
+    paid_digest = "ab" * 32
+    requested_digest = "cd" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{paid_digest}")
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    store = MagicMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": requested_digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == 402
+    store.submit.assert_not_called()
+
+
+def test_timestamp_expired_token_cannot_submit(client: TestClient) -> None:
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}", ttl_s=-1)
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    store = MagicMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == 402
+    store.submit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_timestamp_calendar_wait_does_not_block_api_event_loop() -> None:
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}")
+    started = threading.Event()
+    proof = b"slow-calendar-proof"
+
+    class SlowStore:
+        def submit(self, **_kwargs):
+            started.set()
+            time.sleep(0.15)
+            return {
+                "proof_sha256": hashlib.sha256(proof).hexdigest(),
+                "state": "pending_bitcoin",
+            }, proof
+
+    app = FastAPI()
+    app.include_router(truth_oracle.router)
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=SlowStore()),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as async_client:
+            request_task = asyncio.create_task(
+                async_client.post(
+                    "/oracle/timestamp",
+                    json={"sha256_hex": digest},
+                    headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+                )
+            )
+            assert await asyncio.to_thread(started.wait, 1.0)
+            before = asyncio.get_running_loop().time()
+            await asyncio.sleep(0.01)
+            assert asyncio.get_running_loop().time() - before < 0.08
+            response = await request_task
+    assert response.status_code == 200
 
 
 # --- U2 demand telemetry ---------------------------------------------------------
