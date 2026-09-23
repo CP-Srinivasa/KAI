@@ -57,13 +57,24 @@ _GENERIC_CRYPTO_TERMS = re.compile(
 )
 
 
+#: Feed boilerplate that names the SITE, not the story. Every cryptobriefing
+#: item ends with "The post … appeared first on Crypto Briefing." -- counted as
+#: a crypto term, it made that site-wide, mostly off-topic feed pass the gate
+#: wholesale (live 23.09., right after the hotfix).
+_FEED_BOILERPLATE = re.compile(
+    r"\bthe post\b.{0,400}?\bappeared first on\b[^.\n]{0,80}\.?|\bcrypto briefing\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _mentions_generic_crypto(doc: CanonicalDocument) -> bool:
     parts = (
         getattr(doc, "title", None),
         getattr(doc, "subtitle", None),
         getattr(doc, "cleaned_text", None) or getattr(doc, "raw_text", None),
     )
-    return bool(_GENERIC_CRYPTO_TERMS.search(" ".join(p for p in parts if p)))
+    text = _FEED_BOILERPLATE.sub(" ", " ".join(p for p in parts if p))
+    return bool(_GENERIC_CRYPTO_TERMS.search(text))
 
 
 def crypto_relevance_verdict(
