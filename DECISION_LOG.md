@@ -24,6 +24,11 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-282 (2026-09-23)
+**Entscheidung:** Jev/TypeSafe bleibt eine optionale Offline-/Shadow-Vergleichsquelle unter `app/ai`; KAI-Start, Readiness, Scheduler, bestehende Modellrouten und Trading-Gates dürfen weder Zugangsdaten noch Erreichbarkeit oder Ergebnisse von Jev voraussetzen.
+**Begründung:** Der externe Zugang ist derzeit nicht verfügbar, während Korpus, KAI-Baseline und Gate-Prüfung vollständig ohne Jev ausführbar sind; ein experimenteller Anbieter darf KAI weder blockieren noch seine bestehende Entscheidungshoheit übernehmen.
+**Auswirkung/Beleg:** Fehlender oder fehlerhafter Jev-Zugang wird als `SKIPPED/BLOCKED_EXTERNAL` ausgewiesen, nicht als KAI-Ausfall; Aktivierung als Laufzeitroute erfordert eine eigene graduierte Entscheidung und reale Shadow-Evidenz. Aktuell existiert in `app/ai` kein Jev-Aufrufer, `app/integrations/litellm/jev.py` führt kein Netzwerk-I/O aus; PRIMARY-, Deploy- und Trading-Status bleiben unverändert.
+
 ### D-281 (2026-09-22)
 **Befund:** KAI PAY Self-Use sendet und empfaengt real: `pi_7e520e56931c4d75` SETTLED, 10 sat an anderen Node, 1050 msat Fee bei 3 sat Limit; `rcv_35783b15732179d2` SETTLED, 6000 msat zurueck. Journal-Kette 89/89 ok, SCB stable, Reconcile ok; Empfaenger bestaetigte den Send.
 **Entscheidung/Limit:** 72h-Pilot T0 `2026-09-22T09:04:09.879472Z` bis `2026-09-25T09:04:09.879472Z`; die 10-sat-Probe ersetzte operatorseitig den 1-sat-Send, aber Ueber-Cap-Deny und positive Fee-Limit-Ablehnung aus D-277 sind noch nicht live belegt. Rueckzahlung aus eigener externer Wallet ist keine Dritt-Einnahme; deren gemeldete 4-sat-Sendegebuehr ist auf KAI nicht verifizierbar. Keine Trading-/L2-/L5-Freigabe aus diesem Zwischenbefund.
