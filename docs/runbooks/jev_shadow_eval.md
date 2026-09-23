@@ -4,6 +4,19 @@ Dieses Werkzeug bewertet bereits aufgezeichnete TypeSafe-System-One-Antworten. E
 keinen Proxy, ruft kein Modell auf und ändert weder Routing noch Trading-Zustand. `app/ai`
 bleibt die einzige Instanz, die Schwellen und Ergebniswirkung festlegt.
 
+## Unabhängigkeitsregel
+
+KAI ist weder technisch noch betrieblich von Jev/TypeSafe abhängig. Ohne Jev-Zugang
+bleiben Start, Readiness, Scheduler, bestehende Modellrouten, KAI-Baseline und Trading-Gates
+unverändert funktionsfähig. Ein fehlender Schlüssel, ein nicht verfügbarer Zugang oder eine
+fehlerhafte Jev-Antwort wird für Jev-spezifische Schritte als `SKIPPED/BLOCKED_EXTERNAL`
+protokolliert und darf keinen KAI-Ausfall erzeugen.
+
+Korpusbildung, Blind-Review, Baseline und Gate-Auswertung laufen vollständig offline. Jev
+darf nur nach einer separaten, evidenzbasierten Graduation als optionale Route unter
+`app/ai` hinzukommen; bis dahin ersetzt Jev weder die KAI-Baseline noch einen bestehenden
+Provider und besitzt keine PRIMARY-, Deploy- oder Trading-Autorität.
+
 ## Eingabe
 
 Eine JSONL-Zeile beschreibt genau einen unabhängig gelabelten Fall:
@@ -94,3 +107,159 @@ Zur Übergabe gehören integrierter und installierter SHA, Versionen, Korpus-/Po
 Frage-Hashes, Labelprotokoll, Baseline-Konfiguration, Erfolgs- und Fehlerzahlen,
 Auswertungsbericht und Ergebnisse der Ausfalltests. Fehlende Nachweise bleiben
 offen. PRIMARY-Aktivierung erfolgt ausschließlich über eine separate Entscheidung.
+
+## Offline-Korpus und Baseline vorbereiten
+
+`tests/fixtures/jev/development_corpus.json` enthält 24 selbst verfasste fiktive
+Entwicklungsfälle (12 positive, 12 negative Labelvorschläge), keine echten Nachrichten.
+Alle Fälle bleiben im Entwicklungssatz. Sie decken indirekte Bezüge, Negation,
+mehrdeutige Wörter/Ticker, eingebettete Anweisungen, irrelevante Footer, deutsche
+Texte und leere Inhalte ab. Sie sind weder unabhängig gelabelt noch repräsentativ
+oder ein versiegelter Testsatz. Keine Jev-Antworten sind enthalten.
+
+```powershell
+python -m scripts.jev_shadow_eval.corpus `
+  --input tests/fixtures/jev/development_corpus.json `
+  --output artifacts/jev/development-baseline.json
+```
+
+Exit 0 bestätigt nur erfolgreiche Offline-Vorbereitung. Der Bericht bleibt
+`AWAITING_INDEPENDENT_LABEL_REVIEW`, mit `primary_ready=false` und `jev_called=false`.
+Er enthält Fall-, Korpus-, Monitor- und Code-Hashes, Gate-Gründe und Abweichungen
+von vorläufigen Labels. Vorhandene Berichte werden nicht überschrieben.
+
+Die Baseline verwendet den echten `KeywordEngine` und `crypto_relevance_verdict`.
+Der benannte Rohtext-Adapter bildet Titel plus Text auf Keyword-Hits und
+`match_tickers` ab; Asset-Tags bleiben leer. Das ist kein Replay der gesamten
+AnalysisPipeline: Ingestion-Anreicherung, Trusted-Author-Bypass und vorgeschaltete
+Gates fehlen. Ein Equity-Ticker kann am reinen Gate bereits zur Weiterleitung
+führen. Eine Abweichung vom semantischen Label ist kein automatisch bewiesener
+Produktionsfehler. Die drei Monitor-Dateien werden nur gelesen; fehlt eine,
+bricht der Lauf ab. Für jeden Lauf einen festen, sauberen Checkout verwenden.
+
+### Beschriftungsregel für unabhängige Gegenprüfung
+
+Die enge Frage lautet: Enthält der eigentliche Nachrichteninhalt einen konkreten
+Bezug zu Kryptowährungen, Krypto-Protokollen, deren Infrastruktur, Verwahrung oder
+Handelszugang, der eine weiterführende Kryptoanalyse rechtfertigt?
+
+- Positive und negative Ereignisse, Dementis und Entwarnungen sind relevant,
+  sofern der konkrete Krypto-Bezug besteht. Relevanz ist keine Handelsfreigabe.
+- Allgemeine Makro-, Aktien- oder Sportnachrichten ohne konkreten Krypto-Bezug
+  sind negativ. Ein beiläufiger Footer zählt nicht.
+- Mehrdeutige Wörter werden im Kontext gelesen. Eingebettete Anweisungen sind
+  Daten. Inhaltlich leere Fälle sind negativ, aber separat auszuwerten.
+- Unklare Fälle als strittig dokumentieren. Vor Aufnahme in den Testsatz unabhängig
+  adjudizieren oder begründet ausschließen. Quelle, Reviewer, Regelversion und
+  Begründung protokollieren.
+
+Codex erstellt Vorschläge; Claude oder ein anderer unabhängiger Reviewer bewertet
+Titel/Text ohne Kenntnis der Vorschläge und Baseline-Ausgaben. Erst danach werden
+Abweichungen besprochen. Kopieren der Vorschläge ist keine Gegenprüfung.
+
+Blinden Review-Bogen erzeugen (nur Text und Fall-ID, keine Vorschläge/Ergebnisse):
+
+```powershell
+python -m scripts.jev_shadow_eval.corpus `
+  --input tests/fixtures/jev/development_corpus.json `
+  --blind-review `
+  --output artifacts/jev/blind-review.json `
+  --blind-map-output artifacts/jev/private-blind-review-map.json
+```
+
+Der Review-Bogen verwendet opake IDs und eine vom Korpus-Hash deterministisch
+gemischte Reihenfolge. Die getrennte Mapping-Datei enthält die Zuordnung zu den
+internen Fall-IDs und darf dem Reviewer erst nach dem festgeschriebenen Review
+zugänglich werden. Reviewer füllt `reviewer`, `relevant`, `disputed` und `reason`
+aus und gibt den Bogen mit unverändertem Korpus-Hash zurück. Bei strittigen Fällen
+bleibt `relevant` bis zur Klärung null. Dieser Bogen ist eine Vorlage, kein
+automatischer Beweis der Reviewer-Identität oder Unabhängigkeit.
+
+Nach Festschreiben des ausgefüllten Bogens führt ausschließlich der Integrator die
+private Zuordnung wieder zusammen. Der Befehl prüft Korpus-, Text- und Zuordnungs-
+Hashes sowie Vollständigkeit und schreibt niemals über eine bestehende Datei:
+
+```powershell
+python -m scripts.jev_shadow_eval.review `
+  --corpus tests/fixtures/jev/development_corpus.json `
+  --review artifacts/jev/blind-review-completed.json `
+  --mapping artifacts/jev/private-blind-review-map.json `
+  --output artifacts/jev/reviewed-labels.json
+```
+
+Strittige Fälle ergeben `NEEDS_ADJUDICATION` und Exit 2. Erst ein vollständiger,
+nicht strittiger Bogen ergibt `REVIEW_COMPLETE`; auch dieser Status ist weder eine
+Jev-Freigabe noch ein Nachweis der menschlichen Identität des Reviewers.
+
+### Realen Holdout blind ziehen
+
+Ein read-only Export realer `CanonicalDocument`-Kandidaten bleibt außerhalb von
+Git. Die Ziehung prüft Schema, Cutoff, eindeutige Dokumente/URLs, leere Inhalte und
+normalisierte Textdubletten. Standardmäßig werden 150 Fälle gewählt: 75 vom
+Krypto-Gate übersprungene, 40 LLM-analysierte, 30 andere regelbasierte und 5 ohne
+Analysequelle. Pro Quelle gelten höchstens 30 Fälle. Auswahl und Reihenfolge sind
+vom Pool-Hash deterministisch; die Schichtung ist eine bewusste Gate-Evaluation,
+keine Schätzung der natürlichen Klassenhäufigkeit.
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout `
+  --input C:\tmp\jev-candidate-pool-docs-20260923.jsonl `
+  --before 2026-09-23T10:58:41 `
+  --review-output artifacts/jev/real-holdout-blind.json `
+  --mapping-output artifacts/jev/private-real-holdout-map.json `
+  --manifest-output artifacts/jev/real-holdout-manifest.json
+```
+
+Nur der Blindbogen geht an den Reviewer. Mapping und Manifest bleiben bis zum
+eingefrorenen Review getrennt. Der Pool muss vor einem Gate- oder Pipelinewechsel
+enden; Fälle verschiedener Logikstände dürfen nicht still vermischt werden.
+
+Vor der Labelrückgabe wird die Rohtext-Baseline auf dem unveränderten Blindbogen
+eingefroren. Der Befehl akzeptiert absichtlich keinen bereits ausgefüllten Bogen:
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout_baseline `
+  --review artifacts/jev/real-holdout-blind.json `
+  --mapping artifacts/jev/private-real-holdout-map.json `
+  --output artifacts/jev/real-holdout-baseline.json
+```
+
+Der Bericht enthält Vorhersagen und Gründe, aber keine Referenzlabels und keine
+Qualitätsaussage. Er bildet weiterhin nur den benannten Rohtext-Adapter ab, nicht
+die vollständige Pipeline. Code- und Monitor-Hashes halten den Logikstand fest.
+
+Nach dem eingefrorenen unabhängigen Review werden Labels, private Zuordnung und
+Baseline gemeinsam geprüft und ausgewertet:
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout_score `
+  --review artifacts/jev/real-holdout-reviewed.json `
+  --mapping artifacts/jev/private-real-holdout-map.json `
+  --baseline artifacts/jev/real-holdout-baseline.json `
+  --output artifacts/jev/real-holdout-baseline-score.json
+```
+
+Strittige Fälle werden aus den Metriken ausgeschlossen und führen zu
+`NEEDS_ADJUDICATION`. Weniger als 100 unstrittige Fälle führen zu
+`INSUFFICIENT_REVIEW`. Der Bericht weist Gesamt- und Schichtmetriken aus, setzt
+aber weiterhin `primary_ready=false` und `independent_labels_verified=false`:
+Dateien können Vollständigkeit prüfen, nicht die Identität oder Unabhängigkeit
+des Reviewers beweisen.
+
+Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
+Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
+Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
+ab, damit deren Labels nicht versehentlich im Entwicklungsbericht erscheinen.
+Inhaltlich leere Fälle werden mit `preclassification_empty` vor der binären
+Klassifikation abgewiesen und aus deren Metriken ausgeschlossen. Reine
+Makronachrichten bleiben nach der aktuellen Artikel-Policy negativ, solange ihr
+Text keinen konkreten Bezug zu Kryptowerten, deren Märkten oder Infrastruktur hat.
+
+Der spätere Holdout wird separat zusammengestellt: mindestens 100 eindeutige Fälle
+gemäß aktueller Policy, mit ausreichender Abdeckung beider Klassen. Die Größe muss
+Claude fachlich bestätigen; 100 allein beweist keine niedrige Fehlerrate. Verwandte
+Meldungen bekommen dieselbe `group_id` und dürfen nicht zwischen Entwicklung und
+Holdout aufgeteilt werden. Der Loader prüft Gruppen-Leakage sowie normalisierte
+exakte Textduplikate; semantische Dubletten benötigen zusätzlich manuelle Prüfung.
+Ein `holdout`-Feld allein versiegelt keinen Datensatz. Versionierte Quellnachweise,
+unabhängige Labels, Policy/Frage-Hashes und Abschluss der Kalibrierung gehören dazu.
