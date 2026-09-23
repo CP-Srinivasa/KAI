@@ -161,6 +161,9 @@ def test_cloud_boundary_uses_only_loopback_and_dedicated_dev_names() -> None:
 def test_local_route_is_pinned_to_installed_kai_model() -> None:
     assert hub.LOCAL_MODEL == "kai-qwen3-coder:30b-16k"
     assert hub.HERMES_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
+    # OpenCode's own prompt plus one read file exceeds 16K (Ollama truncated
+    # 16942 -> 16384 tokens in the 23.09. acceptance); coding runs need 64K.
+    assert hub.OPENCODE_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
     assert hub.DEV_MODELS == {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
 
 
@@ -241,15 +244,17 @@ def test_opencode_start_injects_context_and_pins_model(
     _managed(kai_repo, tmp_path, monkeypatch)
     calls: list[list[str]] = []
     monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
-    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.OPENCODE_LOCAL_MODEL})
     monkeypatch.setattr(
         hub, "_command", lambda name: "opencode.cmd" if name == "opencode.cmd" else None
     )
     real_popen = hub.subprocess.Popen
+    envs: list[dict[str, str]] = []
 
     def capture_client(args: list[str], **kwargs: object) -> object:
         if args[0] == "opencode.cmd":
             calls.append(args)
+            envs.append(kwargs["env"])  # type: ignore[arg-type]
             return object()
         return real_popen(args, **kwargs)
 
@@ -258,7 +263,13 @@ def test_opencode_start_injects_context_and_pins_model(
     hub.launch_opencode(kai_repo, "local")
 
     args = calls[0]
-    assert args[args.index("-m") + 1] == f"ollama/{hub.LOCAL_MODEL}"
+    assert args[args.index("-m") + 1] == f"ollama/{hub.OPENCODE_LOCAL_MODEL}"
+    # The global OpenCode config only knows the 16K model; the hub supplies
+    # its own loopback-only provider entry instead of editing that file.
+    extra = json.loads(Path(envs[0]["OPENCODE_CONFIG"]).read_text(encoding="utf-8"))
+    ollama = extra["provider"]["ollama"]
+    assert ollama["options"]["baseURL"] == "http://127.0.0.1:11434/v1"
+    assert hub.OPENCODE_LOCAL_MODEL in ollama["models"]
     prompt = args[args.index("--prompt") + 1]
     assert "rules" in prompt and "architecture" in prompt
     assert "This document is self-contained" in prompt

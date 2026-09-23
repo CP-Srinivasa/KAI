@@ -30,7 +30,7 @@ from typing import Any
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.3.0"
+HUB_VERSION = "0.3.1"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
@@ -39,6 +39,9 @@ PI_HOST = "192.168.178.23"
 PI_USER = "ubuntu"
 LOCAL_MODEL = "kai-qwen3-coder:30b-16k"
 HERMES_LOCAL_MODEL = "kai-qwen3-coder:30b-64k"
+# OpenCode's system prompt plus a read file exceeds 16K tokens (Ollama
+# truncated 16942 -> 16384 on 23.09.); coding sessions use the 64K model.
+OPENCODE_LOCAL_MODEL = HERMES_LOCAL_MODEL
 DEV_MODELS = {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
 REMOTE_ENV = "/home/kai/ai_analyst_trading_bot/.env"
 REMOTE_PROXY = "/home/kai/current/scripts/dev_reserve.sh"
@@ -327,7 +330,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
     checks["kimi_installed"] = bool(_command("kimi"))
     checks["ollama_online"] = _port_open(OLLAMA_PORT)
     models = _ollama_models() if checks["ollama_online"] else set()
-    checks["opencode_local_model"] = LOCAL_MODEL in models
+    checks["opencode_local_model"] = OPENCODE_LOCAL_MODEL in models
     checks["hermes_local_model"] = HERMES_LOCAL_MODEL in models
     checks["handoff_chain"] = verify_handoffs()[0]
     checks["cloud_tunnel_open"] = _port_open(DEV_PORT)
@@ -530,6 +533,28 @@ def _stop_remote_proxy() -> bool:
     return result.returncode in (0, 3)
 
 
+def _opencode_local_config() -> Path:
+    """Hub-owned OpenCode config fragment (merged via OPENCODE_CONFIG).
+
+    Declares the loopback Ollama provider with the 64K model, so the operator's
+    global OpenCode configuration stays untouched.
+    """
+    target = _state_dir() / "opencode-local.json"
+    payload = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "ollama": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama lokal (KAI Developer Hub)",
+                "options": {"baseURL": f"http://{DEV_HOST}:{OLLAMA_PORT}/v1"},
+                "models": {OPENCODE_LOCAL_MODEL: {"name": OPENCODE_LOCAL_MODEL}},
+            }
+        },
+    }
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = None) -> None:
     session = workflow.require_session(repo, STATE_ROOT)
     executable = _command("opencode.cmd") or _command("opencode")
@@ -538,9 +563,10 @@ def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = Non
     env = os.environ.copy()
     if route == "local":
         ensure_ollama()
-        if LOCAL_MODEL not in _ollama_models():
-            raise HubError(f"Lokales Modell fehlt: {LOCAL_MODEL}")
-        model = f"ollama/{LOCAL_MODEL}"
+        if OPENCODE_LOCAL_MODEL not in _ollama_models():
+            raise HubError(f"Lokales Modell fehlt: {OPENCODE_LOCAL_MODEL}")
+        env["OPENCODE_CONFIG"] = str(_opencode_local_config())
+        model = f"ollama/{OPENCODE_LOCAL_MODEL}"
     elif route == "cloud":
         env["KAI_DEV_LITELLM_KEY"] = start_cloud()
         _cloud_inference_probe(env["KAI_DEV_LITELLM_KEY"], "kai-dev-code")
