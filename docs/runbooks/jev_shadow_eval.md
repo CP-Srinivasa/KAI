@@ -201,6 +201,20 @@ Nur der Blindbogen geht an den Reviewer. Mapping und Manifest bleiben bis zum
 eingefrorenen Review getrennt. Der Pool muss vor einem Gate- oder Pipelinewechsel
 enden; Fälle verschiedener Logikstände dürfen nicht still vermischt werden.
 
+Vor der Labelrückgabe wird die Rohtext-Baseline auf dem unveränderten Blindbogen
+eingefroren. Der Befehl akzeptiert absichtlich keinen bereits ausgefüllten Bogen:
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout_baseline `
+  --review artifacts/jev/real-holdout-blind.json `
+  --mapping artifacts/jev/private-real-holdout-map.json `
+  --output artifacts/jev/real-holdout-baseline.json
+```
+
+Der Bericht enthält Vorhersagen und Gründe, aber keine Referenzlabels und keine
+Qualitätsaussage. Er bildet weiterhin nur den benannten Rohtext-Adapter ab, nicht
+die vollständige Pipeline. Code- und Monitor-Hashes halten den Logikstand fest.
+
 Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
 Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
 Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
