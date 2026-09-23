@@ -133,9 +133,7 @@ def _answer(raw: object, question: JevQuestion, name: str) -> JevAnswer:
     )
 
 
-def parse_systemone_response(
-    body: object, *, questions: dict[str, JevQuestion]
-) -> JevEvaluation:
+def parse_systemone_response(body: object, *, questions: dict[str, JevQuestion]) -> JevEvaluation:
     """Validate an entire response; partial answers are invalid evidence."""
     if not questions:
         raise ValueError("at least one question is required")

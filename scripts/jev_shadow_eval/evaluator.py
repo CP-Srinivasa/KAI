@@ -181,9 +181,7 @@ def evaluate(
         for item, was_decided, prediction in zip(cases, decided, predictions, strict=True)
     )
     baseline_correct = sum(item.baseline_relevant == item.expected_relevant for item in cases)
-    jev_forced_correct = sum(
-        (item.probability >= 0.5) == item.expected_relevant for item in cases
-    )
+    jev_forced_correct = sum((item.probability >= 0.5) == item.expected_relevant for item in cases)
     baseline_accuracy = _rate(baseline_correct, len(cases))
     jev_forced_accuracy = _rate(jev_forced_correct, len(cases))
     accuracy_gain = (
@@ -192,9 +190,7 @@ def evaluate(
         else None
     )
     brier = (
-        statistics.fmean(
-            (item.probability - float(item.expected_relevant)) ** 2 for item in cases
-        )
+        statistics.fmean((item.probability - float(item.expected_relevant)) ** 2 for item in cases)
         if cases
         else None
     )
@@ -221,11 +217,7 @@ def evaluate(
             reasons.append("MODEL_IDENTITY_DRIFT")
         if accuracy_gain is None or accuracy_gain < policy.minimum_accuracy_gain:
             reasons.append("ACCURACY_GAIN_TOO_LOW")
-        status = (
-            EvaluationStatus.NOT_READY
-            if reasons
-            else EvaluationStatus.READY_FOR_SHADOW_REVIEW
-        )
+        status = EvaluationStatus.NOT_READY if reasons else EvaluationStatus.READY_FOR_SHADOW_REVIEW
     models = sorted({item.actual_model for item in cases})
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
