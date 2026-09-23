@@ -16,7 +16,7 @@ python scripts/kai_dev_hub.py ui
 ```
 
 Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v0.2.0`, schreibt `install.json` mit
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.0), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 `python scripts/kai_dev_hub.py --version` zeigt die Version. Vor Installation
@@ -105,11 +105,18 @@ prüfen, im Hub **Übergabe** samt Snapshot erzeugen, neuen Client auf derselben
 Aufgabe starten, Kontext übernehmen und die Antwort mit Challenge als Ack
 erfassen. Kein Modellwechsel innerhalb einer schreibenden Sitzung.
 
+Cloud-Reserve beenden: **Cloud-Tunnel stoppen** bzw. `stop-cloud`. Das räumt auch nach einem
+Absturz, Tunnelabbruch oder Neustart auf: Beendet wird nur eine noch lebende `ssh.exe` mit der
+gespeicherten PID, der vom Hub gestartete Pi-Proxy wird über seine PID-Datei samt
+Befehlszeilenprüfung beendet. Der Zustand bleibt stehen, solange die Pi nicht erreichbar ist,
+sodass ein späterer Aufruf das Aufräumen abschließt. Ein Fehlstart räumt sich selbst auf.
+
 Diagnose ohne Pi/Anbieter: `doctor --mode local-inference` prüft eine echte
 Ollama-Antwort. `doctor --mode cloud` prüft Economy und Code mit echter kurzer
 Antwort, Modellfeld und positivem Kostenkopf; Frontier wird nicht automatisch
 aufgerufen. `automations` zeigt lokale KAI-Tasks mit Zustand, letztem Lauf,
-Ergebnis und nächstem Termin; Pi-systemd und Codex-Automationen sind dort
+Ergebnis und nächstem Termin; `last_success`/`last_failure` stammen aus Event 201
+(Rückgabecode der Aktion), nicht aus Event 102, das auch Fehlläufe als „abgeschlossen“ meldet; Pi-systemd und Codex-Automationen sind dort
 ausdrücklich *nicht geprüft*. Der Installer registriert einen stündlichen,
 anbieterfreien `KAI-Developer-Reserve-Health`-Task: Nach einem Neustart startet
 er Ollama lokal bei Bedarf und prüft Modelle, Übergaben und Automationen, ohne
