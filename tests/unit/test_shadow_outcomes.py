@@ -125,7 +125,7 @@ def test_to_feature_outcomes_rejects_unknown_horizon():
 def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
     from app.observability.l2_evidence_eval import pit_join
 
-    entry_ts = datetime(2026, 7, 1, 12, 0, 30, tzinfo=UTC)
+    entry_ts = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
     outcomes = build_outcomes(
         [_resolved("candidate-1", "BTC/USDT", "long", h3600=33.0)],
         {"candidate-1": entry_ts},
@@ -135,7 +135,10 @@ def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
             "candidate_id": "candidate-1",
             "symbol": "BTC/USDT",
             "direction": "long",
-            "ts": "2026-07-01T12:00:00+00:00",
+            "ts": "2026-07-01T12:00:01+00:00",
+            "decision_ts": "2026-07-01T12:00:00+00:00",
+            "reference_price_ts": "2026-07-01T11:59:59+00:00",
+            "causality_ok": True,
             feature_key: 0.9,
         }
     ]

@@ -103,9 +103,13 @@ def pit_join(
     Both records must carry the same non-empty ``candidate_id``, the same ``symbol``,
     and compatible ``direction`` (measurement) / ``side`` (outcome). Candidate IDs
     that occur more than once on either side are ambiguous and therefore unmatched.
-    The outcome must occur at/after the measurement and no more than
-    ``max_age_seconds`` later. Missing provenance, direction, symbol, or valid
-    timestamps is fail-closed and remains unmatched.
+    New producer rows also carry ``decision_ts``, ``reference_price_ts`` and
+    ``causality_ok``.  Their outcome must use the same decision anchor; the
+    measurement must be written after that anchor and within ``max_age_seconds``.
+    A reference price after the anchor, a false/missing causality verdict or a
+    mismatched anchor is rejected.  Legacy rows that predate the context fields
+    retain the stricter old rule: outcome at/after measurement within the bound.
+    Missing provenance, direction, symbol, or valid timestamps is fail-closed.
 
     The 300-second default is the repository's existing aligned-evidence tolerance;
     callers may make it stricter, but cannot disable the age bound. Returned pairs
@@ -147,7 +151,24 @@ def pit_join(
         outcome_at = _parse_ts(outcome.get("entry_ts"))
         if measured_at is None or outcome_at is None:
             continue
-        age_seconds = (outcome_at - measured_at).total_seconds()
+
+        has_context = any(
+            key in measurement for key in ("decision_ts", "reference_price_ts", "causality_ok")
+        )
+        if has_context:
+            decision_at = _parse_ts(measurement.get("decision_ts"))
+            reference_at = _parse_ts(measurement.get("reference_price_ts"))
+            if (
+                measurement.get("causality_ok") is not True
+                or decision_at is None
+                or reference_at is None
+                or reference_at > decision_at
+                or outcome_at != decision_at
+            ):
+                continue
+            age_seconds = (measured_at - decision_at).total_seconds()
+        else:
+            age_seconds = (outcome_at - measured_at).total_seconds()
         if age_seconds < 0.0 or age_seconds > max_age:
             continue
         dated_pairs.append((outcome_at, measurement, outcome))
