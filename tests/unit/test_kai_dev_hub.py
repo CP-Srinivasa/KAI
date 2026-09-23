@@ -207,6 +207,35 @@ def test_handoff_ack_requires_recipient_challenge_and_preserves_chain(
         )
 
 
+def test_snapshot_patch_is_byte_exact_and_restores_changes(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 23.09. acceptance: the patch was written in text mode (CRLF on Windows)
+    # and lost its final newline -> "git apply: corrupt patch". A snapshot
+    # that cannot be applied is no recovery.
+    _managed(kai_repo, tmp_path, monkeypatch)
+    (kai_repo / "blob.bin").write_bytes(bytes(range(256)))
+    _git(kai_repo, "add", "blob.bin")
+    _git(kai_repo, "commit", "-m", "binary fixture")
+    changed_text = "rules\nsecond line\n"
+    changed_blob = bytes(reversed(range(256)))
+    (kai_repo / "AGENTS.md").write_text(changed_text, encoding="utf-8", newline="\n")
+    (kai_repo / "blob.bin").write_bytes(changed_blob)
+
+    saved = hub.workflow.snapshot(kai_repo, hub.STATE_ROOT, "restore-proof")
+    patch = Path(saved["path"]) / "tracked.patch"
+    assert b"\r\n" not in patch.read_bytes()
+
+    _git(kai_repo, "checkout", "--", ".")
+    assert (kai_repo / "AGENTS.md").read_text(encoding="utf-8") == "rules\n"
+    _git(kai_repo, "apply", "--binary", str(patch))
+    # Text may come back with the checkout's line endings (core.autocrlf);
+    # binary content must be identical.
+    restored = (kai_repo / "AGENTS.md").read_bytes().replace(b"\r\n", b"\n")
+    assert restored == changed_text.encode()
+    assert (kai_repo / "blob.bin").read_bytes() == changed_blob
+
+
 def test_snapshot_rejects_untracked_secret_before_writing(
     kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
