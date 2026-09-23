@@ -165,6 +165,13 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
                     is_stale=True,
                     source=f"{chosen.source}|provider_disagreement:{lo:.6g}vs{hi:.6g}",
                 )
+            # Einig: den bestaetigenden Anbieter mitgeben. close_guard laesst damit
+            # einen echten Kurssprung ueber dem Phantom-Cap schliessen (ARB 23.09.).
+            if chosen in fresh_real:
+                second = next(p for p in fresh_real if p is not chosen)
+                chosen = replace(
+                    chosen, corroborated_by=second.source, corroborating_price=second.price
+                )
 
         # DS-20260818-MOCK-EXIT: synthetic data must never drive an entry OR an
         # exit. MockMarketDataAdapter hardcodes is_stale=False / freshness 0.0, so

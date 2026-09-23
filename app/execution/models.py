@@ -111,6 +111,17 @@ class PriceEvidence:
 
     is_stale: bool | None = None
 
+    corroborated_by: str = ""
+    """Unabhaengiger zweiter Anbieter, der die Quote bestaetigt hat ("" = keiner).
+
+    Vom Fallback-Adapter gesetzt, wenn zwei frische echte Venues innerhalb der
+    Uneinigkeits-Toleranz lagen. ``close_guard`` laesst damit einen Close ueber
+    dem Phantom-Cap zu (ARB/USDT 17.–23.09.2026).
+    """
+
+    corroborating_price: float | None = None
+    """Der Preis des bestaetigenden Anbieters."""
+
 
 @dataclass(frozen=True)
 class PaperFill:
@@ -237,6 +248,10 @@ class PaperPosition:
     # monitor_positions) can stamp the regime that was active at decision time.
     # "" = unknown. edge_report PER REGIME reads ev.get("regime").
     regime: str = ""
+    # 2026-09-23 (ARB-P0): Zahl der Entry-Fills dieser Position. Traegt die
+    # Nachkauf-Grenze (``close_guard.max_entry_fills_per_position``); Replay und
+    # Live-Pfad zaehlen gleich.
+    entry_fill_count: int = 1
 
     def unrealized_pnl(self, current_price: float) -> float:
         if self.position_side == "short":

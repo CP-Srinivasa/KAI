@@ -122,6 +122,10 @@ class MarketDataPoint:
     source: str  # "mock" | "binance" | "coinbase" | etc.
     is_stale: bool = False
     freshness_seconds: float = 0.0
+    # 2026-09-23: zweiter frischer Anbieter, der diesen Preis innerhalb der
+    # Uneinigkeits-Toleranz bestaetigt ("" = keiner). Siehe close_guard.
+    corroborated_by: str = ""
+    corroborating_price: float | None = None
 
 
 @dataclass(frozen=True)

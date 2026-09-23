@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.symbol_guard import untradeable_reason
+from app.execution.close_guard import clamp_take_profit
 from app.execution.models import (
     LifecycleTransition,
     PaperPosition,
@@ -420,6 +421,7 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                 source=pos.source,
                 document_id=pos.document_id,
                 regime=pos.regime,
+                entry_fill_count=pos.entry_fill_count,
             )
             continue
 
@@ -575,7 +577,13 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                     quantity=total_qty,
                     avg_entry_price=avg_entry,
                     stop_loss=stop_loss if stop_loss is not None else existing.stop_loss,
-                    take_profit=(take_profit if take_profit is not None else existing.take_profit),
+                    # Dieselbe Nachkauf-Klemme wie live (paper_finite_gate) — sonst
+                    # holte der Rehydrate das ungeklemmte TP aus order_created zurueck.
+                    take_profit=clamp_take_profit(
+                        take_profit if take_profit is not None else existing.take_profit,
+                        avg_entry,
+                        existing.position_side,
+                    ),
                     opened_at=existing.opened_at,
                     realized_pnl_usd=existing.realized_pnl_usd,
                     position_side=existing.position_side,
@@ -586,6 +594,7 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                     source=existing.source or source,
                     document_id=existing.document_id or document_id,
                     regime=existing.regime or regime,
+                    entry_fill_count=existing.entry_fill_count + 1,
                 )
         elif is_close:
             if (
@@ -629,6 +638,7 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                     source=existing.source,
                     document_id=existing.document_id,
                     regime=existing.regime,
+                    entry_fill_count=existing.entry_fill_count,
                 )
         else:
             # 2026-05-25 Forensik-Fix: unbekannte side/position-Kombi skipt.

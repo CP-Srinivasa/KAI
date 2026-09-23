@@ -7,6 +7,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from app.execution.close_guard import clamp_take_profit
 from app.execution.models import PaperOrder, PaperPortfolio, PaperPosition, _now_utc
 
 logger = logging.getLogger(__name__)
@@ -398,7 +399,12 @@ def _opening_replacement(
         quantity=total_qty,
         avg_entry_price=avg_price,
         stop_loss=order.stop_loss or existing.stop_loss,
-        take_profit=order.take_profit or existing.take_profit,
+        # ARB-P0 2026-09-23: beim Nachkauf wird das TP gegen den NEUEN
+        # Durchschnittseinstieg unter den Phantom-Cap geklemmt — sonst ist es
+        # unerreichbar (close_guard). Die Erst-Eroeffnung bleibt unberuehrt.
+        take_profit=clamp_take_profit(
+            order.take_profit or existing.take_profit, avg_price, existing.position_side
+        ),
         opened_at=existing.opened_at,
         realized_pnl_usd=pos_realized,
         position_side=existing.position_side,
@@ -409,6 +415,7 @@ def _opening_replacement(
         source=existing.source,
         document_id=existing.document_id,
         regime=existing.regime,
+        entry_fill_count=existing.entry_fill_count + 1,
     )
 
 
@@ -441,6 +448,7 @@ def _closing_replacement(
         source=position.source,
         document_id=position.document_id,
         regime=position.regime,
+        entry_fill_count=position.entry_fill_count,
     )
 
 
