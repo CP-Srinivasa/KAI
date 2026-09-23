@@ -1,3 +1,22 @@
+## 2026-09-23 - Konfiguration: Direkt gelesene Schalter sichtbar gemacht — Handels-Schwellen standen in keiner Vorlage (S2-9d)
+
+Der Drift-Ratchet leitete seine Erwartung bisher nur aus den `BaseSettings`-Klassen ab. Damit war eine ganze Klasse von
+Schaltern unsichtbar: **16 Env-Namen, die der Code direkt per `os.getenv`/`os.environ` liest** — und KEINER von ihnen
+stand in `.env.example`. Darunter Werte, die Buchungen und Preisentscheidungen steuern:
+
+- `MAX_CLOSE_RETURN_PCT` (0.20) — Phantom-Filter des Paper-Engines; ein Treffer wandert nach `quarantined_pnl_usd`.
+- `PREMIUM_PRICE_OUTLIER_MAX_RATIO` (3.0) / `PREMIUM_PRICE_OUTLIER_MEDIAN_PCT` (0.35) — Preis-Plausibilitaet.
+- `MARKET_DATA_PROVIDER_DISAGREEMENT_PCT` (0.10) — Anbieter-Abweichung; Anlass laut Code war der 28.05.2026, als das
+  Paper-Buch +73.548 USD Phantom-PnL buchte, weil Einstieg und Monitor-Tick von verschiedenen Anbietern kamen.
+- `ALERT_TRADINGVIEW_PAPER_STOP_PCT` / `_TAKE_PCT`, `KYT_ADDR_SALT` (Default `kai-kyt-v1` — kein Geheimnis, macht die
+  Adress-Hashes aber ueber Installationen hinweg vorhersagbar), die Premium-Event-Store-Pfade und fuenf Diagnose-Sonden.
+
+`scripts/env_example_drift.py` scannt jetzt beide Quellen; die Meldung nennt sie getrennt
+("N aus Settings-Klassen + M direkt gelesene"). Erfasst werden nur String-Literale — ein Name aus einer Variablen
+bleibt unsichtbar, das steht als Grenze im Scan. Alle 16 sind dokumentiert, die Baseline bleibt bei 369 (keine neue
+Luecke). Neue Tests: Scan findet alle drei Schreibweisen und ignoriert Nicht-Literale; eine undokumentierte
+Direktlesung ist eine Luecke; die vier Handels-Schwellen sind gepinnt.
+
 ## 2026-09-23 - Konfiguration: Operator-Bot und Signal-Uebergabe in `.env.example` (S2-9c)
 
 Neunzehn `OPERATOR_*`-Schluessel standen in keiner Vorlage, darunter die kapitalnahen Schalter der Signal-Weiterleitung

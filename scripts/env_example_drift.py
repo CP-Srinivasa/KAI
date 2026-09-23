@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drift zwischen den Settings-Klassen und ``.env.example`` (System-Audit 16.09., P1-20).
+"""Drift zwischen dem, was das System liest, und ``.env.example`` (Audit 16.09., P1-20).
 
 Die Pi-``.env`` fuehrte 204 Schluessel, die Vorlage deckte 121 — darunter
 fehlten sicherheitsrelevante Namen, und ``TRADINGVIEW_WEBHOOK_SHARED_TOKEN``
@@ -14,8 +14,12 @@ dokumentiert. Die Differenz ist ein Ratchet: bekannte Luecken stehen in
 ``tests/unit/env_example_drift_baseline.json`` und duerfen nur schrumpfen
 (``--update`` schreibt die Baseline neu, nie groesser als der Ist-Stand).
 
-Bewusst NICHT erfasst: direkte ``os.getenv``-Lesungen ausserhalb der
-Settings-Klassen (Audit-Anhang, ~23 Stellen) — eigener Punkt.
+Zweite Quelle seit 23.09.: **direkte** ``os.getenv``/``os.environ``-Lesungen in
+``app/``. Sie stehen in keiner Settings-Klasse, waren deshalb fuer die
+Ableitung unsichtbar — und KEINE der 16 stand in der Vorlage, obwohl darunter
+der Phantom-Filter des Paper-Engines, die Preis-Sanity-Schwellen und die
+Anbieter-Abweichung sind. Erfasst werden nur String-Literale; ein Name aus
+einer Variablen bleibt unsichtbar (bewusste Grenze, im Scan dokumentiert).
 """
 
 from __future__ import annotations
@@ -61,6 +65,13 @@ SETTINGS_MODULES: tuple[str, ...] = (
 
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _EXAMPLE_LINE = re.compile(r"^\s*(#\s*)?([A-Z][A-Z0-9_]*)=(.*)$")
+#: ``os.getenv("X")`` / ``os.environ.get("X")`` / ``os.environ["X"]`` — nur
+#: Literale. Ein Name, der aus einer Variablen kommt, ist so nicht auffindbar;
+#: das ist die bewusste Grenze dieses Scans.
+_DIRECT_READ = re.compile(
+    r"""os\.(?:getenv|environ\.get)\(\s*["']([A-Z][A-Z0-9_]*)["']"""
+    r"""|os\.environ\[\s*["']([A-Z][A-Z0-9_]*)["']\s*\]"""
+)
 
 
 def settings_classes() -> list[type[BaseSettings]]:
@@ -129,6 +140,31 @@ def secret_env_names() -> set[str]:
     return secrets
 
 
+def direct_env_reads(app_root: Path | None = None) -> dict[str, str]:
+    """Env-Name -> erste Fundstelle ``datei:zeile`` fuer Lesungen an den
+    Settings-Klassen vorbei.
+
+    Diese Namen sind die eigentliche Falle: sie stehen in keiner Settings-Klasse,
+    also sieht sie die Ableitung oben nicht — und bis 23.09. stand keiner von
+    ihnen in der Vorlage, obwohl darunter Handels-Schwellen sind (Phantom-Filter,
+    Preis-Sanity, Provider-Abweichung).
+    """
+    root = app_root or (REPO_ROOT / "app")
+    found: dict[str, str] = {}
+    for path in sorted(root.rglob("*.py")):
+        try:
+            rel = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:  # Root ausserhalb des Repos (Tests)
+            rel = path.relative_to(root).as_posix()
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        ):
+            for match in _DIRECT_READ.finditer(line):
+                name = match.group(1) or match.group(2)
+                found.setdefault(name, f"{rel}:{lineno}")
+    return found
+
+
 def example_entries(path: Path = EXAMPLE_PATH) -> dict[str, tuple[bool, str]]:
     """Env-Name -> (aktiv?, Wert) aus ``.env.example``."""
     entries: dict[str, tuple[bool, str]] = {}
@@ -141,14 +177,18 @@ def example_entries(path: Path = EXAMPLE_PATH) -> dict[str, tuple[bool, str]]:
 
 
 def missing_names(path: Path = EXAMPLE_PATH) -> dict[str, str]:
-    """Kanonischer Env-Name -> ``Klasse.feld`` fuer Felder, von denen KEIN Name
-    in der Vorlage steht."""
+    """Kanonischer Env-Name -> Herkunft (``Klasse.feld`` oder ``datei:zeile``)
+    fuer alles, was das System liest und die Vorlage nicht nennt."""
     documented = example_entries(path)
-    return {
+    missing = {
         candidates[0]: origin
         for origin, candidates in expected_fields().items()
         if not any(name in documented for name in candidates)
     }
+    for name, origin in direct_env_reads().items():
+        if name not in documented:
+            missing.setdefault(name, origin)
+    return missing
 
 
 def load_baseline(path: Path = BASELINE_PATH) -> set[str]:
@@ -158,9 +198,10 @@ def load_baseline(path: Path = BASELINE_PATH) -> set[str]:
 def write_baseline(entries: set[str], path: Path = BASELINE_PATH) -> None:
     payload = {
         "_comment": (
-            "Ratchet (scripts/env_example_drift.py): bekannte Luecken zwischen den "
-            "Settings-Klassen und .env.example. Darf nur schrumpfen; neue Luecken "
-            "sind rot. Aktualisieren: python scripts/env_example_drift.py --update"
+            "Ratchet (scripts/env_example_drift.py): bekannte Luecken zwischen dem, was "
+            "das System liest (Settings-Klassen UND direkte os.getenv-Lesungen), und "
+            ".env.example. Darf nur schrumpfen; neue Luecken sind rot. "
+            "Aktualisieren: python scripts/env_example_drift.py --update"
         ),
         "entries": sorted(entries),
     }
@@ -175,13 +216,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     expected = expected_env_names()
+    direct = direct_env_reads()
     missing = missing_names()
     print(
-        f"[env-drift] {len(expected)} erwartete Schluessel, {len(missing)} fehlen in .env.example"
+        f"[env-drift] {len(expected)} Schluessel aus Settings-Klassen + {len(direct)} direkt "
+        f"gelesene, {len(missing)} fehlen in .env.example"
     )
     by_origin: dict[str, list[str]] = {}
     for name, origin in sorted(missing.items()):
-        by_origin.setdefault(origin.split(".")[0], []).append(name)
+        # "Klasse.feld" -> Klasse; "app/pfad.py:12" -> Pfad ohne Zeile
+        group = origin.rsplit(":", 1)[0] if "/" in origin else origin.split(".")[0]
+        by_origin.setdefault(group, []).append(name)
     for cls_name, names in sorted(by_origin.items()):
         print(f"  {cls_name}: {len(names)} -> {', '.join(names)}")
 

@@ -1,9 +1,10 @@
-"""Ratchet: ``.env.example`` gegen die Settings-Klassen (System-Audit 16.09., P1-20).
+"""Ratchet: ``.env.example`` gegen alles, was das System liest (Audit P1-20).
 
-Verhalten, nicht Implementierung: keine NEUE Luecke zwischen Settings und
-Vorlage; die Baseline traegt keine veralteten Eintraege (sonst ``--update``);
-Secrets stehen in der Vorlage nur leer; die im Audit belegte Luecke
-``TRADINGVIEW_WEBHOOK_SHARED_TOKEN`` bleibt geschlossen.
+Verhalten, nicht Implementierung: keine NEUE Luecke — weder aus den
+Settings-Klassen noch aus direkten ``os.getenv``-Lesungen; die Baseline traegt
+keine veralteten Eintraege (sonst ``--update``); Secrets stehen in der Vorlage
+nur leer; die Vorlage laedt in jede Settings-Klasse; und die im Audit belegte
+Luecke ``TRADINGVIEW_WEBHOOK_SHARED_TOKEN`` bleibt geschlossen.
 """
 
 from __future__ import annotations
@@ -91,6 +92,53 @@ def test_secrets_stehen_in_der_vorlage_nur_leer() -> None:
         if name in entries and entries[name][0] and entries[name][1] != ""
     )
     assert offenders == [], f"Secret-Schluessel mit Wert in .env.example: {offenders}"
+
+
+def test_direkte_env_lesungen_werden_gefunden(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    (app / "sub").mkdir(parents=True)
+    (app / "a.py").write_text(
+        "import os\n"
+        'x = os.getenv("DIREKT_EINS", "1")\n'
+        'y = os.environ.get("DIREKT_ZWEI")\n'
+        'z = os.environ["DIREKT_DREI"]\n'
+        "egal = os.getenv(variable_name)\n"  # kein Literal -> nicht auffindbar
+        'klein = os.getenv("nicht_gross")\n',  # kein Env-Namensmuster
+        encoding="utf-8",
+    )
+    (app / "sub" / "b.py").write_text('import os\nq = os.getenv("DIREKT_EINS")\n', encoding="utf-8")
+
+    found = drift.direct_env_reads(app)
+
+    assert set(found) == {"DIREKT_EINS", "DIREKT_ZWEI", "DIREKT_DREI"}
+    # Erste Fundstelle gewinnt, mit Datei und Zeile.
+    assert found["DIREKT_EINS"].endswith("a.py:2")
+
+
+def test_direkte_lesung_ohne_vorlagen_eintrag_ist_eine_luecke(monkeypatch, tmp_path: Path) -> None:
+    example = tmp_path / ".env.example"
+    example.write_text("NUR_DIESER=1\n", encoding="utf-8")
+    monkeypatch.setattr(drift, "expected_fields", dict)
+    monkeypatch.setattr(
+        drift, "direct_env_reads", lambda: {"NUR_DIESER": "app/x.py:1", "FEHLT_HIER": "app/y.py:2"}
+    )
+
+    missing = drift.missing_names(example)
+
+    assert missing == {"FEHLT_HIER": "app/y.py:2"}
+
+
+def test_handels_schwellen_stehen_in_der_vorlage() -> None:
+    # Diese vier steuern Paper-Buchungen bzw. Preis-Plausibilitaet und wurden bis
+    # 23.09. nur im Code gelesen — sie sind der Anlass fuer den erweiterten Scan.
+    entries = drift.example_entries()
+    for name in (
+        "MAX_CLOSE_RETURN_PCT",
+        "PREMIUM_PRICE_OUTLIER_MAX_RATIO",
+        "PREMIUM_PRICE_OUTLIER_MEDIAN_PCT",
+        "MARKET_DATA_PROVIDER_DISAGREEMENT_PCT",
+    ):
+        assert name in entries, f"{name} fehlt in .env.example"
 
 
 def test_audit_luecke_shared_token_bleibt_geschlossen() -> None:
