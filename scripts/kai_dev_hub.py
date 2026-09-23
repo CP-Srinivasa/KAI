@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shlex
 import shutil
 import socket
@@ -280,32 +281,81 @@ def _cloud_inference_probe(key: str, route: str) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
             body = json.load(response)
-            cost_header = response.headers.get("x-litellm-response-cost")
+            headers = response.headers
     except urllib.error.HTTPError as exc:
-        raise HubError(
-            f"Dev-Route {route}: HTTP {exc.code}; Modell oder Schlüssel prüfen."
-        ) from exc
+        raise HubError(_diagnose_http_error(route, exc)) from exc
     except (OSError, ValueError) as exc:
-        raise HubError(f"Dev-Route {route}: keine gültige Antwort ({type(exc).__name__}).") from exc
-    model = body.get("model")
+        raise HubError(
+            f"Dev-Route {route}: keine gültige Antwort ({type(exc).__name__}) — "
+            "Tunnel/Dev-Proxy erreichbar? 'Cloud prüfen' startet beides neu."
+        ) from exc
+    # The body echoes the route alias; the provider model behind it is only in
+    # LiteLLM's response headers. Identity means the latter.
+    provider_model = headers.get("x-litellm-model-name")
+    api_base = headers.get("x-litellm-model-api-base")
+    cost_header = headers.get("x-litellm-response-cost")
     choices = body.get("choices") or []
     answer = choices[0].get("message", {}).get("content") if choices else None
     try:
         cost = float(cost_header) if cost_header is not None else None
     except ValueError:
         cost = None
-    if not model or not answer or cost is None or cost <= 0:
+    if not provider_model or not answer or cost is None or cost <= 0:
         missing = ", ".join(
             label
             for label, absent in (
-                ("Modellidentität", not model),
+                ("Modellidentität (x-litellm-model-name)", not provider_model),
                 ("Antworttext", not answer),
                 ("positive Kostenmessung", cost is None or cost <= 0),
             )
             if absent
         )
         raise HubError(f"Dev-Route {route}: FAIL_CLOSED; fehlt: {missing}.")
-    return {"route": route, "model": model, "response_proven": True, "cost_usd": cost}
+    return {
+        "route": route,
+        "model": provider_model,
+        "api_base": api_base,
+        "model_group": headers.get("x-litellm-model-group") or body.get("model"),
+        "attempted_retries": headers.get("x-litellm-attempted-retries"),
+        "attempted_fallbacks": headers.get("x-litellm-attempted-fallbacks"),
+        "response_proven": True,
+        "cost_usd": cost,
+    }
+
+
+_HTTP_HINTS = {
+    400: "Anfrage oder Route abgelehnt — Routenname und Parameter prüfen",
+    401: "Schlüssel fehlt oder ist falsch — LITELLM_DEV_MASTER_KEY auf der Pi prüfen",
+    403: "Schlüssel ohne Berechtigung für diese Route",
+    404: "Route unbekannt — ist sie in config/litellm_dev.yaml definiert?",
+    408: "Zeitgrenze überschritten — Anbieter langsam oder nicht erreichbar",
+    429: "Rate- oder Ausgabenlimit beim Anbieter erreicht",
+}
+_SECRETISH = re.compile(r"(sk-[A-Za-z0-9_\-*]{4,}|Bearer\s+\S+|[A-Fa-f0-9]{40,})")
+
+
+def _diagnose_http_error(route: str, exc: urllib.error.HTTPError) -> str:
+    """Actionable text for an HTTP failure; key-like fragments are masked."""
+    try:
+        detail = json.loads(exc.read() or b"{}").get("error", {}).get("message", "")
+    except (OSError, ValueError, AttributeError):
+        detail = ""
+    detail = _SECRETISH.sub("***", str(detail)).replace("\n", " ")[:200]
+    if "No connected db" in detail:
+        # LiteLLM without a database reports a wrong key this way (issue #1000).
+        return (
+            f"Dev-Route {route}: HTTP {exc.code} — Schlüssel falsch (LiteLLM ohne Datenbank "
+            "meldet das als 'No connected db', #1000) — LITELLM_DEV_MASTER_KEY auf der Pi prüfen."
+        )
+    hint = _HTTP_HINTS.get(
+        exc.code,
+        "Anbieterfehler — Anbieterstatus und Dev-Key-Guthaben prüfen"
+        if exc.code >= 500
+        else "unerwarteter Status",
+    )
+    return f"Dev-Route {route}: HTTP {exc.code} — {hint}." + (
+        f" Proxy meldet: {detail}" if detail else ""
+    )
 
 
 def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
@@ -451,7 +501,10 @@ def start_cloud() -> str:
             stderr=subprocess.STDOUT,
             creationflags=_creation_flag("CREATE_NO_WINDOW"),
         )
-        _save_cloud_pid(process.pid, "tunnel-only" if remote_open else "proxy-and-tunnel")
+        # A running proxy whose PID file this hub wrote (e.g. orphaned since a
+        # lost tunnel) is adopted, so the next stop ends it; a foreign one is not.
+        owned = not remote_open or _remote_proxy_owned()
+        _save_cloud_pid(process.pid, "proxy-and-tunnel" if owned else "tunnel-only")
         try:
             for _ in range(80):
                 if process.poll() is not None:
@@ -508,6 +561,20 @@ def stop_cloud() -> bool:
         return False
     state_file.unlink(missing_ok=True)
     return True
+
+
+def _remote_proxy_owned() -> bool:
+    """True if the Pi dev proxy runs under the PID this hub recorded."""
+    code = (
+        "from pathlib import Path; import sys; "
+        f"p=Path('{REMOTE_PID_FILE}'); "
+        "pid=int(p.read_text().strip() or 0) if p.is_file() else 0; "
+        "q=Path(f'/proc/{pid}/cmdline'); "
+        "c=q.read_bytes().replace(bytes([0]),b' ').decode() if pid and q.is_file() else ''; "
+        f"sys.exit(0 if ('litellm_dev.yaml' in c and '--port {DEV_PORT}' in c) else 1)"
+    )
+    remote = f"python3 -c {shlex.quote(code)}"
+    return _run([*_ssh_base(), f"{PI_USER}@{PI_HOST}", remote], timeout=15).returncode == 0
 
 
 def _stop_remote_proxy() -> bool:

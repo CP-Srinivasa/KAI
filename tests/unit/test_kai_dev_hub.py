@@ -308,21 +308,45 @@ def test_cloud_probe_requires_real_reply_identity_and_positive_cost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Reply(io.BytesIO):
-        headers = {"x-litellm-response-cost": "0.000002"}
+        headers = {
+            "x-litellm-response-cost": "0.000002",
+            "x-litellm-model-name": "moonshot/kimi-k2.7-code",
+            "x-litellm-model-api-base": "https://api.moonshot.ai/v1",
+            "x-litellm-model-group": "kai-dev-code",
+        }
 
     def healthy(_request: object, timeout: int) -> Reply:
         assert timeout == 120
+        # LiteLLM echoes the alias in the body; identity is in the headers.
         return Reply(
-            json.dumps({"model": "kimi-k2.7", "choices": [{"message": {"content": "ok"}}]}).encode()
+            json.dumps(
+                {"model": "kai-dev-code", "choices": [{"message": {"content": "ok"}}]}
+            ).encode()
         )
 
     monkeypatch.setattr(hub.urllib.request, "urlopen", healthy)
     report = hub._cloud_inference_probe("test-only", "kai-dev-code")
-    assert report["model"] == "kimi-k2.7"
+    assert report["model"] == "moonshot/kimi-k2.7-code"
+    assert report["api_base"] == "https://api.moonshot.ai/v1"
     assert report["cost_usd"] > 0
 
+    class AliasOnly(Reply):
+        headers = {"x-litellm-response-cost": "0.000002"}
+
+    monkeypatch.setattr(
+        hub.urllib.request,
+        "urlopen",
+        lambda _request, timeout: AliasOnly(
+            json.dumps(
+                {"model": "kai-dev-code", "choices": [{"message": {"content": "ok"}}]}
+            ).encode()
+        ),
+    )
+    with pytest.raises(hub.HubError, match="Modellidentität"):
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+
     class ZeroCost(Reply):
-        headers = {"x-litellm-response-cost": "0"}
+        headers = {**Reply.headers, "x-litellm-response-cost": "0"}
 
     monkeypatch.setattr(
         hub.urllib.request,
@@ -659,6 +683,57 @@ def test_start_cloud_cleans_up_when_tunnel_dies_during_start(
     with pytest.raises(hub.HubError, match="vorzeitig"):
         hub.start_cloud()
     assert stopped == [True]
+
+
+def test_cloud_probe_explains_http_failures_without_leaking_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = json.dumps(
+        {"error": {"message": "Authentication Error, Received API Key = sk-abcd****wxyz"}}
+    ).encode()
+
+    def unauthorized(_request: object, timeout: int) -> object:
+        raise hub.urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(body))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", unauthorized)
+    with pytest.raises(hub.HubError) as caught:
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+    message = str(caught.value)
+    assert "HTTP 401" in message and "LITELLM_DEV_MASTER_KEY" in message
+    assert "sk-abcd" not in message
+
+    # Until #1000 is deployed a wrong key arrives as 400 "No connected db.".
+    no_db = json.dumps({"error": {"message": "No connected db."}}).encode()
+
+    def no_db_error(_request: object, timeout: int) -> object:
+        raise hub.urllib.error.HTTPError("u", 400, "Bad", {}, io.BytesIO(no_db))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", no_db_error)
+    with pytest.raises(hub.HubError, match="Schlüssel falsch"):
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+
+
+def test_start_cloud_adopts_orphaned_proxy_started_by_hub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(hub, "_fetch_dev_key", lambda: "dev-test-key")
+    tunnel = {"open": False}
+    monkeypatch.setattr(hub, "_port_open", lambda _port: tunnel["open"])
+    monkeypatch.setattr(hub, "_remote_proxy_is_open", lambda: True)
+    monkeypatch.setattr(hub, "_remote_proxy_owned", lambda: True)
+    monkeypatch.setattr(hub, "_verify_cloud_catalog", lambda _key: None)
+
+    class Alive:
+        pid = 778
+
+        def poll(self) -> None:
+            tunnel["open"] = True
+
+    monkeypatch.setattr(hub.subprocess, "Popen", lambda *_a, **_kw: Alive())
+    hub.start_cloud()
+    state = json.loads(hub._cloud_state_file().read_text(encoding="utf-8"))
+    assert state["mode"] == "proxy-and-tunnel"
 
 
 def test_automation_success_comes_from_action_result_not_task_completion() -> None:
