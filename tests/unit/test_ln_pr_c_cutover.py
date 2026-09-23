@@ -330,6 +330,7 @@ def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
         chain="main",
         blocks=954871,
         headers=954871,
+        best_block_hash="ab" * 32,
         fee_sat_vb=1.0,
         mempool_tx=0,
     )
