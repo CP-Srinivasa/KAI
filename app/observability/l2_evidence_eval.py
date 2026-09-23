@@ -31,6 +31,16 @@ DEFAULT_PIT_JOIN_MAX_AGE_SECONDS = 300.0
 MIN_SAMPLE = 8
 
 
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def moving_block_bootstrap_p_mean_positive(
     values: Sequence[float],
     *,
@@ -47,7 +57,12 @@ def moving_block_bootstrap_p_mean_positive(
     inflated by treating autocorrelated points as independent. ``None`` below
     ``min_sample`` (honest insufficiency).
     """
-    vals = [float(v) for v in values]
+    vals: list[float] = []
+    for value in values:
+        number = _finite_number(value)
+        if number is None:
+            raise ValueError("bootstrap values must be finite numbers, not booleans")
+        vals.append(number)
     n = len(vals)
     if n < min_sample:
         return None
@@ -156,21 +171,29 @@ def evaluate_feature_direction(
     ``contrarian``; the mirror → ``pro_trend``). Otherwise ``inconclusive``; below
     ``min_sample`` per group ``insufficient``. Never assumes a direction (B-003).
 
-    Measurements whose feature value is recorded as an explicit ``null`` (producer
-    logs "source unavailable", e.g. fee endpoint down) carry no information for the
-    split — they are excluded and counted honestly in ``n_null_feature``.
+    Missing/null features carry no information and count as ``n_null_feature``.
+    Malformed, boolean or nonfinite features/outcomes are excluded and counted;
+    NaN must never manufacture a negative bootstrap verdict from failed comparisons.
     """
     high: list[float] = []
     low: list[float] = []
     n_null_feature = 0
+    n_invalid_feature = 0
+    n_invalid_outcome = 0
     for m, o in pairs:
-        if o.get("net_bps") is None:
+        outcome = _finite_number(o.get("net_bps"))
+        if outcome is None:
+            n_invalid_outcome += 1
             continue
-        feat = m.get(feature_key, 0.5)
+        feat = m.get(feature_key)
         if feat is None:
             n_null_feature += 1
             continue
-        (high if float(feat) > 0.5 else low).append(float(o["net_bps"]))
+        feature = _finite_number(feat)
+        if feature is None:
+            n_invalid_feature += 1
+            continue
+        (high if feature > 0.5 else low).append(outcome)
     n_high, n_low = len(high), len(low)
     mean_high = sum(high) / n_high if high else 0.0
     mean_low = sum(low) / n_low if low else 0.0
@@ -198,6 +221,8 @@ def evaluate_feature_direction(
         "n_high": n_high,
         "n_low": n_low,
         "n_null_feature": n_null_feature,
+        "n_invalid_feature": n_invalid_feature,
+        "n_invalid_outcome": n_invalid_outcome,
         "mean_high": mean_high,
         "mean_low": mean_low,
         "p_high_positive": p_high,

@@ -9,6 +9,8 @@ direction-compatible, bounded-age outcome.
 
 from __future__ import annotations
 
+import pytest
+
 from app.observability.l2_evidence_eval import (
     evaluate_feature_direction,
     moving_block_bootstrap_p_mean_positive,
@@ -16,6 +18,36 @@ from app.observability.l2_evidence_eval import (
 )
 
 # --- moving-block bootstrap ------------------------------------------------------
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf"), True])
+def test_bootstrap_rejects_invalid_values_instead_of_negative_evidence(invalid) -> None:
+    with pytest.raises(ValueError, match="finite numbers"):
+        moving_block_bootstrap_p_mean_positive([invalid] * 8)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf"), True, "bad"])
+@pytest.mark.parametrize("field", ["feature", "outcome"])
+def test_invalid_values_cannot_manufacture_direction(invalid, field) -> None:
+    high = ({"fee_percentile": 0.9}, {"net_bps": -20.0})
+    low = ({"fee_percentile": 0.1}, {"net_bps": 20.0})
+    if field == "feature":
+        low[0]["fee_percentile"] = invalid
+    else:
+        high[1]["net_bps"] = invalid
+    result = evaluate_feature_direction([high] * 8 + [low] * 8, feature_key="fee_percentile")
+    assert result["direction"] == "insufficient"
+    assert result["n_high"] + result["n_low"] == 8
+    assert result[f"n_invalid_{field}"] == 8
+
+
+def test_missing_feature_is_not_imputed_as_low_evidence() -> None:
+    pairs = [({"fee_percentile": 0.9}, {"net_bps": -20.0})] * 8
+    pairs += [({}, {"net_bps": 20.0})] * 8
+    result = evaluate_feature_direction(pairs, feature_key="fee_percentile")
+    assert result["direction"] == "insufficient"
+    assert result["n_low"] == 0
+    assert result["n_null_feature"] == 8
 
 
 def test_block_bootstrap_below_min_sample_is_none() -> None:
