@@ -1,3 +1,11 @@
+## 2026-09-23 - Konfiguration: Operator-Bot und Signal-Uebergabe in `.env.example` (S2-9c)
+
+Neunzehn `OPERATOR_*`-Schluessel standen in keiner Vorlage, darunter die kapitalnahen Schalter der Signal-Weiterleitung
+(`OPERATOR_SIGNAL_FORWARD_TO_EXCHANGE_ENABLED`, `..._RELAY_ENDPOINT`, `..._RELAY_API_KEY`) und die drei getrennten
+Relay-Spuren (outbox / sent / dead letter). Sie sind jetzt dokumentiert -- mit ihren fail-closed-Defaults, Secrets leer,
+und `OPERATOR_SIGNAL_AUTO_RUN_MODE=paper`, weil der Validator nur `paper` oder `shadow` zulaesst und ein leerer Wert den
+Start scheitern liesse (der Ladetest aus S2-9b faengt genau das). Drift-Baseline 388 -> 369.
+
 ## 2026-09-23 - Ingestion: Envelope-Log unter Lock, Leser ueberleben Byte-Muell (S2-13c)
 
 `artifacts/telegram_message_envelope.jsonl` hat VIER Append-Stellen in ZWEI Prozessen -- kai-tg-listener
