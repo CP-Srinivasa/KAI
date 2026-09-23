@@ -18,7 +18,9 @@ decoupled from the spend kill-switch via U1).
 from __future__ import annotations
 
 import base64
+import math
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -48,6 +50,7 @@ router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 # config change (caps) takes effect on next build; ``reset_mint_limiter`` is the
 # test seam.
 _mint_limiter: MintLimiter | None = None
+ONCHAIN_FACTS_MAX_AGE_SECONDS = 60.0
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -138,18 +141,64 @@ async def _require_paid(request: Request, scope: str) -> None:
 @router.get("/onchain-facts")
 async def onchain_facts(request: Request) -> dict[str, Any]:
     """UC-4: verifiable on-chain facts from KAI's own node (L402-paid)."""
-    await _require_paid(request, "onchain-facts")
     from app.chain.cache import get_cached_chain_status
 
     status, age = await get_cached_chain_status()
+    state = str(getattr(status, "state", "unknown"))
+    blocks = getattr(status, "blocks", 0)
+    headers = getattr(status, "headers", 0)
+    chain = getattr(status, "chain", "")
+    age_seconds = (
+        float(age) if isinstance(age, (int, float)) and not isinstance(age, bool) else None
+    )
+    ready = (
+        state == "ok"
+        and getattr(status, "reachable", False) is True
+        and getattr(status, "synced", False) is True
+        and isinstance(chain, str)
+        and bool(chain)
+        and isinstance(blocks, int)
+        and not isinstance(blocks, bool)
+        and blocks > 0
+        and isinstance(headers, int)
+        and not isinstance(headers, bool)
+        and headers == blocks
+        and age_seconds is not None
+        and math.isfinite(age_seconds)
+        and 0.0 <= age_seconds <= ONCHAIN_FACTS_MAX_AGE_SECONDS
+    )
+    if not ready:
+        public_state = (
+            "stale"
+            if age_seconds is not None and age_seconds > ONCHAIN_FACTS_MAX_AGE_SECONDS
+            else state
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "onchain_facts_unavailable",
+                "state": public_state,
+                "retriable": True,
+            },
+            headers={"Retry-After": "5"},
+        )
+    assert age_seconds is not None  # included in the readiness contract above
+
+    # Readiness precedes L402 minting: callers are never asked to pay for a fact
+    # already known to be unavailable. A paid token is stateless and remains
+    # reusable for the same scope when the cache becomes healthy again.
+    await _require_paid(request, "onchain-facts")
+    observed_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
     return {
         "source": "kai_sovereign_bitcoind",
-        "chain": status.chain,
-        "block_height": status.blocks,
+        "chain": chain,
+        "block_height": blocks,
+        "headers": headers,
         "synced": status.synced,
         "fee_sat_vb": status.fee_sat_vb,
         "mempool_tx": status.mempool_tx,
-        "as_of_age_seconds": age,
+        "observed_at_utc": observed_at.isoformat(),
+        "as_of_age_seconds": age_seconds,
     }
 
 

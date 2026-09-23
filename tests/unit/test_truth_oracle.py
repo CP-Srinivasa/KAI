@@ -39,6 +39,19 @@ def _settings(*, enabled: bool, secret: str = _SECRET) -> SimpleNamespace:
     )
 
 
+def _healthy_chain(*, blocks: int = 954871) -> SimpleNamespace:
+    return SimpleNamespace(
+        state="ok",
+        reachable=True,
+        chain="main",
+        blocks=blocks,
+        headers=blocks,
+        synced=True,
+        fee_sat_vb=1.2,
+        mempool_tx=42,
+    )
+
+
 @pytest.fixture
 def client() -> TestClient:
     truth_oracle.reset_mint_limiter()  # fresh per-test limiter (module-level state)
@@ -66,6 +79,10 @@ def test_unpaid_returns_402_with_invoice_challenge(client: TestClient) -> None:
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch(
+            "app.chain.cache.get_cached_chain_status",
+            AsyncMock(return_value=(_healthy_chain(), 5.0)),
+        ),
     ):
         r = client.get("/oracle/onchain-facts")
     assert r.status_code == 402
@@ -75,7 +92,7 @@ def test_unpaid_returns_402_with_invoice_challenge(client: TestClient) -> None:
 
 def test_paid_token_returns_facts(client: TestClient) -> None:
     token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
-    chain = SimpleNamespace(chain="main", blocks=954871, synced=True, fee_sat_vb=1.2, mempool_tx=42)
+    chain = _healthy_chain()
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch("app.chain.cache.get_cached_chain_status", AsyncMock(return_value=(chain, 5.0))),
@@ -87,6 +104,7 @@ def test_paid_token_returns_facts(client: TestClient) -> None:
     assert r.status_code == 200
     body = r.json()
     assert body["block_height"] == 954871 and body["fee_sat_vb"] == 1.2
+    assert body["headers"] == 954871 and body["observed_at_utc"].endswith("+00:00")
     assert body["source"] == "kai_sovereign_bitcoind"
 
 
@@ -105,6 +123,10 @@ def test_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch(
+            "app.chain.cache.get_cached_chain_status",
+            AsyncMock(return_value=(_healthy_chain(), 5.0)),
+        ),
     ):
         r = client.get(
             "/oracle/onchain-facts",
@@ -138,6 +160,10 @@ def test_unpaid_request_logs_challenge_minted_with_fingerprint(client: TestClien
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
         patch.object(truth_oracle, "append_demand_event", _capture),
+        patch(
+            "app.chain.cache.get_cached_chain_status",
+            AsyncMock(return_value=(_healthy_chain(), 5.0)),
+        ),
     ):
         r = client.get("/oracle/onchain-facts", headers={"X-Forwarded-For": "203.0.113.9"})
     assert r.status_code == 402
@@ -151,7 +177,7 @@ def test_unpaid_request_logs_challenge_minted_with_fingerprint(client: TestClien
 
 def test_paid_request_logs_access_granted(client: TestClient) -> None:
     token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
-    chain = SimpleNamespace(chain="main", blocks=954871, synced=True, fee_sat_vb=1.2, mempool_tx=42)
+    chain = _healthy_chain()
     events: list[tuple[str, dict[str, Any]]] = []
 
     def _capture(event: str, **kw: Any) -> bool:
@@ -169,6 +195,120 @@ def test_paid_request_logs_access_granted(client: TestClient) -> None:
     assert r.status_code == 200
     granted = [kw for ev, kw in events if ev == ACCESS_GRANTED]
     assert len(granted) == 1 and granted[0]["payment_hash"] == _PH_HEX
+
+
+@pytest.mark.parametrize(
+    ("chain", "age", "expected_state"),
+    [
+        (
+            SimpleNamespace(
+                state="pending", reachable=False, synced=False, chain="", blocks=0, headers=0
+            ),
+            None,
+            "pending",
+        ),
+        (
+            SimpleNamespace(
+                state="disabled", reachable=False, synced=False, chain="", blocks=0, headers=0
+            ),
+            None,
+            "disabled",
+        ),
+        (
+            SimpleNamespace(
+                state="unavailable", reachable=False, synced=False, chain="", blocks=0, headers=0
+            ),
+            None,
+            "unavailable",
+        ),
+        (
+            SimpleNamespace(
+                state="ok", reachable=True, synced=False, chain="main", blocks=100, headers=101
+            ),
+            1.0,
+            "ok",
+        ),
+        (
+            SimpleNamespace(
+                state="ok", reachable=True, synced=True, chain="main", blocks=100, headers=101
+            ),
+            1.0,
+            "ok",
+        ),
+        (
+            SimpleNamespace(
+                state="ok", reachable=True, synced=True, chain="main", blocks=0, headers=0
+            ),
+            1.0,
+            "ok",
+        ),
+        (
+            SimpleNamespace(
+                state="ok", reachable=True, synced=True, chain="main", blocks=100, headers=100
+            ),
+            61.0,
+            "stale",
+        ),
+    ],
+)
+def test_unready_chain_never_mints_or_serves_paid_200(
+    client: TestClient, chain: SimpleNamespace, age: float | None, expected_state: str
+) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.chain.cache.get_cached_chain_status", AsyncMock(return_value=(chain, age))),
+    ):
+        unpaid = client.get("/oracle/onchain-facts")
+        token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
+        paid = client.get(
+            "/oracle/onchain-facts",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert unpaid.status_code == 503 and paid.status_code == 503
+    assert paid.json()["detail"] == {
+        "code": "onchain_facts_unavailable",
+        "state": expected_state,
+        "retriable": True,
+    }
+    assert paid.headers["Retry-After"] == "5"
+    mint.assert_not_awaited()
+
+
+def test_same_paid_token_retries_after_chain_recovers_without_new_invoice(
+    client: TestClient,
+) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
+    unavailable = SimpleNamespace(
+        state="pending", reachable=False, synced=False, chain="", blocks=0, headers=0
+    )
+    healthy = SimpleNamespace(
+        state="ok",
+        reachable=True,
+        synced=True,
+        chain="main",
+        blocks=101,
+        headers=101,
+        fee_sat_vb=None,
+        mempool_tx=0,
+    )
+    cached = AsyncMock(side_effect=[(unavailable, None), (healthy, 2.0)])
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.chain.cache.get_cached_chain_status", cached),
+    ):
+        first = client.get(
+            "/oracle/onchain-facts", headers={"Authorization": f"L402 {token}:{_PREIMAGE}"}
+        )
+        retry = client.get(
+            "/oracle/onchain-facts", headers={"Authorization": f"L402 {token}:{_PREIMAGE}"}
+        )
+    assert first.status_code == 503
+    assert retry.status_code == 200 and retry.json()["block_height"] == 101
+    mint.assert_not_awaited()
 
 
 # --- /oracle/verdicts — the auditable falsification-verdict product (Stage 3) -----
