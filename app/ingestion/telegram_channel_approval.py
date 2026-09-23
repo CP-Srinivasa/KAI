@@ -36,6 +36,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.storage.jsonl_io import append_jsonl_locked
+
 logger = logging.getLogger(__name__)
 
 APPROVED_SUFFIX = "_approved"
@@ -434,7 +436,7 @@ def _iter_records(path: Path) -> list[dict[str, Any]]:
         return []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning("[approval] log read failed: %s", exc)
         return []
     out: list[dict[str, Any]] = []
@@ -470,9 +472,7 @@ def is_already_approved(path: Path, origin_envelope_id: str) -> bool:
 
 
 def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    append_jsonl_locked(path, record)
 
 
 # Forward-only audit log for approval-bot send attempts (NEO-P-approval-send-audit-v1).

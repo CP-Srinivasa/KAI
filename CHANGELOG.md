@@ -1,3 +1,21 @@
+## 2026-09-23 - Ingestion: Envelope-Log unter Lock, Leser ueberleben Byte-Muell (S2-13c)
+
+`artifacts/telegram_message_envelope.jsonl` hat VIER Append-Stellen in ZWEI Prozessen -- kai-tg-listener
+(`telegram_channel_envelope.emit_parsed_signal`, `telegram_channel_approval._append_jsonl`) und kai-server
+(Dashboard-Paste `api/routers/signals._append_audit`, Bot `telegram_bot`) -- und keine davon nahm einen Lock. Neu:
+`app/storage/jsonl_io.append_jsonl_locked()` als gemeinsamer Schreibweg (best-effort `append_lock`, `flush()` im Lock,
+`OSError` wird durchgereicht, damit jede Aufrufstelle ihr Fehlerverhalten behaelt; `ensure_ascii` bleibt Parameter, weil
+die Aufrufer sich unterscheiden und die Datei-Schreibweise sich hier nicht aendern soll).
+
+Die Folge einer verzahnten Zeile war schwerer als "eine Zeile verloren": alle drei Leser fingen nur `OSError`, und ein
+`UnicodeDecodeError` aus halben UTF-8-Sequenzen ist eine `ValueError`-Subklasse. Er schlug damit bis in das
+Dedup-Gate des Bots (`_is_duplicate_envelope` -> doppelter Re-Emit statt Dedup), in `telegram_channel_approval._iter_records`
+und in den Dashboard-Endpunkt `recent_envelopes` (500) durch. Die drei Stellen fangen jetzt
+`(OSError, UnicodeDecodeError)` und fallen wie bisher auf "leer" zurueck.
+
+`TelegramOperatorBot._append_jsonl` entfaellt; die drei Aufrufer nutzen den Helfer direkt -- das God-File schrumpft
+3339 -> 3336 (Ratchet nachgezogen).
+
 ## 2026-09-23 - Architektur: SSE-Event-Hub nach `app/observability/`, zwei Aufwaertskanten entfallen (System-Audit AR-A-003, S2-8 Teil 1)
 
 `app/api/event_hub.py` (100 LOC, nur stdlib) wurde aus `app.alerts` und `app.execution` importiert -- Domaenencode, der
