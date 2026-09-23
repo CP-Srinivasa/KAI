@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -186,7 +187,7 @@ def test_handoff_ack_requires_recipient_challenge_and_preserves_chain(
             response="I understand the open item and will review the isolated assertion.",
         )
     response = (
-        f"{receipt['ack_challenge']} I received the isolated test review. "
+        f"{receipt['ack_challenge']} Handoff {receipt['handoff_id']}: I received the review. "
         "I will explain the failing assertion without changing production."
     )
     ack = hub.acknowledge_handoff(
@@ -404,3 +405,225 @@ def test_new_task_branches_from_fresh_authoritative_remote(kai_repo: Path, tmp_p
         assert hub.workflow.require_session(path, state)["session_id"] == row["session_id"]
     finally:
         _git(kai_repo, "worktree", "remove", str(path))
+
+
+# --- KAI-DEV-INDEPENDENCE-02: handoff identity, task sources, cleanup ---------
+
+
+def _with_secret_catalogue(kai_repo: Path) -> None:
+    """The source guard reuses the repository's single secret catalogue."""
+    for name in ("scripts/secret_guard.py", "app/security/secret_patterns.py"):
+        target = kai_repo / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((REPO / name).read_text(encoding="utf-8"), encoding="utf-8")
+    (kai_repo / "app" / "__init__.py").write_text("", encoding="utf-8")
+    (kai_repo / "app" / "security" / "__init__.py").write_text("", encoding="utf-8")
+    (kai_repo / "scripts" / "dev_reserve.sh").write_text(
+        "#!/usr/bin/env bash\nPORT=4001\n" + "echo reserve\n" * 3, encoding="utf-8"
+    )
+    _git(kai_repo, "add", ".")
+    _git(kai_repo, "commit", "-m", "sources")
+
+
+def _handoff(kai_repo: Path, **extra: object) -> dict[str, object]:
+    return hub.create_handoff(
+        kai_repo,
+        from_agent="OpenCode",
+        to_agent="Kimi",
+        task="Review dev reserve",
+        completed="Read runbook",
+        open_items="Check proxy start",
+        assumptions="No production access",
+        next_action="Review scripts/dev_reserve.sh",
+        tests="not run",
+        **extra,
+    )
+
+
+def test_context_pack_names_handoff_id_distinct_from_session(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    receipt = _handoff(kai_repo)
+    text = Path(str(receipt["context_pack_path"])).read_text(encoding="utf-8")
+
+    assert f"Handoff ID: {receipt['handoff_id']}" in text
+    assert "Session ID (workspace, not the handoff): test-session" in text
+    assert f"Handoff receipt SHA-256: {receipt['payload_sha256']}" in text
+    assert f"Previous receipt SHA-256: {receipt['previous_sha256']}" in text
+    assert "ledger.jsonl" in text
+    # The ID appears before any included document, so it cannot be missed.
+    assert text.index(f"Handoff ID: {receipt['handoff_id']}") < text.index("## Included source")
+
+
+def test_ack_must_quote_handoff_id_not_session_id(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    receipt = _handoff(kai_repo)
+    wrong = (
+        f"{receipt['ack_challenge']} Session test-session received. I will review the "
+        "proxy start in scripts/dev_reserve.sh without production access."
+    )
+    with pytest.raises(hub.HubError, match="Übergabe-ID"):
+        hub.acknowledge_handoff(
+            kai_repo, handoff_id=str(receipt["handoff_id"]), agent="Kimi", response=wrong
+        )
+    right = wrong.replace("Session test-session", f"Handoff {receipt['handoff_id']}")
+    ack = hub.acknowledge_handoff(
+        kai_repo, handoff_id=str(receipt["handoff_id"]), agent="Kimi", response=right
+    )
+    assert ack["schema_version"] == 2
+    assert hub.verify_handoffs()[0] is True
+
+
+def test_task_sources_are_pinned_hashed_and_truncation_is_visible(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    _with_secret_catalogue(kai_repo)
+    long_file = kai_repo / "scripts" / "long.py"
+    long_file.write_text("x = 1\n" * 5_000, encoding="utf-8")
+    _git(kai_repo, "add", ".")
+    _git(kai_repo, "commit", "-m", "long")
+    receipt = _handoff(kai_repo, sources=["scripts/dev_reserve.sh", "scripts\\long.py"])
+    text = Path(str(receipt["context_pack_path"])).read_text(encoding="utf-8")
+    blob = hub._git(kai_repo, "rev-parse", "HEAD:scripts/dev_reserve.sh")
+    data = (kai_repo / "scripts" / "dev_reserve.sh").read_bytes()
+
+    assert receipt["context_sources"] == ["scripts/dev_reserve.sh", "scripts/long.py"]
+    assert "## Task source: scripts/dev_reserve.sh" in text
+    assert f"Git blob at HEAD: {blob}" in text
+    assert f"SHA-256 of working file: {hub.hashlib.sha256(data).hexdigest()}" in text
+    assert "echo reserve" in text
+    assert "## Task source: scripts/long.py" in text
+    assert "TRUNCATED" in text.split("## Task source: scripts/long.py", 1)[1]
+    # Unselected repository files are not transferred.
+    assert "secret_patterns" not in text.split("## Task-specific sources", 1)[1]
+
+
+def _write_untracked(repo: Path) -> None:
+    (repo / "untracked.py").write_text("x = 1\n", encoding="utf-8")
+
+
+def _noop(_repo: Path) -> None:
+    return None
+
+
+@pytest.mark.parametrize(
+    ("setup", "path", "message"),
+    [
+        (_write_untracked, "untracked.py", "nicht versioniert"),
+        (_noop, "../outside.py", "außerhalb"),
+        (_noop, ".env", "Secret"),
+        (_noop, "missing.py", "nicht versioniert"),
+    ],
+)
+def test_task_sources_reject_unsafe_selection_before_writing(
+    kai_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    setup: Callable[[Path], None],
+    path: str,
+    message: str,
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    _with_secret_catalogue(kai_repo)
+    setup(kai_repo)
+    with pytest.raises(hub.workflow.WorkflowError, match=message):
+        _handoff(kai_repo, sources=[path])
+    assert not (hub.STATE_ROOT / "handoffs" / "ledger.jsonl").exists()
+    assert not (hub.STATE_ROOT / "snapshots").exists()
+
+
+def test_task_source_with_secret_content_is_refused_without_echoing_it(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    _with_secret_catalogue(kai_repo)
+    token = "sk-proj-" + "A" * 30
+    (kai_repo / "leak.py").write_text(f"KEY = '{token}'\n", encoding="utf-8")
+    _git(kai_repo, "add", ".")
+    _git(kai_repo, "commit", "-m", "leak")
+    with pytest.raises(hub.workflow.WorkflowError) as caught:
+        _handoff(kai_repo, sources=["leak.py"])
+    assert "leak.py:1" in str(caught.value)
+    assert token not in str(caught.value)
+
+
+def test_task_sources_fail_closed_without_secret_catalogue(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    with pytest.raises(hub.workflow.WorkflowError, match="Secret-Prüfung"):
+        _handoff(kai_repo, sources=["AGENTS.md"])
+
+
+def test_task_source_count_is_bounded(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    _with_secret_catalogue(kai_repo)
+    with pytest.raises(hub.workflow.WorkflowError, match="höchstens"):
+        _handoff(kai_repo, sources=[f"f{i}.py" for i in range(20)])
+
+
+def test_stop_cloud_cleans_up_after_dead_tunnel_without_killing_foreign_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub, "STATE_ROOT", tmp_path / "state")
+    hub._save_cloud_pid(4242, "proxy-and-tunnel")
+    killed: list[list[str]] = []
+    monkeypatch.setattr(hub, "_pid_is_ssh", lambda _pid: False)
+    monkeypatch.setattr(hub, "_run", lambda args, **_kw: killed.append(args))
+    monkeypatch.setattr(hub, "_stop_remote_proxy", lambda: True)
+
+    assert hub.stop_cloud() is True
+    assert killed == []
+    assert not hub._cloud_state_file().exists()
+
+
+def test_stop_cloud_keeps_state_while_pi_is_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub, "STATE_ROOT", tmp_path / "state")
+    hub._save_cloud_pid(4242, "proxy-and-tunnel")
+    monkeypatch.setattr(hub, "_pid_is_ssh", lambda _pid: False)
+    monkeypatch.setattr(hub, "_stop_remote_proxy", lambda: False)
+
+    assert hub.stop_cloud() is False
+    assert hub._cloud_state_file().exists()
+
+
+def test_start_cloud_cleans_up_when_tunnel_dies_during_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(hub, "_fetch_dev_key", lambda: "dev-test-key")
+    monkeypatch.setattr(hub, "_port_open", lambda _port: False)
+    monkeypatch.setattr(hub, "_remote_proxy_is_open", lambda: False)
+    stopped: list[bool] = []
+
+    def stop() -> bool:
+        stopped.append(True)
+        return True
+
+    monkeypatch.setattr(hub, "stop_cloud", stop)
+
+    class Dead:
+        pid = 777
+
+        def poll(self) -> int:
+            return 255
+
+    monkeypatch.setattr(hub.subprocess, "Popen", lambda *_a, **_kw: Dead())
+    with pytest.raises(hub.HubError, match="vorzeitig"):
+        hub.start_cloud()
+    assert stopped == [True]
+
+
+def test_automation_success_comes_from_action_result_not_task_completion() -> None:
+    text = HUB_PATH.read_text(encoding="utf-8")
+    assert "Id=201" in text
+    assert "Id=102" not in text
+    assert "last_failure" in text

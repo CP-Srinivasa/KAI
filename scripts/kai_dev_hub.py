@@ -8,6 +8,7 @@ This is an operator tool, not part of KAI's inference runtime. It never imports
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -22,13 +23,14 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.2.0"
+HUB_VERSION = "0.3.0"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
@@ -357,14 +359,18 @@ def automation_inventory() -> dict[str, Any]:
     """Read local Task Scheduler state; Pi/systemd needs separate evidence."""
     if sys.platform != "win32":
         return {"available": False, "reason": "Windows Task Scheduler nicht verfügbar"}
+    # Event 201 ("action completed") carries the action's exit code in
+    # Properties[3]. Event 102 ("task completed") is written for failed runs
+    # too and must not be read as success.
     script = (
-        "$success=@{}; "
+        "$success=@{}; $failure=@{}; "
         "$events=Get-WinEvent -FilterHashtable "
-        "@{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=102;"
-        "StartTime=(Get-Date).AddDays(-2)} -MaxEvents 500 -ErrorAction SilentlyContinue; "
-        "foreach($e in $events) { $n=[string]$e.Properties[0].Value; "
-        "if($n -like '\\KAI-*' -and -not $success.ContainsKey($n.TrimStart('\\'))) "
-        "{ $success[$n.TrimStart('\\')]=$e.TimeCreated.ToString('o') } }; "
+        "@{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=201;"
+        "StartTime=(Get-Date).AddDays(-2)} -MaxEvents 2000 -ErrorAction SilentlyContinue; "
+        "foreach($e in $events) { $n=([string]$e.Properties[0].Value).TrimStart('\\'); "
+        "if($n -notlike 'KAI-*') { continue }; $rc=[int64]$e.Properties[3].Value; "
+        "$slot=if($rc -eq 0){$success}else{$failure}; "
+        "if(-not $slot.ContainsKey($n)) { $slot[$n]=$e.TimeCreated.ToString('o') } }; "
         "Get-ScheduledTask | Where-Object { $_.TaskName -like 'KAI-*' } | "
         "ForEach-Object { $i = $_ | Get-ScheduledTaskInfo; "
         "$last = if ($i -and $i.LastRunTime) { $i.LastRunTime.ToString('o') } else { $null }; "
@@ -375,6 +381,7 @@ def automation_inventory() -> dict[str, Any]:
         "elseif($code -eq 2147946720){'MISSED_SCHEDULE'}else{'NONZERO_CHECK_LOG'}; "
         "[pscustomobject]@{name=$_.TaskName; state=[string]$_.State; "
         "owner=$_.Principal.UserId; last_run=$last; last_success=$success[$_.TaskName]; "
+        "last_failure=$failure[$_.TaskName]; "
         "last_result=$code; last_result_hex=('0x{0:X8}' -f $code); "
         "last_result_meaning=$meaning; next_run=$next} } | "
         "ConvertTo-Json -Depth 3 -Compress"
@@ -413,6 +420,11 @@ def automation_inventory() -> dict[str, Any]:
 
 def start_cloud() -> str:
     key = _fetch_dev_key()
+    state_file = _cloud_state_file()
+    if state_file.is_file() and not _port_open(DEV_PORT):
+        # Leftover from a crash or reboot: reclaim a proxy this hub started
+        # before a new start could mistake it for a foreign one.
+        stop_cloud()
     if not _port_open(DEV_PORT):
         remote_open = _remote_proxy_is_open()
         no_command = ["-N"] if remote_open else []
@@ -437,23 +449,45 @@ def start_cloud() -> str:
             creationflags=_creation_flag("CREATE_NO_WINDOW"),
         )
         _save_cloud_pid(process.pid, "tunnel-only" if remote_open else "proxy-and-tunnel")
-        for _ in range(80):
-            if process.poll() is not None:
-                raise HubError(
-                    "SSH-Tunnel/Dev-Proxy wurde vorzeitig beendet. Siehe "
-                    f"{_state_dir() / 'cloud-ssh.log'}"
-                )
-            if _port_open(DEV_PORT):
-                break
-            time.sleep(0.25)
-        else:
-            process.terminate()
-            raise HubError(f"Dev-Proxy antwortet nicht auf {DEV_HOST}:{DEV_PORT}.")
+        try:
+            for _ in range(80):
+                if process.poll() is not None:
+                    raise HubError(
+                        "SSH-Tunnel/Dev-Proxy wurde vorzeitig beendet. Siehe "
+                        f"{_state_dir() / 'cloud-ssh.log'}"
+                    )
+                if _port_open(DEV_PORT):
+                    break
+                time.sleep(0.25)
+            else:
+                raise HubError(f"Dev-Proxy antwortet nicht auf {DEV_HOST}:{DEV_PORT}.")
+            _verify_cloud_catalog(key)
+        except HubError:
+            # Started here, so cleaned up here: no orphaned tunnel or Pi proxy.
+            stop_cloud()
+            raise
+        return key
     _verify_cloud_catalog(key)
     return key
 
 
+def _pid_is_ssh(pid: int) -> bool:
+    """True only if ``pid`` still is an ssh process (PIDs are reused)."""
+    if sys.platform != "win32":
+        return False
+    result = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout=10)
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) > 1 and row[1].strip() == str(pid):
+            return row[0].strip().casefold() == "ssh.exe"
+    return False
+
+
 def stop_cloud() -> bool:
+    """Stop what this hub started; also after a crash, reboot or dead tunnel.
+
+    The state file is kept until both ends are verifiably down, so a later
+    call can finish the cleanup (e.g. once the Pi is reachable again).
+    """
     state_file = _cloud_state_file()
     if not state_file.is_file():
         return False
@@ -463,28 +497,37 @@ def stop_cloud() -> bool:
         mode = str(state.get("mode", ""))
     except (ValueError, KeyError, json.JSONDecodeError):
         return False
-    result = _run(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=15)
-    if result.returncode == 0:
-        if mode == "proxy-and-tunnel" and not _stop_remote_proxy():
+    if _pid_is_ssh(pid):
+        result = _run(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=15)
+        if result.returncode != 0:
             return False
-        state_file.unlink(missing_ok=True)
-        return True
-    return False
+    if mode == "proxy-and-tunnel" and not _stop_remote_proxy():
+        return False
+    state_file.unlink(missing_ok=True)
+    return True
 
 
 def _stop_remote_proxy() -> bool:
+    """Stop the Pi dev proxy this hub started; True if it is gone afterwards.
+
+    Remote exit 0 = stopped, 3 = already gone (stale PID file removed),
+    1 = PID belongs to a foreign process (left alone), 255 = SSH failed.
+    """
     code = (
         "from pathlib import Path; import os,signal,sys; "
         f"p=Path('{REMOTE_PID_FILE}'); "
-        "pid=int(p.read_text().strip()) if p.is_file() else 0; "
-        "c=Path(f'/proc/{pid}/cmdline').read_bytes().replace(bytes([0]),b' ').decode() "
-        "if pid and Path(f'/proc/{pid}/cmdline').is_file() else ''; "
+        "pid=int(p.read_text().strip() or 0) if p.is_file() else 0; "
+        "q=Path(f'/proc/{pid}/cmdline'); "
+        "c=q.read_bytes().replace(bytes([0]),b' ').decode() if pid and q.is_file() else ''; "
+        "p.unlink(missing_ok=True) if not c else None; "
+        "sys.exit(3) if not c else None; "
         f"ok=('litellm_dev.yaml' in c and '--port {DEV_PORT}' in c); "
         "os.kill(pid,signal.SIGTERM) if ok else None; "
         "p.unlink(missing_ok=True) if ok else None; sys.exit(0 if ok else 1)"
     )
     remote = f"python3 -c {shlex.quote(code)}"
-    return _run([*_ssh_base(), f"{PI_USER}@{PI_HOST}", remote], timeout=15).returncode == 0
+    result = _run([*_ssh_base(), f"{PI_USER}@{PI_HOST}", remote], timeout=15)
+    return result.returncode in (0, 3)
 
 
 def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = None) -> None:
@@ -516,7 +559,9 @@ def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = Non
         f"KAI-Aufgabe: {session['task']}. Hier ist das verifizierbare Kontextpaket "
         f"(Quelle: {pack.name}):\n\n{pack.read_text(encoding='utf-8')}\n\n"
         + (
-            f"Bestätige die Übergabe mit {handoff['ack_challenge']} und beschreibe den offenen Schritt. "
+            f"Bestätige die Übergabe-ID {handoff['handoff_id']} und die Challenge "
+            f"{handoff['ack_challenge']}, beschreibe den offenen Schritt und nenne die "
+            "mitgelieferten Quellen, auf die du dich stützt. "
             if handoff
             else ""
         )
@@ -581,9 +626,9 @@ def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
     )
 
 
-def context_pack(repo: Path) -> Path:
+def context_pack(repo: Path, sources: Sequence[str] = ()) -> Path:
     session = workflow.require_session(repo, STATE_ROOT)
-    return workflow.context_pack(repo, STATE_ROOT, task=session["task"])
+    return workflow.context_pack(repo, STATE_ROOT, task=session["task"], sources=list(sources))
 
 
 def launch_kimi(repo: Path, handoff: dict[str, Any] | None = None) -> Path:
@@ -636,10 +681,13 @@ def create_handoff(
     assumptions: str,
     next_action: str,
     tests: str,
+    sources: Sequence[str] = (),
 ) -> dict[str, Any]:
     session = workflow.require_session(repo, STATE_ROOT)
     if not from_agent.strip() or not to_agent.strip() or not task.strip():
         raise HubError("Von-Agent, An-Agent und Auftrag sind Pflichtfelder.")
+    # Checked before snapshot and ledger: a refused source leaves no trace.
+    context_sources = workflow.validate_sources(repo, sources)
     valid, reason = verify_handoffs()
     if not valid:
         raise HubError(f"Übergabekette ungültig: {reason}")
@@ -653,7 +701,7 @@ def create_handoff(
     handoff_id = str(uuid.uuid4())
     saved = workflow.snapshot(repo, STATE_ROOT, handoff_id)
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "event": "handoff",
         "handoff_id": handoff_id,
         "session_id": session["session_id"],
@@ -673,6 +721,7 @@ def create_handoff(
         "assumptions": assumptions.strip(),
         "next_action": next_action.strip(),
         "tests": tests.strip(),
+        "context_sources": context_sources,
         "previous_sha256": previous,
     }
     payload["payload_sha256"] = hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
@@ -691,6 +740,8 @@ def create_handoff(
                 f"- Receipt SHA-256: `{payload['payload_sha256']}`",
                 f"- Previous: `{payload['previous_sha256']}`",
                 f"- Acknowledgement challenge: `{payload['ack_challenge']}`",
+                f"- Session ID (workspace): `{payload['session_id']}`",
+                f"- Task sources: {', '.join(context_sources) or '—'}",
                 f"- Context pack: `{pack}`",
                 f"- Recoverable snapshot: `{saved['path']}`",
                 "",
@@ -751,8 +802,13 @@ def acknowledge_handoff(
         raise HubError(
             "Antwort muss die Challenge und eine verständliche Aufgabenübernahme enthalten."
         )
+    # From schema 2 on the recipient must name the handoff itself; a session
+    # ID in its place (the Kimi confusion) is not an acknowledgement.
+    schema = 2 if int(source.get("schema_version", 1)) >= 2 else 1
+    if schema >= 2 and handoff_id not in response:
+        raise HubError("Antwort muss die Übergabe-ID nennen (nicht die Session-ID).")
     event: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": schema,
         "event": "ack",
         "handoff_id": handoff_id,
         "created_at": datetime.now(UTC).isoformat(),
@@ -829,6 +885,10 @@ def verify_handoffs() -> tuple[bool, str]:
                 or row.get("from_agent", "").casefold() != source["to_agent"].casefold()
                 or row.get("ack_challenge", "") not in row.get("response", "")
                 or len(row.get("response", "")) < 50
+                or (
+                    int(row.get("schema_version", 1)) >= 2
+                    and row["handoff_id"] not in row.get("response", "")
+                )
             ):
                 return False, f"Zeile {line_number}: ungültige Empfangsbestätigung"
             acknowledged.add(row["handoff_id"])
@@ -888,6 +948,7 @@ def _handoff_dialog(repo: Path, parent: Any) -> None:
         ("assumptions", "Annahmen", ""),
         ("next_action", "Nächster Schritt", ""),
         ("tests", "Tests", ""),
+        ("sources", f"Quelldateien (je Zeile, max. {workflow.MAX_SOURCE_FILES})", ""),
     ]
     widgets: dict[str, Any] = {}
     for row, (name, label, initial) in enumerate(fields):
@@ -898,12 +959,11 @@ def _handoff_dialog(repo: Path, parent: Any) -> None:
         widgets[name] = widget
 
     def save(*, start_recipient: bool = False) -> None:
+        values = {name: widget.get("1.0", "end").strip() for name, widget in widgets.items()}
+        sources = values.pop("sources").splitlines()
         try:
-            result = create_handoff(
-                repo,
-                **{name: widget.get("1.0", "end").strip() for name, widget in widgets.items()},
-            )
-        except HubError as exc:
+            result = create_handoff(repo, sources=sources, **values)
+        except (HubError, workflow.WorkflowError) as exc:
             messagebox.showerror("Übergabe nicht gespeichert", str(exc), parent=dialog)
             return
         messagebox.showinfo(
@@ -1193,12 +1253,15 @@ def _parser() -> argparse.ArgumentParser:
     handoff.add_argument("--assumptions", default="")
     handoff.add_argument("--next-action", default="")
     handoff.add_argument("--tests", default="")
+    source_help = "Versionierte Quelldatei für das Kontextpaket (wiederholbar)"
+    handoff.add_argument("--source", action="append", default=[], help=source_help)
     ack_parser = sub.add_parser("ack")
     ack_parser.add_argument("--handoff-id", required=True)
     ack_parser.add_argument("--agent", required=True)
     ack_parser.add_argument("--response-file", required=True)
     sub.add_parser("verify-handoffs")
-    sub.add_parser("context-pack")
+    pack_parser = sub.add_parser("context-pack")
+    pack_parser.add_argument("--source", action="append", default=[], help=source_help)
     return parser
 
 
@@ -1252,6 +1315,7 @@ def main(argv: list[str] | None = None) -> int:
                 assumptions=args.assumptions,
                 next_action=args.next_action,
                 tests=args.tests,
+                sources=args.source,
             )
             print(json.dumps(result, indent=2, ensure_ascii=False))
         elif args.command == "ack":
@@ -1270,7 +1334,7 @@ def main(argv: list[str] | None = None) -> int:
             print(message)
             return 0 if valid else 1
         elif args.command == "context-pack":
-            print(context_pack(repo))
+            print(context_pack(repo, args.source))
     except (HubError, workflow.WorkflowError, OSError, subprocess.SubprocessError) as exc:
         print(f"KAI_DEV_HUB_ERROR: {exc}", file=sys.stderr)
         return 1
