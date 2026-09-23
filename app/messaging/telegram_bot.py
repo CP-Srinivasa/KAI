@@ -28,6 +28,8 @@ from uuid import uuid4
 
 import httpx
 
+from app.storage.jsonl_io import append_jsonl_locked
+
 if TYPE_CHECKING:
     from app.execution.live_engine import LiveExecutionEngine
     from app.messaging.text_intent import TextIntentProcessor
@@ -1245,7 +1247,7 @@ class TelegramOperatorBot:
             log_lines.append("Exchange-Forward: `disabled`")
 
         try:
-            self._append_jsonl(self._signal_handoff_log_path, handoff_record)
+            append_jsonl_locked(self._signal_handoff_log_path, handoff_record, ensure_ascii=True)
         except OSError as exc:
             logger.error("[BOT] Signal handoff audit write failed: %s", exc)
             log_lines.append("Signal-Handoff-Log: `failed`")
@@ -1448,7 +1450,7 @@ class TelegramOperatorBot:
         }
         if structured_signal:
             record["structured_signal"] = structured_signal
-        self._append_jsonl(self._signal_exchange_outbox_log_path, record)
+        append_jsonl_locked(self._signal_exchange_outbox_log_path, record, ensure_ascii=True)
 
     @staticmethod
     def _normalize_signal_payload(signal: dict[str, Any]) -> tuple[str, str, str, str] | None:
@@ -1491,11 +1493,6 @@ class TelegramOperatorBot:
                     return f"{base}/{quote}"
         return f"{candidate}/USDT"
 
-    @staticmethod
-    def _append_jsonl(path: Path, record: dict[str, object]) -> None:
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
-
     def _compute_idempotency_key(self, parsed_payload: Any) -> str | None:
         """Return the canonical idempotency key for a typed payload, or None."""
         from app.messaging.message_models import MessageEnvelope, SourceChannel
@@ -1529,7 +1526,7 @@ class TelegramOperatorBot:
         try:
             with path.open("r", encoding="utf-8") as fh:
                 lines = fh.readlines()
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             logger.warning("[BOT] Envelope log read failed: %s", exc)
             return False
         for line in reversed(lines[-lookback:]):
@@ -1608,7 +1605,7 @@ class TelegramOperatorBot:
         if metadata:
             record["metadata"] = dict(metadata)
         try:
-            self._append_jsonl(self._message_envelope_log_path, record)
+            append_jsonl_locked(self._message_envelope_log_path, record, ensure_ascii=True)
         except OSError as exc:
             logger.error("[BOT] Message envelope audit write failed: %s", exc)
         return idempotency_key

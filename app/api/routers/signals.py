@@ -56,6 +56,7 @@ from app.premium.state_machine import (
     state_label,
     state_tone,
 )
+from app.storage.jsonl_io import append_jsonl_locked
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +113,7 @@ def _audit_path() -> Path:
 def _append_audit(record: dict[str, object]) -> None:
     path = _audit_path()
     try:
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        append_jsonl_locked(path, record)
     except OSError as exc:
         logger.error("[signals.paste] Audit write failed: %s", exc)
 
@@ -756,7 +756,7 @@ async def recent_envelopes(
     try:
         with path.open("r", encoding="utf-8") as fh:
             lines = fh.readlines()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning("[signals.recent] Audit read failed: %s", exc)
         return EnvelopeRecentResponse(count=0, records=[])
 

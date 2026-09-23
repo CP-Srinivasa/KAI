@@ -24,6 +24,8 @@ Public API:
   the single retry-on-truncate policy; use when the latest line matters).
 * :func:`iter_jsonl_tolerant` — constant-memory streaming variant for
   aggregation-only read paths (count/sum/tail) on large append-only files.
+* :func:`append_jsonl_locked` — the write side: one line under the shared
+  ``append_lock``, for streams several processes write.
 * :func:`RETRY_SLEEP_SECONDS` — policy constant kept as module attribute
   so tests can monkey-patch it without touching import-order edge cases.
 """
@@ -32,14 +34,38 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
+
+from app.core.file_lock import append_lock
 
 # 100 ms retry delay — chosen in NEO-P-002 D after empirical observation
 # that a writer's fsync-plus-append takes < 50 ms on SSD; 100 ms keeps the
 # latency impact on readers well below the 1 s cron-tick budget.
 RETRY_SLEEP_SECONDS: float = 0.1
+
+
+def append_jsonl_locked(
+    path: Path, record: Mapping[str, Any], *, ensure_ascii: bool = False
+) -> None:
+    """Append one JSON line while holding the shared best-effort lock.
+
+    For streams that more than one PROCESS writes. POSIX guarantees no
+    atomicity for a ``write()`` on a regular file against other writers, and a
+    line above the 8 KiB ``TextIOWrapper`` buffer is split into several
+    syscalls — an interleaved line is no longer JSON and is dropped by every
+    tolerant reader above (System-Audit 2026-09-16, NEO-A-014).
+
+    Raises ``OSError`` like a plain append would, so a caller keeps whatever
+    error handling it had. ``ensure_ascii`` stays a parameter because the
+    existing call sites disagree and the on-disk form should not change here.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=ensure_ascii) + "\n"
+    with append_lock(path), path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
 
 
 def read_jsonl_tolerant(

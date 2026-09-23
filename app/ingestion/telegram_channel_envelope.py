@@ -27,6 +27,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.storage.jsonl_io import append_jsonl_locked
+
 if TYPE_CHECKING:
     from app.ingestion.telegram_channel_parser import ParsedSignal
 
@@ -294,10 +296,8 @@ def emit_parsed_signal(
         logger.info("[channel-envelope] duplicate idempotency_key=%s — skipping", idem)
         return None
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        append_jsonl_locked(log_path, record)
     except OSError as exc:
         logger.error("[channel-envelope] write failed: %s", exc)
         return None
