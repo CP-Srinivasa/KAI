@@ -116,6 +116,32 @@ def test_body_text_is_considered_not_only_the_title() -> None:
     assert crypto_relevance_verdict(doc, []) == (True, "generic_crypto_term")
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Live 23.09. after the hotfix: every cryptobriefing item ends with this
+        # WordPress footer, so the site NAME made its off-topic feed "crypto".
+        "Qualcomm is reportedly in talks to acquire PickNik Robotics. The post Qualcomm "
+        "reportedly in talks to acquire PickNik Robotics for edge AI expansion appeared "
+        "first on Crypto Briefing .",
+        "Musk hinted at a merger. The post Musk hints at Tesla-SpaceX merger amid Terafab "
+        "project collaboration appeared first on Crypto Briefing.",
+        "Rates were left unchanged. Source: Crypto Briefing",
+    ],
+)
+def test_feed_footer_and_site_name_are_not_a_crypto_signal(body: str) -> None:
+    doc = _doc("Qualcomm reportedly in talks to acquire PickNik Robotics", body)
+    assert crypto_relevance_verdict(doc, []) == (False, "no_crypto_signal")
+
+
+def test_crypto_in_the_article_itself_still_counts_despite_footer() -> None:
+    body = (
+        "The bank will offer crypto trading to 18 million clients. The post Raiffeisen "
+        "partners with Bitpanda appeared first on Crypto Briefing."
+    )
+    assert crypto_relevance_verdict(_doc("Raiffeisen partners with Bitpanda", body), [])[0]
+
+
 def test_existing_precedence_is_unchanged() -> None:
     doc = CanonicalDocument(url="u", title="crypto", raw_text="x", tickers=["BTC"])
     assert crypto_relevance_verdict(doc, []) == (True, "has_tickers")
