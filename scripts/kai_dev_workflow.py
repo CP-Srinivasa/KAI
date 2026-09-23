@@ -65,6 +65,20 @@ def _git(repo: Path, *args: str, timeout: int = 40) -> str:
     return result.stdout.strip()
 
 
+def _git_bytes(repo: Path, *args: str, timeout: int = 40) -> bytes:
+    """Raw git output: no decoding, no strip, no newline translation (patches)."""
+    result = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+        creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+    )
+    if result.returncode:
+        raise WorkflowError(f"Git {args[0]} fehlgeschlagen (Exit {result.returncode}).")
+    return result.stdout
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -150,14 +164,16 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
     root = state_root / "snapshots" / handoff_id
     if root.exists():
         raise WorkflowError("Für diese Übergabe existiert bereits ein Snapshot.")
-    tracked = _git(repo, "diff", "--binary", "HEAD")
+    # Byte-exact: a text-mode write turned LF into CRLF on Windows and _git's
+    # strip() dropped the final newline -> "git apply: corrupt patch" (23.09.).
+    tracked = _git_bytes(repo, "diff", "--binary", "HEAD")
     changed_tracked = _git(repo, "diff", "--name-only", "HEAD", "-z")
     if any(SECRET_NAME.search(name) for name in changed_tracked.split("\0") if name):
         raise WorkflowError("Geänderte Secret-Datei darf nicht im Snapshot gespeichert werden.")
     untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z")
     names = [name for name in untracked.split("\0") if name]
     planned: list[tuple[Path, Path, int]] = []
-    total = len(tracked.encode("utf-8"))
+    total = len(tracked)
     for name in names:
         relative = Path(name)
         raw_source = repo / relative
@@ -180,7 +196,7 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
         raise WorkflowError("Snapshot überschreitet das lokale Größenlimit (20 MB).")
     root.mkdir(parents=True)
     patch = root / "tracked.patch"
-    patch.write_text(tracked, encoding="utf-8")
+    patch.write_bytes(tracked)
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "created_at": _now(),

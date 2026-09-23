@@ -161,6 +161,9 @@ def test_cloud_boundary_uses_only_loopback_and_dedicated_dev_names() -> None:
 def test_local_route_is_pinned_to_installed_kai_model() -> None:
     assert hub.LOCAL_MODEL == "kai-qwen3-coder:30b-16k"
     assert hub.HERMES_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
+    # OpenCode's own prompt plus one read file exceeds 16K (Ollama truncated
+    # 16942 -> 16384 tokens in the 23.09. acceptance); coding runs need 64K.
+    assert hub.OPENCODE_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
     assert hub.DEV_MODELS == {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
 
 
@@ -204,6 +207,35 @@ def test_handoff_ack_requires_recipient_challenge_and_preserves_chain(
         )
 
 
+def test_snapshot_patch_is_byte_exact_and_restores_changes(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 23.09. acceptance: the patch was written in text mode (CRLF on Windows)
+    # and lost its final newline -> "git apply: corrupt patch". A snapshot
+    # that cannot be applied is no recovery.
+    _managed(kai_repo, tmp_path, monkeypatch)
+    (kai_repo / "blob.bin").write_bytes(bytes(range(256)))
+    _git(kai_repo, "add", "blob.bin")
+    _git(kai_repo, "commit", "-m", "binary fixture")
+    changed_text = "rules\nsecond line\n"
+    changed_blob = bytes(reversed(range(256)))
+    (kai_repo / "AGENTS.md").write_text(changed_text, encoding="utf-8", newline="\n")
+    (kai_repo / "blob.bin").write_bytes(changed_blob)
+
+    saved = hub.workflow.snapshot(kai_repo, hub.STATE_ROOT, "restore-proof")
+    patch = Path(saved["path"]) / "tracked.patch"
+    assert b"\r\n" not in patch.read_bytes()
+
+    _git(kai_repo, "checkout", "--", ".")
+    assert (kai_repo / "AGENTS.md").read_text(encoding="utf-8") == "rules\n"
+    _git(kai_repo, "apply", "--binary", str(patch))
+    # Text may come back with the checkout's line endings (core.autocrlf);
+    # binary content must be identical.
+    restored = (kai_repo / "AGENTS.md").read_bytes().replace(b"\r\n", b"\n")
+    assert restored == changed_text.encode()
+    assert (kai_repo / "blob.bin").read_bytes() == changed_blob
+
+
 def test_snapshot_rejects_untracked_secret_before_writing(
     kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -241,15 +273,17 @@ def test_opencode_start_injects_context_and_pins_model(
     _managed(kai_repo, tmp_path, monkeypatch)
     calls: list[list[str]] = []
     monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
-    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.OPENCODE_LOCAL_MODEL})
     monkeypatch.setattr(
         hub, "_command", lambda name: "opencode.cmd" if name == "opencode.cmd" else None
     )
     real_popen = hub.subprocess.Popen
+    envs: list[dict[str, str]] = []
 
     def capture_client(args: list[str], **kwargs: object) -> object:
         if args[0] == "opencode.cmd":
             calls.append(args)
+            envs.append(kwargs["env"])  # type: ignore[arg-type]
             return object()
         return real_popen(args, **kwargs)
 
@@ -258,32 +292,109 @@ def test_opencode_start_injects_context_and_pins_model(
     hub.launch_opencode(kai_repo, "local")
 
     args = calls[0]
-    assert args[args.index("-m") + 1] == f"ollama/{hub.LOCAL_MODEL}"
+    assert args[args.index("-m") + 1] == f"ollama/{hub.OPENCODE_LOCAL_MODEL}"
+    # The global OpenCode config only knows the 16K model; the hub supplies
+    # its own loopback-only provider entry instead of editing that file.
+    extra = json.loads(Path(envs[0]["OPENCODE_CONFIG"]).read_text(encoding="utf-8"))
+    ollama = extra["provider"]["ollama"]
+    assert ollama["options"]["baseURL"] == "http://127.0.0.1:11434/v1"
+    assert hub.OPENCODE_LOCAL_MODEL in ollama["models"]
     prompt = args[args.index("--prompt") + 1]
     assert "rules" in prompt and "architecture" in prompt
     assert "This document is self-contained" in prompt
     assert "Lies zuerst C:" not in prompt
 
 
+def test_opencode_launches_native_binary_not_cmd_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Killing the cmd.exe wrapper left opencode.exe running as an orphan
+    # (23.09. acceptance). The hub starts the binary the wrapper would call.
+    wrapper = tmp_path / "opencode.cmd"
+    wrapper.write_text("@echo off\n", encoding="utf-8")
+    native = tmp_path / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"MZ")
+    monkeypatch.setattr(
+        hub.shutil, "which", lambda name: str(wrapper) if name == "opencode.cmd" else None
+    )
+    assert hub._opencode_executable() == str(native)
+
+    native.unlink()
+    assert hub._opencode_executable() == str(wrapper)
+
+
+def test_hermes_start_pins_tool_cwd_to_task_worktree(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Hermes resolves relative tool paths against TERMINAL_CWD, not against
+    # --in or the process cwd. Without it read_file looked in the home
+    # directory ("File not found: scripts/dev_reserve.sh", 23.09. acceptance).
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.HERMES_LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_command", lambda name: "hermes.exe" if name == "hermes" else None)
+    monkeypatch.setattr(hub.sys, "platform", "linux")  # no clipboard in tests
+    envs: list[dict[str, str]] = []
+    real_popen = hub.subprocess.Popen
+
+    def capture_client(args: list[str], **kwargs: object) -> object:
+        if args[0] == "hermes.exe":
+            envs.append(kwargs["env"])  # type: ignore[arg-type]
+            return object()
+        return real_popen(args, **kwargs)
+
+    monkeypatch.setattr(hub.subprocess, "Popen", capture_client)
+
+    hub.launch_hermes(kai_repo)
+
+    assert envs[0]["TERMINAL_CWD"] == str(kai_repo)
+    assert envs[0]["CUSTOM_BASE_URL"] == "http://127.0.0.1:11434/v1"
+
+
 def test_cloud_probe_requires_real_reply_identity_and_positive_cost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Reply(io.BytesIO):
-        headers = {"x-litellm-response-cost": "0.000002"}
+        headers = {
+            "x-litellm-response-cost": "0.000002",
+            "x-litellm-model-name": "moonshot/kimi-k2.7-code",
+            "x-litellm-model-api-base": "https://api.moonshot.ai/v1",
+            "x-litellm-model-group": "kai-dev-code",
+        }
 
     def healthy(_request: object, timeout: int) -> Reply:
         assert timeout == 120
+        # LiteLLM echoes the alias in the body; identity is in the headers.
         return Reply(
-            json.dumps({"model": "kimi-k2.7", "choices": [{"message": {"content": "ok"}}]}).encode()
+            json.dumps(
+                {"model": "kai-dev-code", "choices": [{"message": {"content": "ok"}}]}
+            ).encode()
         )
 
     monkeypatch.setattr(hub.urllib.request, "urlopen", healthy)
     report = hub._cloud_inference_probe("test-only", "kai-dev-code")
-    assert report["model"] == "kimi-k2.7"
+    assert report["model"] == "moonshot/kimi-k2.7-code"
+    assert report["api_base"] == "https://api.moonshot.ai/v1"
     assert report["cost_usd"] > 0
 
+    class AliasOnly(Reply):
+        headers = {"x-litellm-response-cost": "0.000002"}
+
+    monkeypatch.setattr(
+        hub.urllib.request,
+        "urlopen",
+        lambda _request, timeout: AliasOnly(
+            json.dumps(
+                {"model": "kai-dev-code", "choices": [{"message": {"content": "ok"}}]}
+            ).encode()
+        ),
+    )
+    with pytest.raises(hub.HubError, match="Modellidentität"):
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+
     class ZeroCost(Reply):
-        headers = {"x-litellm-response-cost": "0"}
+        headers = {**Reply.headers, "x-litellm-response-cost": "0"}
 
     monkeypatch.setattr(
         hub.urllib.request,
@@ -620,6 +731,57 @@ def test_start_cloud_cleans_up_when_tunnel_dies_during_start(
     with pytest.raises(hub.HubError, match="vorzeitig"):
         hub.start_cloud()
     assert stopped == [True]
+
+
+def test_cloud_probe_explains_http_failures_without_leaking_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = json.dumps(
+        {"error": {"message": "Authentication Error, Received API Key = sk-abcd****wxyz"}}
+    ).encode()
+
+    def unauthorized(_request: object, timeout: int) -> object:
+        raise hub.urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(body))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", unauthorized)
+    with pytest.raises(hub.HubError) as caught:
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+    message = str(caught.value)
+    assert "HTTP 401" in message and "LITELLM_DEV_MASTER_KEY" in message
+    assert "sk-abcd" not in message
+
+    # Until #1000 is deployed a wrong key arrives as 400 "No connected db.".
+    no_db = json.dumps({"error": {"message": "No connected db."}}).encode()
+
+    def no_db_error(_request: object, timeout: int) -> object:
+        raise hub.urllib.error.HTTPError("u", 400, "Bad", {}, io.BytesIO(no_db))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", no_db_error)
+    with pytest.raises(hub.HubError, match="Schlüssel falsch"):
+        hub._cloud_inference_probe("test-only", "kai-dev-code")
+
+
+def test_start_cloud_adopts_orphaned_proxy_started_by_hub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub, "STATE_ROOT", tmp_path / "state")
+    monkeypatch.setattr(hub, "_fetch_dev_key", lambda: "dev-test-key")
+    tunnel = {"open": False}
+    monkeypatch.setattr(hub, "_port_open", lambda _port: tunnel["open"])
+    monkeypatch.setattr(hub, "_remote_proxy_is_open", lambda: True)
+    monkeypatch.setattr(hub, "_remote_proxy_owned", lambda: True)
+    monkeypatch.setattr(hub, "_verify_cloud_catalog", lambda _key: None)
+
+    class Alive:
+        pid = 778
+
+        def poll(self) -> None:
+            tunnel["open"] = True
+
+    monkeypatch.setattr(hub.subprocess, "Popen", lambda *_a, **_kw: Alive())
+    hub.start_cloud()
+    state = json.loads(hub._cloud_state_file().read_text(encoding="utf-8"))
+    assert state["mode"] == "proxy-and-tunnel"
 
 
 def test_automation_success_comes_from_action_result_not_task_completion() -> None:

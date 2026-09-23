@@ -16,7 +16,7 @@ python scripts/kai_dev_hub.py ui
 ```
 
 Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.0), schreibt `install.json` mit
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.1), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 `python scripts/kai_dev_hub.py --version` zeigt die Version. Vor Installation
@@ -29,7 +29,13 @@ Worktree. Ein Client-Start im gemeinsamen Checkout wird abgewiesen. Alle
 Oberflächen bleiben auf ihr gewähltes Modell für die jeweilige Sitzung gepinnt:
 
 - **OpenCode lokal (offline):** startet das vorhandene Ollama-Modell
-  `kai-qwen3-coder:30b-16k`; kein Internet und kein Anbieter-Schlüssel nötig.
+  `kai-qwen3-coder:30b-64k`; kein Internet und kein Anbieter-Schlüssel nötig.
+  Ab Hub 0.3.1 nicht mehr `30b-16k`: Bei der Abnahme am 23.09. war der
+  OpenCode-Prompt nach einer gelesenen Datei 16 942 Token lang, und Ollama kürzte
+  auf 16 384. Die Antwort ignorierte daraufhin das geforderte Format. Mit 64K war
+  sie korrekt. Das Modell wird über ein hub-eigenes Konfigurationsfragment
+  (`OPENCODE_CONFIG` → `developer-hub\opencode-local.json`, nur Loopback)
+  bekanntgemacht; die globale OpenCode-Konfiguration bleibt unverändert.
   Das kompakte KAI-Kontextpaket wird im Startprompt mitgegeben, weil das
   OpenCode-Profil externe Verzeichnisse nicht lesen darf.
 - **OpenCode Cloud-Reserve:** öffnet in einem neuen, auf `kai-dev-code`
@@ -44,7 +50,10 @@ Oberflächen bleiben auf ihr gewähltes Modell für die jeweilige Sitzung gepinn
   `AGENTS.md` und arbeitet nicht mehr als projektloser Chat. Der Hub setzt
   Reasoning auf `none` (andernfalls antwortet das lokale Modell mit HTTP 400)
   und legt den ersten Kontextprompt in die Zwischenablage: **einmal in Hermes
-  einfügen und absenden**. Die globale Hermes-
+  einfügen und absenden**. Ab 0.3.1 setzt der Hub zusätzlich `TERMINAL_CWD`
+  auf den Aufgaben-Worktree. Hermes löst Werkzeugpfade danach auf, nicht nach
+  `--in`, und ohne `TERMINAL_CWD` fand `read_file` bei der Abnahme am 23.09.
+  `scripts/dev_reserve.sh` nicht (Suche im Home-Verzeichnis). Die globale Hermes-
   Konfiguration wird nicht verändert. Der LiteLLM-Dev-Proxy bleibt OpenCodes
   Cloud-Reserve; Hermes' vorgeschaltete Key-/Kostenprüfung benötigt eine
   LiteLLM-Datenbank und ist mit dem bewusst datenbanklosen Dev-Proxy inkompatibel.

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shlex
 import shutil
 import socket
@@ -30,7 +31,7 @@ from typing import Any
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.3.0"
+HUB_VERSION = "0.3.1"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
@@ -39,6 +40,9 @@ PI_HOST = "192.168.178.23"
 PI_USER = "ubuntu"
 LOCAL_MODEL = "kai-qwen3-coder:30b-16k"
 HERMES_LOCAL_MODEL = "kai-qwen3-coder:30b-64k"
+# OpenCode's system prompt plus a read file exceeds 16K tokens (Ollama
+# truncated 16942 -> 16384 on 23.09.); coding sessions use the 64K model.
+OPENCODE_LOCAL_MODEL = HERMES_LOCAL_MODEL
 DEV_MODELS = {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
 REMOTE_ENV = "/home/kai/ai_analyst_trading_bot/.env"
 REMOTE_PROXY = "/home/kai/current/scripts/dev_reserve.sh"
@@ -84,6 +88,19 @@ def _command(name: str) -> str | None:
         "kimi": [local / "Programs/Kimi/Kimi.exe"],
     }
     return next((str(path) for path in candidates.get(name, []) if path.is_file()), None)
+
+
+def _opencode_executable() -> str | None:
+    """The OpenCode binary itself, not its npm ``opencode.cmd`` wrapper.
+
+    Behind the wrapper the client runs as a child of cmd.exe; if only the
+    wrapper dies, opencode.exe keeps running as an orphan (23.09. acceptance).
+    """
+    wrapper = _command("opencode.cmd")
+    if wrapper:
+        native = Path(wrapper).parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
+        return str(native) if native.is_file() else wrapper
+    return _command("opencode")
 
 
 def _port_open(port: int, *, timeout: float = 0.35) -> bool:
@@ -277,32 +294,81 @@ def _cloud_inference_probe(key: str, route: str) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
             body = json.load(response)
-            cost_header = response.headers.get("x-litellm-response-cost")
+            headers = response.headers
     except urllib.error.HTTPError as exc:
-        raise HubError(
-            f"Dev-Route {route}: HTTP {exc.code}; Modell oder Schlüssel prüfen."
-        ) from exc
+        raise HubError(_diagnose_http_error(route, exc)) from exc
     except (OSError, ValueError) as exc:
-        raise HubError(f"Dev-Route {route}: keine gültige Antwort ({type(exc).__name__}).") from exc
-    model = body.get("model")
+        raise HubError(
+            f"Dev-Route {route}: keine gültige Antwort ({type(exc).__name__}) — "
+            "Tunnel/Dev-Proxy erreichbar? 'Cloud prüfen' startet beides neu."
+        ) from exc
+    # The body echoes the route alias; the provider model behind it is only in
+    # LiteLLM's response headers. Identity means the latter.
+    provider_model = headers.get("x-litellm-model-name")
+    api_base = headers.get("x-litellm-model-api-base")
+    cost_header = headers.get("x-litellm-response-cost")
     choices = body.get("choices") or []
     answer = choices[0].get("message", {}).get("content") if choices else None
     try:
         cost = float(cost_header) if cost_header is not None else None
     except ValueError:
         cost = None
-    if not model or not answer or cost is None or cost <= 0:
+    if not provider_model or not answer or cost is None or cost <= 0:
         missing = ", ".join(
             label
             for label, absent in (
-                ("Modellidentität", not model),
+                ("Modellidentität (x-litellm-model-name)", not provider_model),
                 ("Antworttext", not answer),
                 ("positive Kostenmessung", cost is None or cost <= 0),
             )
             if absent
         )
         raise HubError(f"Dev-Route {route}: FAIL_CLOSED; fehlt: {missing}.")
-    return {"route": route, "model": model, "response_proven": True, "cost_usd": cost}
+    return {
+        "route": route,
+        "model": provider_model,
+        "api_base": api_base,
+        "model_group": headers.get("x-litellm-model-group") or body.get("model"),
+        "attempted_retries": headers.get("x-litellm-attempted-retries"),
+        "attempted_fallbacks": headers.get("x-litellm-attempted-fallbacks"),
+        "response_proven": True,
+        "cost_usd": cost,
+    }
+
+
+_HTTP_HINTS = {
+    400: "Anfrage oder Route abgelehnt — Routenname und Parameter prüfen",
+    401: "Schlüssel fehlt oder ist falsch — LITELLM_DEV_MASTER_KEY auf der Pi prüfen",
+    403: "Schlüssel ohne Berechtigung für diese Route",
+    404: "Route unbekannt — ist sie in config/litellm_dev.yaml definiert?",
+    408: "Zeitgrenze überschritten — Anbieter langsam oder nicht erreichbar",
+    429: "Rate- oder Ausgabenlimit beim Anbieter erreicht",
+}
+_SECRETISH = re.compile(r"(sk-[A-Za-z0-9_\-*]{4,}|Bearer\s+\S+|[A-Fa-f0-9]{40,})")
+
+
+def _diagnose_http_error(route: str, exc: urllib.error.HTTPError) -> str:
+    """Actionable text for an HTTP failure; key-like fragments are masked."""
+    try:
+        detail = json.loads(exc.read() or b"{}").get("error", {}).get("message", "")
+    except (OSError, ValueError, AttributeError):
+        detail = ""
+    detail = _SECRETISH.sub("***", str(detail)).replace("\n", " ")[:200]
+    if "No connected db" in detail:
+        # LiteLLM without a database reports a wrong key this way (issue #1000).
+        return (
+            f"Dev-Route {route}: HTTP {exc.code} — Schlüssel falsch (LiteLLM ohne Datenbank "
+            "meldet das als 'No connected db', #1000) — LITELLM_DEV_MASTER_KEY auf der Pi prüfen."
+        )
+    hint = _HTTP_HINTS.get(
+        exc.code,
+        "Anbieterfehler — Anbieterstatus und Dev-Key-Guthaben prüfen"
+        if exc.code >= 500
+        else "unerwarteter Status",
+    )
+    return f"Dev-Route {route}: HTTP {exc.code} — {hint}." + (
+        f" Proxy meldet: {detail}" if detail else ""
+    )
 
 
 def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
@@ -322,12 +388,12 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
             ensure_ollama()
         except (HubError, OSError, subprocess.SubprocessError) as exc:
             checks["ollama_start_error"] = str(exc)
-    checks["opencode_installed"] = bool(_command("opencode.cmd") or _command("opencode"))
+    checks["opencode_installed"] = bool(_opencode_executable())
     checks["hermes_installed"] = bool(_command("hermes"))
     checks["kimi_installed"] = bool(_command("kimi"))
     checks["ollama_online"] = _port_open(OLLAMA_PORT)
     models = _ollama_models() if checks["ollama_online"] else set()
-    checks["opencode_local_model"] = LOCAL_MODEL in models
+    checks["opencode_local_model"] = OPENCODE_LOCAL_MODEL in models
     checks["hermes_local_model"] = HERMES_LOCAL_MODEL in models
     checks["handoff_chain"] = verify_handoffs()[0]
     checks["cloud_tunnel_open"] = _port_open(DEV_PORT)
@@ -448,7 +514,10 @@ def start_cloud() -> str:
             stderr=subprocess.STDOUT,
             creationflags=_creation_flag("CREATE_NO_WINDOW"),
         )
-        _save_cloud_pid(process.pid, "tunnel-only" if remote_open else "proxy-and-tunnel")
+        # A running proxy whose PID file this hub wrote (e.g. orphaned since a
+        # lost tunnel) is adopted, so the next stop ends it; a foreign one is not.
+        owned = not remote_open or _remote_proxy_owned()
+        _save_cloud_pid(process.pid, "proxy-and-tunnel" if owned else "tunnel-only")
         try:
             for _ in range(80):
                 if process.poll() is not None:
@@ -507,6 +576,20 @@ def stop_cloud() -> bool:
     return True
 
 
+def _remote_proxy_owned() -> bool:
+    """True if the Pi dev proxy runs under the PID this hub recorded."""
+    code = (
+        "from pathlib import Path; import sys; "
+        f"p=Path('{REMOTE_PID_FILE}'); "
+        "pid=int(p.read_text().strip() or 0) if p.is_file() else 0; "
+        "q=Path(f'/proc/{pid}/cmdline'); "
+        "c=q.read_bytes().replace(bytes([0]),b' ').decode() if pid and q.is_file() else ''; "
+        f"sys.exit(0 if ('litellm_dev.yaml' in c and '--port {DEV_PORT}' in c) else 1)"
+    )
+    remote = f"python3 -c {shlex.quote(code)}"
+    return _run([*_ssh_base(), f"{PI_USER}@{PI_HOST}", remote], timeout=15).returncode == 0
+
+
 def _stop_remote_proxy() -> bool:
     """Stop the Pi dev proxy this hub started; True if it is gone afterwards.
 
@@ -530,17 +613,40 @@ def _stop_remote_proxy() -> bool:
     return result.returncode in (0, 3)
 
 
+def _opencode_local_config() -> Path:
+    """Hub-owned OpenCode config fragment (merged via OPENCODE_CONFIG).
+
+    Declares the loopback Ollama provider with the 64K model, so the operator's
+    global OpenCode configuration stays untouched.
+    """
+    target = _state_dir() / "opencode-local.json"
+    payload = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "ollama": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama lokal (KAI Developer Hub)",
+                "options": {"baseURL": f"http://{DEV_HOST}:{OLLAMA_PORT}/v1"},
+                "models": {OPENCODE_LOCAL_MODEL: {"name": OPENCODE_LOCAL_MODEL}},
+            }
+        },
+    }
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = None) -> None:
     session = workflow.require_session(repo, STATE_ROOT)
-    executable = _command("opencode.cmd") or _command("opencode")
+    executable = _opencode_executable()
     if not executable:
         raise HubError("OpenCode ist nicht installiert oder nicht im PATH.")
     env = os.environ.copy()
     if route == "local":
         ensure_ollama()
-        if LOCAL_MODEL not in _ollama_models():
-            raise HubError(f"Lokales Modell fehlt: {LOCAL_MODEL}")
-        model = f"ollama/{LOCAL_MODEL}"
+        if OPENCODE_LOCAL_MODEL not in _ollama_models():
+            raise HubError(f"Lokales Modell fehlt: {OPENCODE_LOCAL_MODEL}")
+        env["OPENCODE_CONFIG"] = str(_opencode_local_config())
+        model = f"ollama/{OPENCODE_LOCAL_MODEL}"
     elif route == "cloud":
         env["KAI_DEV_LITELLM_KEY"] = start_cloud()
         _cloud_inference_probe(env["KAI_DEV_LITELLM_KEY"], "kai-dev-code")
@@ -591,6 +697,9 @@ def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
     env["CUSTOM_API_KEY"] = "ollama-local"
     env["HERMES_INFERENCE_MODEL"] = model
     env["HERMES_INFERENCE_PROVIDER"] = "custom"
+    # Hermes' file/terminal tools resolve relative paths against TERMINAL_CWD,
+    # not against --in; unset, read_file looked in the home directory.
+    env["TERMINAL_CWD"] = str(repo)
     env["KAI_AGENT_SURFACE"] = "hermes-local"
     pack = workflow.context_pack(
         repo, STATE_ROOT, task=session["task"], handoff=handoff, compact=True
@@ -915,7 +1024,7 @@ def status(repo: Path) -> dict[str, Any]:
         "head": _git(repo, "rev-parse", "HEAD"),
         "context_contract": (repo / "AGENTS.md").is_file()
         and (repo / "docs/AI_HANDOFF.md").is_file(),
-        "opencode": bool(_command("opencode.cmd") or _command("opencode")),
+        "opencode": bool(_opencode_executable()),
         "hermes": bool(_command("hermes")),
         "kimi": bool(_command("kimi")),
         "ollama_online": ollama_online,
