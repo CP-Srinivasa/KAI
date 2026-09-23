@@ -13,10 +13,10 @@ evaluator — funding, OI, momentum, L2, and any future pre-registered hypothesi
 draws from the same fill-independent pool instead of a hand-produced outcomes file.
 
   * :func:`load_canonical_outcomes` — resolved shadow candidates -> time-ordered
-    outcomes ``{symbol, side, entry_ts, fwd:{h:bps}}`` with side-adjusted forward
+    outcomes ``{candidate_id, symbol, side, entry_ts, fwd:{h:bps}}`` with side-adjusted forward
     returns (``fwd_{h}s_bps`` > 0 means the candidate's OWN direction paid).
   * :func:`to_feature_outcomes` — project one horizon into the flat
-    ``{symbol, entry_ts, net_bps}`` shape the raw-feature evaluators
+    ``{candidate_id, symbol, side, entry_ts, net_bps}`` shape the raw-feature evaluators
     (:func:`app.observability.l2_evidence_eval.pit_join` /
     ``evaluate_feature_direction``) consume — so momentum/L2 no longer REQUIRE a
     hand-supplied ``--outcomes`` file.
@@ -103,7 +103,7 @@ def build_outcomes(
 ) -> list[dict[str, Any]]:
     """Resolved shadow candidates -> time-ordered outcome records.
 
-    Each outcome is ``{symbol, side, entry_ts (datetime), fwd:{h: bps|None}}`` with
+    Each outcome is ``{candidate_id, symbol, side, entry_ts (datetime), fwd:{h: bps|None}}`` with
     SIDE-ADJUSTED forward returns. Rows with a sentinel ``|fwd| >= max_abs_bps``
     (delisted/no-data), an unknown side, no entry time, or no usable horizon are
     dropped. The list is sorted by ``entry_ts`` so a downstream moving-block
@@ -111,9 +111,12 @@ def build_outcomes(
     """
     out: list[dict[str, Any]] = []
     for c in resolved:
+        candidate_id = c.get("candidate_id")
         sym = c.get("symbol")
         side = c.get("side")
         ets = entry_ts_for(c, entry_times)
+        if not isinstance(candidate_id, str) or not candidate_id.strip():
+            continue
         if not sym or side not in _SIDES or ets is None:
             continue
         fwd: dict[int, float | None] = {}
@@ -130,7 +133,15 @@ def build_outcomes(
             fwd[h] = fv
         if sentinel or all(fwd.get(h) is None for h in HORIZONS):
             continue
-        out.append({"symbol": str(sym), "side": str(side), "entry_ts": ets, "fwd": fwd})
+        out.append(
+            {
+                "candidate_id": candidate_id.strip(),
+                "symbol": str(sym),
+                "side": str(side),
+                "entry_ts": ets,
+                "fwd": fwd,
+            }
+        )
     out.sort(key=lambda o: o["entry_ts"])  # time-ordered → autocorr-preserving bootstrap
     return out
 
@@ -154,7 +165,7 @@ def to_feature_outcomes(
 ) -> list[dict[str, Any]]:
     """Project canonical outcomes into the flat raw-feature-evaluator shape.
 
-    ``{symbol, entry_ts (ISO str), net_bps}`` for the given horizon, dropping
+    ``{candidate_id, symbol, side, entry_ts (ISO str), net_bps}`` for the given horizon, dropping
     outcomes with no return at that horizon. This lets the momentum / L2 feature
     evaluators (which pit-join on ``entry_ts`` and read ``net_bps``) run against
     the fill-independent canonical pool instead of a hand-produced file.
@@ -169,7 +180,9 @@ def to_feature_outcomes(
         ets = o["entry_ts"]
         out.append(
             {
+                "candidate_id": o["candidate_id"],
                 "symbol": o["symbol"],
+                "side": o["side"],
                 "entry_ts": ets.isoformat() if isinstance(ets, datetime) else str(ets),
                 "net_bps": float(v),
             }

@@ -69,6 +69,7 @@ def test_build_outcomes_filters_and_time_orders():
     out = build_outcomes(resolved, times)
     assert [o["symbol"] for o in out] == ["ETH/USDT", "BTC/USDT"]  # time-ordered
     btc = out[1]
+    assert btc["candidate_id"] == "a"
     assert btc["side"] == "long"
     assert btc["fwd"][60] == 10.0
     assert btc["fwd"][3600] == 25.0
@@ -94,6 +95,7 @@ def test_load_entry_times_maps_candidate_id():
 def test_to_feature_outcomes_projects_horizon_and_iso_ts():
     outcomes = [
         {
+            "candidate_id": "btc-long",
             "symbol": "BTC/USDT",
             "side": "long",
             "entry_ts": datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
@@ -102,7 +104,13 @@ def test_to_feature_outcomes_projects_horizon_and_iso_ts():
     ]
     feats = to_feature_outcomes(outcomes, horizon=3600)
     assert feats == [
-        {"symbol": "BTC/USDT", "entry_ts": "2026-07-01T12:00:00+00:00", "net_bps": 33.0}
+        {
+            "candidate_id": "btc-long",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-07-01T12:00:00+00:00",
+            "net_bps": 33.0,
+        }
     ]
     # a horizon with no value is dropped (not emitted as None)
     assert to_feature_outcomes(outcomes, horizon=300) == []
@@ -111,3 +119,27 @@ def test_to_feature_outcomes_projects_horizon_and_iso_ts():
 def test_to_feature_outcomes_rejects_unknown_horizon():
     with pytest.raises(ValueError):
         to_feature_outcomes([], horizon=120)
+
+
+@pytest.mark.parametrize("feature_key", ["fee_percentile", "momentum_score"])
+def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
+    from app.observability.l2_evidence_eval import pit_join
+
+    entry_ts = datetime(2026, 7, 1, 12, 0, 30, tzinfo=UTC)
+    outcomes = build_outcomes(
+        [_resolved("candidate-1", "BTC/USDT", "long", h3600=33.0)],
+        {"candidate-1": entry_ts},
+    )
+    measurements = [
+        {
+            "candidate_id": "candidate-1",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "ts": "2026-07-01T12:00:00+00:00",
+            feature_key: 0.9,
+        }
+    ]
+    pairs = pit_join(measurements, to_feature_outcomes(outcomes))
+    assert len(pairs) == 1
+    assert pairs[0][1]["candidate_id"] == "candidate-1"
+    assert pairs[0][1]["side"] == "long"
