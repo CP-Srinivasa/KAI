@@ -42,8 +42,12 @@ class JevShadowPolicy:
     require_single_model_identity: bool = True
 
     def __post_init__(self) -> None:
-        if isinstance(self.minimum_sample_count, bool) or self.minimum_sample_count < 1:
-            raise ValueError("minimum_sample_count must be positive")
+        if (
+            isinstance(self.minimum_sample_count, bool)
+            or not isinstance(self.minimum_sample_count, int)
+            or self.minimum_sample_count < 1
+        ):
+            raise ValueError("minimum_sample_count must be a positive integer")
         ProbabilityPolicy(self.negative_below, self.positive_at)
         for name in ("minimum_coverage", "maximum_false_negative_rate", "maximum_brier_score"):
             value = getattr(self, name)

@@ -42,6 +42,10 @@ Exit `0` bedeutet ausschließlich `READY_FOR_SHADOW_REVIEW`. Exit `2` bedeutet u
 unzureichende oder nicht bestandene Evidenz. Jeder Bericht enthält `primary_ready=false`;
 dieses Werkzeug besitzt keinen Aktivierungspfad.
 
+Der Ausgabepfad muss neu sein. Bestehende Dateien (auch frühere Berichte, Eingabedaten
+oder Policy-Dateien) werden niemals überschrieben; dafür endet der Aufruf mit Exit `2`.
+Die Mindeststichprobe muss eine positive ganze Zahl sein.
+
 Vor einem echten Lauf sind Korpusquelle, Labelverfahren, Datentrennung und zulässiger
 externer Datentransfer durch den Integrator zu dokumentieren. Ein synthetischer Smoke prüft
 nur Parser und Bericht, nicht die Modellqualität.

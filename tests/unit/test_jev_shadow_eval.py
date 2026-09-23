@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from scripts.jev_shadow_eval.evaluator import (
     EvaluationStatus,
     JevShadowPolicy,
     evaluate,
     load_cases,
+    policy_from_dict,
 )
+
+
+@pytest.mark.parametrize("value", [True, None, "100", 1.5, float("nan"), float("inf"), 0, -1])
+def test_invalid_sample_count_is_rejected(value: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        policy_from_dict({"minimum_sample_count": value})
 
 
 def _row(case_id: str, *, expected: bool, probability: float, cost=0.000001) -> dict:

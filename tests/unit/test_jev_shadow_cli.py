@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from scripts.jev_shadow_eval.cli import main
 
 
@@ -67,3 +68,30 @@ def test_cli_fails_closed_for_invalid_input(tmp_path: Path) -> None:
     policy.write_text(json.dumps({"minimum_sample_count": 1}), encoding="utf-8")
 
     assert main(["--input", str(evidence), "--policy", str(policy)]) == 2
+
+
+@pytest.mark.parametrize("target", ["evidence.jsonl", "policy.json", "previous.json"])
+def test_cli_preserves_existing_files(tmp_path: Path, target: str) -> None:
+    evidence = tmp_path / "evidence.jsonl"
+    evidence.write_text(json.dumps(_case("case", True, 0.95)) + "\n", encoding="utf-8")
+    policy = tmp_path / "policy.json"
+    policy.write_text('{"minimum_sample_count": 1}', encoding="utf-8")
+    previous = tmp_path / "previous.json"
+    previous.write_text("previous report", encoding="utf-8")
+    paths = [evidence, policy, previous]
+    original = {path: path.read_bytes() for path in paths}
+
+    assert (
+        main(
+            [
+                "--input",
+                str(evidence),
+                "--policy",
+                str(policy),
+                "--output",
+                str(tmp_path / target),
+            ]
+        )
+        == 2
+    )
+    assert {path: path.read_bytes() for path in paths} == original
