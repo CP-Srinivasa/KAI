@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from app.audit.stream_validation import PaperExecutionAuditStreamRow
@@ -21,6 +22,7 @@ from app.core.file_lock import append_lock
 from app.core.settings import get_settings
 from app.core.symbol_guard import is_tradeable_symbol
 from app.execution.audit_replay import replay_paper_audit
+from app.execution.close_guard import guard_close, pyramid_rejection
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
     PaperFill,
@@ -194,21 +196,6 @@ def _liquidation_price(entry: float, leverage: float | None, side: str) -> float
     if side == "short":
         return entry * (1.0 + frac)
     return entry * (1.0 - frac)
-
-
-def _implied_close_return(
-    entry_price: float, close_price: float, position_side: str
-) -> float | None:
-    """Signed per-trade return a close at ``close_price`` would realize.
-
-    Returns None when prices are non-positive (cannot reason about the move).
-    Long: (close/entry - 1). Short: (entry/close - 1).
-    """
-    if entry_price <= 0 or close_price <= 0:
-        return None
-    if position_side == "short":
-        return entry_price / close_price - 1.0
-    return close_price / entry_price - 1.0
 
 
 class DuplicateOrderError(RuntimeError):
@@ -1043,7 +1030,13 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
                             _rg.route,
                         )
                         return None
-
+        # ARB-P0 2026-09-23: Nachkauf-Grenze je Position (close_guard).
+        _pyramid = pyramid_rejection(self._portfolio.positions.get(order.symbol))
+        if _opens and _pyramid is not None:
+            _pyramid.update(order_id=order.order_id, symbol=order.symbol, source=order.source or "")
+            self._append_audit("order_rejected_pyramid_limit", _pyramid)
+            logger.warning("[PAPER] Rejecting add on %s — limit: %s", order.symbol, _pyramid)
+            return None
         try:
             mutation_plan, unavailable_reason = build_fill_mutation_plan(
                 order=order,
@@ -1239,6 +1232,28 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
     # to the residual position. When tiers is empty and SL never fired the
     # operator can manually close or wait for SL.
 
+    def _close_allowed(
+        self,
+        pos: PaperPosition,
+        close_price: float,
+        reason: str,
+        evidence: PriceEvidence | None,
+        extra: dict[str, object] | None = None,
+    ) -> bool:
+        """Phantom-Cap mit Zweitanbieter-Bestaetigung (app/execution/close_guard.py)."""
+        return guard_close(
+            symbol=pos.symbol,
+            reason=reason,
+            entry_price=pos.avg_entry_price,
+            close_price=close_price,
+            position_side=pos.position_side,
+            price_source=self._tick_price_sources.get(pos.symbol, "unknown"),
+            evidence=evidence or self._tick_price_evidence.get(pos.symbol),
+            append_audit=self._append_audit,
+            cap=_max_close_return_pct(),
+            extra=extra,
+        )
+
     def _consume_first_tier(
         self,
         symbol: str,
@@ -1296,34 +1311,9 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
         # DS-20260529-V1: same circuit breaker as close_position — a tier that
         # only fires because the monitor price disagrees with the entry source
         # must not book a phantom partial close.
-        implied = _implied_close_return(entry_price, current_price, pos.position_side)
-        cap = _max_close_return_pct()
-        if implied is not None and abs(implied) > cap:
-            self._append_audit(
-                "close_price_sanity_rejected",
-                {
-                    "symbol": symbol,
-                    "reason": "tp_tier",
-                    "tier_price": tier_price,
-                    "entry_price": entry_price,
-                    "close_price": current_price,
-                    "implied_return_pct": implied * 100.0,
-                    "max_close_return_pct": cap * 100.0,
-                    "position_side": pos.position_side,
-                    # Ohne diese Zeile ist der Befund nicht zurueckverfolgbar:
-                    # man sieht, DASS ein unmoeglicher Preis kam, nie WOHER.
-                    "price_source": self._tick_price_sources.get(symbol, "unknown"),
-                },
-            )
-            logger.error(
-                "[PAPER] Tier-close REJECTED — implied return %.1f%% exceeds cap "
-                "%.1f%%: %s entry=%.6g close=%.6g (likely stale/wrong price source)",
-                implied * 100.0,
-                cap * 100.0,
-                symbol,
-                entry_price,
-                current_price,
-            )
+        if not self._close_allowed(
+            pos, current_price, "tp_tier", price_evidence, extra={"tier_price": tier_price}
+        ):
             return None
         close_side = "buy" if pos.position_side == "short" else "sell"
         order = self.create_order(
@@ -1462,22 +1452,11 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
             )
         new_sl = stop_loss if stop_loss is not None else pos.stop_loss
         new_tp = take_profit if take_profit is not None else pos.take_profit
-        self._portfolio.positions[symbol] = PaperPosition(
-            symbol=pos.symbol,
-            quantity=pos.quantity,
-            avg_entry_price=pos.avg_entry_price,
+        self._portfolio.positions[symbol] = replace(
+            pos,
             stop_loss=new_sl,
             take_profit=new_tp,
-            opened_at=pos.opened_at,
-            realized_pnl_usd=pos.realized_pnl_usd,
-            position_side=pos.position_side,
             take_profit_tiers=list(pos.take_profit_tiers),
-            initial_quantity=pos.initial_quantity,
-            correlation_id=pos.correlation_id,
-            leverage=pos.leverage,
-            source=pos.source,
-            document_id=pos.document_id,
-            regime=pos.regime,
         )
         self._append_audit(
             "position_adjusted",
@@ -1551,34 +1530,9 @@ class PaperExecutionEngine(PaperFiniteGateMixin):
             return None
 
         entry_price = pos.avg_entry_price
-        # DS-20260529-V1: reject phantom closes from price-source disagreement.
-        implied = _implied_close_return(entry_price, current_price, pos.position_side)
-        cap = _max_close_return_pct()
-        if implied is not None and abs(implied) > cap:
-            self._append_audit(
-                "close_price_sanity_rejected",
-                {
-                    "symbol": symbol,
-                    "reason": reason,
-                    "entry_price": entry_price,
-                    "close_price": current_price,
-                    "implied_return_pct": implied * 100.0,
-                    "max_close_return_pct": cap * 100.0,
-                    "position_side": pos.position_side,
-                    # Ohne diese Zeile ist der Befund nicht zurueckverfolgbar:
-                    # man sieht, DASS ein unmoeglicher Preis kam, nie WOHER.
-                    "price_source": self._tick_price_sources.get(symbol, "unknown"),
-                },
-            )
-            logger.error(
-                "[PAPER] Close REJECTED — implied return %.1f%% exceeds cap %.1f%%: "
-                "%s entry=%.6g close=%.6g (likely stale/wrong price source)",
-                implied * 100.0,
-                cap * 100.0,
-                symbol,
-                entry_price,
-                current_price,
-            )
+        # DS-20260529-V1: reject phantom closes from price-source disagreement —
+        # unless an independent second venue confirms the price (close_guard).
+        if not self._close_allowed(pos, current_price, reason, price_evidence):
             return None
         quantity = pos.quantity
         close_side = "buy" if pos.position_side == "short" else "sell"

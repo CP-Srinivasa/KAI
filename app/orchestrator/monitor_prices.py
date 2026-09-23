@@ -19,6 +19,7 @@ war da, sie kam nur nie dort an, wo der Befund entsteht.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Protocol
 
 from app.execution.models import PriceEvidence
@@ -94,6 +95,17 @@ async def collect_monitor_prices(
             observed_price=point.price,
             age_ms=(float(age_s) * 1000.0 if isinstance(age_s, (int, float)) else None),
             is_stale=bool(point.is_stale),
+            # Zweitanbieter-Bestaetigung (2026-09-23): nur sie laesst einen Close
+            # ueber dem Phantom-Cap zu (app/execution/close_guard.py).
+            corroborated_by=str(getattr(point, "corroborated_by", "") or ""),
+            corroborating_price=_finite_or_none(getattr(point, "corroborating_price", None)),
         )
 
     return MonitorPrices(by_symbol, sources, no_market_data, evidence)
+
+
+def _finite_or_none(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    out = float(value)
+    return out if math.isfinite(out) and out > 0 else None
