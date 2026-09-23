@@ -4,6 +4,19 @@ Dieses Werkzeug bewertet bereits aufgezeichnete TypeSafe-System-One-Antworten. E
 keinen Proxy, ruft kein Modell auf und ändert weder Routing noch Trading-Zustand. `app/ai`
 bleibt die einzige Instanz, die Schwellen und Ergebniswirkung festlegt.
 
+## Unabhängigkeitsregel
+
+KAI ist weder technisch noch betrieblich von Jev/TypeSafe abhängig. Ohne Jev-Zugang
+bleiben Start, Readiness, Scheduler, bestehende Modellrouten, KAI-Baseline und Trading-Gates
+unverändert funktionsfähig. Ein fehlender Schlüssel, ein nicht verfügbarer Zugang oder eine
+fehlerhafte Jev-Antwort wird für Jev-spezifische Schritte als `SKIPPED/BLOCKED_EXTERNAL`
+protokolliert und darf keinen KAI-Ausfall erzeugen.
+
+Korpusbildung, Blind-Review, Baseline und Gate-Auswertung laufen vollständig offline. Jev
+darf nur nach einer separaten, evidenzbasierten Graduation als optionale Route unter
+`app/ai` hinzukommen; bis dahin ersetzt Jev weder die KAI-Baseline noch einen bestehenden
+Provider und besitzt keine PRIMARY-, Deploy- oder Trading-Autorität.
+
 ## Eingabe
 
 Eine JSONL-Zeile beschreibt genau einen unabhängig gelabelten Fall:
