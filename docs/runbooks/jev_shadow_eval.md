@@ -49,3 +49,48 @@ Die Mindeststichprobe muss eine positive ganze Zahl sein.
 Vor einem echten Lauf sind Korpusquelle, Labelverfahren, Datentrennung und zulässiger
 externer Datentransfer durch den Integrator zu dokumentieren. Ein synthetischer Smoke prüft
 nur Parser und Bericht, nicht die Modellqualität.
+
+## Abnahme vor einer realen Shadow-Ausführung
+
+1. Integrator prüft und integriert den Donor-PR. Installierten Commit, Python-Version,
+   LiteLLM-Version und konkrete TypeSafe-Modellkennung im Versuchsprotokoll festhalten.
+   CI allein belegt keine Kompatibilität des installierten Proxys.
+2. Einen separaten Entwicklungsendpunkt und ein festes Anfrage-/Kostenlimit wählen.
+   Zugangsdaten außerhalb von Git hinterlegen; im Protokoll ausschließlich deren
+   Vorhandensein bestätigen. Produktionsendpunkte nicht für diesen Versuch verwenden.
+3. Korpusquelle und Freigabe zum externen Datentransfer dokumentieren. Mindestens
+   100 eindeutige Fälle vorsehen, darunter relevante und irrelevante Inhalte sowie
+   schwierige Grenzfälle. Doppelte Inhalte und Überschneidungen mit Kalibrierungsdaten
+   entfernen. Beide Klassen sind erforderlich; ihr bloßes Vorhandensein beweist
+   noch keine repräsentative Stichprobe.
+4. Referenzlabels vor Modellaufrufen unabhängig festlegen. Labelverantwortlichen,
+   Unstimmigkeiten und deren Auflösung dokumentieren. Baseline auf exakt denselben
+   Inhalten ausführen und ihren Commit sowie ihre Konfiguration festhalten.
+5. Policy und Fragewortlaut vor dem Testsatz festschreiben. Inhalte, Labels, Policy
+   und Fragewortlaut hashen. Ein Hash belegt Unverändertheit, keine unabhängige
+   Beschriftung oder korrekte Herkunft; diese Nachweise separat prüfen.
+6. Auf dem Entwicklungsendpunkt zuerst einen einzelnen freigegebenen Fall prüfen.
+   Jev verwendet den System-One-Vertrag; der hier implementierte Parser ist kein
+   Netzwerkclient. Proxy-Route und Aufrufer müssen separat verifiziert werden.
+7. Anschließend den begrenzten Testsatz erfassen: unveränderte Antworten, tatsächliche
+   Modellkennung, gemessene Latenz, Tokenverbrauch und nachvollziehbare Kosten.
+   Fehler und Timeouts ebenfalls im Versuchsprotokoll zählen; ausschließlich
+   erfolgreiche Antworten auszuwerten würde den Vergleich verzerren.
+8. JSONL auswerten und Bericht unabhängig reviewen. False Negatives einzeln prüfen;
+   ebenso Fehlalarme, Review-Fälle, Klassenverteilung und Unterschiede zur Baseline.
+   Die Punktschätzungen im Bericht sind keine statistische Zuverlässigkeitsgarantie.
+
+## Abbruch und Rückfall prüfen
+
+Vor jeder späteren Laufzeitintegration auf dem Entwicklungsstand fehlenden/falschen
+Key, Timeout, nicht erreichbaren Proxy, ungültiges JSON und eine unerwartete
+Modellkennung simulieren. Erwartung: der vorhandene KAI-Pfad bleibt zuständig;
+ein Shadow-Fehler verändert keine Entscheidung und blockiert keine Verarbeitung.
+Der Offline-Harness implementiert diesen Laufzeit-Fallback nicht: dafür sind Tests
+am tatsächlichen Aufrufer erforderlich. Prozessneustart und Abschalten der
+Shadow-Route müssen denselben Baseline-Pfad wiederherstellen.
+
+Zur Übergabe gehören integrierter und installierter SHA, Versionen, Korpus-/Policy-/
+Frage-Hashes, Labelprotokoll, Baseline-Konfiguration, Erfolgs- und Fehlerzahlen,
+Auswertungsbericht und Ergebnisse der Ausfalltests. Fehlende Nachweise bleiben
+offen. PRIMARY-Aktivierung erfolgt ausschließlich über eine separate Entscheidung.

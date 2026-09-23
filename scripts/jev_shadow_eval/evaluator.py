@@ -208,6 +208,10 @@ def evaluate(
     elif len(cases) < policy.minimum_sample_count:
         status = EvaluationStatus.INSUFFICIENT_EVIDENCE
         reasons.append("SAMPLE_COUNT_TOO_LOW")
+    elif positives == 0 or positives == len(cases):
+        # Both classes are needed to assess missed signals and false alarms.
+        status = EvaluationStatus.INSUFFICIENT_EVIDENCE
+        reasons.append("REFERENCE_CLASS_MISSING")
     else:
         if coverage is None or coverage < policy.minimum_coverage:
             reasons.append("COVERAGE_TOO_LOW")
@@ -229,6 +233,8 @@ def evaluate(
         "reasons": reasons,
         "primary_ready": False,
         "sample_count": len(cases),
+        "reference_positive_count": positives,
+        "reference_negative_count": len(cases) - positives,
         "invalid_record_count": len(issues),
         "validation_issues": [asdict(issue) for issue in issues],
         "actual_models": models,

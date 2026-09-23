@@ -148,3 +148,22 @@ def test_model_identity_drift_blocks_readiness(tmp_path: Path) -> None:
 
     assert report["status"] == EvaluationStatus.NOT_READY
     assert "MODEL_IDENTITY_DRIFT" in report["reasons"]
+
+
+@pytest.mark.parametrize("expected", [True, False])
+def test_single_reference_class_cannot_establish_readiness(tmp_path: Path, expected: bool) -> None:
+    source = tmp_path / "cases.jsonl"
+    _write(
+        source,
+        [
+            _row(str(index), expected=expected, probability=0.95 if expected else 0.05)
+            for index in range(100)
+        ],
+    )
+    cases, issues, _ = load_cases(source)
+    report = evaluate(cases, issues, JevShadowPolicy())
+    assert report["status"] == EvaluationStatus.INSUFFICIENT_EVIDENCE
+    assert report["reasons"] == ["REFERENCE_CLASS_MISSING"]
+    assert report["reference_positive_count"] == (100 if expected else 0)
+    assert report["reference_negative_count"] == (0 if expected else 100)
+    assert report["primary_ready"] is False
