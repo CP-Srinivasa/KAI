@@ -276,6 +276,34 @@ def test_opencode_start_injects_context_and_pins_model(
     assert "Lies zuerst C:" not in prompt
 
 
+def test_hermes_start_pins_tool_cwd_to_task_worktree(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Hermes resolves relative tool paths against TERMINAL_CWD, not against
+    # --in or the process cwd. Without it read_file looked in the home
+    # directory ("File not found: scripts/dev_reserve.sh", 23.09. acceptance).
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.HERMES_LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_command", lambda name: "hermes.exe" if name == "hermes" else None)
+    monkeypatch.setattr(hub.sys, "platform", "linux")  # no clipboard in tests
+    envs: list[dict[str, str]] = []
+    real_popen = hub.subprocess.Popen
+
+    def capture_client(args: list[str], **kwargs: object) -> object:
+        if args[0] == "hermes.exe":
+            envs.append(kwargs["env"])  # type: ignore[arg-type]
+            return object()
+        return real_popen(args, **kwargs)
+
+    monkeypatch.setattr(hub.subprocess, "Popen", capture_client)
+
+    hub.launch_hermes(kai_repo)
+
+    assert envs[0]["TERMINAL_CWD"] == str(kai_repo)
+    assert envs[0]["CUSTOM_BASE_URL"] == "http://127.0.0.1:11434/v1"
+
+
 def test_cloud_probe_requires_real_reply_identity_and_positive_cost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

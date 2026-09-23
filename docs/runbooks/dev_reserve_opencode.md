@@ -50,7 +50,10 @@ Oberflächen bleiben auf ihr gewähltes Modell für die jeweilige Sitzung gepinn
   `AGENTS.md` und arbeitet nicht mehr als projektloser Chat. Der Hub setzt
   Reasoning auf `none` (andernfalls antwortet das lokale Modell mit HTTP 400)
   und legt den ersten Kontextprompt in die Zwischenablage: **einmal in Hermes
-  einfügen und absenden**. Die globale Hermes-
+  einfügen und absenden**. Ab 0.3.1 setzt der Hub zusätzlich `TERMINAL_CWD`
+  auf den Aufgaben-Worktree. Hermes löst Werkzeugpfade danach auf, nicht nach
+  `--in`, und ohne `TERMINAL_CWD` fand `read_file` bei der Abnahme am 23.09.
+  `scripts/dev_reserve.sh` nicht (Suche im Home-Verzeichnis). Die globale Hermes-
   Konfiguration wird nicht verändert. Der LiteLLM-Dev-Proxy bleibt OpenCodes
   Cloud-Reserve; Hermes' vorgeschaltete Key-/Kostenprüfung benötigt eine
   LiteLLM-Datenbank und ist mit dem bewusst datenbanklosen Dev-Proxy inkompatibel.

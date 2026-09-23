@@ -617,6 +617,9 @@ def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
     env["CUSTOM_API_KEY"] = "ollama-local"
     env["HERMES_INFERENCE_MODEL"] = model
     env["HERMES_INFERENCE_PROVIDER"] = "custom"
+    # Hermes' file/terminal tools resolve relative paths against TERMINAL_CWD,
+    # not against --in; unset, read_file looked in the home directory.
+    env["TERMINAL_CWD"] = str(repo)
     env["KAI_AGENT_SURFACE"] = "hermes-local"
     pack = workflow.context_pack(
         repo, STATE_ROOT, task=session["task"], handoff=handoff, compact=True
