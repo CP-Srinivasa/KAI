@@ -1,3 +1,15 @@
+## 2026-09-23 - Architektur: SSE-Event-Hub nach `app/observability/`, zwei Aufwaertskanten entfallen (System-Audit AR-A-003, S2-8 Teil 1)
+
+`app/api/event_hub.py` (100 LOC, nur stdlib) wurde aus `app.alerts` und `app.execution` importiert -- Domaenencode, der
+nach oben in die Transportschicht griff. Genau deshalb waren beide Publish-Pfade als lazy Import in einem
+`except Exception: pass` versteckt (`alerts/audit.py::_publish_alert_fired`, `paper_engine.py::_publish_paper_event`):
+ein `ImportError` waere dort still verschwunden. Das Modul liegt jetzt unter `app/observability/event_hub.py`, die
+Publisher importieren normal auf Top-Level, und der einzige Abonnent (`app/api/routers/events.py`) importiert nach
+unten. Das `try/except` bleibt -- es schuetzt den Broadcast, nicht den Import. **Kein Re-Export im alten Pfad:** ein Shim
+haette die Importe in `alerts`/`execution` weiter auf `app.api` zeigen lassen und den Befund nur verschoben. Verhalten,
+Route (`/dashboard/api/events`), Event-Namen und Queue-Semantik unveraendert; `paper_engine.py` schrumpft 1882 -> 1881
+(Ratchet nachgezogen). Teil 2 (Agenten-SSOT `_AGENTS` nach `app/agents/registry.py`) folgt nach dem Deploy-HOLD.
+
 ## 2026-09-22 - Execution: `entry_watcher_audit.jsonl` unter Lock (S2-13b)
 
 Drei Prozesse schreiben denselben Strom -- `kai-entry-watch.service` (Dauerlauf), der zweite entry-watch aus

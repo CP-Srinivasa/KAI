@@ -17,6 +17,7 @@ import portalocker
 
 from app.audit.stream_validation import AlertAuditStreamRow
 from app.core.file_lock import append_lock
+from app.observability.event_hub import get_default_event_hub
 from app.signals.models import SignalProvenance
 from app.storage.jsonl_io import read_jsonl_tolerant
 
@@ -291,12 +292,11 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
 
 
 def _publish_alert_fired(record: AlertAuditRecord) -> None:
-    # NEO-P-005: fire-and-forget SSE publish. Import lazy to avoid a cycle
-    # between app.alerts and app.api, and to keep audit usable in contexts
-    # where the FastAPI app is never built (CLI, tests).
+    # NEO-P-005: fire-and-forget SSE publish — ein Broadcast-Problem darf den
+    # Audit-Append nie scheitern lassen. Der Import war lazy, weil er nach oben
+    # in app.api zeigte; seit der Hub in observability liegt (nur stdlib), ist
+    # es ein gewoehnlicher Top-Level-Import.
     try:
-        from app.api.event_hub import get_default_event_hub
-
         get_default_event_hub().publish(
             "alert_fired",
             {

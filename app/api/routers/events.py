@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from app.api.event_hub import get_default_event_hub
+from app.observability.event_hub import get_default_event_hub
 
 logger = logging.getLogger(__name__)
 

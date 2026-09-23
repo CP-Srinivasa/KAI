@@ -18,11 +18,11 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 
-from app.api.event_hub import (
+from app.api.routers import events as events_mod
+from app.observability.event_hub import (
     get_default_event_hub,
     reset_default_event_hub,
 )
-from app.api.routers import events as events_mod
 
 
 @pytest.fixture(autouse=True)
