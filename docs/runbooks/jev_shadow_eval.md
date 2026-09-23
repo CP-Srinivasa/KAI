@@ -178,6 +178,29 @@ Strittige Fälle ergeben `NEEDS_ADJUDICATION` und Exit 2. Erst ein vollständige
 nicht strittiger Bogen ergibt `REVIEW_COMPLETE`; auch dieser Status ist weder eine
 Jev-Freigabe noch ein Nachweis der menschlichen Identität des Reviewers.
 
+### Realen Holdout blind ziehen
+
+Ein read-only Export realer `CanonicalDocument`-Kandidaten bleibt außerhalb von
+Git. Die Ziehung prüft Schema, Cutoff, eindeutige Dokumente/URLs, leere Inhalte und
+normalisierte Textdubletten. Standardmäßig werden 150 Fälle gewählt: 75 vom
+Krypto-Gate übersprungene, 40 LLM-analysierte, 30 andere regelbasierte und 5 ohne
+Analysequelle. Pro Quelle gelten höchstens 30 Fälle. Auswahl und Reihenfolge sind
+vom Pool-Hash deterministisch; die Schichtung ist eine bewusste Gate-Evaluation,
+keine Schätzung der natürlichen Klassenhäufigkeit.
+
+```powershell
+python -m scripts.jev_shadow_eval.holdout `
+  --input C:\tmp\jev-candidate-pool-docs-20260923.jsonl `
+  --before 2026-09-23T10:58:41 `
+  --review-output artifacts/jev/real-holdout-blind.json `
+  --mapping-output artifacts/jev/private-real-holdout-map.json `
+  --manifest-output artifacts/jev/real-holdout-manifest.json
+```
+
+Nur der Blindbogen geht an den Reviewer. Mapping und Manifest bleiben bis zum
+eingefrorenen Review getrennt. Der Pool muss vor einem Gate- oder Pipelinewechsel
+enden; Fälle verschiedener Logikstände dürfen nicht still vermischt werden.
+
 Der Baseline-Bericht enthält eine als vorläufig markierte Konfusionsmatrix samt
 Accuracy, Precision, Recall und Specificity. Sie misst ausschließlich die
 Labelvorschläge des Entwicklungssatzes. Der Baseline-Befehl weist Holdout-Zeilen
