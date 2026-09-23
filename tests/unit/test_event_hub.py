@@ -15,7 +15,7 @@ import threading
 
 import pytest
 
-from app.api.event_hub import (
+from app.observability.event_hub import (
     EventHub,
     ServerEvent,
     get_default_event_hub,
@@ -66,7 +66,7 @@ async def test_publish_from_worker_thread_delivers_via_loop() -> None:
 
 @pytest.mark.asyncio
 async def test_publish_drops_events_when_queue_full() -> None:
-    from app.api import event_hub as event_hub_mod
+    from app.observability import event_hub as event_hub_mod
 
     hub = EventHub()
     queue, _sub = hub.subscribe()

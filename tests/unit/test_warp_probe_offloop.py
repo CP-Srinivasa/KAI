@@ -6,7 +6,7 @@ Windows ein ``subprocess.run`` mit 3 s Timeout, plattformuebergreifend ein
 ``timeout x attempts`` haengt (glibc-Default 5 s x 2).
 
 Aufgerufen wurde sie direkt aus ``get_daily_operator_summary`` (async), und der
-Dienst laeuft als Single-Worker-Uvicorn (app/api/event_hub.py:5, D-159). Ein
+Dienst laeuft als Single-Worker-Uvicorn (app/observability/event_hub.py:5, D-159). Ein
 haengender Resolver hielt damit nicht diesen einen Request auf, sondern den
 gesamten Prozess — jede andere Route wartete mit.
 

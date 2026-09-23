@@ -46,6 +46,7 @@ from app.execution.paper_finite_gate import (
 from app.execution.phantom_filter import _DEFAULT_MAX_CLOSE_RETURN_PCT
 from app.execution.price_evidence import _age_ms_at_fill, _finite_or_none
 from app.execution.rotation_gate import evaluate_rotation_gate
+from app.observability.event_hub import get_default_event_hub
 from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
     IllegalStateTransitionError,
@@ -250,8 +251,6 @@ def _publish_paper_event(event_type: str, record: dict[str, object]) -> None:
     if sse_event is None:
         return
     try:
-        from app.api.event_hub import get_default_event_hub
-
         get_default_event_hub().publish(sse_event, record)
     except Exception:  # noqa: BLE001 — publish must never fail the engine
         pass

@@ -729,7 +729,7 @@ async def _warp_status_offloop() -> dict[str, object]:
     ``socket.gethostbyname_ex``. The latter blocks in glibc for up to
     ``timeout x attempts`` (5 s x 2 by default) when the resolver does not
     answer. Called straight from ``get_daily_operator_summary`` on a
-    single-worker uvicorn (event_hub.py:5, D-159), that stall was not local to
+    single-worker uvicorn (app/observability/event_hub.py, D-159), that stall was not local to
     one request — it held the whole process, which is a plausible contributor to
     /health taking 12,44 s for a 322-byte response.
 

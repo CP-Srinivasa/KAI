@@ -7,6 +7,13 @@ Broadcasting is best-effort: events to a slow subscriber are dropped once
 that client's queue hits the cap, so a stuck browser never stalls the
 publisher.
 
+Lives in ``observability`` because the publishers are domain code
+(``app.alerts``, ``app.execution``) and only the ONE subscriber is an API
+router. While this module sat under ``app/api/``, both publishers had to
+import upwards into the transport layer — which is why they used a lazy,
+exception-swallowed import (System-Audit 2026-09-16, AR-A-003). Nothing here
+touches FastAPI: the dependencies are stdlib only, so the router imports down.
+
 Threading model: publishers may run in any context (APScheduler worker
 thread, sync CLI path, async request handler). We capture the subscriber's
 running event-loop at subscribe-time and use `call_soon_threadsafe` to hand
