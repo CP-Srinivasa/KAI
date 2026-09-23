@@ -40,6 +40,9 @@ litellm_settings:
   request_timeout: 30
   # KAI writes the canonical artifacts/llm_telemetry.jsonl stream.
   telemetry: false
+  # Without a database a missing/invalid key must answer 401, not 500/400
+  # (issue #1000). Module lives next to this file: config/kai_litellm_auth_status.py
+  callbacks: ["kai_litellm_auth_status.auth_status_handler"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -47,6 +47,8 @@ litellm_settings:
   # Coding-Antworten sind lang; 30 s (Laufzeit-Default) reichen hier nicht.
   request_timeout: 300
   telemetry: false
+  # Ohne Datenbank: fehlender/falscher Schluessel -> 401 statt 500/400 (#1000).
+  callbacks: ["kai_litellm_auth_status.auth_status_handler"]
 
 general_settings:
   # Eigener Schluessel. `LITELLM_MASTER_KEY` der Laufzeit taucht hier nicht
