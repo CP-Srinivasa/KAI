@@ -210,6 +210,7 @@ def build_packages(
         "pool_sha256": pool_hash,
         "cutoff_exclusive": cutoff,
         "selection_algorithm": "sha256-order/v1",
+        "selection_code_sha256": _digest(Path(__file__).read_bytes()),
         "targets": targets,
         "selected_count": len(selected),
         "max_per_source": max_per_source,

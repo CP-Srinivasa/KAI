@@ -115,7 +115,10 @@ def capture(review_path: Path, mapping_path: Path, monitor: Path) -> dict[str, A
         "baseline_positive_count": sum(row["baseline_relevant"] for row in results),
         "baseline_negative_count": sum(not row["baseline_relevant"] for row in results),
         "monitor_sha256": config_hashes,
-        "code_sha256": {name: digest((ROOT / name).read_bytes()) for name in BASELINE_FILES},
+        "code_sha256": {
+            **{name: digest((ROOT / name).read_bytes()) for name in BASELINE_FILES},
+            "scripts/jev_shadow_eval/holdout_baseline.py": digest(Path(__file__).read_bytes()),
+        },
         "cases": results,
     }
 

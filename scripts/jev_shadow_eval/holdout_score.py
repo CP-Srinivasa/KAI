@@ -156,6 +156,7 @@ def score(review_path: Path, mapping_path: Path, baseline_path: Path) -> dict[st
         "review_sha256": review_hash,
         "mapping_sha256": mapping_hash,
         "baseline_sha256": baseline_hash,
+        "scoring_code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "case_count": len(joined),
         "undisputed_count": len(undisputed),
         "disputed_count": disputed_count,

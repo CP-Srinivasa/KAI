@@ -77,6 +77,7 @@ def test_holdout_selection_is_reproducible_balanced_and_blind(tmp_path: Path) ->
     )
     assert review["case_count"] == mapping["case_count"] == 150
     assert manifest["targets"] == DEFAULT_TARGETS
+    assert len(manifest["selection_code_sha256"]) == 64
     assert not ({"doc_id", "url", "source_name", "stratum"} & set(review["cases"][0]))
     assert mapping["handling"] == "DO_NOT_SHARE_WITH_REVIEWER_BEFORE_REVIEW_IS_FROZEN"
 

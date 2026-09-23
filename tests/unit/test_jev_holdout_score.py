@@ -90,6 +90,7 @@ def test_score_complete_holdout_and_strata(tmp_path: Path) -> None:
     assert report["case_count"] == report["undisputed_count"] == 100
     assert report["disputed_count"] == 0
     assert report["independent_labels_verified"] is False
+    assert len(report["scoring_code_sha256"]) == 64
     assert report["metrics"]["true_positive"] == 25
     assert report["metrics"]["false_negative"] == 25
     assert set(report["metrics_by_stratum"]) == {"external_llm", "gate_skipped"}

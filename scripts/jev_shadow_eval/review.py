@@ -88,6 +88,7 @@ def reconcile(corpus_path: Path, review_path: Path, mapping_path: Path) -> dict[
         "corpus_sha256": corpus_hash,
         "review_sha256": review_hash,
         "mapping_sha256": mapping_hash,
+        "reconcile_code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "case_count": len(labels),
         "disputed_count": disputed_count,
         "labels": labels,

@@ -59,6 +59,7 @@ def test_capture_is_reproducible_and_unscored(tmp_path: Path) -> None:
     assert report["baseline_positive_count"] + report["baseline_negative_count"] == 1
     assert report["jev_called"] is False
     assert report["primary_ready"] is False
+    assert len(report["code_sha256"]["scripts/jev_shadow_eval/holdout_baseline.py"]) == 64
 
 
 @pytest.mark.parametrize("defect", ["hash", "label", "missing", "duplicate"])

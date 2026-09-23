@@ -37,6 +37,7 @@ def test_reconcile_seals_complete_review(tmp_path: Path) -> None:
     assert report["disputed_count"] == 0
     assert len(report["review_sha256"]) == 64
     assert len(report["mapping_sha256"]) == 64
+    assert len(report["reconcile_code_sha256"]) == 64
     assert [label["case_id"] for label in report["labels"]] == sorted(
         label["case_id"] for label in report["labels"]
     )
