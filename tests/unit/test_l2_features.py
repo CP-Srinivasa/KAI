@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from app.core.l2_candidate_context import bind_candidate
 from app.signals.l2_features import (
     OnchainFlowFeatures,
     append_l2_shadow_log,
@@ -122,3 +123,88 @@ def test_append_shadow_log_writes_raw_features_and_context(tmp_path) -> None:
     # B-003: NO pre-chosen direction-aligned strength is recorded — raw only.
     assert "evidence_direction_aligned" not in line
     assert "evidence_value" not in line
+
+
+# --- shadow log: Kandidatenkontext ------------------------------------------------
+#
+# Der Writer laeuft INNERHALB von ``SignalGenerator.generate``. Steht dort ein
+# Kandidatenkontext, traegt die Messzeile ihn mit — additiv, damit ein Leser
+# beide Formen akzeptieren muss und Altzeilen gueltig bleiben.
+
+
+def _feats() -> OnchainFlowFeatures:
+    return OnchainFlowFeatures(
+        fee_sat_vb=2.5, mempool_tx=2000, fee_percentile=0.75, mempool_percentile=0.5, window_n=4
+    )
+
+
+def _write(out, **kw) -> dict:
+    append_l2_shadow_log(
+        out, symbol="BTC/USDT", direction="LONG", features=_feats(), source_trust=0.5, **kw
+    )
+    return json.loads(out.read_text(encoding="utf-8").strip().splitlines()[-1])
+
+
+def test_ohne_zyklus_bleibt_die_messzeile_genau_wie_bisher(tmp_path) -> None:
+    out = tmp_path / "l2_shadow.jsonl"
+    line = _write(out)
+    for feld in ("candidate_id", "decision_ts", "reference_price_ts", "causality_ok"):
+        assert feld not in line
+
+
+def test_im_zyklus_traegt_die_messzeile_die_kandidaten_id(tmp_path) -> None:
+    out = tmp_path / "l2_shadow.jsonl"
+    with bind_candidate(
+        candidate_id="cycle-42",
+        decision_ts="2026-09-23T10:00:05+00:00",
+        reference_price_ts="2026-09-23T10:00:00+00:00",
+    ):
+        line = _write(out)
+    assert line["candidate_id"] == "cycle-42"
+    assert line["decision_ts"] == "2026-09-23T10:00:05+00:00"
+    assert line["reference_price_ts"] == "2026-09-23T10:00:00+00:00"
+    assert line["causality_ok"] is True
+
+
+def test_der_beobachtungszeitpunkt_wird_nicht_zurueckdatiert(tmp_path) -> None:
+    """``ts`` bleibt die Uhr der Messung — NICHT die Entscheidungszeit."""
+    out = tmp_path / "l2_shadow.jsonl"
+    vergangen = "2020-01-01T00:00:00+00:00"
+    with bind_candidate(candidate_id="cycle-42", decision_ts=vergangen):
+        line = _write(out)
+    assert line["ts"] != vergangen
+    assert line["ts"] > "2026-"
+    assert line["decision_ts"] == vergangen
+
+
+def test_look_ahead_wird_markiert_statt_verschwiegen(tmp_path) -> None:
+    out = tmp_path / "l2_shadow.jsonl"
+    with bind_candidate(
+        candidate_id="cycle-42",
+        decision_ts="2026-09-23T10:00:00+00:00",
+        reference_price_ts="2026-09-23T10:00:05+00:00",  # Preis JUENGER als Entscheidung
+    ):
+        line = _write(out)
+    assert line["causality_ok"] is False
+    # Die Zeile wird trotzdem geschrieben — das Urteil gehoert dem Evaluator.
+    assert line["candidate_id"] == "cycle-42"
+
+
+def test_die_rohmerkmale_bleiben_unangetastet(tmp_path) -> None:
+    out = tmp_path / "l2_shadow.jsonl"
+    ohne = _write(out)
+    with bind_candidate(candidate_id="cycle-42", decision_ts="2026-09-23T10:00:00+00:00"):
+        mit = _write(out)
+    roh = (
+        "symbol",
+        "direction",
+        "fee_sat_vb",
+        "mempool_tx",
+        "fee_percentile",
+        "mempool_percentile",
+        "window_n",
+        "source_trust",
+    )
+    assert {k: ohne[k] for k in roh} == {k: mit[k] for k in roh}
+    # B-003 gilt weiter: keine vorgewaehlte Richtungsstaerke.
+    assert "evidence_direction_aligned" not in mit
