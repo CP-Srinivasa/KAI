@@ -26,7 +26,7 @@ MODULE = REPO / "config" / "kai_litellm_auth_status.py"
 CALLBACK = "kai_litellm_auth_status.auth_status_handler"
 
 
-class ProxyErrorTypes(str, enum.Enum):
+class ProxyErrorTypes(str, enum.Enum):  # noqa: UP042 - bewusst wie LiteLLM, nicht StrEnum
     """Wie in LiteLLM: str-Enum -- ``str(member)`` ist NICHT der Wert."""
 
     no_db_connection = "no_db_connection"
