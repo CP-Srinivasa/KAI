@@ -392,9 +392,7 @@ def test_gleicher_lock_ergibt_denselben_spec_hash(tmp_path: Path) -> None:
 
 
 def test_jede_lock_aenderung_ergibt_einen_anderen_spec_hash(tmp_path: Path) -> None:
-    assert _spec_sha(tmp_path, "litellm==1.99.0\n") != _spec_sha(
-        tmp_path, "litellm==2.0.0\n"
-    )
+    assert _spec_sha(tmp_path, "litellm==1.99.0\n") != _spec_sha(tmp_path, "litellm==2.0.0\n")
 
 
 def _idempotenz_probe(wurzel: Path, spec_sha: str) -> str:
