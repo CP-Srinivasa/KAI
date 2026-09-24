@@ -21,6 +21,7 @@ import asyncio
 import base64
 import math
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
@@ -57,6 +58,8 @@ router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 _mint_limiter: MintLimiter | None = None
 ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
 _timestamp_submit_slots = asyncio.Semaphore(2)
+# Oracle invoices expire after 300 s (``LndRestClient.add_invoice`` default expiry).
+_INVOICE_EXPIRY_MINUTES = 5
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -165,14 +168,24 @@ async def _issue_challenge(
 
 
 async def _require_paid(
-    request: Request, scope: str, *, telemetry_scope: str | None = None
+    request: Request,
+    scope: str,
+    *,
+    telemetry_scope: str | None = None,
+    before_mint: Callable[[], Awaitable[None]] | None = None,
 ) -> L402Verdict:
-    """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid."""
+    """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid.
+
+    ``before_mint`` runs after the S-002 limiter and before the invoice, so
+    route-specific pre-mint checks never become work an unpaid flood can force.
+    """
     settings = _require_oracle_enabled()
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     verdict = _valid_paid_token(request, scope)
     if verdict is None:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
+        if before_mint is not None:
+            await before_mint()
         await _issue_challenge(scope, requester_fp=fp, telemetry_scope=telemetry_scope)
     # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
     append_demand_event(
@@ -349,14 +362,22 @@ async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
         ):
             auth = replay
     if auth is None:
-        # Capacity is checked before minting so KAI never invoices for work it
-        # already knows it cannot durably accept.
-        if not await asyncio.to_thread(store.has_capacity):
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "timestamp_capacity_exhausted", "retriable": False},
-            )
-        auth = await _require_paid(request, scope, telemetry_scope="timestamp")
+        # Capacity is checked after the S-002 limiter and before minting, so KAI
+        # never invoices for work it already knows it cannot durably accept and
+        # an unpaid flood cannot force store scans. Challenges reserve nothing,
+        # so keep headroom for every invoice that can still be paid.
+        reserve = settings.lightning.l402_mint_budget_per_min * _INVOICE_EXPIRY_MINUTES
+
+        async def _capacity_before_mint() -> None:
+            if not await asyncio.to_thread(store.has_capacity, reserve=reserve):
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "timestamp_capacity_exhausted", "retriable": False},
+                )
+
+        auth = await _require_paid(
+            request, scope, telemetry_scope="timestamp", before_mint=_capacity_before_mint
+        )
 
     try:
         async with _timestamp_submit_slots:
@@ -370,6 +391,8 @@ async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
             status_code=409, detail="payment already bound to another digest"
         ) from exc
     except TimestampJobCapacityError as exc:
+        # Paid but undeliverable: keep it visible in the demand ledger.
+        append_demand_event(PAID_UNAVAILABLE, scope="timestamp", payment_hash=auth.payment_hash)
         raise HTTPException(
             status_code=503,
             detail={"code": "timestamp_capacity_exhausted", "retriable": False},

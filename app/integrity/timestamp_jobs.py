@@ -121,15 +121,19 @@ class TimestampJobStore:
         if self.max_jobs <= 0:
             raise ValueError("max_jobs must be positive")
 
-    def has_capacity(self, *, payment_hash: str | None = None) -> bool:
-        """Return whether a new job can be reserved; existing jobs always fit."""
+    def has_capacity(self, *, payment_hash: str | None = None, reserve: int = 0) -> bool:
+        """Advisory pre-mint check; existing jobs always fit.
+
+        Lock-free on purpose: it runs for unpaid callers, and a global strict
+        lock there would let an anonymous flood stall paid ``submit`` calls. The
+        hard bound is enforced under the lock in :meth:`submit`. ``reserve``
+        keeps headroom for invoices already issued (challenges reserve nothing),
+        so a paid caller does not lose the race for the last slot.
+        """
         canonical = _canonical_hash(payment_hash, name="payment_hash") if payment_hash else None
         if canonical is not None and (self.root / canonical).is_dir():
             return True
-        with append_lock(self.root / ".capacity", strict=True):
-            if canonical is not None and (self.root / canonical).is_dir():
-                return True
-            return self._job_count() < self.max_jobs
+        return self._job_count() + max(0, int(reserve)) < self.max_jobs
 
     def has_binding(self, *, payment_hash: str, digest: str) -> bool:
         """Return whether a paid job already durably binds this hash and digest."""
@@ -322,6 +326,15 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
             return False
         if not proof:
             return False
+        proof_sha256 = hashlib.sha256(proof).hexdigest()
+        already_reconciled = (
+            record.get("state") == "bitcoin_confirmed"
+            and record.get("proof_sha256") == proof_sha256
+        )
+        if already_reconciled:
+            # Already reconciled: the upgrader calls this on every pass, so a
+            # rewrite here would only churn fsyncs on the Pi's SD card.
+            return True
         digest = record.get("digest")
         if not isinstance(digest, str) or not _proof_matches_digest(proof_path, digest):
             return False
@@ -331,7 +344,7 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
             "state": "bitcoin_confirmed",
             "updated_at": now,
             "confirmed_at": record.get("confirmed_at", now),
-            "proof_sha256": hashlib.sha256(proof).hexdigest(),
+            "proof_sha256": proof_sha256,
         }
         _atomic_json(record_path, confirmed)
         return True

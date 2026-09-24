@@ -219,6 +219,58 @@ def test_confirmed_uc3_proof_heals_record_on_next_upgrade_pass(tmp_path) -> None
     assert record["state"] == "bitcoin_confirmed"
 
 
+def _pending_job(tmp_path: Path, digest_byte: bytes) -> Path:
+    job_dir = tmp_path / ("a" * 64)
+    job_dir.mkdir()
+    _write_proof(job_dir / "proof.ots", digest=digest_byte * 32)
+    (job_dir / "record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "payment_hash": "a" * 64,
+                "digest": digest_byte.hex() * 32,
+                "state": "pending_bitcoin",
+                "created_at": "2026-09-23T10:00:00+00:00",
+                "updated_at": "2026-09-23T10:00:00+00:00",
+                "attempts": 1,
+                "proof_sha256": "pre-upgrade-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return job_dir
+
+
+def test_uc3_record_heals_after_mark_raised_in_previous_pass(tmp_path) -> None:
+    """A lock/IO error while reconciling must not strand the paid job forever."""
+    job_dir = _pending_job(tmp_path, b"\x99")
+
+    with patch(
+        "app.integrity.timestamp_jobs.mark_timestamp_job_confirmed",
+        side_effect=OSError("record lock unavailable"),
+    ):
+        first = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900002))
+    assert first.failed == 1
+
+    second = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900002))
+    assert second.already_confirmed == 1 and second.failed == 0
+    record = json.loads((job_dir / "record.json").read_text(encoding="utf-8"))
+    assert record["state"] == "bitcoin_confirmed"
+
+
+def test_reconciled_uc3_record_is_not_rewritten_on_every_pass(tmp_path) -> None:
+    """Confirmed + matching hash is a no-op: no fsync churn on the SD card."""
+    job_dir = _pending_job(tmp_path, b"\xaa")
+    upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900003))
+    record_path = job_dir / "record.json"
+    settled = record_path.read_bytes()
+    assert json.loads(settled)["state"] == "bitcoin_confirmed"
+
+    again = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900003))
+    assert again.already_confirmed == 1 and again.failed == 0
+    assert record_path.read_bytes() == settled
+
+
 def test_upgrade_ignores_transient_work_proofs(tmp_path) -> None:
     work = tmp_path / ("a" * 64) / "work"
     work.mkdir(parents=True)

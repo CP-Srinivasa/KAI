@@ -114,6 +114,27 @@ def test_capacity_bounds_new_jobs_without_deleting_paid_proofs(tmp_path: Path) -
     assert (replay_record, replay_proof) == (first_record, first_proof)
 
 
+def test_pre_mint_capacity_keeps_reserve_and_takes_no_global_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anonymous pre-mint checks must not serialise on ``.capacity``; the hard
+    bound stays in ``submit``. The reserve keeps headroom for invoices that
+    are already out and can still be paid."""
+    import app.integrity.timestamp_jobs as jobs
+
+    store = TimestampJobStore(tmp_path, stamper=FakeStamper(), max_jobs=3)
+    store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+
+    def no_lock(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("pre-mint capacity check must not take the global lock")
+
+    monkeypatch.setattr(jobs, "append_lock", no_lock)
+    assert store.has_capacity() is True
+    assert store.has_capacity(reserve=1) is True
+    assert store.has_capacity(reserve=2) is False
+    assert store.has_capacity(payment_hash=PAYMENT_HASH, reserve=99) is True
+
+
 def test_capacity_snapshot_reports_operator_thresholds(tmp_path: Path) -> None:
     store = TimestampJobStore(tmp_path, stamper=FakeStamper(), max_jobs=2)
     assert store.capacity_snapshot() == {
@@ -218,3 +239,29 @@ def test_hash_mismatch_with_wrong_ots_digest_fails_closed(tmp_path: Path) -> Non
 
     with pytest.raises(TimestampJobUnavailableError, match="unreadable"):
         store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+
+
+def test_jobs_root_is_derived_from_proofs_dir() -> None:
+    """One root for upgrader, backup and the State symlink: ``proofs_dir``.
+
+    The OTS upgrader scans only ``proofs_dir``, the backup covers
+    ``monitor/integrity`` and the release links only that directory into State.
+    A jobs root outside ``proofs_dir`` would leave paid proofs pending forever.
+    """
+    from app.core.integrity_settings import IntegritySettings
+
+    cfg = IntegritySettings(proofs_dir="state/integrity")
+    assert Path(cfg.timestamp_jobs_dir) == Path("state/integrity") / "uc3_timestamp_jobs"
+    assert Path(IntegritySettings().timestamp_jobs_dir) == Path(
+        "monitor/integrity/uc3_timestamp_jobs"
+    )
+
+
+def test_jobs_root_cannot_be_moved_out_of_proofs_dir_by_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.integrity_settings import IntegritySettings
+
+    monkeypatch.setenv("APP_INTEGRITY_TIMESTAMP_JOBS_DIR", "/elsewhere/jobs")
+    cfg = IntegritySettings(proofs_dir="monitor/integrity")
+    assert Path(cfg.timestamp_jobs_dir) == Path("monitor/integrity") / "uc3_timestamp_jobs"

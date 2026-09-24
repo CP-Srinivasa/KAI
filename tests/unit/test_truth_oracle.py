@@ -286,6 +286,57 @@ def test_paid_timestamp_capacity_race_is_non_retriable_and_not_granted(
     assert response.status_code == 503
     assert response.json()["detail"]["retriable"] is False
     assert ACCESS_GRANTED not in events
+    # Paid but undeliverable must stay visible, like onchain-facts.
+    assert PAID_UNAVAILABLE in events
+
+
+def test_timestamp_rate_limit_precedes_capacity_scan(client: TestClient) -> None:
+    """S-002: an unpaid flood is rejected by the limiter before any store work."""
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    store = MagicMock()
+    store.has_capacity.return_value = True
+    with (
+        patch.object(
+            truth_oracle,
+            "get_settings",
+            return_value=_settings(enabled=True, mint_per_min=1, mint_budget_per_min=100),
+        ),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        codes = [
+            client.post("/oracle/timestamp", json={"sha256_hex": f"{i:02x}" * 32}).status_code
+            for i in range(5)
+        ]
+    assert codes == [402, 429, 429, 429, 429]
+    assert store.has_capacity.call_count == 1
+
+
+def test_timestamp_pre_mint_capacity_reserves_outstanding_invoices(client: TestClient) -> None:
+    """Challenges do not reserve slots, so keep headroom for every invoice that
+    can still be paid: mint budget per minute x invoice expiry (5 min)."""
+    store = MagicMock()
+    store.has_capacity.return_value = False
+    with (
+        patch.object(
+            truth_oracle,
+            "get_settings",
+            return_value=_settings(enabled=True, mint_budget_per_min=60),
+        ),
+        patch.object(truth_oracle, "create_invoice", AsyncMock()),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post("/oracle/timestamp", json={"sha256_hex": "ab" * 32})
+    assert response.status_code == 503
+    store.has_capacity.assert_called_once_with(reserve=300)
 
 
 def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClient) -> None:

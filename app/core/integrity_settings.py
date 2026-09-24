@@ -15,6 +15,8 @@ See KAI-mirror/kai_btc_ln_future_integration_20260616.md (Layer 3 / UC-3).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -41,6 +43,15 @@ class IntegritySettings(BaseSettings):
     stamper: str = Field(default="null")
     # Where digest records + .ots proofs are written.
     proofs_dir: str = Field(default="monitor/integrity")
-    # Durable paid UC-3 jobs have one explicit root. Keeping this independent
-    # from ``proofs_dir`` makes backup scope and migration visible in config.
-    timestamp_jobs_dir: str = Field(default="monitor/integrity/uc3_timestamp_jobs")
+
+    @property
+    def timestamp_jobs_dir(self) -> str:
+        """Durable paid UC-3 jobs — derived, deliberately NOT configurable.
+
+        Three places assume the jobs live under ``proofs_dir``: the OTS upgrader
+        scans only ``proofs_dir``, the backup covers ``monitor/integrity`` and the
+        release links only that directory into writable State. A separate knob
+        could move paid proofs where none of them look — pending forever,
+        unbacked, or unwritable. Move ``proofs_dir`` instead.
+        """
+        return str(Path(self.proofs_dir) / "uc3_timestamp_jobs")
