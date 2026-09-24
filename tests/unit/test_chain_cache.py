@@ -108,7 +108,7 @@ async def test_ttl_gates_refetch(monkeypatch) -> None:
     assert status.state == "ok" and calls == 1 and age is not None
 
     # Past the TTL -> a new background refresh is triggered.
-    monkeypatch.setattr(chain_cache, "_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(chain_cache, "CHAIN_CACHE_TTL_SECONDS", -1.0)
     await chain_cache.get_cached_chain_status()
     await chain_cache._refresh_task
     assert calls == 2
