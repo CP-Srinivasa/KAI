@@ -35,7 +35,8 @@ def test_transport_lock_is_fully_hashed_and_exact() -> None:
     requirements = _locked_requirements()
     assert requirements
     assert all(len(requirement.specifier) == 1 for requirement, _ in requirements)
-    assert all(next(iter(requirement.specifier)).operator == "==" for requirement, _ in requirements)
+    operators = {next(iter(requirement.specifier)).operator for requirement, _ in requirements}
+    assert operators == {"=="}
     assert all(hashes for _, hashes in requirements)
 
 
