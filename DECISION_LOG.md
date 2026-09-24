@@ -38,6 +38,7 @@
 
 **Entscheidung/Limit:** D-277 Schritt 4 ist damit vollstaendig belegt (Send, Cap-Deny, Fee-Limit am Node). Die Pilotauswertung folgt nach T0+72h (2026-09-25T09:04:09Z). Eigenzahlungen an den eigenen externen Payee belegen keine Marktnachfrage. Daraus folgt weder eine Trading-, L2- noch L5-Freigabe, und die Sieben-Tage-Vorgabe vor Trading bleibt bestehen.
 **Beleg:** Pi `artifacts/payments/payment_journal.jsonl` (Intents oben), lnd `ListPayments --include_incomplete`, `QueryRoutes --use_mc`, `ChannelBalance`, `reconcile_state.json`, Journal `kai-ln-scb-monitor`.
+
 ### D-283 (2026-09-24)
 **Befund:** Holdout v1 (150 Fälle, Cutoff `2026-09-23T10:58:41`) ist vollständig entschieden und gegen die aktuelle Produktionspipeline gemessen. Replay der unveränderten `AnalysisPipeline` auf Mainline `2003d529` mit Volltext von der Pi, Krypto-Gate `enforce` wie auf der Pi, Stub-Provider ohne I/O, ohne Rückfluss früherer Analyseausgaben:
 - volle Pipeline: **P 0,905 / R 0,768** (TP 76, FP 8, FN 23)
