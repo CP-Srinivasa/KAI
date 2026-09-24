@@ -26,15 +26,21 @@ _PREIMAGE = "33" * 32
 _PH_HEX = hashlib.sha256(bytes.fromhex(_PREIMAGE)).hexdigest()
 
 
-def _settings(*, enabled: bool, secret: str = _SECRET) -> SimpleNamespace:
+def _settings(
+    *,
+    enabled: bool,
+    secret: str = _SECRET,
+    mint_per_min: int = 100,
+    mint_budget_per_min: int = 100,
+) -> SimpleNamespace:
     return SimpleNamespace(
         lightning=SimpleNamespace(
             l402_enabled=enabled,
             l402_secret=secret,
             l402_default_price_sat=10,
             # S-002 mint caps (generous here so single-request tests never hit them).
-            l402_mint_per_min=100,
-            l402_mint_budget_per_min=100,
+            l402_mint_per_min=mint_per_min,
+            l402_mint_budget_per_min=mint_budget_per_min,
         )
     )
 
@@ -319,6 +325,37 @@ def test_same_paid_token_retries_after_chain_recovers_without_new_invoice(
     assert first.status_code == 503
     assert retry.status_code == 200 and retry.json()["block_height"] == 101
     mint.assert_not_awaited()
+
+
+def test_unready_chain_does_not_consume_invoice_mint_budget(client: TestClient) -> None:
+    """A stale response must leave the single available mint slot untouched."""
+    stale = _healthy_chain()
+    healthy = _healthy_chain(blocks=stale.blocks + 1)
+    cached = AsyncMock(side_effect=[(stale, 61.0), (healthy, 1.0)])
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    mint = AsyncMock(return_value=inv)
+    settings = _settings(enabled=True, mint_per_min=1, mint_budget_per_min=1)
+
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=settings),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.chain.cache.get_cached_chain_status", cached),
+    ):
+        unavailable = client.get("/oracle/onchain-facts")
+        challenge = client.get("/oracle/onchain-facts")
+
+    assert unavailable.status_code == 503
+    assert challenge.status_code == 402
+    assert challenge.headers["WWW-Authenticate"].startswith("L402 ")
+    mint.assert_awaited_once()
 
 
 # --- /oracle/verdicts — the auditable falsification-verdict product (Stage 3) -----
