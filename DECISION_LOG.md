@@ -8,7 +8,7 @@
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
 - edge status: `WIDERLEGT — canonical-edge 2026-08-25: n=208, mean -20,9 bps, median -111 bps, P(mu_net>0)=0,204; ohne Best-Trade -39,6 bps / P=0,014. Keine Ausweitung der Execution.`
 - live execution: `OFF — paper/approval-mode only; Live-Gates ungeoeffnet`
-- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt; 10 sat gesendet (1,05 sat Node-Fee), 6 sat zurueck empfangen. 72h-Pilot bis 2026-09-25T09:04:09Z; weitere D-277-Negativbeweise offen. Verifizierte Einnahmen von Dritten lifetime = 0 sat.`
+- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt; Pilot-Sends 10/40/100 sat SETTLED (Node-Fees 1,05/1,2/1,45 sat), Receives 6/35 sat. D-277-Negativbeweise live belegt (D-284): Ueber-Cap-Deny und Fee-Limit-Ablehnung am Node. 72h-Pilot bis 2026-09-25T09:04:09Z. Verifizierte Einnahmen von Dritten lifetime = 0 sat.`
 - policy: `Falsifikation vor Feature. Kein Aggregat ohne Zerlegung (D-244). Jede Schwelle wird gemessen, nicht gesetzt. Kein Auto-Merge bei Architektur-PRs.`
 - Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-268; die Nachtragsbloecke D-237..D-249 und D-250..D-268 sind nach Vergabe, nicht nach Datum sortiert).
 
@@ -24,6 +24,20 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-284 (2026-09-24)
+**Befund (D-277-Nachtrag, Pilot Tag 3):** Beide offenen Negativbeweise aus D-277 sind live belegt, per Operator-`/pay` nach `docs/runbooks/ln_rearm_sendpath.md` §4, ohne Config-Aenderung und ohne Restart.
+- (2) **Ueber-Cap-Deny:** Um 09:52:36Z wurde eine Rechnung ueber 1500 sat eingereicht (`pi_139fe0a5cbe14d8a`). Die Policy lehnte ab: `DENY`, Regel `amount_limits`, Grund `per_payment_max exceeded: 1500 > 1000`. Es gab kein `approval_granted`, kein `submitted` und keinen Node-Aufruf, `lncli listpayments` blieb unveraendert.
+- (3) **Positive Fee-Limit-Ablehnung am Node:** Um 09:58:06Z ging eine Rechnung ueber 900 sat an den Pilot-Payee (`pi_d785a1c328f54a1e`). Das Limit lag bei 3 sat (900 × 3000 ppm = 2 sat, auf den Boden von 3 sat angehoben). Nach HOTP-Freigabe gab es genau einen `submitted`, danach `FAILED_FINAL` mit `FAILURE_REASON_NO_ROUTE`, 0 sat bewegt, Fee 0. Der Node bestaetigt dasselbe fuer Payment `74a656f4…`: `FAILED`, `htlcs=0`, `NO_ROUTE`. Journal und Node stimmen ueberein.
+- **Ursache belegt, nur lesend geprueft:** `queryroutes --use_mc` zum Hint-Knoten der Rechnung ergibt ohne Limit 3 Hops mit 5,05 sat Gesamtgebuehr (success_prob 0,70), mit Limit „unable to find a path“. Eigene Liquiditaet ist als Ursache ausgeschlossen (lokal 370 744 sat, ein aktiver Kanal). Ein zweites `/pay ok` war ein Replay ohne weiteren Sendeversuch.
+- **Nutzung Tag 3:** Um 10:05:00Z wurden 100 sat gesendet (`pi_bbfcdd9ffae841aa`), `SETTLED` nach 3,3 s, 4 Hops, Node-Fee 1450 msat. Der erste Reconcile nach dem Send (10:16:04Z) ist `ok`, `complete`, 0 Orphans, SCB `stable`.
+
+**Nebenbefunde:**
+- (a) Das Journal verbucht Gebuehren in ganzen sat (`fee_actual_minor_units: 1` gegen 1450 msat am Node). Die Rundungsluecke ist damit live belegt, #1034 behebt sie in einem eigenen Release, weil der PR den Sendepfad beruehrt.
+- (b) Die Gebuehrenschaetzung der Vorschau war nur `settings_floor` und kam nicht vom Node. Sie kann eine Limit-Ablehnung nicht vorhersagen.
+- (c) Die Replay-Vorschau eines `FAILED_FINAL`-Intents bietet weiterhin „/pay ok“ an. Das ist harmlos, weil kein erneuter Send erfolgt, aber irrefuehrend (UX, P3).
+
+**Entscheidung/Limit:** D-277 Schritt 4 ist damit vollstaendig belegt (Send, Cap-Deny, Fee-Limit am Node). Die Pilotauswertung folgt nach T0+72h (2026-09-25T09:04:09Z). Eigenzahlungen an den eigenen externen Payee belegen keine Marktnachfrage. Daraus folgt weder eine Trading-, L2- noch L5-Freigabe, und die Sieben-Tage-Vorgabe vor Trading bleibt bestehen.
+**Beleg:** Pi `artifacts/payments/payment_journal.jsonl` (Intents oben), lnd `ListPayments --include_incomplete`, `QueryRoutes --use_mc`, `ChannelBalance`, `reconcile_state.json`, Journal `kai-ln-scb-monitor`.
 ### D-283 (2026-09-24)
 **Befund:** Holdout v1 (150 Fälle, Cutoff `2026-09-23T10:58:41`) ist vollständig entschieden und gegen die aktuelle Produktionspipeline gemessen. Replay der unveränderten `AnalysisPipeline` auf Mainline `2003d529` mit Volltext von der Pi, Krypto-Gate `enforce` wie auf der Pi, Stub-Provider ohne I/O, ohne Rückfluss früherer Analyseausgaben:
 - volle Pipeline: **P 0,905 / R 0,768** (TP 76, FP 8, FN 23)
