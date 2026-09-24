@@ -217,7 +217,6 @@ def test_onchain_facts_accepts_cache_age_through_refresh_grace(
 ) -> None:
     token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
     chain = _healthy_chain()
-    chain.headers += 1  # one header ahead is a normal new-block transition
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch("app.chain.cache.get_cached_chain_status", AsyncMock(return_value=(chain, age))),
@@ -344,6 +343,58 @@ def test_unready_chain_never_mints_or_serves_paid_200(
     }
     assert paid.headers["Retry-After"] == "5"
     mint.assert_not_awaited()
+
+
+def _healthy_except(**overrides: Any) -> SimpleNamespace:
+    chain = _healthy_chain()
+    for field, value in overrides.items():
+        setattr(chain, field, value)
+    return chain
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"reachable": False},
+        {"synced": False},
+        {"chain": ""},
+        {"blocks": 0, "headers": 0},
+        {"headers": 954871 + 1},
+        {"headers": 954871 - 1},
+        {"best_block_hash": "zz" * 32},
+        {"best_block_hash": "ab" * 31},
+    ],
+    ids=[
+        "unreachable",
+        "not_synced",
+        "empty_chain",
+        "zero_blocks",
+        "header_ahead",
+        "header_behind",
+        "non_hex_hash",
+        "short_hash",
+    ],
+)
+def test_each_readiness_condition_alone_blocks_paid_200(
+    client: TestClient, overrides: dict[str, Any]
+) -> None:
+    """Exactly one broken field on an otherwise healthy snapshot must fail closed.
+
+    Earlier negative cases lacked ``best_block_hash`` and failed on the hash
+    check alone, so six readiness conditions could be deleted without a red test.
+    """
+    chain = _healthy_except(**overrides)
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.chain.cache.get_cached_chain_status", AsyncMock(return_value=(chain, 1.0))),
+    ):
+        paid = client.get(
+            "/oracle/onchain-facts",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert paid.status_code == 503
+    assert paid.json()["detail"]["state"] == "not_ready"
 
 
 def test_same_paid_token_retries_after_chain_recovers_without_new_invoice(

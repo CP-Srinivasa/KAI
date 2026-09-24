@@ -176,7 +176,10 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         and blocks > 0
         and isinstance(headers, int)
         and not isinstance(headers, bool)
-        and 0 <= headers - blocks <= 1
+        # Exact equality on purpose: the adapter only reports ``synced`` when
+        # ``blocks == headers`` (``app/chain/adapter.py``), so any header lead is
+        # already not-synced — a tolerance here would be dead code.
+        and headers == blocks
         and isinstance(best_block_hash, str)
         and len(best_block_hash) == 64
         and all(char in "0123456789abcdef" for char in best_block_hash.lower())
@@ -215,7 +218,10 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
 
     # Readiness precedes L402 minting: callers are never asked to pay for a fact
     # already known to be unavailable. A paid token is stateless and remains
-    # reusable for the same scope when the cache becomes healthy again.
+    # reusable for the same scope when the cache becomes healthy again — but
+    # only within its L402 TTL (``app.lightning.l402._DEFAULT_TTL_S``, 3600 s).
+    # An outage longer than the remaining TTL leaves a paid call undelivered;
+    # ``PAID_UNAVAILABLE`` above keeps that visible in the demand ledger.
     await _require_paid(request, "onchain-facts")
     observed_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
     return {
