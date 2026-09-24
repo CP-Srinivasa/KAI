@@ -1,0 +1,251 @@
+{
+  "files_sha256": {
+    "adjudication": "aa12753600cc6eed385521631fc379b4d8111746861c2b218a0f68f45f1ae3ce",
+    "baseline_frozen_1055": "d2937d4a0e1839684727d4f01630006141331c1dbb9846ad1d6079fbbf8c7878",
+    "blind_sheet": "6ee6d641c26591a72edb89a2abd250d3e1334192c816c3fcdb44e26006c892e5",
+    "candidate_pool": "84c47ed76a3334c6e00b724353552c41ca9fce65e6f601c889dc9f7aed2af920",
+    "claude_blind_labels": "3587855e290c8941b0f44bedf0a28808fdd38a50b389b9a4065c57dae1b84c19",
+    "fulltext_export": "66d0d6707dcab8d224e19a26c58370e7f274e28bd50d92af48abfd51dc384e8b",
+    "pipeline_replay": "a4089d8aac7467e1e8fc9d212a94fa60980a1efd3535c25deb91ff5643dcbb3a",
+    "private_mapping": "f4fac04d1db277be8932121ba1efcedcc2cf1dffaba0bcddf3e9c189d0dd6f8c",
+    "score_baseline_frozen_1055": "dbf3561798f2311f8f54107c6c5cfb5dc84f023e7b6933f3f858ae022b782932",
+    "score_pipeline_replay": "0a7fab533e2cd6602d34ba2af53527fbf0e908bd35f67cdb6c683074f2722dc1",
+    "selection_manifest": "c559f28b2f534e679bab1d491b0cc7fd160df0510a9175a19c6e085f44d1b356"
+  },
+  "findings": [
+    "Footer-Fix #1059 entfernt 24 FP (alle cryptobriefing) und kostet 1 TP (holdout-0018, CLARITY Act).",
+    "crypto_relevance kennt 数字资产, aber nicht englisch 'digital asset(s)' (holdout-0018 FN). Nicht am Holdout tunen; Pruefung nur an Entwicklungsdaten oder Holdout v2.",
+    "Ohne Reset der Analyse-Rueckschreibung haette das Replay 2 Faelle ueber has_tickers durchgelassen (Leakage, in #1065 behoben)."
+  ],
+  "holdout": {
+    "case_count": 150,
+    "cutoff_exclusive": "2026-09-23T10:58:41",
+    "selection_algorithm": "sha256-order/v1",
+    "targets": {
+      "external_llm": 40,
+      "gate_skipped": 75,
+      "other_rule": 30,
+      "unassigned": 5
+    }
+  },
+  "jev_called": false,
+  "labels": {
+    "adjudication_bound_to_labels_sha256": "3587855e290c8941b0f44bedf0a28808fdd38a50b389b9a4065c57dae1b84c19",
+    "adjudication_decided_by": {
+      "claude_derived_under_operator_delegation": 3,
+      "operator": 19
+    },
+    "adjudication_rules": {
+      "R-FIRMA": "Kryptofirma positiv, wenn die Meldung ihr Kryptogeschaeft betrifft",
+      "R-MAKRO": "Reine Makronachricht ohne konkreten Kryptobezug = negativ (Runbook jev_shadow_eval.md:148-149, 254-256), Quelle ist kein Proxy",
+      "R-PROGNOSE": "Prognosemarkt nur positiv bei onchain-Markt oder Krypto-Anbieter"
+    },
+    "disputed": 22,
+    "labelled_at_utc": "2026-09-23T12:20:27.986966+00:00",
+    "reviewer": "Claude (Opus 5.5), blind: nur Blindbogen gelesen, keine Zuordnung/Manifest/Baseline/Labels",
+    "undisputed": 128
+  },
+  "next": "Holdout v2 ab 2026-09-25 mit holdout.py --after ziehen und sofort versiegeln; erst nach der naechsten Gate-Aenderung auswerten.",
+  "note": "Nur Hashes, Herkunft und Kennzahlen. Texte, Labels und Mapping bleiben ausserhalb des Repos.",
+  "primary_ready": false,
+  "replay": {
+    "analysis_writeback_reset": [
+      "categories",
+      "crypto_assets",
+      "entities",
+      "entity_mentions",
+      "market_scope",
+      "organizations",
+      "people",
+      "tags",
+      "tickers",
+      "topics"
+    ],
+    "code_sha256": {
+      "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/ai/__init__.py": "90f5e65e8644469e3c411025e5482c7f719c38854a6af53d6e180c1cc8c90b67",
+      "app/ai/audit.py": "0dae6ffde3c77ab8af514be5bbc42a0774530144b1566c2e054f0109c2f40155",
+      "app/ai/budget.py": "6f1f7dfbcfd472d327cc9b71dffbf1e9257eab5c350ce210af525207eb3ba75f",
+      "app/ai/circuit.py": "fb5473ee7f89ff83fb20f6e32e10f09e6ea2d95852e0d5ffb01e3bab7ecf2fd9",
+      "app/ai/config.py": "938c264e7f9bf2101fd3617fee08eafd85fbff819e68832a1f578e3afb21f6fb",
+      "app/ai/gateway.py": "11bb3c36e88ae5c93a70f72972e416efdaa2edffe233bc830cfc2151895fca89",
+      "app/ai/models.py": "8c37786469e546bde28841fb89ae446e875247de4a509e3d87a1a8568329c3bf",
+      "app/ai/modes.py": "fb3a77af2dbb61510433553821d1eb8e9bcb40b12afddce3b004df326d00d84f",
+      "app/ai/research.py": "07c725b4aa2bc362ab399d3cacf08956784df826c38c11b3e1cd55e25f3f0b81",
+      "app/ai/retry.py": "7d47570c5bea0e59744e8aad74b5c5c77901a65170fa94276ec5f919e3725ebe",
+      "app/ai/routes.py": "9d08f6679dd9d053f607e3ebaedebeeca0055d84c552dfff9c6a328d4a9a4080",
+      "app/ai/runtime.py": "d30b798868fa38f98a8797729c816e7241835b6c135dcb5bb3118c7b5f0f828a",
+      "app/analysis/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/analysis/base/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/analysis/base/interfaces.py": "c2b063da413c81467fa7bb1180507fff45fa76b9f5cc2b9759c945a32016d8c8",
+      "app/analysis/crypto_relevance.py": "985dfd89f9361aa9a0b9bf0ecfeac542afacae6f26f09dfc16c5d0fe48bd7055",
+      "app/analysis/input_contract.py": "6942c4c75a85b223d3053832dd426a5a7dd67cee585fd4ad842bdb1ae53f0c5a",
+      "app/analysis/keywords/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/analysis/keywords/aliases.py": "53259bf8c090ba7b95248fb4dd512fe3e8bdbe9fd70f42579ba68f0cce11c8f4",
+      "app/analysis/keywords/engine.py": "27ca50f5d54647af5501ce0373aa3b60b71bb6a7ae228c971ee513a9bc325333",
+      "app/analysis/keywords/watchlist.py": "a08431b3329ac3e0e1ac5e7e8434bbf2c4e277acb3f59d33cb16c06358b8061b",
+      "app/analysis/pipeline.py": "28a6dee3614a58cfc34ef4736243d6018beff0a06db06bd7ec10b2bdff62dda5",
+      "app/analysis/prompts.py": "db924516edb61f0c45eb9d9564d3e1a1865eb2b7c71437ed9ba488c0e5aceba8",
+      "app/analysis/rules/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/analysis/rules/asset_detector.py": "f8aa220e272782ff620e156135a54b36b924a88e94f753d7b78189b5df07491c",
+      "app/analysis/rules/keyword_matcher.py": "45ff6fdec30a013476aaea723a6c753384a4dec88240540c1b3699522656ac23",
+      "app/analysis/rules/rule_analyzer.py": "b9d779a71ee42528827a67576aeb374f66a6bdea25e0f39d3d5d2a23f79b5ed1",
+      "app/analysis/scoring.py": "b80fa9c01992d6f79ecf1b0640bde65f4c6b272b418fd741cb78c703f3eb6af2",
+      "app/core/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/core/ai_cost_settings.py": "f880479b59cbd8c616ed1baa1bc9882e47e6b166372a3417696ef92953644ca4",
+      "app/core/domain/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/core/domain/document.py": "2c1036cf75b90040539c3ee0c1f5cac35c372dba8e6e8fc855be83dc4dfc8a1a",
+      "app/core/enums.py": "b72d4f328ef00e7047249118f9225f5f58887afdd9e10744b67466372e8e222b",
+      "app/core/file_lock.py": "a93270a93eab011500dd021f7e11c035202b93b37a71ca39019be567bd302059",
+      "app/core/logging.py": "f609f44d896223dd48d358b9703dd203c549b2aa26a351b7a1b5c0cb221165c1",
+      "app/integrations/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/integrations/litellm/__init__.py": "00eb3eaf243d85ea063f93a5d9e815f9bc54f0678dd5b5d5371fa7b975c09d1a",
+      "app/integrations/litellm/health.py": "ba42c9aa9dafb75a95665f926c77d900ad52eeb27862500999f6bf1d767aba21",
+      "app/integrations/litellm/provider.py": "63ace0501a2de4f2a95afe4f832cc52f41eae8bb8871bf3e19444c55cd4899a2",
+      "app/market_data/__init__.py": "041992e6df61922e6bdaff23d5866a587d5a88a99777545b78cf56d760e91714",
+      "app/market_data/base.py": "205f791d3c9d45476fe4d7aa996e4c2615ac1824986ff36b105af5b8d7103e5d",
+      "app/market_data/binance_futures_adapter.py": "75c333a78235773707e28674157c66801bf9a44d1a73ed317bd6cd337598651b",
+      "app/market_data/bitmex_adapter.py": "0e9e925f02953999a1c8eb8b708a6bdcbdc8eff2356d6a929b80158510b7061b",
+      "app/market_data/bybit_adapter.py": "d14d292a199111f87d1423ed9bf4d550e9efb36af6ddbaf8fe4e1617fdc8e6fa",
+      "app/market_data/coingecko_adapter.py": "180c378ef31dc4dbcf11f6889af6f10894804107f8eb5c9d170298e1aa698ebd",
+      "app/market_data/coingecko_overview.py": "88eb0ae1df78fa5f4b152ca340f1bf7a73774749195c664ada98e1170c0a601d",
+      "app/market_data/mock_adapter.py": "af2e61fb321ce5f4d31a01c87bd219e1e89e99d298660ed5e2161913284cc01f",
+      "app/market_data/models.py": "8fc5ebbabd1749f83ca8ce8b10c8eee2351031addef10af5b6c830a130715997",
+      "app/market_data/oi_zscore.py": "9004ef7d2555a1b3f11ee24da6a97dc859b6e9ce75568414cddb7a50ec7baa4a",
+      "app/market_data/okx_adapter.py": "1d797a304f86a7edb257e6e13916460600db6565f13269337b481c367ac23634",
+      "app/market_data/service.py": "968fa831e4c61998e6dbd87ed729ef3c65a7de301542e5ca4b964e37945978d2",
+      "app/normalization/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/normalization/entities.py": "f0369e968cb36d0304f4bd4aa95ce263fd0edd7c0ea1ab4c26da8688795727d1",
+      "app/observability/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/observability/llm_telemetry.py": "5504314339ac108ad37c762fe9b74b78fc8fba192a61a0dab2299bc54f71c557",
+      "app/storage/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "app/storage/jsonl_io.py": "22d013ffa9007e4d99f62acf5bf0741692cc278145789c35df21c4d3f2a3d29c",
+      "scripts/jev_shadow_eval/pipeline_replay.py": "9b1d3d3c2c094d0d74b522ec97fa86fb2e7b10723bb5e82e8a6a66d46bb1928d"
+    },
+    "crypto_gate_mode": "enforce",
+    "crypto_gate_mode_source": "Pi .env SOURCE_CRYPTO_RELEVANCE_GATE_MODE am 2026-09-24",
+    "git_sha": "2003d5295e2d5390a2f4d34f31c9d3237da2cbad",
+    "input": "canonical_documents-Volltext, read-only aus Pi data/dev.db am 2026-09-24",
+    "outcome_counts": {
+      "crypto_relevance_gate: no_crypto_signal": 47,
+      "input_contract_rejected: youtube_content_below_measured_minimum": 4,
+      "low_relevance_gate": 6,
+      "stub_document: content below threshold.": 9,
+      "would_call_llm": 84
+    },
+    "provider_call_count": 84
+  },
+  "results": {
+    "frozen_raw_text_baseline_pr1055": {
+      "adjudicated_count": 22,
+      "by_stratum": {
+        "external_llm": {
+          "case_count": 40,
+          "false_negative": 0,
+          "false_positive": 4,
+          "precision": 0.897436,
+          "recall": 1.0,
+          "true_negative": 1,
+          "true_positive": 35
+        },
+        "gate_skipped": {
+          "case_count": 75,
+          "false_negative": 6,
+          "false_positive": 25,
+          "precision": 0.561404,
+          "recall": 0.842105,
+          "true_negative": 12,
+          "true_positive": 32
+        },
+        "other_rule": {
+          "case_count": 30,
+          "false_negative": 6,
+          "false_positive": 1,
+          "precision": 0.941176,
+          "recall": 0.727273,
+          "true_negative": 7,
+          "true_positive": 16
+        },
+        "unassigned": {
+          "case_count": 5,
+          "false_negative": 2,
+          "false_positive": 0,
+          "precision": 1.0,
+          "recall": 0.5,
+          "true_negative": 1,
+          "true_positive": 2
+        }
+      },
+      "overall": {
+        "case_count": 150,
+        "false_negative": 14,
+        "false_positive": 30,
+        "precision": 0.73913,
+        "recall": 0.858586,
+        "true_negative": 21,
+        "true_positive": 85
+      },
+      "prediction_source": {
+        "kind": "baseline"
+      }
+    },
+    "full_pipeline_replay": {
+      "adjudicated_count": 22,
+      "by_stratum": {
+        "external_llm": {
+          "case_count": 40,
+          "false_negative": 0,
+          "false_positive": 5,
+          "precision": 0.875,
+          "recall": 1.0,
+          "true_negative": 0,
+          "true_positive": 35
+        },
+        "gate_skipped": {
+          "case_count": 75,
+          "false_negative": 7,
+          "false_positive": 3,
+          "precision": 0.911765,
+          "recall": 0.815789,
+          "true_negative": 34,
+          "true_positive": 31
+        },
+        "other_rule": {
+          "case_count": 30,
+          "false_negative": 12,
+          "false_positive": 0,
+          "precision": 1.0,
+          "recall": 0.454545,
+          "true_negative": 8,
+          "true_positive": 10
+        },
+        "unassigned": {
+          "case_count": 5,
+          "false_negative": 4,
+          "false_positive": 0,
+          "precision": null,
+          "recall": 0.0,
+          "true_negative": 1,
+          "true_positive": 0
+        }
+      },
+      "overall": {
+        "case_count": 150,
+        "false_negative": 23,
+        "false_positive": 8,
+        "precision": 0.904762,
+        "recall": 0.767677,
+        "true_negative": 43,
+        "true_positive": 76
+      },
+      "prediction_source": {
+        "crypto_gate_mode": "enforce",
+        "git_sha": "2003d5295e2d5390a2f4d34f31c9d3237da2cbad",
+        "input_sha256": "66d0d6707dcab8d224e19a26c58370e7f274e28bd50d92af48abfd51dc384e8b",
+        "kind": "pipeline_replay"
+      }
+    }
+  },
+  "schema_version": "jev-holdout-evidence/v1",
+  "status": "SCORED_ADJUDICATED_FULL_PIPELINE_REPLAY"
+}

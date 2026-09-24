@@ -24,6 +24,20 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-283 (2026-09-24)
+**Befund:** Holdout v1 (150 Fälle, Cutoff `2026-09-23T10:58:41`) ist vollständig entschieden und gegen die aktuelle Produktionspipeline gemessen. Replay der unveränderten `AnalysisPipeline` auf Mainline `2003d529` mit Volltext von der Pi, Krypto-Gate `enforce` wie auf der Pi, Stub-Provider ohne I/O, ohne Rückfluss früherer Analyseausgaben:
+- volle Pipeline: **P 0,905 / R 0,768** (TP 76, FP 8, FN 23)
+- eingefrorene Rohtext-Baseline #1055: P 0,739 / R 0,859
+
+Die 23 FN verteilen sich so: 9 Krypto-Gate, darunter „digital asset“, das dem Gate fehlt; 8 Stub-Dokumente (nur Titel); 4 Low-Relevance; 3 YouTube ohne Transkript.
+**Entscheidung:** Der Operator hat drei Regeln festgelegt:
+- R-MAKRO: reine Makronachricht = negativ, die Quelle ist kein Proxy.
+- R-PROGNOSE: Prognosemärkte nur bei onchain-Markt oder Krypto-Anbieter.
+- R-FIRMA: Kryptofirma positiv, wenn es um ihr Kryptogeschäft geht.
+
+Von den 22 Streitfällen hat der Operator 19 entschieden. 3 hat Claude nach diesen Regeln abgeleitet, weil der Operator das delegiert hat. **Holdout v1 ist damit verbraucht:** Gate-Anpassungen, die aus diesen Fällen abgeleitet sind, dürfen nur an Entwicklungsdaten oder am versiegelten Holdout v2 (ab 2026-09-25, `holdout.py --after`) belegt werden.
+**Beleg:** `docs/evidence/jev_holdout_v1_manifest.json` (Hashes aller Artefakte, Code-Hashes des Replays, Kennzahlen je Stratum); Werkzeuge #1065. Jev nicht aufgerufen, PRIMARY-, Deploy- und Trading-Status unverändert.
+
 ### D-282 (2026-09-23)
 **Entscheidung:** Jev/TypeSafe bleibt eine optionale Offline-/Shadow-Vergleichsquelle unter `app/ai`; KAI-Start, Readiness, Scheduler, bestehende Modellrouten und Trading-Gates dürfen weder Zugangsdaten noch Erreichbarkeit oder Ergebnisse von Jev voraussetzen.
 **Begründung:** Der externe Zugang ist derzeit nicht verfügbar, während Korpus, KAI-Baseline und Gate-Prüfung vollständig ohne Jev ausführbar sind; ein experimenteller Anbieter darf KAI weder blockieren noch seine bestehende Entscheidungshoheit übernehmen.
