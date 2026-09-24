@@ -92,6 +92,19 @@ def _parse_ts(ts: object) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
+def outcome_contract_gaps(outcomes: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Count missing PIT identity fields before a fail-closed join drops rows."""
+    missing_id = 0
+    missing_side = 0
+    for outcome in outcomes:
+        candidate_id = outcome.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id.strip():
+            missing_id += 1
+        if outcome.get("side") not in {"long", "short"}:
+            missing_side += 1
+    return {"missing_candidate_id": missing_id, "missing_side": missing_side}
+
+
 def pit_join(
     measurements: Sequence[dict[str, Any]],
     outcomes: Sequence[dict[str, Any]],
@@ -257,5 +270,6 @@ __all__ = [
     "MIN_SAMPLE",
     "evaluate_feature_direction",
     "moving_block_bootstrap_p_mean_positive",
+    "outcome_contract_gaps",
     "pit_join",
 ]

@@ -9,11 +9,15 @@ direction-compatible, bounded-age outcome.
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from scripts import evaluate_l2_evidence, evaluate_momentum_evidence
 
 from app.observability.l2_evidence_eval import (
     evaluate_feature_direction,
     moving_block_bootstrap_p_mean_positive,
+    outcome_contract_gaps,
     pit_join,
 )
 
@@ -72,6 +76,48 @@ def test_block_bootstrap_deterministic_with_seed() -> None:
 
 
 # --- point-in-time join ----------------------------------------------------------
+
+
+def test_outcome_contract_gaps_exposes_rows_that_cannot_join() -> None:
+    assert outcome_contract_gaps(
+        [
+            {"candidate_id": "ok", "side": "long"},
+            {"candidate_id": "", "side": "short"},
+            {"candidate_id": "missing-side"},
+            {"side": "invalid"},
+        ]
+    ) == {"missing_candidate_id": 2, "missing_side": 2}
+
+
+@pytest.mark.parametrize(
+    ("evaluator", "prefix"),
+    [
+        (evaluate_l2_evidence.main, "l2-eval"),
+        (evaluate_momentum_evidence.main, "momentum-eval"),
+    ],
+)
+def test_cli_warns_when_override_outcomes_lack_pit_identity(
+    tmp_path, capsys, evaluator, prefix
+) -> None:
+    shadow = tmp_path / "shadow.jsonl"
+    outcomes = tmp_path / "outcomes.jsonl"
+    shadow.write_text(json.dumps({"candidate_id": "c1"}) + "\n", encoding="utf-8")
+    outcomes.write_text(
+        json.dumps(
+            {
+                "symbol": "BTC/USDT",
+                "entry_ts": "2026-09-24T08:00:00+00:00",
+                "net_bps": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert evaluator(["--shadow", str(shadow), "--outcomes", str(outcomes)]) == 0
+    warning = capsys.readouterr().err
+    assert f"{prefix}: WARNING outcome contract gaps" in warning
+    assert "missing_candidate_id=1 missing_side=1" in warning
 
 
 def test_pit_join_pairs_with_strictly_later_outcome() -> None:
