@@ -30,6 +30,11 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _normalized_content_hash(title: str, text: str) -> str:
+    normalized = " ".join(unicodedata.normalize("NFKC", title + " " + text).casefold().split())
+    return digest(normalized.encode("utf-8"))
+
+
 def load_corpus(path: Path) -> tuple[list[dict[str, Any]], str]:
     data = path.read_bytes()
     rows = json.loads(data)
@@ -117,7 +122,7 @@ def prepare_blind_review(
     mappings = []
     for index, row in enumerate(ordered, start=1):
         review_id = f"case-{index:04d}"
-        content_hash = digest((row["title"] + "\n" + row["text"]).encode())
+        content_hash = _normalized_content_hash(row["title"], row["text"])
         cases.append(
             {
                 "review_id": review_id,

@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.jev_shadow_eval.corpus import ROOT, load_corpus, main, prepare
+from scripts.jev_shadow_eval.corpus import (
+    ROOT,
+    _normalized_content_hash,
+    load_corpus,
+    main,
+    prepare,
+    prepare_blind_review,
+)
 
 CORPUS = ROOT / "tests/fixtures/jev/development_corpus.json"
 
@@ -173,3 +180,10 @@ def test_baseline_runs_the_actual_gate_with_a_known_monitor(tmp_path: Path) -> N
     assert cases["btc-outage"]["baseline_reason"] == "has_tickers"
     assert cases["football"]["baseline_relevant"] is False
     assert cases["football"]["baseline_reason"] == "no_crypto_signal"
+
+
+def test_blind_mapping_uses_normalized_holdout_content_hash() -> None:
+    rows, corpus_hash = load_corpus(CORPUS)
+    _, mapping = prepare_blind_review(rows[:1], corpus_hash)
+    expected = _normalized_content_hash(rows[0]["title"], rows[0]["text"])
+    assert mapping["cases"][0]["content_sha256"] == expected

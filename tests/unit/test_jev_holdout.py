@@ -77,6 +77,7 @@ def test_holdout_selection_is_reproducible_balanced_and_blind(tmp_path: Path) ->
     )
     assert review["case_count"] == mapping["case_count"] == 150
     assert manifest["targets"] == DEFAULT_TARGETS
+    assert manifest["sealed"] is True
     assert len(manifest["selection_code_sha256"]) == 64
     assert not ({"doc_id", "url", "source_name", "stratum"} & set(review["cases"][0]))
     assert mapping["handling"] == "DO_NOT_SHARE_WITH_REVIEWER_BEFORE_REVIEW_IS_FROZEN"
@@ -127,3 +128,14 @@ def test_source_cap_fails_closed_when_target_cannot_be_met(tmp_path: Path) -> No
     rows, pool_hash, _ = load_candidates(path, before=datetime.fromisoformat("2026-09-23T10:58:41"))
     with pytest.raises(ValueError, match="insufficient candidates"):
         select_holdout(rows, pool_hash=pool_hash, targets=DEFAULT_TARGETS, max_per_source=1)
+
+
+def test_after_excludes_candidates_at_or_before_window_start(tmp_path: Path) -> None:
+    path = tmp_path / "pool.jsonl"
+    path.write_text(json.dumps(_candidate(1, "gate_skipped", "source")) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="predates selection window"):
+        load_candidates(
+            path,
+            before=datetime.fromisoformat("2026-09-21T00:00:00"),
+            after=datetime.fromisoformat("2026-09-20T10:00:00"),
+        )
