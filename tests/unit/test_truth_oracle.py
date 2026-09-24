@@ -45,6 +45,8 @@ def _settings(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         integrity=SimpleNamespace(
+            enabled=True,
+            stamper="opentimestamps",
             proofs_dir="monitor/integrity",
             timestamp_jobs_dir="monitor/integrity/uc3_timestamp_jobs",
         ),
@@ -188,6 +190,56 @@ def test_timestamp_unpaid_challenge_is_bound_to_requested_digest(client: TestCli
     assert verdict.valid and verdict.scope == f"timestamp:{digest}"
 
 
+def test_timestamp_disabled_configuration_never_mints(client: TestClient) -> None:
+    settings = _settings(enabled=True)
+    settings.integrity.enabled = False
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=settings),
+        patch.object(truth_oracle, "create_invoice", mint),
+    ):
+        response = client.post("/oracle/timestamp", json={"sha256_hex": "ab" * 32})
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "timestamp_service_disabled",
+        "retriable": False,
+    }
+    mint.assert_not_awaited()
+
+
+def test_timestamp_digest_stays_out_of_invoice_memo_and_demand_scope(
+    client: TestClient,
+) -> None:
+    digest = "ab" * 32
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    store = MagicMock()
+    store.has_capacity.return_value = True
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)) as mint,
+        patch.object(
+            truth_oracle,
+            "append_demand_event",
+            lambda event, **payload: events.append((event, payload)),
+        ),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post("/oracle/timestamp", json={"sha256_hex": digest})
+    assert response.status_code == 402
+    assert mint.await_args.kwargs["memo"] == "kai-oracle:timestamp"
+    assert events[0][1]["scope"] == "timestamp"
+    assert digest not in str(events)
+
+
 def test_timestamp_capacity_is_rejected_before_invoice_mint(client: TestClient) -> None:
     digest = "ab" * 32
     store = MagicMock()
@@ -261,6 +313,50 @@ def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClien
     store.submit.assert_called_once_with(payment_hash=_PH_HEX, digest=digest)
 
 
+@pytest.mark.parametrize(
+    ("failure", "status_code", "detail"),
+    [
+        (
+            "conflict",
+            409,
+            "payment already bound to another digest",
+        ),
+        (
+            "unavailable",
+            503,
+            {"code": "timestamp_pending_retry", "retriable": True},
+        ),
+    ],
+)
+def test_timestamp_store_failures_have_stable_http_mapping(
+    client: TestClient, failure: str, status_code: int, detail: object
+) -> None:
+    from app.integrity.timestamp_jobs import (
+        TimestampJobConflictError,
+        TimestampJobUnavailableError,
+    )
+
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}")
+    store = MagicMock()
+    store.submit.side_effect = (
+        TimestampJobConflictError("bound")
+        if failure == "conflict"
+        else TimestampJobUnavailableError("calendar")
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == status_code
+    assert response.json()["detail"] == detail
+
+
 def test_timestamp_token_for_other_digest_cannot_submit(client: TestClient) -> None:
     paid_digest = "ab" * 32
     requested_digest = "cd" * 32
@@ -275,6 +371,7 @@ def test_timestamp_token_for_other_digest_cannot_submit(client: TestClient) -> N
         },
     )
     store = MagicMock()
+    store.has_binding.return_value = False
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
@@ -302,6 +399,7 @@ def test_timestamp_expired_token_cannot_submit(client: TestClient) -> None:
         },
     )
     store = MagicMock()
+    store.has_binding.return_value = False
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
@@ -314,6 +412,34 @@ def test_timestamp_expired_token_cannot_submit(client: TestClient) -> None:
         )
     assert response.status_code == 402
     store.submit.assert_not_called()
+
+
+def test_timestamp_expired_token_replays_existing_paid_job_without_new_invoice(
+    client: TestClient,
+) -> None:
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}", ttl_s=-1)
+    proof = b"persisted-proof"
+    store = MagicMock()
+    store.has_binding.return_value = True
+    store.submit.return_value = (
+        {"proof_sha256": hashlib.sha256(proof).hexdigest(), "state": "pending_bitcoin"},
+        proof,
+    )
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == 200
+    mint.assert_not_awaited()
+    store.has_binding.assert_called_once_with(payment_hash=_PH_HEX, digest=digest)
 
 
 @pytest.mark.asyncio

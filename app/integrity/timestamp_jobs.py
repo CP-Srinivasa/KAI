@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -45,12 +46,29 @@ def _canonical_hash(value: str, *, name: str) -> str:
 
 def _atomic_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("wb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        if os.name != "nt":
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -112,6 +130,17 @@ class TimestampJobStore:
             if canonical is not None and (self.root / canonical).is_dir():
                 return True
             return self._job_count() < self.max_jobs
+
+    def has_binding(self, *, payment_hash: str, digest: str) -> bool:
+        """Return whether a paid job already durably binds this hash and digest."""
+        payment_hash = _canonical_hash(payment_hash, name="payment_hash")
+        digest = _canonical_hash(digest, name="digest")
+        record_path = self.root / payment_hash / "record.json"
+        if not record_path.exists():
+            return False
+        with append_lock(record_path, strict=True):
+            record = _read_record(record_path)
+            return bool(record is not None and record.get("digest") == digest)
 
     def capacity_snapshot(self) -> dict[str, int | float | str]:
         """Return a read-only operator-health view of durable UC-3 capacity."""

@@ -131,6 +131,14 @@ def test_capacity_snapshot_reports_operator_thresholds(tmp_path: Path) -> None:
     assert full["state"] == "full" and full["available"] == 0
 
 
+def test_existing_payment_binding_is_detected_without_calendar_call(tmp_path: Path) -> None:
+    store = TimestampJobStore(tmp_path, stamper=FakeStamper())
+    assert store.has_binding(payment_hash=PAYMENT_HASH, digest=DIGEST) is False
+    store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+    assert store.has_binding(payment_hash=PAYMENT_HASH, digest=DIGEST) is True
+    assert store.has_binding(payment_hash=PAYMENT_HASH, digest="c" * 64) is False
+
+
 def test_restart_recovers_proof_written_before_completion_record(tmp_path: Path) -> None:
     job_dir = tmp_path / PAYMENT_HASH
     job_dir.mkdir(parents=True)

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,12 +104,29 @@ def _save_detached(detached: Any, path: Path) -> None:
 
     ctx = BytesSerializationContext()
     detached.serialize(ctx)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("wb") as handle:
-        handle.write(ctx.getbytes())
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(ctx.getbytes())
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        if os.name != "nt":
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def read_proof_info(path: Path) -> ProofInfo:
