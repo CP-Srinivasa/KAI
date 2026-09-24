@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.l2_candidate_context import bind_candidate
+from app.observability.l2_evidence_eval import pit_join
 from app.research.shadow_outcomes import (
     HORIZONS,
     build_outcomes,
@@ -15,6 +17,7 @@ from app.research.shadow_outcomes import (
     read_jsonl,
     to_feature_outcomes,
 )
+from app.signals.l2_features import OnchainFlowFeatures, append_l2_shadow_log
 
 
 def test_read_jsonl_missing_file_returns_empty(tmp_path):
@@ -123,8 +126,6 @@ def test_to_feature_outcomes_rejects_unknown_horizon():
 
 @pytest.mark.parametrize("feature_key", ["fee_percentile", "momentum_score"])
 def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
-    from app.observability.l2_evidence_eval import pit_join
-
     entry_ts = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
     outcomes = build_outcomes(
         [_resolved("candidate-1", "BTC/USDT", "long", h3600=33.0)],
@@ -146,3 +147,46 @@ def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
     assert len(pairs) == 1
     assert pairs[0][1]["candidate_id"] == "candidate-1"
     assert pairs[0][1]["side"] == "long"
+
+
+def test_1056_producer_fields_reach_canonical_reader_and_pit_join(tmp_path):
+    """Exercise the real #1056 producer rather than a hand-written measurement."""
+    decision = datetime.now(UTC)
+    reference = decision - timedelta(seconds=1)
+    shadow_log = tmp_path / "l2.jsonl"
+    features = OnchainFlowFeatures(
+        fee_sat_vb=2.0,
+        mempool_tx=42,
+        fee_percentile=0.8,
+        mempool_percentile=0.7,
+        window_n=200,
+    )
+
+    with bind_candidate(
+        candidate_id="cycle-e2e",
+        decision_ts=decision.isoformat(),
+        reference_price_ts=reference.isoformat(),
+    ):
+        append_l2_shadow_log(
+            shadow_log,
+            symbol="BTC/USDT",
+            direction="long",
+            features=features,
+            source_trust=0.5,
+        )
+
+    measurements = read_jsonl(shadow_log)
+    outcomes = build_outcomes(
+        [_resolved("cycle-e2e", "BTC/USDT", "long", h3600=12.5)],
+        {"cycle-e2e": decision},
+    )
+    pairs = pit_join(measurements, to_feature_outcomes(outcomes))
+
+    assert len(pairs) == 1
+    measurement, outcome = pairs[0]
+    assert measurement["candidate_id"] == "cycle-e2e"
+    assert measurement["decision_ts"] == decision.isoformat()
+    assert measurement["reference_price_ts"] == reference.isoformat()
+    assert measurement["causality_ok"] is True
+    assert outcome["candidate_id"] == "cycle-e2e"
+    assert outcome["net_bps"] == 12.5
