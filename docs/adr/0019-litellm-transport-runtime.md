@@ -309,22 +309,24 @@ zweite Rotation und einen zweiten Posten im Backup. Das ist echter Aufwand, und
 er fällt an, obwohl heute genau ein Transport existiert. Die Alternative wäre,
 den Kern an einen austauschbaren Bestandteil zu binden — teurer, nur später.
 
-**Rückrollbarkeit:** Vollständig. Ohne Transport-Runtime verhält sich KAI wie
-heute: `kai-litellm.service` existiert nicht, `OFF` ist der Zustand, die direkten
-Provider tragen den Betrieb. Es gibt nichts zu migrieren und nichts
-zurückzubauen — nur einen Baum, den man nicht anlegt.
+**Rückrollmodell der Entscheidung:** Vollständig. Ohne aktive Transport-Runtime
+verhält sich KAI wie vor ihrer Einführung: `OFF` nutzt den Transport nicht und
+die direkten Provider tragen den Betrieb. Das beschreibt den vorgesehenen
+Rückweg, nicht den heutigen Installationszustand; laut D-280 wurde
+`kai-litellm.service` auf der Pi aktiviert. Der aktuelle Pi-Stand wird im
+Release-Sprint S3 erneut bestätigt.
 
 ## Status der Umsetzung
 
 | | |
 |---|---|
 | ADR entschieden | **ACCEPTED 2026-09-08** |
-| Transport-Implementierung | **zulaessig** |
-| `pi_make_transport.sh` | nicht gebaut |
-| Unit auf Transport-Pfad umgestellt | nein |
-| `/health`-Block | nicht gebaut |
+| Transport-Implementierung | **im Repo umgesetzt** |
+| `pi_make_transport.sh` | **im Repo gebaut** |
+| Unit auf Transport-Pfad umgestellt | **ja, via `pi_transport_exec.sh`** |
+| `/health`-Block | Liveliness-Sonde gebaut; Transport-Block im KAI-`/health` noch nicht verdrahtet |
 | Backup-Vertrag erweitert | nein |
 | Release 3 mit eingebettetem LiteLLM | **NO** |
-| `kai-litellm.service` | **NO** |
+| `kai-litellm.service` | **Unit im Repo vorhanden; Pi-Stand im Release-Sprint S3 bestätigen** |
 | `PRIMARY` | **NO** |
-| Pi-Cutover | **HOLD** |
+| Pi-Cutover | laut D-280 erfolgt; aktuelle Release-Bestätigung in S3 offen |
