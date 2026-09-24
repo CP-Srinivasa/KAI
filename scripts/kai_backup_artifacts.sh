@@ -144,6 +144,13 @@ DEFAULT_SOURCES=(
 # Dateien, nicht um Zeilen — eine feste Namensliste wuerde neue verpassen).
 DEFAULT_SOURCE_DIRS=(
     "artifacts/research/forecaster_panel"
+    # OTS-Anker + Digest-Records (IntegritySettings.proofs_dir-Default). Ohne
+    # sie beweist die gesicherte Attestierungskette nichts: der Anker ist der
+    # Beweis, der Ledger nur der Inhalt. Bezahlte UC3-Auftraege liegen
+    # darunter (uc3_timestamp_jobs/) und kommen rekursiv mit. Wer
+    # APP_INTEGRITY_PROOFS_DIR umbiegt, muss den Pfad HIER nachziehen —
+    # KAI_BACKUP_EXTRA_FILES nimmt nur Dateien, keine Verzeichnisse.
+    "monitor/integrity"
 )
 
 # Dateien, deren Fehlen ein FEHLER ist, kein Hinweis. Fuer die Evidenz-Stroeme
