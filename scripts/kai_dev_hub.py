@@ -914,6 +914,8 @@ def acknowledge_handoff(
         raise HubError("Übergabe-ID fehlt oder stammt aus dem alten Schema ohne Challenge.")
     if any(row.get("event") == "ack" and row.get("handoff_id") == handoff_id for row in rows):
         raise HubError("Diese Übergabe wurde bereits bestätigt.")
+    if any(row.get("event") == "supersede" and row.get("handoff_id") == handoff_id for row in rows):
+        raise HubError("Diese Übergabe wurde bereits nachvollziehbar abgelöst.")
     if Path(source["repository"]).resolve() != repo.resolve():
         raise HubError("Übergabe gehört zu einem anderen Arbeitsbereich.")
     if agent.strip().casefold() != source["to_agent"].casefold():
@@ -946,10 +948,56 @@ def acknowledge_handoff(
     return event
 
 
+def supersede_handoff(
+    handoff_id: str, reason: str, replaced_by: str | None = None
+) -> dict[str, Any]:
+    """Close a pending handoff with an append-only, independently verifiable event."""
+    valid, detail = verify_handoffs()
+    if not valid:
+        raise HubError(f"Übergabekette ungültig: {detail}")
+    reason = reason.strip()
+    replaced_by = replaced_by.strip() if replaced_by else None
+    if not reason:
+        raise HubError("Grund für das Ablösen ist ein Pflichtfeld.")
+    ledger, _ = _handoff_paths()
+    if not ledger.is_file():
+        raise HubError("Keine Übergabe zum Ablösen vorhanden.")
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    handoffs = {row["handoff_id"]: row for row in rows if row.get("event", "handoff") == "handoff"}
+    source = handoffs.get(handoff_id)
+    if source is None:
+        raise HubError("Übergabe-ID ist unbekannt.")
+    if any(
+        row.get("event") in {"ack", "supersede"} and row.get("handoff_id") == handoff_id
+        for row in rows
+    ):
+        raise HubError("Übergabe ist bereits bestätigt oder abgelöst.")
+    if replaced_by:
+        replacement = handoffs.get(replaced_by)
+        if replacement is None or replaced_by == handoff_id:
+            raise HubError("Ersatz-Übergabe ist unbekannt oder identisch.")
+        if Path(replacement["repository"]).resolve() != Path(source["repository"]).resolve():
+            raise HubError("Ersatz-Übergabe gehört zu einem anderen Arbeitsbereich.")
+    event: dict[str, Any] = {
+        "schema_version": 2,
+        "event": "supersede",
+        "handoff_id": handoff_id,
+        "created_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
+        "replaced_by": replaced_by,
+        "handoff_sha256": source["payload_sha256"],
+        "previous_sha256": rows[-1]["payload_sha256"],
+    }
+    event["payload_sha256"] = hashlib.sha256(_canonical_json(event).encode()).hexdigest()
+    with ledger.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(_canonical_json(event) + "\n")
+    return event
+
+
 def handoff_state(repo: Path | None = None) -> dict[str, Any]:
     ledger, _ = _handoff_paths()
     if not ledger.is_file():
-        return {"handoffs": 0, "acknowledged": 0, "pending": []}
+        return {"handoffs": 0, "acknowledged": 0, "superseded": [], "pending": []}
     rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     handoffs = [
         row
@@ -958,6 +1006,17 @@ def handoff_state(repo: Path | None = None) -> dict[str, Any]:
         and (repo is None or Path(row["repository"]).resolve() == repo.resolve())
     ]
     acknowledged = {row["handoff_id"] for row in rows if row.get("event") == "ack"}
+    superseded_events = {row["handoff_id"]: row for row in rows if row.get("event") == "supersede"}
+    superseded = [
+        {
+            "handoff_id": row["handoff_id"],
+            "reason": superseded_events[row["handoff_id"]]["reason"],
+            "replaced_by": superseded_events[row["handoff_id"]].get("replaced_by"),
+            "created_at": superseded_events[row["handoff_id"]]["created_at"],
+        }
+        for row in handoffs
+        if row["handoff_id"] in superseded_events
+    ]
     pending = [
         {
             "handoff_id": row["handoff_id"],
@@ -965,11 +1024,12 @@ def handoff_state(repo: Path | None = None) -> dict[str, Any]:
             "created_at": row["created_at"],
         }
         for row in handoffs
-        if row["handoff_id"] not in acknowledged
+        if row["handoff_id"] not in acknowledged and row["handoff_id"] not in superseded_events
     ]
     return {
         "handoffs": len(handoffs),
-        "acknowledged": len(handoffs) - len(pending),
+        "acknowledged": sum(row["handoff_id"] in acknowledged for row in handoffs),
+        "superseded": superseded,
         "pending": pending,
     }
 
@@ -982,6 +1042,7 @@ def verify_handoffs() -> tuple[bool, str]:
     count = 0
     handoffs: dict[str, dict[str, Any]] = {}
     acknowledged: set[str] = set()
+    superseded: set[str] = set()
     for line_number, line in enumerate(ledger.read_text(encoding="utf-8").splitlines(), start=1):
         try:
             row = json.loads(line)
@@ -1001,6 +1062,7 @@ def verify_handoffs() -> tuple[bool, str]:
             if (
                 source is None
                 or row["handoff_id"] in acknowledged
+                or row["handoff_id"] in superseded
                 or row.get("handoff_sha256") != source["payload_sha256"]
                 or row.get("ack_challenge") != source.get("ack_challenge")
                 or row.get("from_agent", "").casefold() != source["to_agent"].casefold()
@@ -1013,10 +1075,34 @@ def verify_handoffs() -> tuple[bool, str]:
             ):
                 return False, f"Zeile {line_number}: ungültige Empfangsbestätigung"
             acknowledged.add(row["handoff_id"])
+        elif row.get("event") == "supersede":
+            source = handoffs.get(row.get("handoff_id", ""))
+            replacement_id = row.get("replaced_by")
+            replacement = handoffs.get(replacement_id) if replacement_id else None
+            if (
+                source is None
+                or row["handoff_id"] in acknowledged
+                or row["handoff_id"] in superseded
+                or row.get("handoff_sha256") != source["payload_sha256"]
+                or not str(row.get("reason", "")).strip()
+                or replacement_id == row["handoff_id"]
+                or (replacement_id and replacement is None)
+                or (
+                    replacement is not None
+                    and Path(replacement["repository"]).resolve()
+                    != Path(source["repository"]).resolve()
+                )
+            ):
+                return False, f"Zeile {line_number}: ungültige Ablösung"
+            superseded.add(row["handoff_id"])
         else:
             return False, f"Zeile {line_number}: unbekannter Ereignistyp"
         previous = claimed
-    return True, f"{count} Übergabe(n), {len(acknowledged)} bestätigt; Hash-Kette unverändert."
+    return (
+        True,
+        f"{count} Übergabe(n), {len(acknowledged)} bestätigt, "
+        f"{len(superseded)} abgelöst; Hash-Kette unverändert.",
+    )
 
 
 def status(repo: Path) -> dict[str, Any]:
@@ -1421,6 +1507,10 @@ def _parser() -> argparse.ArgumentParser:
     ack_parser.add_argument("--handoff-id", required=True)
     ack_parser.add_argument("--agent", required=True)
     ack_parser.add_argument("--response-file", required=True)
+    supersede_parser = sub.add_parser("supersede-handoff")
+    supersede_parser.add_argument("--handoff-id", required=True)
+    supersede_parser.add_argument("--reason", required=True)
+    supersede_parser.add_argument("--replaced-by")
     sub.add_parser("verify-handoffs")
     pack_parser = sub.add_parser("context-pack")
     pack_parser.add_argument("--source", action="append", default=[], help=source_help)
@@ -1495,6 +1585,14 @@ def main(argv: list[str] | None = None) -> int:
                     acknowledge_handoff(
                         repo, handoff_id=args.handoff_id, agent=args.agent, response=response
                     ),
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        elif args.command == "supersede-handoff":
+            print(
+                json.dumps(
+                    supersede_handoff(args.handoff_id, args.reason, args.replaced_by),
                     indent=2,
                     ensure_ascii=False,
                 )
