@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -9,6 +10,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -109,7 +111,7 @@ def test_handoff_ledger_is_append_only_chained_and_detects_tampering(
     assert "Completed: Read logs" in Path(first["context_pack_path"]).read_text(encoding="utf-8")
     assert hub.verify_handoffs() == (
         True,
-        "2 Übergabe(n), 0 bestätigt; Hash-Kette unverändert.",
+        "2 Übergabe(n), 0 bestätigt, 0 abgelöst; Hash-Kette unverändert.",
     )
 
     ledger, _ = hub._handoff_paths()
@@ -714,6 +716,114 @@ def test_ack_must_quote_handoff_id_not_session_id(
     )
     assert ack["schema_version"] == 2
     assert hub.verify_handoffs()[0] is True
+
+
+def test_supersede_is_append_only_and_separate_from_pending(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    old = _handoff(kai_repo)
+    replacement = _handoff(kai_repo)
+
+    event = hub.supersede_handoff(
+        str(old["handoff_id"]),
+        "Neuere Übergabe enthält den aktuellen Stand",
+        str(replacement["handoff_id"]),
+    )
+
+    assert event["event"] == "supersede"
+    assert event["handoff_sha256"] == old["payload_sha256"]
+    state = hub.handoff_state(kai_repo)
+    assert [row["handoff_id"] for row in state["superseded"]] == [old["handoff_id"]]
+    assert [row["handoff_id"] for row in state["pending"]] == [replacement["handoff_id"]]
+    assert state["acknowledged"] == 0
+    assert hub.verify_handoffs() == (
+        True,
+        "2 Übergabe(n), 0 bestätigt, 1 abgelöst; Hash-Kette unverändert.",
+    )
+    with pytest.raises(hub.HubError, match="abgelöst"):
+        hub.acknowledge_handoff(
+            kai_repo,
+            handoff_id=str(old["handoff_id"]),
+            agent="Kimi",
+            response=(
+                f"{old['ack_challenge']} Handoff {old['handoff_id']} received; "
+                "I will continue the documented task from its included sources."
+            ),
+        )
+
+
+def test_supersede_requires_reason_and_known_replacement(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    old = _handoff(kai_repo)
+    ledger, _ = hub._handoff_paths()
+    before = ledger.read_bytes()
+
+    with pytest.raises(hub.HubError, match="Pflichtfeld"):
+        hub.supersede_handoff(str(old["handoff_id"]), "  ")
+    with pytest.raises(hub.HubError, match="Ersatz-Übergabe"):
+        hub.supersede_handoff(str(old["handoff_id"]), "replaced", "unknown")
+
+    assert ledger.read_bytes() == before
+
+
+def test_acknowledged_or_already_superseded_handoff_cannot_be_superseded_again(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    acknowledged = _handoff(kai_repo)
+    response = (
+        f"{acknowledged['ack_challenge']} Handoff {acknowledged['handoff_id']} received; "
+        "I will continue the documented task from its included sources."
+    )
+    hub.acknowledge_handoff(
+        kai_repo,
+        handoff_id=str(acknowledged["handoff_id"]),
+        agent="Kimi",
+        response=response,
+    )
+    with pytest.raises(hub.HubError, match="bereits"):
+        hub.supersede_handoff(str(acknowledged["handoff_id"]), "obsolete")
+
+    pending = _handoff(kai_repo)
+    hub.supersede_handoff(str(pending["handoff_id"]), "obsolete")
+    with pytest.raises(hub.HubError, match="bereits"):
+        hub.supersede_handoff(str(pending["handoff_id"]), "obsolete again")
+
+
+def test_verify_rejects_ack_written_after_supersede(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write path refuses it; the verifier must too, for a hand-edited ledger."""
+    _managed(kai_repo, tmp_path, monkeypatch)
+    old = _handoff(kai_repo)
+    hub.supersede_handoff(str(old["handoff_id"]), "obsolete")
+    ledger, _ = hub._handoff_paths()
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    forged: dict[str, Any] = {
+        "schema_version": 2,
+        "event": "ack",
+        "handoff_id": old["handoff_id"],
+        "created_at": "2026-09-24T00:00:00+00:00",
+        "from_agent": old["to_agent"],
+        "to_agent": old["from_agent"],
+        "handoff_sha256": old["payload_sha256"],
+        "ack_challenge": old["ack_challenge"],
+        "response": (
+            f"{old['ack_challenge']} Handoff {old['handoff_id']} received; "
+            "I will continue the documented task from its included sources."
+        ),
+        "previous_sha256": rows[-1]["payload_sha256"],
+    }
+    forged["payload_sha256"] = hashlib.sha256(hub._canonical_json(forged).encode()).hexdigest()
+    with ledger.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(hub._canonical_json(forged) + "\n")
+
+    valid, detail = hub.verify_handoffs()
+    assert valid is False
+    assert "Empfangsbestätigung" in detail
 
 
 def test_task_sources_are_pinned_hashed_and_truncation_is_visible(
