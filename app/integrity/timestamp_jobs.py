@@ -113,6 +113,21 @@ class TimestampJobStore:
                 return True
             return self._job_count() < self.max_jobs
 
+    def capacity_snapshot(self) -> dict[str, int | float | str]:
+        """Return a read-only operator-health view of durable UC-3 capacity."""
+        with append_lock(self.root / ".capacity", strict=True):
+            used = self._job_count()
+        available = max(0, self.max_jobs - used)
+        utilization = used / self.max_jobs
+        state = "full" if available == 0 else "warning" if utilization >= 0.8 else "ok"
+        return {
+            "state": state,
+            "used": used,
+            "max": self.max_jobs,
+            "available": available,
+            "utilization": utilization,
+        }
+
     def _job_count(self) -> int:
         return (
             sum(

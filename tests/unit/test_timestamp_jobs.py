@@ -114,6 +114,23 @@ def test_capacity_bounds_new_jobs_without_deleting_paid_proofs(tmp_path: Path) -
     assert (replay_record, replay_proof) == (first_record, first_proof)
 
 
+def test_capacity_snapshot_reports_operator_thresholds(tmp_path: Path) -> None:
+    store = TimestampJobStore(tmp_path, stamper=FakeStamper(), max_jobs=2)
+    assert store.capacity_snapshot() == {
+        "state": "ok",
+        "used": 0,
+        "max": 2,
+        "available": 2,
+        "utilization": 0.0,
+    }
+    store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+    warning = store.capacity_snapshot()
+    assert warning["state"] == "ok" and warning["used"] == 1
+    store.submit(payment_hash="c" * 64, digest="d" * 64)
+    full = store.capacity_snapshot()
+    assert full["state"] == "full" and full["available"] == 0
+
+
 def test_restart_recovers_proof_written_before_completion_record(tmp_path: Path) -> None:
     job_dir = tmp_path / PAYMENT_HASH
     job_dir.mkdir(parents=True)
