@@ -518,6 +518,134 @@ def test_new_task_branches_from_fresh_authoritative_remote(kai_repo: Path, tmp_p
         _git(kai_repo, "worktree", "remove", str(path))
 
 
+def _prepare_remote_base(kai_repo: Path, tmp_path: Path) -> tuple[Path, Path, str]:
+    state = tmp_path / "state"
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    _git(kai_repo, "remote", "add", "origin", str(remote))
+    _git(kai_repo, "branch", "claude/p7/reentry-ia-codex-cycle")
+    _git(kai_repo, "push", "origin", "claude/p7/reentry-ia-codex-cycle")
+    sha = hub.workflow._git(kai_repo, "rev-parse", hub.workflow.BASE_REF)
+    hub.workflow._write_base_cache(state, sha, hub.workflow._now())
+    return state, remote, sha
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+def test_new_task_requires_confirmation_after_fetch_failure(
+    kai_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    state, _remote, sha = _prepare_remote_base(kai_repo, tmp_path)
+    original = hub.workflow._git
+
+    def failing_fetch(repo: Path, *args: str, **kwargs: object) -> str:
+        if args and args[0] == "fetch":
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired("git fetch", 90)
+            raise hub.workflow.WorkflowError("simulated network failure")
+        return original(repo, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.workflow, "_git", failing_fetch)
+    before = original(kai_repo, "worktree", "list", "--porcelain")
+    with pytest.raises(hub.workflow.OfflineBaseRequired) as caught:
+        hub.workflow.new_task(kai_repo, state, "offline review")
+    assert caught.value.last_remote_sha == sha
+    assert original(kai_repo, "worktree", "list", "--porcelain") == before
+
+    row = hub.workflow.new_task(kai_repo, state, "offline review", allow_offline=True)
+    path = Path(row["worktree"])
+    try:
+        assert row["base_mode"] == "offline-cache"
+        assert row["base_sha"] == sha
+        assert row["base_age_s"] >= 0
+    finally:
+        original(kai_repo, "worktree", "remove", str(path))
+
+
+def test_offline_start_rejects_local_commit_not_in_last_remote_ref(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state, _remote, _sha = _prepare_remote_base(kai_repo, tmp_path)
+    (kai_repo / "local-only.txt").write_text("not fetched\n", encoding="utf-8")
+    _git(kai_repo, "add", "local-only.txt")
+    _git(kai_repo, "commit", "-m", "local only")
+    local_sha = hub.workflow._git(kai_repo, "rev-parse", "HEAD")
+    hub.workflow._write_base_cache(state, local_sha, hub.workflow._now())
+    original = hub.workflow._git
+
+    def failing_fetch(repo: Path, *args: str, **kwargs: object) -> str:
+        if args and args[0] == "fetch":
+            raise hub.workflow.WorkflowError("offline")
+        return original(repo, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hub.workflow, "_git", failing_fetch)
+    with pytest.raises(hub.workflow.OfflineBaseRequired) as caught:
+        hub.workflow.new_task(kai_repo, state, "must fail", allow_offline=True)
+    assert caught.value.last_remote_sha is None
+
+
+def test_orphaned_session_is_visible_and_prune_only_moves_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state"
+    sessions = state / "sessions"
+    sessions.mkdir(parents=True)
+    record = sessions / "gone.json"
+    record.write_text(
+        json.dumps(
+            {
+                "session_id": "gone",
+                "created_at": "2026-09-24T00:00:00+00:00",
+                "task": "Old task",
+                "worktree": str(tmp_path / "does-not-exist"),
+                "branch": "codex/old",
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows = hub.workflow.list_sessions(state)
+    assert rows[0]["orphaned"] is True
+    assert rows[0]["orphan_reason"] == "Arbeitsbereich fehlt"
+    monkeypatch.setattr(
+        hub.workflow,
+        "_git",
+        lambda *_args, **_kwargs: pytest.fail("prune must not invoke git"),
+    )
+
+    moved = hub.workflow.prune_stale_sessions(state)
+
+    assert len(moved) == 1
+    assert not record.exists()
+    assert Path(moved[0]).is_file()
+
+
+def test_doctor_separates_inference_from_task_startability(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_port_open", lambda port: port == hub.OLLAMA_PORT)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.LOCAL_MODEL, hub.HERMES_LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_command", lambda _name: "installed")
+    monkeypatch.setattr(hub, "automation_inventory", lambda: {"available": True, "tasks": []})
+    monkeypatch.setattr(hub.workflow, "_primary_checkout", lambda _repo: kai_repo)
+    monkeypatch.setattr(hub.workflow, "cached_remote_base", lambda _repo, _state: None)
+
+    report = hub.doctor(kai_repo, "offline")
+
+    assert report["checks"]["local_inference_ready"] is True
+    assert report["checks"]["offline_ready"] is True
+    assert report["checks"]["local_task_startable"] is False
+
+
+def test_hub_version_and_offline_basis_are_operator_visible() -> None:
+    text = HUB_PATH.read_text(encoding="utf-8")
+    assert 'HUB_VERSION = "0.3.2"' in text
+    assert "Offline-Start von" in text
+    assert "OFFLINE-BASIS" in text
+
+
 # --- KAI-DEV-INDEPENDENCE-02: handoff identity, task sources, cleanup ---------
 
 
