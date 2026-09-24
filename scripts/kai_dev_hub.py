@@ -31,7 +31,7 @@ from typing import Any
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.3.1"
+HUB_VERSION = "0.3.2"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
@@ -397,7 +397,9 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
     checks["hermes_local_model"] = HERMES_LOCAL_MODEL in models
     checks["handoff_chain"] = verify_handoffs()[0]
     checks["cloud_tunnel_open"] = _port_open(DEV_PORT)
-    checks["managed_workspaces"] = len(workflow.list_sessions(STATE_ROOT))
+    sessions = workflow.list_sessions(STATE_ROOT)
+    checks["managed_workspaces"] = sum(not row.get("orphaned", False) for row in sessions)
+    checks["orphaned_workspaces"] = sum(bool(row.get("orphaned")) for row in sessions)
     checks["local_automations"] = automation_inventory()
     if mode == "local-inference":
         checks["local_inference"] = _local_inference_probe()
@@ -407,7 +409,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         checks["dev_routes"] = [
             _cloud_inference_probe(key, route) for route in ("kai-dev-economy", "kai-dev-code")
         ]
-    checks["offline_ready"] = all(
+    checks["local_inference_ready"] = all(
         checks[name]
         for name in (
             "opencode_installed",
@@ -418,6 +420,16 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
             "handoff_chain",
         )
     )
+    try:
+        primary = workflow._primary_checkout(repo)
+        checks["local_task_startable"] = (
+            workflow.cached_remote_base(primary, STATE_ROOT) is not None
+        )
+    except (workflow.WorkflowError, OSError, subprocess.SubprocessError):
+        checks["local_task_startable"] = False
+    # Compatibility alias for callers of 0.3.1: it described local inference,
+    # not whether a fresh Git worktree could be created during an outage.
+    checks["offline_ready"] = checks["local_inference_ready"]
     return report
 
 
@@ -1034,7 +1046,9 @@ def status(repo: Path) -> dict[str, Any]:
         "handoff_chain_valid": verify_handoffs()[0],
         "handoff_state": handoff_state(repo),
         "handoff_state_global": handoff_state(),
-        "managed_workspaces": len(workflow.list_sessions(STATE_ROOT)),
+        "managed_workspaces": sum(
+            not row.get("orphaned", False) for row in workflow.list_sessions(STATE_ROOT)
+        ),
         "last_independent_check": last_health["checked_at"] if last_health else "NOT_RUN",
         "last_independent_result": (
             last_health.get("checks", {}).get("offline_ready") if last_health else "NOT_RUN"
@@ -1161,17 +1175,24 @@ def run_ui(repo: Path) -> None:
 
     picker = ttk.Combobox(root, state="readonly", width=95)
     picker.pack(padx=16, fill="x")
-    picker_rows: dict[str, Path] = {}
+    picker_rows: dict[str, Path | None] = {}
 
     def refresh_sessions() -> None:
         rows = workflow.list_sessions(STATE_ROOT)
         picker_rows.clear()
         for row in rows:
-            label = f"{row['task']}  [{row['branch']}]"
-            picker_rows[label] = Path(row["worktree"])
+            if row.get("orphaned"):
+                label = f"{row['task']}  [VERWAIST: {row['orphan_reason']}]"
+                picker_rows[label] = None
+            else:
+                label = f"{row['task']}  [{row['branch']}]"
+                if row.get("base_mode") == "offline-cache":
+                    label += "  [OFFLINE-BASIS]"
+                picker_rows[label] = Path(row["worktree"])
         picker["values"] = list(picker_rows)
-        if active["repo"] not in picker_rows.values() and rows:
-            active["repo"] = Path(rows[0]["worktree"])
+        valid_paths = [path for path in picker_rows.values() if path is not None]
+        if active["repo"] not in valid_paths and valid_paths:
+            active["repo"] = valid_paths[0]
         for label, path in picker_rows.items():
             if path == active["repo"]:
                 picker.set(label)
@@ -1255,9 +1276,37 @@ def run_ui(repo: Path) -> None:
         )
         if task:
 
+            def accept_offline(required: workflow.OfflineBaseRequired) -> None:
+                if not required.last_remote_sha or not required.fetched_at:
+                    show_error(required)
+                    return
+                cached = workflow.cached_remote_base(workflow._primary_checkout(repo), STATE_ROOT)
+                if cached is None:
+                    show_error(required)
+                    return
+                hours = int(cached["age_s"]) // 3600
+                accepted = messagebox.askyesno(
+                    "Offline-Basis bestätigen",
+                    f"Offline-Start von {required.last_remote_sha[:8]} (Stand vor {hours} h)?",
+                    parent=root,
+                )
+                if accepted:
+                    action(
+                        lambda: active.update(
+                            repo=Path(
+                                workflow.new_task(repo, STATE_ROOT, task, allow_offline=True)[
+                                    "worktree"
+                                ]
+                            )
+                        )
+                    )
+
             def create() -> None:
-                row = workflow.new_task(repo, STATE_ROOT, task)
-                active["repo"] = Path(row["worktree"])
+                try:
+                    row = workflow.new_task(repo, STATE_ROOT, task)
+                    active["repo"] = Path(row["worktree"])
+                except workflow.OfflineBaseRequired as required:
+                    root.after(0, lambda required=required: accept_offline(required))
 
             action(create)
 
@@ -1339,7 +1388,11 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("status")
     task_parser = sub.add_parser("new-task")
     task_parser.add_argument("--task", required=True)
+    task_parser.add_argument(
+        "--allow-offline", action="store_true", help="Explizit bestätigte Remote-Basis nutzen"
+    )
     sub.add_parser("sessions")
+    sub.add_parser("prune-sessions")
     sub.add_parser("automations")
     doctor_parser = sub.add_parser("doctor")
     doctor_parser.add_argument(
@@ -1385,11 +1438,19 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "new-task":
             print(
                 json.dumps(
-                    workflow.new_task(repo, STATE_ROOT, args.task), indent=2, ensure_ascii=False
+                    workflow.new_task(
+                        repo, STATE_ROOT, args.task, allow_offline=args.allow_offline
+                    ),
+                    indent=2,
+                    ensure_ascii=False,
                 )
             )
         elif args.command == "sessions":
             print(json.dumps(workflow.list_sessions(STATE_ROOT), indent=2, ensure_ascii=False))
+        elif args.command == "prune-sessions":
+            print(
+                json.dumps(workflow.prune_stale_sessions(STATE_ROOT), indent=2, ensure_ascii=False)
+            )
         elif args.command == "automations":
             print(json.dumps(automation_inventory(), indent=2, ensure_ascii=False))
         elif args.command == "doctor":

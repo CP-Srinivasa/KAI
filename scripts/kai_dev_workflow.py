@@ -49,6 +49,24 @@ class WorkflowError(RuntimeError):
     """Operator-visible failure with no secret content."""
 
 
+class OfflineBaseRequired(WorkflowError):  # noqa: N818 - task-capsule API name
+    """A remote refresh failed and only an explicitly accepted cached base remains."""
+
+    def __init__(self, last_remote_sha: str | None, fetched_at: str | None) -> None:
+        self.last_remote_sha = last_remote_sha
+        self.fetched_at = fetched_at
+        if last_remote_sha and fetched_at:
+            message = (
+                "Remote-Basis nicht erreichbar. Ein Offline-Start benötigt eine ausdrückliche "
+                f"Bestätigung für {last_remote_sha[:8]} (zuletzt geholt {fetched_at})."
+            )
+        else:
+            message = (
+                "Remote-Basis nicht erreichbar und keine verifizierte Offline-Basis vorhanden."
+            )
+        super().__init__(message)
+
+
 def _git(repo: Path, *args: str, timeout: int = 40) -> str:
     result = subprocess.run(  # noqa: S603
         ["git", "-C", str(repo), *args],
@@ -93,24 +111,77 @@ def _session_dir(state_root: Path) -> Path:
     return root
 
 
+def _session_status(row: dict[str, Any]) -> tuple[bool, str | None]:
+    try:
+        path = Path(row["worktree"]).resolve()
+        branch = str(row["branch"])
+    except (KeyError, TypeError, ValueError):
+        return False, "Sitzungsdatei unvollständig"
+    if not path.is_dir():
+        return False, "Arbeitsbereich fehlt"
+    try:
+        actual = _git(path, "branch", "--show-current")
+    except (WorkflowError, subprocess.TimeoutExpired):
+        return False, "Arbeitsbereich ist kein lesbarer Git-Worktree"
+    if actual != branch:
+        return False, f"Branch abweichend ({actual or 'DETACHED'})"
+    return True, None
+
+
 def list_sessions(state_root: Path) -> list[dict[str, Any]]:
     root = _session_dir(state_root)
     rows: list[dict[str, Any]] = []
     for item in root.glob("*.json"):
         try:
             row = json.loads(item.read_text(encoding="utf-8"))
-            path = Path(row["worktree"]).resolve()
-            if path.is_dir() and _git(path, "branch", "--show-current") == row["branch"]:
-                rows.append(row)
-        except (OSError, ValueError, KeyError, WorkflowError):
-            continue
+            valid, reason = _session_status(row)
+            row["orphaned"] = not valid
+            row["orphan_reason"] = reason
+            row["session_file"] = str(item)
+            rows.append(row)
+        except (OSError, ValueError, TypeError):
+            rows.append(
+                {
+                    "session_id": item.stem,
+                    "created_at": "",
+                    "task": "Unlesbare Sitzung",
+                    "worktree": "",
+                    "branch": "",
+                    "orphaned": True,
+                    "orphan_reason": "Sitzungsdatei ist kein gültiges JSON",
+                    "session_file": str(item),
+                }
+            )
     return sorted(rows, key=lambda row: str(row["created_at"]), reverse=True)
+
+
+def prune_stale_sessions(state_root: Path) -> list[str]:
+    """Archive records whose worktree is gone, without invoking or mutating Git."""
+    root = _session_dir(state_root)
+    archive = root / "archive"
+    moved: list[str] = []
+    for item in root.glob("*.json"):
+        stale = False
+        try:
+            row = json.loads(item.read_text(encoding="utf-8"))
+            stale = not Path(row["worktree"]).resolve().is_dir()
+        except (OSError, ValueError, KeyError, TypeError):
+            stale = True
+        if not stale:
+            continue
+        archive.mkdir(parents=True, exist_ok=True)
+        target = archive / item.name
+        if target.exists():
+            target = archive / f"{item.stem}-{uuid.uuid4().hex[:8]}.json"
+        item.replace(target)
+        moved.append(str(target))
+    return moved
 
 
 def require_session(repo: Path, state_root: Path) -> dict[str, Any]:
     target = repo.resolve()
     for row in list_sessions(state_root):
-        if Path(row["worktree"]).resolve() == target:
+        if not row.get("orphaned") and Path(row["worktree"]).resolve() == target:
             return row
     raise WorkflowError(
         "Kein vom Hub verwalteter KAI-Arbeitsbereich. Zuerst 'Neue Aufgabe' wählen; "
@@ -118,24 +189,108 @@ def require_session(repo: Path, state_root: Path) -> dict[str, Any]:
     )
 
 
-def new_task(repo: Path, state_root: Path, task: str) -> dict[str, Any]:
-    task = task.strip()
-    if not task or len(task) > 300:
-        raise WorkflowError("Aufgabe muss 1 bis 300 Zeichen enthalten.")
+def _base_cache_path(state_root: Path) -> Path:
+    return state_root / "base-cache.json"
+
+
+def _write_base_cache(state_root: Path, sha: str, fetched_at: str) -> None:
+    state_root.mkdir(parents=True, exist_ok=True)
+    _base_cache_path(state_root).write_text(
+        json.dumps(
+            {"schema_version": 1, "base_ref": BASE_REF, "sha": sha, "fetched_at": fetched_at},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _ref_reflog_time(primary: Path) -> str | None:
+    try:
+        selector = _git(
+            primary, "reflog", "show", "-1", "--date=iso-strict", "--format=%gd", BASE_REF
+        )
+    except (WorkflowError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"@\{(.+)\}$", selector)
+    return match.group(1) if match else None
+
+
+def cached_remote_base(primary: Path, state_root: Path) -> dict[str, Any] | None:
+    """Return a verified remote-tracking base; a local branch head never qualifies."""
+    cache_path = _base_cache_path(state_root)
+    cache: dict[str, Any] | None = None
+    try:
+        decoded = json.loads(cache_path.read_text(encoding="utf-8"))
+        if decoded.get("base_ref") == BASE_REF:
+            cache = decoded
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        last_remote_sha = _git(primary, "rev-parse", BASE_REF)
+        if cache is None:
+            fetched_at = _ref_reflog_time(primary)
+            if fetched_at is None:
+                return None
+            cache = {"sha": last_remote_sha, "fetched_at": fetched_at}
+        sha = str(cache["sha"])
+        fetched_at = str(cache["fetched_at"])
+        _git(primary, "cat-file", "-e", f"{sha}^{{commit}}")
+        _git(primary, "merge-base", "--is-ancestor", sha, last_remote_sha)
+        fetched = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        if fetched.tzinfo is None:
+            return None
+    except (KeyError, ValueError, WorkflowError, subprocess.TimeoutExpired):
+        return None
+    age_s = max(0, int((datetime.now(UTC) - fetched.astimezone(UTC)).total_seconds()))
+    return {"sha": sha, "fetched_at": fetched_at, "age_s": age_s}
+
+
+def _primary_checkout(repo: Path) -> Path:
     root = Path(_git(repo, "rev-parse", "--show-toplevel")).resolve()
-    # The first registered worktree is the canonical checkout. New sessions
-    # always branch from its freshly fetched authoritative remote ref.
     worktrees = _git(root, "worktree", "list", "--porcelain")
     primary_line = next(
         (line for line in worktrees.splitlines() if line.startswith("worktree ")), ""
     )
     if not primary_line:
         raise WorkflowError("Git hat keinen kanonischen Checkout gemeldet.")
-    primary = Path(primary_line.removeprefix("worktree ")).resolve()
-    _git(
-        primary, "fetch", "origin", "--no-tags", "--", BASE_REF.removeprefix("origin/"), timeout=90
-    )
-    base_sha = _git(primary, "rev-parse", BASE_REF)
+    return Path(primary_line.removeprefix("worktree ")).resolve()
+
+
+def new_task(
+    repo: Path, state_root: Path, task: str, *, allow_offline: bool = False
+) -> dict[str, Any]:
+    task = task.strip()
+    if not task or len(task) > 300:
+        raise WorkflowError("Aufgabe muss 1 bis 300 Zeichen enthalten.")
+    primary = _primary_checkout(repo)
+    base_mode = "remote"
+    base_age_s = 0
+    try:
+        _git(
+            primary,
+            "fetch",
+            "origin",
+            "--no-tags",
+            "--",
+            BASE_REF.removeprefix("origin/"),
+            timeout=90,
+        )
+        base_sha = _git(primary, "rev-parse", BASE_REF)
+        fetched_at = _now()
+        _write_base_cache(state_root, base_sha, fetched_at)
+    except (WorkflowError, subprocess.TimeoutExpired) as exc:
+        cached = cached_remote_base(primary, state_root)
+        if not allow_offline or cached is None:
+            raise OfflineBaseRequired(
+                str(cached["sha"]) if cached else None,
+                str(cached["fetched_at"]) if cached else None,
+            ) from exc
+        base_sha = str(cached["sha"])
+        fetched_at = str(cached["fetched_at"])
+        base_age_s = int(cached["age_s"])
+        base_mode = "offline-cache"
     slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")[:35] or "task"
     suffix = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     branch = f"codex/dev-task-{slug}-{suffix}"
@@ -152,6 +307,9 @@ def new_task(repo: Path, state_root: Path, task: str) -> dict[str, Any]:
         "branch": branch,
         "base_ref": BASE_REF,
         "base_sha": base_sha,
+        "base_mode": base_mode,
+        "base_age_s": base_age_s,
+        "base_fetched_at": fetched_at,
     }
     target = _session_dir(state_root) / f"{row['session_id']}.json"
     target.write_text(json.dumps(row, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

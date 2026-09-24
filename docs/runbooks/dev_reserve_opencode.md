@@ -16,7 +16,7 @@ python scripts/kai_dev_hub.py ui
 ```
 
 Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.1), schreibt `install.json` mit
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.2), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 `python scripts/kai_dev_hub.py --version` zeigt die Version. Vor Installation
@@ -25,7 +25,12 @@ Claudes unabhängigen Review noch einen Mainline-Merge.
 
 Jede schreibende Aufgabe beginnt mit **Neue Aufgabe**. Der Hub holt die
 autoritative Remote-Base und erzeugt dafür einen eigenen `codex/dev-task-*`-
-Worktree. Ein Client-Start im gemeinsamen Checkout wird abgewiesen. Alle
+Worktree. Scheitert der Fetch, zeigt 0.3.2 den letzten verifizierten
+Remote-Tracking-SHA samt Alter und verlangt eine ausdrückliche Bestätigung;
+lokale Branch-Köpfe sind keine Offline-Basis. Offline-Sitzungen tragen in der
+Liste die Markierung **OFFLINE-BASIS**. Verwaiste Sitzungen bleiben mit Grund
+sichtbar und `prune-sessions` archiviert nur ihre JSON-Datei, ohne Git oder den
+alten Pfad anzufassen. Ein Client-Start im gemeinsamen Checkout wird abgewiesen. Alle
 Oberflächen bleiben auf ihr gewähltes Modell für die jeweilige Sitzung gepinnt:
 
 - **OpenCode lokal (offline):** startet das vorhandene Ollama-Modell
