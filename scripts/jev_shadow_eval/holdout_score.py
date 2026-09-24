@@ -10,6 +10,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from scripts.jev_shadow_eval.adjudicate import load_adjudication
+
 
 def _read(path: Path) -> tuple[dict[str, Any], str]:
     data = path.read_bytes()
@@ -49,10 +51,58 @@ def _metrics(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def score(review_path: Path, mapping_path: Path, baseline_path: Path) -> dict[str, Any]:
+REPLAY_SCHEMA = "jev-pipeline-replay/v1"
+
+
+def _baseline_from_replay(replay: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any]:
+    """Read a full-pipeline replay as the prediction side of the score.
+
+    The replay is keyed by ``doc_id`` and ran on full text, so its content hash is
+    the mapping's (the reviewed excerpt), not a hash of what the pipeline saw.
+    Predicted relevant = the pipeline would have called the LLM.
+    """
+    by_doc = {row.get("doc_id"): row for row in mapping.get("cases") or [] if isinstance(row, dict)}
+    cases = []
+    for case in replay.get("cases") or []:
+        if not isinstance(case, dict) or not isinstance(case.get("would_call_llm"), bool):
+            raise ValueError("invalid replay case")
+        private = by_doc.get(case.get("case_id"))
+        if private is None:
+            raise ValueError("replay case missing from mapping")
+        cases.append(
+            {
+                "review_id": private.get("review_id"),
+                "content_sha256": private.get("content_sha256"),
+                "baseline_relevant": case["would_call_llm"],
+                "baseline_reason": case.get("skip_reason") or case.get("error") or "would_call_llm",
+            }
+        )
+    return {
+        "schema_version": "jev-holdout-baseline/v1",
+        "pool_sha256": mapping.get("pool_sha256"),
+        "case_count": replay.get("case_count"),
+        "cases": cases,
+    }
+
+
+def score(
+    review_path: Path,
+    mapping_path: Path,
+    baseline_path: Path,
+    adjudication_path: Path | None = None,
+) -> dict[str, Any]:
     review, review_hash = _read(review_path)
     mapping, mapping_hash = _read(mapping_path)
     baseline, baseline_hash = _read(baseline_path)
+    prediction_source: dict[str, Any] = {"kind": "baseline"}
+    if baseline.get("schema_version") == REPLAY_SCHEMA:
+        prediction_source = {
+            "kind": "pipeline_replay",
+            "git_sha": baseline.get("git_sha"),
+            "crypto_gate_mode": baseline.get("crypto_gate_mode"),
+            "input_sha256": baseline.get("input_sha256"),
+        }
+        baseline = _baseline_from_replay(baseline, mapping)
     if review.get("schema_version") != "jev-holdout-blind-review/v1":
         raise ValueError("unknown review schema")
     if mapping.get("schema_version") != "jev-holdout-private-map/v1":
@@ -131,6 +181,44 @@ def score(review_path: Path, mapping_path: Path, baseline_path: Path) -> dict[st
         )
     if seen != set(private_by_id) or seen != set(baseline_by_id):
         raise ValueError("evidence ID sets differ")
+    raw_undisputed = [row for row in joined if not row["disputed"]]
+    raw_by_stratum: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in raw_undisputed:
+        stratum = row["stratum"]
+        if not isinstance(stratum, str):
+            raise ValueError("stratum is missing")
+        raw_by_stratum[stratum].append(row)
+    raw_metrics = _metrics(raw_undisputed)
+    raw_metrics_by_stratum = {
+        stratum: _metrics(rows) for stratum, rows in sorted(raw_by_stratum.items())
+    }
+
+    adjudication_hash: str | None = None
+    adjudicated_count = 0
+    if adjudication_path is not None:
+        adjudication, adjudication_hash = load_adjudication(adjudication_path)
+        bound = adjudication.get("labels_sha256")
+        if bound is not None and bound != review_hash:
+            raise ValueError("adjudication was made for a different label file")
+        decisions = {row["case_id"]: row for row in adjudication["cases"]}
+        joined_ids = {row["review_id"] for row in joined}
+        unknown = set(decisions) - joined_ids
+        if unknown:
+            raise ValueError(f"adjudication contains unknown IDs: {sorted(unknown)}")
+        for row in joined:
+            decision = decisions.get(row["review_id"])
+            if decision is None:
+                continue
+            if not row["disputed"]:
+                # A ruling settles a dispute; it never relabels an agreed case.
+                raise ValueError(f"adjudication targets undisputed case {row['review_id']}")
+            row["raw_reference_relevant"] = row["reference_relevant"]
+            row["raw_disputed"] = row["disputed"]
+            row["reference_relevant"] = decision["final_label"]
+            row["disputed"] = False
+            row["adjudication"] = decision
+            adjudicated_count += 1
+
     undisputed = [row for row in joined if not row["disputed"]]
     by_stratum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in undisputed:
@@ -156,6 +244,9 @@ def score(review_path: Path, mapping_path: Path, baseline_path: Path) -> dict[st
         "review_sha256": review_hash,
         "mapping_sha256": mapping_hash,
         "baseline_sha256": baseline_hash,
+        "adjudication_sha256": adjudication_hash,
+        "adjudicated_count": adjudicated_count,
+        "prediction_source": prediction_source,
         "scoring_code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "case_count": len(joined),
         "undisputed_count": len(undisputed),
@@ -164,6 +255,8 @@ def score(review_path: Path, mapping_path: Path, baseline_path: Path) -> dict[st
         "metrics_by_stratum": {
             stratum: _metrics(rows) for stratum, rows in sorted(by_stratum.items())
         },
+        "raw_metrics": raw_metrics,
+        "raw_metrics_by_stratum": raw_metrics_by_stratum,
         "cases": joined,
     }
 
@@ -173,10 +266,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--adjudication", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        report = score(args.review, args.mapping, args.baseline)
+        report = score(args.review, args.mapping, args.baseline, args.adjudication)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, indent=2, sort_keys=True, ensure_ascii=False)

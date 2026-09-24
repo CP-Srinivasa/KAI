@@ -55,7 +55,9 @@ def _stratum(row: dict[str, Any]) -> str:
     return "unassigned"
 
 
-def load_candidates(path: Path, *, before: datetime) -> tuple[list[dict[str, Any]], str, int]:
+def load_candidates(
+    path: Path, *, before: datetime, after: datetime | None = None
+) -> tuple[list[dict[str, Any]], str, int]:
     data = path.read_bytes()
     rows: list[dict[str, Any]] = []
     doc_ids: set[str] = set()
@@ -93,6 +95,8 @@ def load_candidates(path: Path, *, before: datetime) -> tuple[list[dict[str, Any
         fetched_at = datetime.fromisoformat(parsed["fetched_at"])
         if fetched_at >= before:
             raise ValueError(f"line {line_number}: candidate crosses cutoff")
+        if after is not None and fetched_at <= after:
+            raise ValueError(f"line {line_number}: candidate predates selection window")
         doc_id = parsed["doc_id"].strip()
         url = parsed["url"].strip()
         if doc_id in doc_ids or url in urls:
@@ -152,6 +156,7 @@ def build_packages(
     *,
     pool_hash: str,
     cutoff: str,
+    after: str | None = None,
     targets: dict[str, int],
     max_per_source: int,
     duplicate_content_count: int,
@@ -205,10 +210,12 @@ def build_packages(
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "status": "SELECTED_NOT_LABELED",
+        "sealed": True,
         "primary_ready": False,
         "jev_called": False,
         "pool_sha256": pool_hash,
         "cutoff_exclusive": cutoff,
+        "after_exclusive": after,
         "selection_algorithm": "sha256-order/v1",
         "selection_code_sha256": _digest(Path(__file__).read_bytes()),
         "targets": targets,
@@ -231,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--before", required=True)
+    parser.add_argument("--after")
     parser.add_argument("--review-output", type=Path, required=True)
     parser.add_argument("--mapping-output", type=Path, required=True)
     parser.add_argument("--manifest-output", type=Path, required=True)
@@ -243,7 +251,10 @@ def main(argv: list[str] | None = None) -> int:
         if any(path.exists() for path in outputs):
             raise FileExistsError("an output already exists")
         cutoff = datetime.fromisoformat(args.before)
-        rows, pool_hash, duplicate_count = load_candidates(args.input, before=cutoff)
+        after = datetime.fromisoformat(args.after) if args.after else None
+        if after is not None and after >= cutoff:
+            raise ValueError("--after must be earlier than --before")
+        rows, pool_hash, duplicate_count = load_candidates(args.input, before=cutoff, after=after)
         selected, source_counts = select_holdout(
             rows,
             pool_hash=pool_hash,
@@ -254,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             selected,
             pool_hash=pool_hash,
             cutoff=args.before,
+            after=args.after,
             targets=DEFAULT_TARGETS,
             max_per_source=args.max_per_source,
             duplicate_content_count=duplicate_count,
