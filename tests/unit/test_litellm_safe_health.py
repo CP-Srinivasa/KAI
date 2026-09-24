@@ -45,6 +45,44 @@ def _without_comments(path: Path) -> str:
     return "\n".join(lines)
 
 
+#: ``/health`` not continued by a sub-path, word or file-name character. The
+#: first version used ``[?'\"\\s]`` in a raw string, which matched a literal
+#: backslash and ``s`` instead of whitespace -- ``curl $URL/health | jq`` slipped
+#: through. Negative lookahead covers every terminator at once.
+BARE_HEALTH = re.compile(r"/health(?![/\w.-])")
+
+#: Files that mention LiteLLM or its ports and still contain a bare ``/health``
+#: that is NOT a LiteLLM call, with the exact number of tolerated hits. A second
+#: hit in the same file fails the guard again.
+KNOWN_NON_LITELLM_HEALTH = {
+    # Docstring about kai-server's own /health vs. the runtime probe.
+    "app/alerts/process_runtime_probe.py": 1,
+}
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "curl -s http://127.0.0.1:4000/health | jq .",
+        "curl -s http://127.0.0.1:4000/health\nnext",
+        "curl http://127.0.0.1:4001/health",
+        'url = f"{base}/health"',
+        "requests.get(base + '/health')",
+        "curl $URL/health)",
+    ],
+)
+def test_guard_pattern_catches_bare_health_callers(caller: str) -> None:
+    assert BARE_HEALTH.search(caller)
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["$URL/health/liveliness", "$URL/health/readiness", "$URL/healthz", "/health_check"],
+)
+def test_guard_pattern_allows_passive_probes(caller: str) -> None:
+    assert BARE_HEALTH.search(caller) is None
+
+
 def test_litellm_callers_never_use_costly_bare_health() -> None:
     """Bare ``/health`` makes provider calls; only passive probes are allowed."""
     candidates: list[Path] = []
@@ -57,16 +95,23 @@ def test_litellm_callers_never_use_costly_bare_health() -> None:
             if "litellm" in lowered or "4000" in text or "4001" in text:
                 candidates.append(path)
 
-    bare_health = re.compile(r"/health(?=$|[?'\"\\s])")
-    violations = [
-        str(path.relative_to(REPO))
-        for path in candidates
-        if bare_health.search(_without_comments(path))
-    ]
+    violations = []
+    for path in candidates:
+        rel = path.relative_to(REPO).as_posix()
+        hits = len(BARE_HEALTH.findall(_without_comments(path)))
+        if hits > KNOWN_NON_LITELLM_HEALTH.get(rel, 0):
+            violations.append(f"{rel} ({hits})")
     assert violations == [], (
         "LiteLLM bare /health can invoke configured providers; use "
         f"/health/liveliness or /health/readiness instead: {violations}"
     )
+
+
+def test_known_exceptions_are_still_needed() -> None:
+    """An exception whose file no longer has the hit must be removed."""
+    for rel, allowed in KNOWN_NON_LITELLM_HEALTH.items():
+        hits = len(BARE_HEALTH.findall(_without_comments(REPO / rel)))
+        assert hits == allowed, f"{rel}: {hits} Treffer, Ausnahme erlaubt {allowed}"
 
 
 @pytest.mark.skipif(_BASH is None, reason="bash interpreter not available")
@@ -105,7 +150,7 @@ def test_smoke_is_read_only_and_checks_expected_statuses(tmp_path: Path) -> None
         "Authorization: Bearer kai-intentionally-invalid-smoke-key" in line for line in lines
     )
     assert all("chat/completions" not in line for line in lines)
-    assert all(re.search(r"/health(?:[?'\"\s]|$)", line) is None for line in lines)
+    assert all(BARE_HEALTH.search(line) is None for line in lines)
 
 
 @pytest.mark.skipif(_BASH is None, reason="bash interpreter not available")
