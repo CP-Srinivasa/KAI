@@ -41,3 +41,6 @@ class IntegritySettings(BaseSettings):
     stamper: str = Field(default="null")
     # Where digest records + .ots proofs are written.
     proofs_dir: str = Field(default="monitor/integrity")
+    # Durable paid UC-3 jobs have one explicit root. Keeping this independent
+    # from ``proofs_dir`` makes backup scope and migration visible in config.
+    timestamp_jobs_dir: str = Field(default="monitor/integrity/uc3_timestamp_jobs")

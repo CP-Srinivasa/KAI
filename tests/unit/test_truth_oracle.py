@@ -11,6 +11,7 @@ import base64
 import hashlib
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,7 +44,10 @@ def _settings(
     mint_budget_per_min: int = 100,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        integrity=SimpleNamespace(proofs_dir="monitor/integrity"),
+        integrity=SimpleNamespace(
+            proofs_dir="monitor/integrity",
+            timestamp_jobs_dir="monitor/integrity/uc3_timestamp_jobs",
+        ),
         lightning=SimpleNamespace(
             l402_enabled=enabled,
             l402_secret=secret,
@@ -193,7 +197,7 @@ def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClien
     )
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
-        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store) as store_cls,
     ):
         response = client.post(
             "/oracle/timestamp",
@@ -203,6 +207,7 @@ def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClien
     assert response.status_code == 200
     assert response.json()["status"] == "pending_bitcoin"
     assert "calendar commitment only" in response.json()["note"]
+    store_cls.assert_called_once_with(Path("monitor/integrity/uc3_timestamp_jobs"))
     store.submit.assert_called_once_with(payment_hash=_PH_HEX, digest=digest)
 
 

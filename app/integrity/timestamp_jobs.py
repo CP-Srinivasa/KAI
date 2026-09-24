@@ -13,7 +13,6 @@ from typing import Any, Protocol
 from app.core.file_lock import append_lock
 from app.integrity.anchor import AnchorUnavailableError, OpenTimestampsStamper
 
-DEFAULT_TIMESTAMP_JOBS_DIR = Path("monitor/integrity/uc3_timestamp_jobs")
 DEFAULT_MAX_TIMESTAMP_JOBS = 10_000
 
 
@@ -74,7 +73,7 @@ class TimestampJobStore:
 
     def __init__(
         self,
-        root: Path = DEFAULT_TIMESTAMP_JOBS_DIR,
+        root: Path | str,
         *,
         stamper: _Stamper | None = None,
         max_jobs: int = DEFAULT_MAX_TIMESTAMP_JOBS,
@@ -238,7 +237,6 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
 
 
 __all__ = [
-    "DEFAULT_TIMESTAMP_JOBS_DIR",
     "DEFAULT_MAX_TIMESTAMP_JOBS",
     "TimestampJobConflictError",
     "TimestampJobStore",

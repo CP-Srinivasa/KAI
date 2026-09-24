@@ -306,7 +306,7 @@ async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
     )
 
     try:
-        jobs_root = Path(get_settings().integrity.proofs_dir) / "uc3_timestamp_jobs"
+        jobs_root = Path(get_settings().integrity.timestamp_jobs_dir)
         async with _timestamp_submit_slots:
             record, proof_bytes = await asyncio.to_thread(
                 TimestampJobStore(jobs_root).submit,
