@@ -27,10 +27,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.api.client_ip import resolve_client_ip
+from app.chain.cache import CHAIN_CACHE_TTL_SECONDS
 from app.core.settings import get_settings
 from app.lightning.demand_ledger import (
     ACCESS_GRANTED,
     CHALLENGE_MINTED,
+    PAID_UNAVAILABLE,
     append_demand_event,
     requester_fingerprint,
 )
@@ -50,7 +52,7 @@ router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 # config change (caps) takes effect on next build; ``reset_mint_limiter`` is the
 # test seam.
 _mint_limiter: MintLimiter | None = None
-ONCHAIN_FACTS_MAX_AGE_SECONDS = 60.0
+ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -76,8 +78,28 @@ async def _gate_mint(request: Request, scope: str) -> None:
     mint unbounded real invoices against the node (DoS/HTLC-flood guard).
     """
     ip = resolve_client_ip(request)  # real caller behind the proxy (not the tunnel IP)
-    if not _get_mint_limiter().allow(f"{ip}:{scope}", now=time.monotonic()):
+    base_scope = scope.split(":", 1)[0]
+    if not _get_mint_limiter().allow(f"{ip}:{base_scope}", now=time.monotonic()):
         raise HTTPException(status_code=429, detail="mint rate limit exceeded")
+
+
+def _require_oracle_enabled() -> Any:
+    settings = get_settings()
+    if not settings.lightning.l402_enabled:
+        raise HTTPException(status_code=503, detail="truth oracle disabled")
+    if not settings.lightning.l402_secret:
+        raise HTTPException(status_code=503, detail="l402 secret not configured")
+    return settings
+
+
+def _valid_paid_token(request: Request, scope: str) -> Any | None:
+    settings = _require_oracle_enabled()
+    try:
+        token, preimage = parse_authorization(request.headers.get("Authorization", ""))
+    except L402Error:
+        return None
+    verdict = verify(token, preimage, secret=settings.lightning.l402_secret)
+    return verdict if verdict.valid and verdict.scope == scope else None
 
 
 async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
@@ -117,25 +139,15 @@ async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
 
 async def _require_paid(request: Request, scope: str) -> None:
     """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid."""
-    settings = get_settings()
-    if not settings.lightning.l402_enabled:
-        raise HTTPException(status_code=503, detail="truth oracle disabled")
-    if not settings.lightning.l402_secret:
-        raise HTTPException(status_code=503, detail="l402 secret not configured")
+    settings = _require_oracle_enabled()
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
-    try:
-        token, preimage = parse_authorization(request.headers.get("Authorization", ""))
-    except L402Error:
-        await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
-        await _issue_challenge(scope, requester_fp=fp)
-        return  # unreachable (challenge raises)
-    v = verify(token, preimage, secret=settings.lightning.l402_secret)
-    if not v.valid or v.scope != scope:
+    verdict = _valid_paid_token(request, scope)
+    if verdict is None:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         await _issue_challenge(scope, requester_fp=fp)
         return  # unreachable (challenge raises)
     # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
-    append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=v.payment_hash)
+    append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=verdict.payment_hash)
 
 
 @router.get("/onchain-facts")
@@ -143,6 +155,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
     """UC-4: verifiable on-chain facts from KAI's own node (L402-paid)."""
     from app.chain.cache import get_cached_chain_status
 
+    _require_oracle_enabled()
     status, age = await get_cached_chain_status()
     state = str(getattr(status, "state", "unknown"))
     blocks = getattr(status, "blocks", 0)
@@ -163,7 +176,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         and blocks > 0
         and isinstance(headers, int)
         and not isinstance(headers, bool)
-        and headers == blocks
+        and 0 <= headers - blocks <= 1
         and isinstance(best_block_hash, str)
         and len(best_block_hash) == 64
         and all(char in "0123456789abcdef" for char in best_block_hash.lower())
@@ -172,11 +185,23 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         and 0.0 <= age_seconds <= ONCHAIN_FACTS_MAX_AGE_SECONDS
     )
     if not ready:
-        public_state = (
-            "stale"
-            if age_seconds is not None and age_seconds > ONCHAIN_FACTS_MAX_AGE_SECONDS
-            else state
-        )
+        if (
+            age_seconds is not None
+            and math.isfinite(age_seconds)
+            and age_seconds > ONCHAIN_FACTS_MAX_AGE_SECONDS
+        ):
+            public_state = "stale"
+        elif state in {"pending", "disabled", "unavailable"}:
+            public_state = state
+        else:
+            public_state = "not_ready"
+        paid = _valid_paid_token(request, "onchain-facts")
+        if paid is not None:
+            append_demand_event(
+                PAID_UNAVAILABLE,
+                scope="onchain-facts",
+                payment_hash=paid.payment_hash,
+            )
         raise HTTPException(
             status_code=503,
             detail={

@@ -29,7 +29,7 @@ from app.core.settings import get_settings
 # Serve a cached value up to this age (seconds) before kicking a background
 # refresh. Refreshes are still single-flight, so a slow node cannot pile up
 # concurrent RPCs even if requests arrive faster than this.
-_TTL_SECONDS = 60.0
+CHAIN_CACHE_TTL_SECONDS = 60.0
 
 _cached: ChainStatus | None = None
 _cached_at: float = 0.0
@@ -82,7 +82,7 @@ async def get_cached_chain_status() -> tuple[ChainStatus, float | None]:
         _start_refresh_if_idle()
         return _pending(), None
     age = time.monotonic() - _cached_at
-    if age > _TTL_SECONDS:
+    if age > CHAIN_CACHE_TTL_SECONDS:
         _start_refresh_if_idle()
     return _cached, age
 
@@ -93,3 +93,6 @@ def reset_cache_for_tests() -> None:
     _cached = None
     _cached_at = 0.0
     _refresh_task = None
+
+
+__all__ = ["CHAIN_CACHE_TTL_SECONDS", "get_cached_chain_status", "reset_cache_for_tests"]

@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 
 import pytest
+from httpx import AsyncClient, MockTransport, Request, Response
+from scripts.ln_selfpay_test import _get_paid_with_retry
 
 from app.lightning.l402 import parse_authorization
 from app.lightning.selfpay import (
@@ -77,3 +79,25 @@ def test_find_settled_preimage_none_when_unsettled_or_missing() -> None:
     # settled but no preimage yet → None
     no_pre = [{"payment_request": _BOLT11, "settled": True}]
     assert find_settled_preimage(no_pre, payment_request=_BOLT11) is None
+
+
+@pytest.mark.asyncio
+async def test_paid_retry_reuses_authorization_after_503() -> None:
+    seen: list[str] = []
+
+    def handler(request: Request) -> Response:
+        seen.append(request.headers["Authorization"])
+        if len(seen) == 1:
+            return Response(503, headers={"Retry-After": "0"})
+        return Response(200, json={"ok": True})
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        response = await _get_paid_with_retry(
+            client,
+            "https://example.test/oracle/onchain-facts",
+            authorization="L402 token:preimage",
+            retries=3,
+        )
+
+    assert response.status_code == 200
+    assert seen == ["L402 token:preimage", "L402 token:preimage"]
