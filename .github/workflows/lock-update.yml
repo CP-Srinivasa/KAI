@@ -40,6 +40,16 @@ jobs:
             --upgrade \
             -o requirements.lock
 
+      - name: Recompile transport lock (Pi aarch64 / Python 3.12.3)
+        run: |
+          python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["optional-dependencies"]["litellm"][0])' |
+            uv pip compile - \
+              --generate-hashes \
+              --python-platform aarch64-manylinux_2_36 \
+              --python-version 3.12.3 \
+              --upgrade \
+              -o requirements-transport.lock
+
       - name: pip-audit gegen neue Lock-File
         id: audit
         continue-on-error: true
@@ -49,6 +59,8 @@ jobs:
             --ignore-vuln CVE-2026-3219 \
             --ignore-vuln CVE-2026-6357 \
             --format columns 2>&1 | tee audit_output.txt
+          pip-audit -r requirements-transport.lock --no-deps --disable-pip \
+            --format columns 2>&1 | tee transport_audit_output.txt
 
       - name: Generate PR body
         id: prbody
@@ -62,6 +74,7 @@ jobs:
             echo "## Quality Gates"
             echo ""
             echo "- [x] Lock-File regeneriert ($(wc -l < requirements.lock) Zeilen)"
+            echo "- [x] Transport-Lock regeneriert ($(wc -l < requirements-transport.lock) Zeilen)"
             echo "- [ ] CI grün (lint+test+security+type-check)"
             echo "- [ ] Operator-Review pip-audit-Output"
             echo ""
@@ -81,12 +94,18 @@ jobs:
             echo "\`\`\`bash"
             echo "uv pip compile pyproject.toml --extra dev --universal -o requirements.lock"
             echo "pip-audit -r requirements.lock"
+            echo "pip-audit -r requirements-transport.lock --no-deps --disable-pip"
             echo "\`\`\`"
             echo ""
             echo "## pip-audit Output"
             echo ""
             echo "\`\`\`"
             cat audit_output.txt
+            echo ""
+            echo "## Transport pip-audit Output"
+            echo ""
+            echo "\`\`\`"
+            cat transport_audit_output.txt
             echo "\`\`\`"
           } > pr_body.md
 
@@ -98,7 +117,9 @@ jobs:
           # Nur der Lock gehoert in den PR — ohne add-paths committete der
           # Erstlauf (#673) seine Scratch-Dateien (audit_output.txt, pr_body.md)
           # in die Repo-Wurzel. Der Audit-Output steht im PR-Body.
-          add-paths: requirements.lock
+          add-paths: |
+            requirements.lock
+            requirements-transport.lock
           branch: chore/lock-update-${{ github.run_number }}
           # Audit 2026-08-06 (P1): "main" ist eine verwaiste, historisch
           # disjunkte Linie ohne gemeinsamen Ancestor — create-pull-request
