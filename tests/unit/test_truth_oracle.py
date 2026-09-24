@@ -175,7 +175,9 @@ def test_timestamp_unpaid_challenge_is_bound_to_requested_digest(client: TestCli
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore") as store_cls,
     ):
+        store_cls.return_value.has_capacity.return_value = True
         response = client.post("/oracle/timestamp", json={"sha256_hex": digest.upper()})
     assert response.status_code == 402
     header = response.headers["WWW-Authenticate"]
@@ -184,6 +186,54 @@ def test_timestamp_unpaid_challenge_is_bound_to_requested_digest(client: TestCli
 
     verdict = verify(token, _PREIMAGE, secret=_SECRET)
     assert verdict.valid and verdict.scope == f"timestamp:{digest}"
+
+
+def test_timestamp_capacity_is_rejected_before_invoice_mint(client: TestClient) -> None:
+    digest = "ab" * 32
+    store = MagicMock()
+    store.has_capacity.return_value = False
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post("/oracle/timestamp", json={"sha256_hex": digest})
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "timestamp_capacity_exhausted",
+        "retriable": False,
+    }
+    mint.assert_not_awaited()
+
+
+def test_paid_timestamp_capacity_race_is_non_retriable_and_not_granted(
+    client: TestClient,
+) -> None:
+    from app.integrity.timestamp_jobs import TimestampJobCapacityError
+
+    digest = "ab" * 32
+    token = mint_token(_PH_HEX, secret=_SECRET, scope=f"timestamp:{digest}")
+    store = MagicMock()
+    store.submit.side_effect = TimestampJobCapacityError("full")
+    events: list[str] = []
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(
+            truth_oracle,
+            "append_demand_event",
+            lambda event, **_payload: events.append(event),
+        ),
+        patch("app.integrity.timestamp_jobs.TimestampJobStore", return_value=store),
+    ):
+        response = client.post(
+            "/oracle/timestamp",
+            json={"sha256_hex": digest},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert response.status_code == 503
+    assert response.json()["detail"]["retriable"] is False
+    assert ACCESS_GRANTED not in events
 
 
 def test_timestamp_paid_response_is_pending_not_mined_finality(client: TestClient) -> None:

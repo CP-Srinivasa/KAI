@@ -24,6 +24,10 @@ class TimestampJobUnavailableError(RuntimeError):
     """The calendar submission did not produce a durable proof."""
 
 
+class TimestampJobCapacityError(TimestampJobUnavailableError):
+    """No durable slot remains for a new paid timestamp job."""
+
+
 class _Stamper(Protocol):
     def stamp(self, digest_hex: str, out_dir: Path, *, prefix: str = "audit") -> str: ...
 
@@ -64,11 +68,26 @@ def _read_record(path: Path) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def _proof_matches_digest(path: Path, digest: str) -> bool:
+    """Verify the digest embedded in a detached OTS proof before record healing."""
+    try:
+        from opentimestamps.core.serialize import BytesDeserializationContext
+        from opentimestamps.core.timestamp import DetachedTimestampFile
+
+        detached = DetachedTimestampFile.deserialize(BytesDeserializationContext(path.read_bytes()))
+        return bytes(detached.file_digest) == bytes.fromhex(digest)
+    except (ImportError, OSError, ValueError):
+        raise
+    except Exception:  # noqa: BLE001 - corrupt/untrusted proof fails closed
+        return False
+
+
 class TimestampJobStore:
-    """Exactly-once calendar submission for one payment-hash/digest binding.
+    """Durable idempotent submission for one payment-hash/digest binding.
 
     A strict cross-process sidecar lock covers record lookup, submission and atomic
-    persistence. Completed jobs are replayed byte-for-byte after retries/restarts.
+    persistence. Completed jobs are replayed byte-for-byte after retries/restarts;
+    an external calendar may still observe a retry after a crash around its call.
     """
 
     def __init__(
@@ -84,6 +103,29 @@ class TimestampJobStore:
         if self.max_jobs <= 0:
             raise ValueError("max_jobs must be positive")
 
+    def has_capacity(self, *, payment_hash: str | None = None) -> bool:
+        """Return whether a new job can be reserved; existing jobs always fit."""
+        canonical = _canonical_hash(payment_hash, name="payment_hash") if payment_hash else None
+        if canonical is not None and (self.root / canonical).is_dir():
+            return True
+        with append_lock(self.root / ".capacity", strict=True):
+            if canonical is not None and (self.root / canonical).is_dir():
+                return True
+            return self._job_count() < self.max_jobs
+
+    def _job_count(self) -> int:
+        return (
+            sum(
+                1
+                for path in self.root.iterdir()
+                if path.is_dir()
+                and len(path.name) == 64
+                and all(char in "0123456789abcdef" for char in path.name)
+            )
+            if self.root.exists()
+            else 0
+        )
+
     def submit(self, *, payment_hash: str, digest: str) -> tuple[dict[str, Any], bytes]:
         payment_hash = _canonical_hash(payment_hash, name="payment_hash")
         digest = _canonical_hash(digest, name="digest")
@@ -91,23 +133,14 @@ class TimestampJobStore:
         record_path = job_dir / "record.json"
         proof_path = job_dir / "proof.ots"
         work_dir = job_dir / "work"
-        # Reserve a bounded durable slot before the external call. Existing paid
-        # jobs always remain retrievable; at capacity, new mints fail closed.
-        with append_lock(self.root / ".capacity", strict=True):
-            existing = (
-                sum(
-                    1
-                    for path in self.root.iterdir()
-                    if path.is_dir()
-                    and len(path.name) == 64
-                    and all(char in "0123456789abcdef" for char in path.name)
-                )
-                if self.root.exists()
-                else 0
-            )
-            if not job_dir.exists() and existing >= self.max_jobs:
-                raise TimestampJobUnavailableError("timestamp job capacity reached")
-            job_dir.mkdir(parents=True, exist_ok=True)
+        # Existing paid jobs take the fast replay path and never scan the whole
+        # store. New jobs reserve a bounded slot under the global capacity lock.
+        if not job_dir.exists():
+            with append_lock(self.root / ".capacity", strict=True):
+                if not job_dir.exists():
+                    if self._job_count() >= self.max_jobs:
+                        raise TimestampJobCapacityError("timestamp job capacity reached")
+                    job_dir.mkdir(parents=True, exist_ok=True)
 
         with append_lock(record_path, strict=True):
             record = _read_record(record_path)
@@ -125,13 +158,32 @@ class TimestampJobStore:
                     proof = b""
                 if proof and hashlib.sha256(proof).hexdigest() == record.get("proof_sha256"):
                     return record, proof
+                if proof and _proof_matches_digest(proof_path, digest):
+                    from app.integrity.upgrade import CONFIRMED, read_proof_info
+
+                    state = (
+                        "bitcoin_confirmed"
+                        if read_proof_info(proof_path).state == CONFIRMED
+                        else "pending_bitcoin"
+                    )
+                    now = _utc_now()
+                    healed = {
+                        **record,
+                        "state": state,
+                        "updated_at": now,
+                        "proof_sha256": hashlib.sha256(proof).hexdigest(),
+                    }
+                    if state == "bitcoin_confirmed":
+                        healed["confirmed_at"] = record.get("confirmed_at", now)
+                    _atomic_json(record_path, healed)
+                    return healed, proof
                 raise TimestampJobUnavailableError("persisted timestamp proof is unreadable")
             if record is not None and record.get("state") == "submitting":
                 try:
                     proof = proof_path.read_bytes()
                 except OSError:
                     proof = b""
-                if proof:
+                if proof and _proof_matches_digest(proof_path, digest):
                     recovered = {
                         **record,
                         "state": "pending_bitcoin",
@@ -214,6 +266,8 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
     with append_lock(record_path, strict=True):
         record = _read_record(record_path)
         if record is None or record.get("state") not in {
+            "submitting",
+            "retryable_error",
             "pending_bitcoin",
             "bitcoin_confirmed",
         }:
@@ -223,6 +277,9 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
         except OSError:
             return False
         if not proof:
+            return False
+        digest = record.get("digest")
+        if not isinstance(digest, str) or not _proof_matches_digest(proof_path, digest):
             return False
         now = _utc_now()
         confirmed = {
@@ -238,6 +295,7 @@ def mark_timestamp_job_confirmed(proof_path: Path) -> bool:
 
 __all__ = [
     "DEFAULT_MAX_TIMESTAMP_JOBS",
+    "TimestampJobCapacityError",
     "TimestampJobConflictError",
     "TimestampJobStore",
     "TimestampJobUnavailableError",

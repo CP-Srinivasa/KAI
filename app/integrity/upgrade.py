@@ -176,7 +176,9 @@ def upgrade_pending_proofs(
     """
     out_dir = Path(proofs_dir)
     try:
-        proofs = sorted(out_dir.rglob("*.ots"))
+        proofs = sorted(
+            path for path in out_dir.rglob("*.ots") if "work" not in path.relative_to(out_dir).parts
+        )
     except OSError as exc:
         logger.warning("[ots] proofs dir unreadable: %s", exc)
         return UpgradeReport()
@@ -199,6 +201,18 @@ def upgrade_pending_proofs(
 
         info = classify_timestamp(detached.timestamp)
         if info.state == CONFIRMED:
+            if path.name == "proof.ots":
+                from app.integrity.timestamp_jobs import mark_timestamp_job_confirmed
+
+                try:
+                    if not mark_timestamp_job_confirmed(path):
+                        logger.warning("[ots] UC-3 confirmed record not reconciled for %s", path)
+                        failed += 1
+                        continue
+                except OSError as exc:
+                    logger.warning("[ots] UC-3 record reconciliation failed for %s: %s", path, exc)
+                    failed += 1
+                    continue
             already += 1
             continue
         if info.state != PENDING:
@@ -214,6 +228,8 @@ def upgrade_pending_proofs(
 
                     if not mark_timestamp_job_confirmed(path):
                         logger.warning("[ots] UC-3 job record not reconciled for %s", path)
+                        failed += 1
+                        continue
                 upgraded += 1
             except OSError as exc:
                 logger.warning("[ots] could not persist upgraded proof %s: %s", path.name, exc)

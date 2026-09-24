@@ -96,7 +96,7 @@ def _require_oracle_enabled() -> Any:
     return settings
 
 
-def _valid_paid_token(request: Request, scope: str) -> Any | None:
+def _valid_paid_token(request: Request, scope: str) -> L402Verdict | None:
     settings = _require_oracle_enabled()
     try:
         token, preimage = parse_authorization(request.headers.get("Authorization", ""))
@@ -297,19 +297,32 @@ async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
     if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
         raise HTTPException(status_code=422, detail="sha256_hex must be 32-byte hex")
 
-    # The signed L402 scope binds this payment to exactly one canonical digest.
-    auth = await _require_paid(request, f"timestamp:{digest}")
     from app.integrity.timestamp_jobs import (
+        TimestampJobCapacityError,
         TimestampJobConflictError,
         TimestampJobStore,
         TimestampJobUnavailableError,
     )
 
+    # The signed L402 scope binds this payment to exactly one canonical digest.
+    scope = f"timestamp:{digest}"
+    jobs_root = Path(get_settings().integrity.timestamp_jobs_dir)
+    store = TimestampJobStore(jobs_root)
+    auth = _valid_paid_token(request, scope)
+    if auth is None:
+        # Capacity is checked before minting so KAI never invoices for work it
+        # already knows it cannot durably accept.
+        if not await asyncio.to_thread(store.has_capacity):
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "timestamp_capacity_exhausted", "retriable": False},
+            )
+        auth = await _require_paid(request, scope)
+
     try:
-        jobs_root = Path(get_settings().integrity.timestamp_jobs_dir)
         async with _timestamp_submit_slots:
             record, proof_bytes = await asyncio.to_thread(
-                TimestampJobStore(jobs_root).submit,
+                store.submit,
                 payment_hash=auth.payment_hash,
                 digest=digest,
             )
@@ -317,12 +330,18 @@ async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
         raise HTTPException(
             status_code=409, detail="payment already bound to another digest"
         ) from exc
+    except TimestampJobCapacityError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "timestamp_capacity_exhausted", "retriable": False},
+        ) from exc
     except (TimestampJobUnavailableError, OSError) as exc:
         raise HTTPException(
             status_code=503,
             detail={"code": "timestamp_pending_retry", "retriable": True},
             headers={"Retry-After": "5"},
         ) from exc
+    append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=auth.payment_hash)
     return {
         "sha256_hex": digest,
         "ots_proof_hex": proof_bytes.hex(),

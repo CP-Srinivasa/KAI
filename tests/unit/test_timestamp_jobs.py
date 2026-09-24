@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from opentimestamps.core.notary import BitcoinBlockHeaderAttestation, PendingAttestation
+from opentimestamps.core.op import OpSHA256
+from opentimestamps.core.serialize import BytesSerializationContext
+from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from app.integrity.anchor import AnchorUnavailableError
 from app.integrity.timestamp_jobs import (
@@ -19,6 +24,19 @@ from app.integrity.timestamp_jobs import (
 
 PAYMENT_HASH = "a" * 64
 DIGEST = "b" * 64
+
+
+def _write_ots(path: Path, *, digest: str, confirmed: bool = False) -> bytes:
+    timestamp = Timestamp(bytes.fromhex(digest))
+    child = timestamp.ops.add(OpSHA256())
+    child.attestations.add(PendingAttestation("https://calendar.example.invalid"))
+    if confirmed:
+        child.attestations.add(BitcoinBlockHeaderAttestation(900_000))
+    context = BytesSerializationContext()
+    DetachedTimestampFile(OpSHA256(), timestamp).serialize(context)
+    payload = context.getbytes()
+    path.write_bytes(payload)
+    return payload
 
 
 class FakeStamper:
@@ -99,7 +117,7 @@ def test_capacity_bounds_new_jobs_without_deleting_paid_proofs(tmp_path: Path) -
 def test_restart_recovers_proof_written_before_completion_record(tmp_path: Path) -> None:
     job_dir = tmp_path / PAYMENT_HASH
     job_dir.mkdir(parents=True)
-    (job_dir / "proof.ots").write_bytes(b"proof-survived-crash")
+    expected_proof = _write_ots(job_dir / "proof.ots", digest=DIGEST)
     (job_dir / "record.json").write_text(
         json.dumps(
             {
@@ -118,7 +136,7 @@ def test_restart_recovers_proof_written_before_completion_record(tmp_path: Path)
     record, proof = TimestampJobStore(tmp_path, stamper=stamper).submit(
         payment_hash=PAYMENT_HASH, digest=DIGEST
     )
-    assert proof == b"proof-survived-crash"
+    assert proof == expected_proof
     assert record["state"] == "pending_bitcoin"
     assert stamper.calls == 0
 
@@ -141,7 +159,7 @@ def test_confirmed_upgrade_updates_hash_and_remains_replayable(tmp_path: Path) -
         payment_hash=PAYMENT_HASH, digest=DIGEST
     )
     proof_path = tmp_path / PAYMENT_HASH / "proof.ots"
-    proof_path.write_bytes(b"bitcoin-confirmed-proof")
+    confirmed_proof = _write_ots(proof_path, digest=DIGEST, confirmed=True)
 
     assert mark_timestamp_job_confirmed(proof_path) is True
 
@@ -151,5 +169,27 @@ def test_confirmed_upgrade_updates_hash_and_remains_replayable(tmp_path: Path) -
     )
     assert record["state"] == "bitcoin_confirmed"
     assert record["confirmed_at"]
-    assert proof == b"bitcoin-confirmed-proof"
+    assert proof == confirmed_proof
     assert restarted_stamper.calls == 0
+
+
+def test_hash_mismatch_heals_only_when_ots_digest_matches(tmp_path: Path) -> None:
+    store = TimestampJobStore(tmp_path, stamper=FakeStamper())
+    store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+    proof_path = tmp_path / PAYMENT_HASH / "proof.ots"
+    expected = _write_ots(proof_path, digest=DIGEST, confirmed=True)
+
+    record, proof = store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+
+    assert proof == expected
+    assert record["state"] == "bitcoin_confirmed"
+    assert record["proof_sha256"] == hashlib.sha256(expected).hexdigest()
+
+
+def test_hash_mismatch_with_wrong_ots_digest_fails_closed(tmp_path: Path) -> None:
+    store = TimestampJobStore(tmp_path, stamper=FakeStamper())
+    store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
+    _write_ots(tmp_path / PAYMENT_HASH / "proof.ots", digest="c" * 64, confirmed=True)
+
+    with pytest.raises(TimestampJobUnavailableError, match="unreadable"):
+        store.submit(payment_hash=PAYMENT_HASH, digest=DIGEST)
