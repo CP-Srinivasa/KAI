@@ -135,6 +135,10 @@ jobs:
         # pip-CVEs (CVE-2026-3219 no-fix, CVE-2026-6357 fix-pending in pip 26.1)
         # ignored — pip ist Build-Tool, keine Project-Dependency.
         run: pip-audit -r requirements.lock --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
+      - name: Transport dependency vulnerability scan
+        # Gepinnter, vollstaendig gehashter Pi-Baum (aarch64): nur die
+        # Versionen gegen die Advisory-DB pruefen, nichts auf x86 installieren.
+        run: pip-audit -r requirements-transport.lock --no-deps --disable-pip
       - name: Static security analysis (bandit)
         run: |
           bandit -r app/ \

@@ -99,7 +99,11 @@ for spec in verfuegbar[name]:
 ' "$REPO/pyproject.toml" "$EXTRA")" || { echo "Spec-Aufloesung gescheitert" >&2; exit 1; }
 
 [ -n "$SPEC" ] || { echo "Extra '$EXTRA' ist leer" >&2; exit 1; }
-SPEC_SHA="$(printf '%s\n' $SPEC | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+LOCK="$REPO/requirements-transport.lock"
+[ -f "$LOCK" ] || { echo "TRANSPORT_LOCK_MISSING: $LOCK" >&2; exit 1; }
+# Der Lock ist der Vertrag. Eine unveraenderte Top-Level-Spec darf nicht mehr
+# zwei verschiedene transitive Baeume hervorbringen.
+SPEC_SHA="$(sha256sum "$LOCK" | cut -d' ' -f1)"
 echo "Transport: $EXTRA" >&2
 printf '  %s\n' $SPEC >&2
 
@@ -110,10 +114,7 @@ printf '  %s\n' $SPEC >&2
 # teuer. Deshalb wird zuerst gefragt, ob ein Baum mit DERSELBEN Spec existiert
 # und sein Manifest noch traegt -- dann ist er die Antwort.
 #
-# Das heisst ausdruecklich: der ERSTE Bau gewinnt. `litellm[proxy]==1.99.0` zieht
-# transitive Pakete, die in keinem Lock stehen und "neuestes zum Bauzeitpunkt"
-# aufloesen; ein zweiter Lauf soll sie NICHT stillschweigend anheben. Wer etwas
-# Neueres will, aendert die Spec oder nimmt `--force`.
+# Der Lock-Hash identifiziert den vollstaendigen transitive Abhaengigkeitsbaum.
 if [ "$FORCE" -eq 0 ]; then
     VORHANDEN="$(python3 -c '
 import json, pathlib, sys
@@ -159,15 +160,13 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" || { echo "kann $STAGE nicht anlegen" >&2; exit 1; }
 
 echo "== 1/5 eigener venv, OHNE den Core-Lock ==" >&2
-# Kein `-c requirements.lock`: das ist der ganze Punkt von ADR 0019. Der
-# Transport loest seine Abhaengigkeiten selbst auf; der Core-Vertrag gilt fuer
-# den Core. Ein Constraint hier holte den Konflikt zurueck, den die Trennung
-# gerade beseitigt.
+# Kein Core-Lock: der Transport hat einen eigenen, gehashten Vertrag. So bleibt
+# der OpenAI-Konflikt getrennt, ohne beim Bau offen aus dem Netz aufzuloesen.
 python3 -m venv "$STAGE/.venv" || { echo "venv-Bau gescheitert" >&2; exit 1; }
 PY="$STAGE/.venv/bin/python3"
 "$PY" -m pip install --upgrade pip >/dev/null 2>&1
 PIP_LOG="/tmp/kai-transport-pip.$$.log"
-if ! "$PY" -m pip install $SPEC >"$PIP_LOG" 2>&1; then
+if ! "$PY" -m pip install --require-hashes -r "$LOCK" >"$PIP_LOG" 2>&1; then
     echo "Installation gescheitert - siehe $PIP_LOG" >&2
     tail -15 "$PIP_LOG" >&2
     exit 1
@@ -181,11 +180,46 @@ if ! "$PY" -m pip check >/dev/null 2>&1; then
 fi
 
 echo "== 3/5 eigener Lock und Manifest ==" >&2
-# Der EIGENE Lock des Baums: was tatsaechlich drin ist, eingefroren. Er
-# beschreibt diesen Transport, nicht KAI -- und er ist der Grund, warum ein
-# Restore kein Netz braucht.
-"$PY" -m pip freeze | LC_ALL=C sort > "$STAGE/requirements.lock"
-DEP_MANIFEST="$(LC_ALL=C sort < "$STAGE/requirements.lock" | sha256sum | cut -d' ' -f1)"
+# Absicht und Ist-Zustand muessen dieselben Paketversionen nennen. Hashzeilen
+# gehoeren nur zum Lock; fuer den Vergleich werden beide Seiten kanonisiert.
+"$PY" -m pip freeze | LC_ALL=C sort > "$STAGE/requirements.freeze"
+if ! "$PY" - "$LOCK" "$STAGE/requirements.freeze" <<'PY'
+import pathlib
+import re
+import sys
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+lock, freeze = map(pathlib.Path, sys.argv[1:])
+locked = {}
+for line in lock.read_text(encoding="utf-8").splitlines():
+    if not line or line[0].isspace() or line.startswith("#"):
+        continue
+    requirement = Requirement(re.sub(r"\\\s*$", "", line))
+    versions = [item.version for item in requirement.specifier if item.operator == "=="]
+    if len(versions) != 1:
+        raise SystemExit("TRANSPORT_LOCK_NOT_EXACT")
+    locked[canonicalize_name(requirement.name)] = versions[0]
+installed = {}
+for line in freeze.read_text(encoding="utf-8").splitlines():
+    requirement = Requirement(line)
+    versions = [item.version for item in requirement.specifier if item.operator == "=="]
+    if len(versions) != 1:
+        raise SystemExit("TRANSPORT_FREEZE_NOT_EXACT")
+    installed[canonicalize_name(requirement.name)] = versions[0]
+if locked != installed:
+    print("TRANSPORT_FREEZE_LOCK_MISMATCH", file=sys.stderr)
+    print("missing:", sorted(set(locked) - set(installed)), file=sys.stderr)
+    print("extra:", sorted(set(installed) - set(locked)), file=sys.stderr)
+    print("changed:", sorted(k for k in locked.keys() & installed.keys() if locked[k] != installed[k]), file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+    echo "Freeze stimmt nicht mit requirements-transport.lock ueberein" >&2
+    exit 1
+fi
+cp "$LOCK" "$STAGE/requirements.lock"
+DEP_MANIFEST="$(LC_ALL=C sort < "$STAGE/requirements.freeze" | sha256sum | cut -d' ' -f1)"
 VERSION="$("$PY" -c "
 import importlib.metadata as md
 import sys

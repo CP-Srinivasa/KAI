@@ -88,12 +88,13 @@ def test_der_transport_wird_ohne_den_core_lock_installiert() -> None:
     Ein `-c requirements.lock` an dieser Stelle holte genau den Konflikt
     zurück, den die Trennung beseitigt: `litellm[proxy]` verlangt
     `openai<3.0.0`, der Core fährt `openai==3.6.0`. Der Transport löst seine
-    Abhängigkeiten selbst auf; der Core-Vertrag gilt für den Core.
+    eigenen gehashten Lock; der Core-Vertrag gilt für den Core.
     """
     code = _code()
-    zeile = next(z for z in code.splitlines() if "pip install" in z and "$SPEC" in z)
+    zeile = next(z for z in code.splitlines() if "pip install" in z and "$LOCK" in z)
     assert "-c " not in zeile, zeile
-    assert "requirements.lock" not in zeile, zeile
+    assert "--require-hashes" in zeile, zeile
+    assert "requirements-transport.lock" in code
 
 
 def _pfad_wache(kandidat: Path) -> subprocess.CompletedProcess[str]:
@@ -257,12 +258,13 @@ def test_das_manifest_erfindet_keine_bindung_an_einen_kai_commit() -> None:
     assert "repo_sha" not in _code()
 
 
-def test_der_eigene_lock_wird_aus_dem_gebauten_venv_geschrieben() -> None:
-    """Er beschreibt diesen Transport, nicht KAI — und macht den Restore
-    netzunabhängig, gerade weil die Pakete in keinem Core-Lock stehen."""
+def test_lock_und_freeze_bleiben_getrennt_und_werden_verglichen() -> None:
+    """Der Lock beschreibt die Absicht, der Freeze den gebauten Ist-Zustand."""
     code = _code()
     assert "pip freeze" in code
-    assert '"$STAGE/requirements.lock"' in code
+    assert '"$STAGE/requirements.freeze"' in code
+    assert 'cp "$LOCK" "$STAGE/requirements.lock"' in code
+    assert "TRANSPORT_FREEZE_LOCK_MISMATCH" in code
 
 
 # ---------------------------------------------------------------------------
@@ -371,28 +373,26 @@ def test_keine_geheimnisse_im_artefakt() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _spec_sha(specs: str) -> str:
-    """Die Spec-Hash-Zeile AUS dem Builder ausführen."""
+def _spec_sha(tmp_path: Path, content: str) -> str:
+    """Die Lock-Hash-Zeile AUS dem Builder ausführen."""
+    lock = tmp_path / f"lock-{len(list(tmp_path.iterdir()))}"
+    lock.write_text(content, encoding="utf-8")
     zeilen = _text().splitlines()
     fragment = next(z.strip() for z in zeilen if z.strip().startswith("SPEC_SHA="))
-    fertig = _bash(f'SPEC="{specs}"\n{fragment}\nprintf %s "$SPEC_SHA"')
+    fertig = _bash(f'LOCK="{lock.as_posix()}"\n{fragment}\nprintf %s "$SPEC_SHA"')
     assert fertig.returncode == 0, fertig.stderr
     return fertig.stdout.strip()
 
 
-def test_gleiche_spec_ergibt_denselben_spec_hash() -> None:
-    a = _spec_sha("litellm[proxy]==1.99.0")
-    b = _spec_sha("litellm[proxy]==1.99.0")
+def test_gleicher_lock_ergibt_denselben_spec_hash(tmp_path: Path) -> None:
+    a = _spec_sha(tmp_path, "litellm==1.99.0\n")
+    b = _spec_sha(tmp_path, "litellm==1.99.0\n")
     assert a == b
     assert len(a) == 64
 
 
-def test_die_reihenfolge_der_specs_aendert_den_hash_nicht() -> None:
-    assert _spec_sha("aaa==1 bbb==2") == _spec_sha("bbb==2 aaa==1")
-
-
-def test_eine_andere_version_ergibt_einen_anderen_spec_hash() -> None:
-    assert _spec_sha("litellm[proxy]==1.99.0") != _spec_sha("litellm[proxy]==2.0.0")
+def test_jede_lock_aenderung_ergibt_einen_anderen_spec_hash(tmp_path: Path) -> None:
+    assert _spec_sha(tmp_path, "litellm==1.99.0\n") != _spec_sha(tmp_path, "litellm==2.0.0\n")
 
 
 def _idempotenz_probe(wurzel: Path, spec_sha: str) -> str:
