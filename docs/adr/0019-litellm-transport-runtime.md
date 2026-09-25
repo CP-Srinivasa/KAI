@@ -32,6 +32,7 @@ Provider und damit der produktive AI-Core laufen. Die LiteLLM-1.x-Reihe verlangt
 | 1.100.0 | `openai>=2.20.0,<3.0.0` |
 | 1.101.0rc1 | `openai>=2.20.0,<3.0.0` |
 | 1.101.0.dev2 | `openai>=2.20.0,<3.0.0` |
+| 1.102.1 | `openai>=2.20.0,<3.0.0` (Transport seit 2026-09-25, PyPI-Metadaten) |
 
 Auch die Vorab- und Entwicklungsschiene hält an `<3.0.0` fest. Es gibt keine
 Version, auf die man warten oder ausweichen könnte, und ein Lock-Refresh

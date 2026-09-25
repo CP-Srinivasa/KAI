@@ -74,7 +74,7 @@ dependencies = [
 # verschiedene Gateways starten koennen. Das waere genau die Provenienzluecke,
 # gegen die das Release-Modell gebaut ist.
 litellm = [
-    "litellm[proxy]==1.99.0",
+    "litellm[proxy]==1.102.1",
 ]
 dev = [
     "pytest>=8.3.0",

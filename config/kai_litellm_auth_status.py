@@ -3,7 +3,8 @@
 KAI betreibt beide Proxies (``litellm.yaml``, ``litellm_dev.yaml``) bewusst
 OHNE Datenbank: es gibt nur den Master-Key, keine virtuellen Schluessel. In
 LiteLLM 1.99.0 laeuft ein Auth-Fehler dann in eine Fehlerklassifikation, die
-``prisma`` bedingungslos importiert:
+``prisma`` bedingungslos importiert (in 1.102.1 unveraendert, am 2026-09-25
+ohne Callback wieder 500/400, mit Callback 401/401):
 
 * ohne Key: ``Exception("No api key passed in.")`` ->
   ``is_database_service_unavailable_error`` -> ``import prisma`` ->
