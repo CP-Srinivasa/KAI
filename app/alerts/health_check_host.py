@@ -52,7 +52,13 @@ def _run(cmd: Sequence[str]) -> str | None:
     """stdout bei Exit 0, sonst ``None`` — ein Werkzeugfehler ist kein Befund."""
     try:
         done = subprocess.run(  # noqa: S603
-            list(cmd), capture_output=True, text=True, timeout=15, check=False
+            list(cmd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",  # git gibt Pfade als UTF-8 aus; nie die Locale raten
+            errors="replace",
+            timeout=15,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
