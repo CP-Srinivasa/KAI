@@ -55,3 +55,23 @@ Dann Remote: `https://kai-trader.org/health` vom Handy aus (Mobilfunk, nicht WLA
 ## Hardening-Notes
 
 Die drei Long-Runner (`kai-server`, `kai-agent-worker`, `cloudflared`) haben `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome=read-only` gesetzt. Nur `/home/kai/ai_analyst_trading_bot` ist writable. Bei späterem Bedarf (z.B. Zugriff auf `/tmp/kai-*.sock`) `ReadWritePaths=` ergänzen, nicht die Hardening-Flags aufweichen.
+
+## `needrestart/`
+
+`50-kai.conf` verhindert, dass `needrestart` nach einem `unattended-upgrade` die
+`kai-*`-Dienste neu startet (Vorfall 25.09.2026 04:34Z, mitten im Pilot D-281).
+Die Dienste erscheinen dann unter "Service restarts being deferred" und laden die
+neue Bibliothek mit dem nächsten Release-Restart.
+
+Vor der Installation ohne Root prüfen, dass das Snippet parst und greift:
+
+```bash
+perl -e 'our %nrconf; my $b=do{local(@ARGV,$/)="/etc/needrestart/needrestart.conf";<>};
+  $b =~ s/# Read additional config snippets.*//s; eval $b; die $@ if $@;
+  eval do{local(@ARGV,$/)="deploy/needrestart/50-kai.conf";<>}; die $@ if $@;
+  for my $u (qw(kai-server.service ssh.service)) { my $r=1;
+    for my $re (keys %{$nrconf{override_rc}}) { next unless $u =~ /$re/; $r=$nrconf{override_rc}->{$re}; last }
+    print "$u restart=$r\n" }'
+# Soll: kai-server.service restart=0, ssh.service restart=1
+sudo install -m 0644 -o root -g root deploy/needrestart/50-kai.conf /etc/needrestart/conf.d/50-kai.conf
+```
