@@ -131,3 +131,23 @@ vollständig über `direct`.
 Bibliotheken ersetzt wurden, darunter auch `kai-litellm` (belegt am 25.09.2026
 04:34Z nach dem curl/libexpat-Update). Der Proxy liest `.env` und die
 Konfiguration nur beim Start. Nach einem solchen Neustart gilt §1.
+Seit #1072 ist das für `kai-*` abgeschaltet (`/etc/needrestart/conf.d/50-kai.conf`,
+installiert am 25.09.2026).
+
+## 6. Preise (Kostenmap)
+
+`kai-litellm.service` und `dev_reserve.sh proxy` setzen
+`LITELLM_LOCAL_MODEL_COST_MAP=True`. Die Preise kommen damit aus dem Transport-Baum,
+sind an `requirements-transport.lock` gebunden, und der Start braucht kein Netz.
+Ohne die Variable lädt LiteLLM die Preise bei jedem Start von GitHub `main`.
+`environment_variables` in der Proxy-YAML wirkt dafür nicht, weil die Map beim
+Import geladen wird. Neue Preise kommen mit dem nächsten Transport-Update (§3).
+
+Die Unit-Änderung wirkt erst, wenn der Operator die Units mit
+`sudo bash scripts/pi_apply_systemd_units.sh` angewendet und `kai-litellm` neu
+gestartet hat. Prüfen:
+
+```bash
+pid=$(systemctl show kai-litellm -p MainPID --value)
+tr '\0' '\n' < /proc/$pid/environ | grep -c '^LITELLM_LOCAL_MODEL_COST_MAP=True$'   # Soll: 1
+```
