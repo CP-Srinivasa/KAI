@@ -136,7 +136,7 @@ async def test_list_payments_wire_and_normalizes_pagination() -> None:
                         "status": "SUCCEEDED",
                         "failure_reason": "FAILURE_REASON_NONE",
                         "value_sat": "1200",
-                        "fee_sat": "3",
+                        "fee_msat": "3050",
                         "payment_index": "8",
                         "payment_preimage": "must-not-escape",
                         "payment_request": "lnbc-must-not-escape",
@@ -162,6 +162,7 @@ async def test_list_payments_wire_and_normalizes_pagination() -> None:
     assert payment.status == "SUCCEEDED"
     assert payment.failure_reason == "FAILURE_REASON_NONE"
     assert (payment.value_sat, payment.fee_sat, payment.payment_index) == (1200, 3, 8)
+    assert payment.fee_msat == 3050
     assert "preimage" not in repr(payment).lower()
     assert "lnbc" not in repr(payment).lower()
     assert "hops" not in repr(payment).lower()

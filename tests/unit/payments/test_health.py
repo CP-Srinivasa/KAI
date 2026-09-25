@@ -48,22 +48,32 @@ async def _snapshot(tmp_path: Path, journal: PaymentJournal, **kwargs: object) -
     )
 
 
-def _settled_intent(journal: PaymentJournal, intent_id: str, *, at: datetime, fee: int) -> None:
+def _settled_intent(
+    journal: PaymentJournal,
+    intent_id: str,
+    *,
+    at: datetime,
+    fee: int,
+    fee_msat: int | None = None,
+) -> None:
     journal.append(
         intent_id,
         "submitted",
         {"status": "SUBMITTED", "rail_dedup_key": "a" * 64, "amount_sent_minor_units": 1000},
         ts=at,
     )
+    payload = {
+        "status": "SETTLED",
+        "amount_settled_minor_units": 1000,
+        "fee_actual_minor_units": fee,
+        "proof_hash": "b" * 64,
+    }
+    if fee_msat is not None:
+        payload["fee_actual_msat"] = fee_msat
     journal.append(
         intent_id,
         "settled",
-        {
-            "status": "SETTLED",
-            "amount_settled_minor_units": 1000,
-            "fee_actual_minor_units": fee,
-            "proof_hash": "b" * 64,
-        },
+        payload,
         ts=at + timedelta(seconds=2),
     )
 
@@ -206,8 +216,22 @@ async def test_settlement_latenz_und_gebuehren_kommen_aus_dem_journal(tmp_path: 
     assert snapshot["settlement_latency_p50_ms"] == 2000.0
     assert snapshot["settlement_latency_p95_ms"] == 2000.0
     assert snapshot["fees_minor_units"] == 10
+    assert snapshot["fees_msat_exact"] is None
     assert snapshot["last_settlement"]["amount_minor_units"] == 1000
     assert snapshot["last_settlement"]["ts"].startswith("2026-09-03")
+
+
+async def test_exakte_gebuehren_nur_bei_vollstaendigem_fenster(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    _settled_intent(journal, "pi_exact", at=NOW - timedelta(minutes=10), fee=1, fee_msat=1050)
+    snapshot = await _snapshot(tmp_path, journal)
+    assert snapshot["fees_minor_units"] == 1
+    assert snapshot["fees_msat_exact"] == 1050
+
+    _settled_intent(journal, "pi_legacy", at=NOW - timedelta(minutes=5), fee=2)
+    mixed = await _snapshot(tmp_path, journal)
+    assert mixed["fees_minor_units"] == 3
+    assert mixed["fees_msat_exact"] is None
 
 
 async def test_ohne_settlement_ist_die_latenz_unbekannt_nicht_null(tmp_path: Path) -> None:

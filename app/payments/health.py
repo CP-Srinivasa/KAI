@@ -77,6 +77,7 @@ async def payment_health_snapshot(
         "reconciliation_required": metrics.reconciliation_required,
         "policy_reject_count": metrics.policy_rejects,
         "fees_minor_units": metrics.fees,
+        "fees_msat_exact": metrics.fees_msat_exact,
         "settlement_latency_p50_ms": metrics.latency_p50_ms,
         "settlement_latency_p95_ms": metrics.latency_p95_ms,
         "last_settlement": metrics.last_settlement,

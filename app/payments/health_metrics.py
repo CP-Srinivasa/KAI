@@ -38,6 +38,7 @@ class JournalMetrics:
     reconciliation_required: int = 0
     policy_rejects: int = 0
     fees: int = 0
+    fees_msat_exact: int | None = None
     latency_p50_ms: float | None = None
     latency_p95_ms: float | None = None
     last_settlement: dict[str, Any] | None = None
@@ -71,6 +72,9 @@ def collect(events: Iterable[PaymentAuditEvent], *, cutoff: datetime) -> Journal
     latencies: list[float] = []
     rejects = 0
     fees = 0
+    fees_msat = 0
+    exact_fees_complete = True
+    settlements_in_window = 0
     last_settlement: dict[str, Any] | None = None
     last_failure: dict[str, Any] | None = None
 
@@ -88,6 +92,12 @@ def collect(events: Iterable[PaymentAuditEvent], *, cutoff: datetime) -> Journal
                 latencies.append((event.ts - start).total_seconds() * 1000.0)
             if event.ts >= cutoff:
                 fees += _int(payload.get("fee_actual_minor_units"))
+                settlements_in_window += 1
+                exact = payload.get("fee_actual_msat")
+                if isinstance(exact, int) and not isinstance(exact, bool) and exact >= 0:
+                    fees_msat += exact
+                else:
+                    exact_fees_complete = False
             last_settlement = {
                 "ts": event.ts.isoformat(),
                 "amount_minor_units": _int(payload.get("amount_settled_minor_units")),
@@ -109,6 +119,7 @@ def collect(events: Iterable[PaymentAuditEvent], *, cutoff: datetime) -> Journal
         ),
         policy_rejects=rejects,
         fees=fees,
+        fees_msat_exact=fees_msat if settlements_in_window and exact_fees_complete else None,
         latency_p50_ms=percentile(ordered, 0.50),
         latency_p95_ms=percentile(ordered, 0.95),
         last_settlement=last_settlement,

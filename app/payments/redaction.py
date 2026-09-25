@@ -60,6 +60,7 @@ ALLOWED_KEYS: frozenset[str] = frozenset(
         "fee_limit_minor_units",
         "fee_estimate_minor_units",
         "fee_actual_minor_units",
+        "fee_actual_msat",
         "currency",
         "scale",
         # Rail-Material — ausschliesslich als Hash
