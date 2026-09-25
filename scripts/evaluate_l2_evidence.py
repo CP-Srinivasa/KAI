@@ -10,8 +10,9 @@ moving-block bootstrap (NOT a naive hit-rate). Read-only; learns nothing into si
 Outcomes are FILL-INDEPENDENT by default (since 2026-07-01): the canonical resolved
 shadow-candidate pool (:mod:`app.research.shadow_outcomes`) is projected onto the
 chosen ``--horizon`` — so the join no longer needs a hand-produced outcomes file.
-``--outcomes <file>`` still overrides with a bespoke ``{symbol, entry_ts, net_bps}``
-JSONL.
+``--outcomes <file>`` still overrides with bespoke JSONL. Every outcome requires
+``candidate_id``, ``symbol``, ``side``, ``entry_ts`` and ``net_bps``; missing PIT
+identity fields are reported before the fail-closed join drops those rows.
 
 Verdict is honest: ``insufficient`` below sample size, ``inconclusive`` when the
 bootstrap does not confirm a direction. Trust-promotion stays operator- AND
@@ -24,7 +25,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from app.observability.l2_evidence_eval import evaluate_feature_direction, pit_join
+from app.observability.l2_evidence_eval import (
+    evaluate_feature_direction,
+    outcome_contract_gaps,
+    pit_join,
+)
 from app.research.shadow_outcomes import (
     HORIZONS,
     load_canonical_outcomes,
@@ -58,6 +63,14 @@ def main(argv: list[str] | None = None) -> int:
         outcomes = to_feature_outcomes(load_canonical_outcomes(), horizon=args.horizon)
         src = f"canonical shadow pool @ {args.horizon}s"
     print(f"l2-eval: {len(outcomes)} outcomes from {src} (fill-independent)")
+    gaps = outcome_contract_gaps(outcomes)
+    if any(gaps.values()):
+        print(
+            "l2-eval: WARNING outcome contract gaps: "
+            f"missing_candidate_id={gaps['missing_candidate_id']} "
+            f"missing_side={gaps['missing_side']}; affected rows cannot PIT-join",
+            file=sys.stderr,
+        )
 
     pairs = pit_join(measurements, outcomes)
     print(f"l2-eval: {len(pairs)} point-in-time pairs (no look-ahead)")

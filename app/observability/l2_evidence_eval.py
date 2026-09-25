@@ -6,8 +6,9 @@ provides the robust primitives the shadow evaluation needs:
 
   * :func:`moving_block_bootstrap_p_mean_positive` — P(mean > 0) by resampling
     CONTIGUOUS blocks (preserving autocorrelation), not independent points.
-  * :func:`pit_join` — point-in-time join: each measurement is paired only with a
-    STRICTLY-later outcome (no look-ahead leakage).
+  * :func:`pit_join` — fail-closed point-in-time join: a measurement is paired only
+    with its uniquely identified, direction-compatible outcome inside a bounded
+    time window (no look-ahead leakage or duplicated effective samples).
   * :func:`evaluate_feature_direction` — learns whether a raw feature (fee/mempool
     percentile) is contrarian, pro-trend, or has no usable direction — with the
     direction GATED on block-bootstrap confidence, never assumed (B-003).
@@ -26,7 +27,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 _DEFAULT_RESAMPLES = 5000
+DEFAULT_PIT_JOIN_MAX_AGE_SECONDS = 300.0
 MIN_SAMPLE = 8
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def moving_block_bootstrap_p_mean_positive(
@@ -45,7 +57,12 @@ def moving_block_bootstrap_p_mean_positive(
     inflated by treating autocorrelated points as independent. ``None`` below
     ``min_sample`` (honest insufficiency).
     """
-    vals = [float(v) for v in values]
+    vals: list[float] = []
+    for value in values:
+        number = _finite_number(value)
+        if number is None:
+            raise ValueError("bootstrap values must be finite numbers, not booleans")
+        vals.append(number)
     n = len(vals)
     if n < min_sample:
         return None
@@ -75,38 +92,102 @@ def _parse_ts(ts: object) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
+def outcome_contract_gaps(outcomes: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Count missing PIT identity fields before a fail-closed join drops rows."""
+    missing_id = 0
+    missing_side = 0
+    for outcome in outcomes:
+        candidate_id = outcome.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id.strip():
+            missing_id += 1
+        if outcome.get("side") not in {"long", "short"}:
+            missing_side += 1
+    return {"missing_candidate_id": missing_id, "missing_side": missing_side}
+
+
 def pit_join(
     measurements: Sequence[dict[str, Any]],
     outcomes: Sequence[dict[str, Any]],
+    *,
+    max_age_seconds: float = DEFAULT_PIT_JOIN_MAX_AGE_SECONDS,
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """Point-in-time join: pair each measurement with the EARLIEST outcome for the
-    same symbol whose ``entry_ts`` is at/after the measurement ``ts``.
+    """Join uniquely identified measurements and outcomes without sample inflation.
 
-    A strictly-later (or equal) outcome only — an outcome before the measurement is
-    look-ahead leakage and is never used. Measurements with no qualifying outcome
-    are dropped (honest: not every measurement has a tradeable consequence).
+    Both records must carry the same non-empty ``candidate_id``, the same ``symbol``,
+    and compatible ``direction`` (measurement) / ``side`` (outcome). Candidate IDs
+    that occur more than once on either side are ambiguous and therefore unmatched.
+    New producer rows also carry ``decision_ts``, ``reference_price_ts`` and
+    ``causality_ok``.  Their outcome must use the same decision anchor; the
+    measurement must be written after that anchor and within ``max_age_seconds``.
+    A reference price after the anchor, a false/missing causality verdict or a
+    mismatched anchor is rejected.  Legacy rows that predate the context fields
+    retain the stricter old rule: outcome at/after measurement within the bound.
+    Missing provenance, direction, symbol, or valid timestamps is fail-closed.
+
+    The 300-second default is the repository's existing aligned-evidence tolerance;
+    callers may make it stricter, but cannot disable the age bound. Returned pairs
+    are ordered by outcome time so the downstream moving-block bootstrap preserves
+    chronology.
     """
-    by_sym: dict[str, list[tuple[datetime, dict[str, Any]]]] = defaultdict(list)
-    for o in outcomes:
-        sym = o.get("symbol")
-        ets = _parse_ts(o.get("entry_ts"))
-        if sym is None or ets is None:
-            continue
-        by_sym[str(sym)].append((ets, o))
-    for sym in by_sym:
-        by_sym[sym].sort(key=lambda pair: pair[0])
+    max_age = float(max_age_seconds)
+    if not math.isfinite(max_age) or max_age <= 0.0:
+        raise ValueError("max_age_seconds must be finite and > 0")
 
-    pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    for m in measurements:
-        sym = m.get("symbol")
-        mts = _parse_ts(m.get("ts"))
-        if sym is None or mts is None:
+    measurements_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    outcomes_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for measurement in measurements:
+        candidate_id = measurement.get("candidate_id")
+        if isinstance(candidate_id, str) and candidate_id.strip():
+            measurements_by_id[candidate_id.strip()].append(measurement)
+    for outcome in outcomes:
+        candidate_id = outcome.get("candidate_id")
+        if isinstance(candidate_id, str) and candidate_id.strip():
+            outcomes_by_id[candidate_id.strip()].append(outcome)
+
+    dated_pairs: list[tuple[datetime, dict[str, Any], dict[str, Any]]] = []
+    for candidate_id, candidate_measurements in measurements_by_id.items():
+        candidate_outcomes = outcomes_by_id.get(candidate_id, [])
+        if len(candidate_measurements) != 1 or len(candidate_outcomes) != 1:
             continue
-        for ets, o in by_sym.get(str(sym), ()):
-            if ets >= mts:
-                pairs.append((m, o))
-                break
-    return pairs
+        measurement = candidate_measurements[0]
+        outcome = candidate_outcomes[0]
+
+        symbol = measurement.get("symbol")
+        if not isinstance(symbol, str) or not symbol or outcome.get("symbol") != symbol:
+            continue
+        direction = measurement.get("direction")
+        side = outcome.get("side")
+        if direction not in {"long", "short"} or side != direction:
+            continue
+
+        measured_at = _parse_ts(measurement.get("ts"))
+        outcome_at = _parse_ts(outcome.get("entry_ts"))
+        if measured_at is None or outcome_at is None:
+            continue
+
+        has_context = any(
+            key in measurement for key in ("decision_ts", "reference_price_ts", "causality_ok")
+        )
+        if has_context:
+            decision_at = _parse_ts(measurement.get("decision_ts"))
+            reference_at = _parse_ts(measurement.get("reference_price_ts"))
+            if (
+                measurement.get("causality_ok") is not True
+                or decision_at is None
+                or reference_at is None
+                or reference_at > decision_at
+                or outcome_at != decision_at
+            ):
+                continue
+            age_seconds = (measured_at - decision_at).total_seconds()
+        else:
+            age_seconds = (outcome_at - measured_at).total_seconds()
+        if age_seconds < 0.0 or age_seconds > max_age:
+            continue
+        dated_pairs.append((outcome_at, measurement, outcome))
+
+    dated_pairs.sort(key=lambda item: item[0])
+    return [(measurement, outcome) for _, measurement, outcome in dated_pairs]
 
 
 def evaluate_feature_direction(
@@ -124,21 +205,29 @@ def evaluate_feature_direction(
     ``contrarian``; the mirror → ``pro_trend``). Otherwise ``inconclusive``; below
     ``min_sample`` per group ``insufficient``. Never assumes a direction (B-003).
 
-    Measurements whose feature value is recorded as an explicit ``null`` (producer
-    logs "source unavailable", e.g. fee endpoint down) carry no information for the
-    split — they are excluded and counted honestly in ``n_null_feature``.
+    Missing/null features carry no information and count as ``n_null_feature``.
+    Malformed, boolean or nonfinite features/outcomes are excluded and counted;
+    NaN must never manufacture a negative bootstrap verdict from failed comparisons.
     """
     high: list[float] = []
     low: list[float] = []
     n_null_feature = 0
+    n_invalid_feature = 0
+    n_invalid_outcome = 0
     for m, o in pairs:
-        if o.get("net_bps") is None:
+        outcome = _finite_number(o.get("net_bps"))
+        if outcome is None:
+            n_invalid_outcome += 1
             continue
-        feat = m.get(feature_key, 0.5)
+        feat = m.get(feature_key)
         if feat is None:
             n_null_feature += 1
             continue
-        (high if float(feat) > 0.5 else low).append(float(o["net_bps"]))
+        feature = _finite_number(feat)
+        if feature is None:
+            n_invalid_feature += 1
+            continue
+        (high if feature > 0.5 else low).append(outcome)
     n_high, n_low = len(high), len(low)
     mean_high = sum(high) / n_high if high else 0.0
     mean_low = sum(low) / n_low if low else 0.0
@@ -166,6 +255,8 @@ def evaluate_feature_direction(
         "n_high": n_high,
         "n_low": n_low,
         "n_null_feature": n_null_feature,
+        "n_invalid_feature": n_invalid_feature,
+        "n_invalid_outcome": n_invalid_outcome,
         "mean_high": mean_high,
         "mean_low": mean_low,
         "p_high_positive": p_high,
@@ -175,8 +266,10 @@ def evaluate_feature_direction(
 
 
 __all__ = [
+    "DEFAULT_PIT_JOIN_MAX_AGE_SECONDS",
     "MIN_SAMPLE",
     "evaluate_feature_direction",
     "moving_block_bootstrap_p_mean_positive",
+    "outcome_contract_gaps",
     "pit_join",
 ]

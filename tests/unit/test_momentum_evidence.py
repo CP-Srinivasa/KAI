@@ -140,12 +140,36 @@ class TestEval:
         from app.observability.l2_evidence_eval import evaluate_feature_direction, pit_join
 
         measurements = [
-            {"ts": "2026-06-01T00:00:00Z", "symbol": "BTC/USDT", "momentum_score": 0.9},
-            {"ts": "2026-06-01T00:00:00Z", "symbol": "ETH/USDT", "momentum_score": 0.1},
+            {
+                "candidate_id": "btc-long",
+                "ts": "2026-06-01T00:00:00Z",
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "momentum_score": 0.9,
+            },
+            {
+                "candidate_id": "eth-short",
+                "ts": "2026-06-01T00:00:00Z",
+                "symbol": "ETH/USDT",
+                "direction": "short",
+                "momentum_score": 0.1,
+            },
         ]
         outcomes = [
-            {"symbol": "BTC/USDT", "entry_ts": "2026-06-01T01:00:00Z", "net_bps": 50.0},
-            {"symbol": "ETH/USDT", "entry_ts": "2026-06-01T01:00:00Z", "net_bps": -50.0},
+            {
+                "candidate_id": "btc-long",
+                "symbol": "BTC/USDT",
+                "side": "long",
+                "entry_ts": "2026-06-01T00:01:00Z",
+                "net_bps": 50.0,
+            },
+            {
+                "candidate_id": "eth-short",
+                "symbol": "ETH/USDT",
+                "side": "short",
+                "entry_ts": "2026-06-01T00:01:00Z",
+                "net_bps": -50.0,
+            },
         ]
         pairs = pit_join(measurements, outcomes)
         result = evaluate_feature_direction(pairs, feature_key="momentum_score", min_sample=1)

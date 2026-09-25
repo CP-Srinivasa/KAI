@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.l2_candidate_context import bind_candidate
+from app.observability.l2_evidence_eval import pit_join
 from app.research.shadow_outcomes import (
     HORIZONS,
     build_outcomes,
@@ -15,6 +17,7 @@ from app.research.shadow_outcomes import (
     read_jsonl,
     to_feature_outcomes,
 )
+from app.signals.l2_features import OnchainFlowFeatures, append_l2_shadow_log
 
 
 def test_read_jsonl_missing_file_returns_empty(tmp_path):
@@ -69,6 +72,7 @@ def test_build_outcomes_filters_and_time_orders():
     out = build_outcomes(resolved, times)
     assert [o["symbol"] for o in out] == ["ETH/USDT", "BTC/USDT"]  # time-ordered
     btc = out[1]
+    assert btc["candidate_id"] == "a"
     assert btc["side"] == "long"
     assert btc["fwd"][60] == 10.0
     assert btc["fwd"][3600] == 25.0
@@ -94,6 +98,7 @@ def test_load_entry_times_maps_candidate_id():
 def test_to_feature_outcomes_projects_horizon_and_iso_ts():
     outcomes = [
         {
+            "candidate_id": "btc-long",
             "symbol": "BTC/USDT",
             "side": "long",
             "entry_ts": datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
@@ -102,7 +107,13 @@ def test_to_feature_outcomes_projects_horizon_and_iso_ts():
     ]
     feats = to_feature_outcomes(outcomes, horizon=3600)
     assert feats == [
-        {"symbol": "BTC/USDT", "entry_ts": "2026-07-01T12:00:00+00:00", "net_bps": 33.0}
+        {
+            "candidate_id": "btc-long",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-07-01T12:00:00+00:00",
+            "net_bps": 33.0,
+        }
     ]
     # a horizon with no value is dropped (not emitted as None)
     assert to_feature_outcomes(outcomes, horizon=300) == []
@@ -111,3 +122,71 @@ def test_to_feature_outcomes_projects_horizon_and_iso_ts():
 def test_to_feature_outcomes_rejects_unknown_horizon():
     with pytest.raises(ValueError):
         to_feature_outcomes([], horizon=120)
+
+
+@pytest.mark.parametrize("feature_key", ["fee_percentile", "momentum_score"])
+def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
+    entry_ts = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    outcomes = build_outcomes(
+        [_resolved("candidate-1", "BTC/USDT", "long", h3600=33.0)],
+        {"candidate-1": entry_ts},
+    )
+    measurements = [
+        {
+            "candidate_id": "candidate-1",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "ts": "2026-07-01T12:00:01+00:00",
+            "decision_ts": "2026-07-01T12:00:00+00:00",
+            "reference_price_ts": "2026-07-01T11:59:59+00:00",
+            "causality_ok": True,
+            feature_key: 0.9,
+        }
+    ]
+    pairs = pit_join(measurements, to_feature_outcomes(outcomes))
+    assert len(pairs) == 1
+    assert pairs[0][1]["candidate_id"] == "candidate-1"
+    assert pairs[0][1]["side"] == "long"
+
+
+def test_1056_producer_fields_reach_canonical_reader_and_pit_join(tmp_path):
+    """Exercise the real #1056 producer rather than a hand-written measurement."""
+    decision = datetime.now(UTC)
+    reference = decision - timedelta(seconds=1)
+    shadow_log = tmp_path / "l2.jsonl"
+    features = OnchainFlowFeatures(
+        fee_sat_vb=2.0,
+        mempool_tx=42,
+        fee_percentile=0.8,
+        mempool_percentile=0.7,
+        window_n=200,
+    )
+
+    with bind_candidate(
+        candidate_id="cycle-e2e",
+        decision_ts=decision.isoformat(),
+        reference_price_ts=reference.isoformat(),
+    ):
+        append_l2_shadow_log(
+            shadow_log,
+            symbol="BTC/USDT",
+            direction="long",
+            features=features,
+            source_trust=0.5,
+        )
+
+    measurements = read_jsonl(shadow_log)
+    outcomes = build_outcomes(
+        [_resolved("cycle-e2e", "BTC/USDT", "long", h3600=12.5)],
+        {"cycle-e2e": decision},
+    )
+    pairs = pit_join(measurements, to_feature_outcomes(outcomes))
+
+    assert len(pairs) == 1
+    measurement, outcome = pairs[0]
+    assert measurement["candidate_id"] == "cycle-e2e"
+    assert measurement["decision_ts"] == decision.isoformat()
+    assert measurement["reference_price_ts"] == reference.isoformat()
+    assert measurement["causality_ok"] is True
+    assert outcome["candidate_id"] == "cycle-e2e"
+    assert outcome["net_bps"] == 12.5

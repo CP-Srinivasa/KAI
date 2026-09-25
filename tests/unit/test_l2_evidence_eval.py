@@ -3,18 +3,55 @@
 The crux of B-003: the fee/mempool series is slow and HIGHLY autocorrelated, so a
 naive IID bootstrap / hit-rate would manufacture significance. We test the
 autocorrelation-robust **moving-block bootstrap** and the look-ahead-safe
-**point-in-time join** that pairs each measurement with a STRICTLY-later outcome.
+**point-in-time join** that pairs each uniquely identified measurement with its
+direction-compatible, bounded-age outcome.
 """
 
 from __future__ import annotations
 
+import json
+
+import pytest
+from scripts import evaluate_l2_evidence, evaluate_momentum_evidence
+
 from app.observability.l2_evidence_eval import (
     evaluate_feature_direction,
     moving_block_bootstrap_p_mean_positive,
+    outcome_contract_gaps,
     pit_join,
 )
 
 # --- moving-block bootstrap ------------------------------------------------------
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf"), True])
+def test_bootstrap_rejects_invalid_values_instead_of_negative_evidence(invalid) -> None:
+    with pytest.raises(ValueError, match="finite numbers"):
+        moving_block_bootstrap_p_mean_positive([invalid] * 8)
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -float("inf"), True, "bad"])
+@pytest.mark.parametrize("field", ["feature", "outcome"])
+def test_invalid_values_cannot_manufacture_direction(invalid, field) -> None:
+    high = ({"fee_percentile": 0.9}, {"net_bps": -20.0})
+    low = ({"fee_percentile": 0.1}, {"net_bps": 20.0})
+    if field == "feature":
+        low[0]["fee_percentile"] = invalid
+    else:
+        high[1]["net_bps"] = invalid
+    result = evaluate_feature_direction([high] * 8 + [low] * 8, feature_key="fee_percentile")
+    assert result["direction"] == "insufficient"
+    assert result["n_high"] + result["n_low"] == 8
+    assert result[f"n_invalid_{field}"] == 8
+
+
+def test_missing_feature_is_not_imputed_as_low_evidence() -> None:
+    pairs = [({"fee_percentile": 0.9}, {"net_bps": -20.0})] * 8
+    pairs += [({}, {"net_bps": 20.0})] * 8
+    result = evaluate_feature_direction(pairs, feature_key="fee_percentile")
+    assert result["direction"] == "insufficient"
+    assert result["n_low"] == 0
+    assert result["n_null_feature"] == 8
 
 
 def test_block_bootstrap_below_min_sample_is_none() -> None:
@@ -41,34 +78,295 @@ def test_block_bootstrap_deterministic_with_seed() -> None:
 # --- point-in-time join ----------------------------------------------------------
 
 
+def test_outcome_contract_gaps_exposes_rows_that_cannot_join() -> None:
+    assert outcome_contract_gaps(
+        [
+            {"candidate_id": "ok", "side": "long"},
+            {"candidate_id": "", "side": "short"},
+            {"candidate_id": "missing-side"},
+            {"side": "invalid"},
+        ]
+    ) == {"missing_candidate_id": 2, "missing_side": 2}
+
+
+@pytest.mark.parametrize(
+    ("evaluator", "prefix"),
+    [
+        (evaluate_l2_evidence.main, "l2-eval"),
+        (evaluate_momentum_evidence.main, "momentum-eval"),
+    ],
+)
+def test_cli_warns_when_override_outcomes_lack_pit_identity(
+    tmp_path, capsys, evaluator, prefix
+) -> None:
+    shadow = tmp_path / "shadow.jsonl"
+    outcomes = tmp_path / "outcomes.jsonl"
+    shadow.write_text(json.dumps({"candidate_id": "c1"}) + "\n", encoding="utf-8")
+    outcomes.write_text(
+        json.dumps(
+            {
+                "symbol": "BTC/USDT",
+                "entry_ts": "2026-09-24T08:00:00+00:00",
+                "net_bps": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert evaluator(["--shadow", str(shadow), "--outcomes", str(outcomes)]) == 0
+    warning = capsys.readouterr().err
+    assert f"{prefix}: WARNING outcome contract gaps" in warning
+    assert "missing_candidate_id=1 missing_side=1" in warning
+
+
 def test_pit_join_pairs_with_strictly_later_outcome() -> None:
     measurements = [
-        {"ts": "2026-06-01T00:00:00+00:00", "symbol": "BTC/USDT", "fee_percentile": 0.9},
+        {
+            "candidate_id": "valid",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "fee_percentile": 0.9,
+        },
+        {
+            "candidate_id": "before",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "fee_percentile": 0.1,
+        },
     ]
     outcomes = [
-        # look-ahead (BEFORE measurement) — must NOT be used
-        {"symbol": "BTC/USDT", "entry_ts": "2026-05-31T23:59:00+00:00", "net_bps": 99.0},
-        # valid: at/after measurement
-        {"symbol": "BTC/USDT", "entry_ts": "2026-06-01T00:05:00+00:00", "net_bps": 12.0},
-        {"symbol": "BTC/USDT", "entry_ts": "2026-06-01T01:00:00+00:00", "net_bps": 50.0},
+        {
+            "candidate_id": "before",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-05-31T23:59:00+00:00",
+            "net_bps": 99.0,
+        },
+        {
+            "candidate_id": "valid",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:05:00+00:00",
+            "net_bps": 12.0,
+        },
     ]
     pairs = pit_join(measurements, outcomes)
     assert len(pairs) == 1
-    assert pairs[0][1]["net_bps"] == 12.0  # earliest qualifying (no look-ahead)
+    assert pairs[0][1]["net_bps"] == 12.0
 
 
 def test_pit_join_skips_other_symbols_and_unmatched() -> None:
     measurements = [
-        {"ts": "2026-06-01T00:00:00+00:00", "symbol": "ETH/USDT", "fee_percentile": 0.2},
-        {"ts": "2026-06-02T00:00:00+00:00", "symbol": "BTC/USDT", "fee_percentile": 0.8},
+        {
+            "candidate_id": "c1",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "ETH/USDT",
+            "direction": "long",
+            "fee_percentile": 0.2,
+        },
+        {
+            "candidate_id": "c2",
+            "ts": "2026-06-02T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "fee_percentile": 0.8,
+        },
     ]
     outcomes = [
-        {"symbol": "BTC/USDT", "entry_ts": "2026-06-01T00:05:00+00:00", "net_bps": 10.0},
+        {
+            "candidate_id": "c1",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:05:00+00:00",
+            "net_bps": 10.0,
+        },
     ]
     pairs = pit_join(measurements, outcomes)
-    # ETH measurement: no ETH outcome → unmatched; BTC measurement at 06-02 has no
-    # later BTC outcome (only 06-01) → unmatched. Result empty.
     assert pairs == []
+
+
+def test_pit_join_does_not_duplicate_an_outcome_for_repeated_measurements() -> None:
+    measurements = [
+        {
+            "candidate_id": "same-candidate",
+            "ts": f"2026-06-01T00:0{minute}:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        }
+        for minute in (0, 1)
+    ]
+    outcomes = [
+        {
+            "candidate_id": "same-candidate",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:02:00+00:00",
+            "net_bps": 10.0,
+        }
+    ]
+    assert pit_join(measurements, outcomes) == []
+
+
+def test_pit_join_rejects_duplicate_outcome_identity() -> None:
+    measurements = [
+        {
+            "candidate_id": "same-candidate",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        }
+    ]
+    outcomes = [
+        {
+            "candidate_id": "same-candidate",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:01:00+00:00",
+            "net_bps": net_bps,
+        }
+        for net_bps in (10.0, 20.0)
+    ]
+    assert pit_join(measurements, outcomes) == []
+
+
+def test_pit_join_rejects_wrong_direction_and_unrelated_candidate() -> None:
+    measurements = [
+        {
+            "candidate_id": "wanted",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        }
+    ]
+    outcomes = [
+        {
+            "candidate_id": "wanted",
+            "symbol": "BTC/USDT",
+            "side": "short",
+            "entry_ts": "2026-06-01T00:01:00+00:00",
+            "net_bps": -10.0,
+        },
+        {
+            "candidate_id": "other",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:00:30+00:00",
+            "net_bps": 99.0,
+        },
+    ]
+    assert pit_join(measurements, outcomes) == []
+
+
+def test_pit_join_enforces_maximum_age() -> None:
+    measurements = [
+        {
+            "candidate_id": "too-old",
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        }
+    ]
+    outcomes = [
+        {
+            "candidate_id": "too-old",
+            "symbol": "BTC/USDT",
+            "side": "long",
+            "entry_ts": "2026-06-01T00:05:01+00:00",
+            "net_bps": 10.0,
+        }
+    ]
+    assert pit_join(measurements, outcomes) == []
+    assert len(pit_join(measurements, outcomes, max_age_seconds=301.0)) == 1
+
+
+def test_pit_join_accepts_merged_producer_context_without_backdating() -> None:
+    measurement = {
+        "candidate_id": "cycle-42",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "ts": "2026-09-23T10:00:02+00:00",
+        "decision_ts": "2026-09-23T10:00:00+00:00",
+        "reference_price_ts": "2026-09-23T09:59:59+00:00",
+        "causality_ok": True,
+    }
+    outcome = {
+        "candidate_id": "cycle-42",
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "entry_ts": "2026-09-23T10:00:00+00:00",
+        "net_bps": 4.0,
+    }
+
+    assert pit_join([measurement], [outcome]) == [(measurement, outcome)]
+
+
+@pytest.mark.parametrize(
+    ("override", "outcome_ts"),
+    [
+        ({"causality_ok": False}, "2026-09-23T10:00:00+00:00"),
+        ({"causality_ok": None}, "2026-09-23T10:00:00+00:00"),
+        ({"reference_price_ts": "2026-09-23T10:00:01+00:00"}, "2026-09-23T10:00:00+00:00"),
+        ({}, "2026-09-23T10:00:01+00:00"),
+        ({"ts": "2026-09-23T09:59:59+00:00"}, "2026-09-23T10:00:00+00:00"),
+    ],
+)
+def test_pit_join_rejects_invalid_merged_producer_context(override, outcome_ts) -> None:
+    measurement = {
+        "candidate_id": "cycle-42",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "ts": "2026-09-23T10:00:02+00:00",
+        "decision_ts": "2026-09-23T10:00:00+00:00",
+        "reference_price_ts": "2026-09-23T09:59:59+00:00",
+        "causality_ok": True,
+        **override,
+    }
+    outcome = {
+        "candidate_id": "cycle-42",
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "entry_ts": outcome_ts,
+        "net_bps": 4.0,
+    }
+
+    assert pit_join([measurement], [outcome]) == []
+
+
+def test_pit_join_missing_provenance_and_invalid_timestamps_are_unmatched() -> None:
+    complete_outcome = {
+        "candidate_id": "c1",
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "entry_ts": "2026-06-01T00:01:00+00:00",
+        "net_bps": 10.0,
+    }
+    measurements = [
+        {
+            "ts": "2026-06-01T00:00:00+00:00",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        },
+        {
+            "candidate_id": "c1",
+            "ts": "not-a-time",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+        },
+    ]
+    assert pit_join(measurements, [complete_outcome]) == []
+
+
+def test_pit_join_rejects_an_unbounded_or_invalid_age() -> None:
+    for invalid in (0.0, -1.0, float("inf"), float("nan")):
+        try:
+            pit_join([], [], max_age_seconds=invalid)
+        except ValueError as exc:
+            assert "max_age_seconds" in str(exc)
+        else:
+            raise AssertionError(f"expected ValueError for {invalid!r}")
 
 
 # --- direction learning ----------------------------------------------------------
