@@ -23,7 +23,9 @@ cd /home/ubuntu/current
 bash scripts/pi_litellm_smoke.sh            # erwartet: 3× PASS, Exit 0
 pid=$(systemctl show kai-litellm -p MainPID --value)
 readlink -f /proc/$pid/cwd                  # = /home/ubuntu/releases/<laufender SHA>
-journalctl -u kai-litellm -n 50 --no-pager | grep TRANSPORT_VERIFIED
+grep TRANSPORT_VERIFIED /home/ubuntu/ai_analyst_trading_bot/logs/litellm.err.log | tail -1
+# Die Unit schreibt stdout/stderr per StandardOutput/StandardError=append: in
+# logs/litellm.log und logs/litellm.err.log -- das Journal zeigt nur Start/Stop.
 ```
 
 Soll:
@@ -38,7 +40,7 @@ Ohne den Callback antwortet LiteLLM 1.99.0 ohne Datenbank mit **500** (kein Key)
 und **400 "No connected db."** (falscher Key). Stand 25.09.2026 unter Runtime
 `d6f8058f`, gemessen vor dem Release mit #1046. Liefert der Smoke nach einem
 Release mit #1046 noch 500/400, dann lädt der Proxy die alte Konfiguration
-(cwd prüfen) oder der Callback lässt sich nicht importieren (Journal prüfen).
+(cwd prüfen) oder der Callback lässt sich nicht importieren (`logs/litellm.err.log` prüfen).
 
 ## 2. Release-Rollback (ganzer KAI-Baum)
 
@@ -91,7 +93,11 @@ ln -sfn "$NEU" /home/ubuntu/transport/litellm/current
 sudo -n /usr/local/sbin/kai-service-control restart kai-litellm.service
 ```
 
-Danach §1. `TRANSPORT_VERIFIED` im Journal muss den neuen Baum nennen.
+Danach §1. Die letzte `TRANSPORT_VERIFIED`-Zeile in `logs/litellm.err.log` muss den neuen Baum nennen.
+
+Belegt am 25.09.2026 09:46 CEST: Umschaltung `1.99.0-293669ce` -> `1.99.0-4e65cd31` (aus
+`requirements-transport.lock`), bereit nach 13 s, `TRANSPORT_VERIFIED … manifest=4e65cd31…`,
+0 fehlgeschlagene Units.
 
 **Rollback:** `ln -sfn "$ALT" /home/ubuntu/transport/litellm/current`, dann den
 Dienst neu starten und §1 ausführen.
