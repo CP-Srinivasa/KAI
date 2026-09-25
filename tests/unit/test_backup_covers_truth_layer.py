@@ -62,6 +62,22 @@ def test_versiegelte_prognosen_werden_als_verzeichnis_gesichert(script_text: str
     assert "artifacts/research/forecaster_panel" in dirs
 
 
+def test_ots_beweise_werden_als_verzeichnis_gesichert(script_text: str) -> None:
+    """Ohne die ``.ots``-Dateien beweist der gesicherte Ledger nichts mehr.
+
+    Die Liste sicherte die Attestierungskette, aber nicht die Anker darüber:
+    ``proofs_dir`` (89 truthledger-, 92 audit-Proofs auf der Pi, 24.09.) fehlte.
+    Der Test koppelt an den Settings-Default, damit ein verschobener
+    ``proofs_dir`` nicht still aus dem Backup fällt. Bezahlte UC3-Aufträge
+    liegen darunter und werden rekursiv mitgenommen.
+    """
+    from app.core.integrity_settings import IntegritySettings
+
+    default = IntegritySettings.model_fields["proofs_dir"].default
+    dirs = _array_entries(script_text, "DEFAULT_SOURCE_DIRS")
+    assert default in dirs, f"proofs_dir-Default {default!r} fehlt in DEFAULT_SOURCE_DIRS"
+
+
 def test_fehlende_wahrheitsquelle_ist_ein_fehler_kein_hinweis(script_text: str) -> None:
     required = _array_entries(script_text, "REQUIRED_SOURCES")
     assert "artifacts/research/prereg_ledger.jsonl" in required
