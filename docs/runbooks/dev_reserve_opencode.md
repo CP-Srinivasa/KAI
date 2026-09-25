@@ -19,6 +19,11 @@ Der Installer kopiert Hub und Workflow in
 `%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.2), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
+Ein Worktree mit detached HEAD ist als Quelle zulässig. Die Herkunft belegt dann
+`source_head` (voller SHA), `source_branch` ist `null` und `source_detached` ist `true`.
+Der Installer löst erst alles auf und schreibt dann in einen Staging-Ordner, der
+per Umbenennen zur Version wird. Scheitert ein Schritt, bleibt die vorhandene
+Version unangetastet. Für Tests gibt es `-InstallRoot` und `-SkipShortcut`.
 `python scripts/kai_dev_hub.py --version` zeigt die Version. Vor Installation
 den geprüften Donor-Commit verwenden; ein lokaler Shortcut ersetzt weder
 Claudes unabhängigen Review noch einen Mainline-Merge.
