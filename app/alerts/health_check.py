@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from app.alerts import health_check_host as _hch
 from app.alerts import health_check_pay as _hcpay
 from app.alerts import health_check_payments as _hcp
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
@@ -1420,9 +1421,8 @@ def run_health_check_report(
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
-    report.issues.extend(_check_alert_delivery(adir, now))
-    report.issues.extend(_check_prereg_reconciliation(adir))
-    report.issues.extend(_check_runtime_provenance(adir.parent))
+    report.issues.extend(_check_alert_delivery(adir, now) + _check_prereg_reconciliation(adir))
+    report.issues.extend(_check_runtime_provenance(adir.parent) + _hch.check(adir.parent, report))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).
