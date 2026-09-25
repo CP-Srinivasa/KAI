@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 #: ein Test bindet beide. Der Purpose steht in ``APP_PAYMENT_PURPOSES_ALLOWED``.
 PAY_PURPOSE = "operator_pay_invoice"
 PENDING_TTL = timedelta(minutes=10)
+#: Nur aus diesen Zustaenden fuehrt ``/pay ok`` noch zu einem Send. Alles danach
+#: (gesendet, gescheitert, abgelaufen) weist der Service als Replay ab — die
+#: Vorschau darf dann keine Freigabe anbieten.
+_CONFIRMABLE = frozenset({"AWAITING_APPROVAL", "AUTHORIZED"})
 USAGE = (
     "⚡ */pay* — Rechnung bezahlen (D-277)\n"
     "/pay <bolt11> — Vorschau (Betrag, Gebuehr, Policy)\n"
@@ -127,6 +131,13 @@ async def _preview(flow: PayFlow, service: Any, chat_id: int, bolt11: str, now: 
     status = view.status.value
     if status == "DENIED":
         return f"⛔ Policy lehnt ab ({_reasons(view) or 'ohne Begruendung'}). Nichts gesendet."
+    if status not in _CONFIRMABLE:
+        flow.pending.pop(chat_id, None)
+        flow.last_intent[chat_id] = view.intent_id
+        return (
+            f"ℹ️ Diese Rechnung ist bereits bekannt: Intent `{view.intent_id}` → {status}. "
+            "Kein erneuter Send moeglich — fuer einen neuen Versuch eine neue Rechnung."
+        )
 
     fee_line = f"Gebuehr: Schaetzung n/a, Limit {fee_limit} sat"
     try:
