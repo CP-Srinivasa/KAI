@@ -1,6 +1,6 @@
 # DECISION_LOG.md
 
-## Current State (Basis 2026-08-26; Lightning aktualisiert 2026-09-22)
+## Current State (Basis 2026-08-26; Lightning aktualisiert 2026-09-25)
 
 - phase: `Research-/Truth-Plattform (ADR-0012 Hybrid), Paper-/Lernbetrieb`
 - status: `ACTIVE` — Pi 5 live; Prozess und Checkout auf demselben Commit (Runtime-Attestation D-236/STAB-02, `/health` nennt `runtime_commit`).
@@ -8,7 +8,7 @@
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
 - edge status: `WIDERLEGT — canonical-edge 2026-08-25: n=208, mean -20,9 bps, median -111 bps, P(mu_net>0)=0,204; ohne Best-Trade -39,6 bps / P=0,014. Keine Ausweitung der Execution.`
 - live execution: `OFF — paper/approval-mode only; Live-Gates ungeoeffnet`
-- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt; Pilot-Sends 10/40/100 sat SETTLED (Node-Fees 1,05/1,2/1,45 sat), Receives 6/35 sat. D-277-Negativbeweise live belegt (D-284): Ueber-Cap-Deny und Fee-Limit-Ablehnung am Node. 72h-Pilot bis 2026-09-25T09:04:09Z. Verifizierte Einnahmen von Dritten lifetime = 0 sat.`
+- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt. 72h-Pilot D-281 abgeschlossen: PASS (technisch, D-286), Sendepfad bleibt scharf mit unveraenderten Caps (1000/1000 sat, Freigabe ab 1 sat). Pilot-Sends 10/40/100 sat SETTLED (Node-Fees 1,05/1,2/1,45 sat), Receives 6/35 sat, 0 ungewollte Fehlschlaege, 0 Orphans. D-277-Negativbeweise live belegt (D-284). Runtime seit 2026-09-25 Release 350bf598. Verifizierte Einnahmen von Dritten lifetime = 0 sat. Strang B (KAI-Pay-Wallet-Produkt) ausserhalb des Kerns: D-285.`
 - policy: `Falsifikation vor Feature. Kein Aggregat ohne Zerlegung (D-244). Jede Schwelle wird gemessen, nicht gesetzt. Kein Auto-Merge bei Architektur-PRs.`
 - Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-268; die Nachtragsbloecke D-237..D-249 und D-250..D-268 sind nach Vergabe, nicht nach Datum sortiert).
 
@@ -23,6 +23,27 @@
 > Vergabereihenfolge, nicht der Chronologie** (D-235/D-236 waren am 25.08. bereits vergeben).
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
+
+### D-286 (2026-09-25)
+**Befund (Pilotabschluss D-281, T0+72h = 2026-09-25T09:04:09Z):** Verdikt **PASS (technisch)** fuer KAI PAY Self-Use mit genau einem externen Payee. Journal, Node und Reconcile stimmen im ganzen Fenster ueberein, gelesen um 09:04:14Z.
+- **Sends im Fenster:** Drei Zahlungen, alle `SETTLED`: 10 sat (`pi_7e520e56931c4d75`, settled zu T0), 40 sat (`pi_fc3d0a4c234a43b4`) und 100 sat (`pi_bbfcdd9ffae841aa`). Zusammen 150 sat.
+- **Gebuehren:** Laut Node 1050/1200/1450 msat, zusammen 3700 msat. Das sind 2,47 %, bei so kleinen Betraegen bestimmt der Fee-Boden die Quote. Das Journal verbucht 3 sat, weil es je Zahlung auf ganze sat rundet; #1034 behebt das.
+- **Gewollte Ablehnungen:** Ueber-Cap-Deny (1500 sat) und Fee-Limit am Node (900 sat, `NO_ROUTE`), belegt in D-284. Dazu einmal Purpose-Deny `day2`, ein Bedienfehler, den die Policy wie vorgesehen abgelehnt hat.
+- **Receives:** 6 und 35 sat, beide `SETTLED`.
+- **Fehlerquote:** 0 ungewollte Fehlschlaege, 0 haengende Intents, 0 Orphans.
+- **Journal:** 117 Zeilen, `prev_hash`- und `seq`-Kette ohne Bruch, letzter Eintrag 2026-09-24T10:05:03Z. Unabhaengig bestaetigt durch `verify_chain` im Vault-Lauf 08:01Z.
+- **Node (lnd 0.19.3):** synced to chain/graph, ein aktiver Kanal (lokal 370 610 / remote 28 393 sat). Keine Zahlung `IN_FLIGHT`. Im Fenster genau die vier Sendeversuche des Journals.
+- **Reconcile und SCB:** Letzter Reconcile vor Pilotende 09:02:12Z `ok`, 0 Orphans, keine Uhr-Anomalie. SCB auf der Pi `stable`, Kopie ausserhalb des Nodes aktuell.
+- **Zwei Neustarts von kai-server im Fenster, beide ohne laufenden Intent:** 04:34Z durch needrestart nach einem unattended-upgrade (Folge: #1072), 08:51Z durch das Release `350bf598` (`DEPLOY_VERIFIED`). Journal-Zaehler, Caps, Allowlist (1 Eintrag) und Go-live-Preflight (keine Blocker) waren danach unveraendert.
+
+**Nebenbefunde:**
+- (a) Die Replay-Vorschau bot nach `FAILED_FINAL` erneut „/pay ok“ an. Behoben in #1070, live mit `350bf598`.
+- (b) `policy_decided.ts` liegt je Intent etwa 0,1 s vor `intent_created.ts`, weil die Policy vor dem Persistieren bewertet wird. Die `seq`-Reihenfolge stimmt, ein Defekt ist das nicht.
+- (c) Audit-Punkt B5: Der Force-Close `cf5fe058…` fuehrt in lnd weiter 25 815 sat als Limbo (`StateWaitingFullResolution`, keine offenen Sweeps). Sein Closing-Output `58ae2f35…:0` ist on-chain aber schon ausgegeben, in der Wallet-Tx `2fd51c3d…` (Hoehe 953 849, 845 499 sat an eine eigene Adresse). Der zweite Input dieser Tx ist die Closing-Tx `94f9d604…` des REMOTE_FORCE_CLOSE (settled 820 634 sat, Hoehe 942 189), belegt per `lncli closedchannels`. Die Summe 820 634 + 25 815 − 845 499 ergibt eine Gebuehr von 950 sat. **Belegt:** Beide Ausgaenge wurden gemeinsam in die eigene Wallet gesweept. **Nicht direkt belegt:** der Betrag von `58ae2f35…:0`, weil der Node ohne txindex laeuft. Der Befund ist also stark gestuetzt, aber nicht vollstaendig bewiesen. lnd hat die Aufloesung nicht verbucht. Ein Aufraeumen ist irreversibel und braucht einen eigenen Operator-Entscheid.
+
+**Entscheidung (Operator):** **Fortfuehren.** Der Sendepfad bleibt scharf, Caps und Payee bleiben unveraendert. Der naechste geplante Send ist die Abnahme von #1034 (exakte msat-Gebuehren gleich den Node-Werten). #1034 kommt als eigenes Release fruehestens 24 h nach `350bf598`.
+**Limit:** Eigenzahlungen an den eigenen externen Payee belegen **keine Marktnachfrage**, und die verifizierten Einnahmen von Dritten bleiben 0 sat. Aus dem Pilot folgt keine Trading-, L2- oder L5-Freigabe und keine Ausweitung von Cap oder Payee. D-285 (Strang B) bleibt davon unberuehrt.
+**Beleg:** Pi `artifacts/payments/payment_journal.jsonl`, `reconcile_state.json`, `kai-ln-scb-monitor`, `~/release_deploy_350bf598.log`. lnd `getinfo`, `listchannels`, `listpayments --include_incomplete`, `pendingchannels`, `listchaintxns`. `bitcoin-cli gettxout`.
 
 ### D-285 (2026-09-25)
 **Entscheidung (Operator):** KAI-Pay wird ein oeffentliches, **selbstverwahrtes** Wallet-Produkt fuer Web und App, das sich funktional an Wallet of Satoshi orientiert und im KAI-Design gestaltet ist. Es entsteht als eigener Strang B **ausserhalb des KAI-Kerns**: eigenes Repo `kai-pay`, Laufzeit auf Cloudflare, Wallet-Kern Breez SDK (Spark). Plattformweg: zuerst PWA, dann Capacitor. Der Rechtstraeger wird spaeter geklaert und ist Vorbedingung fuer iOS und die oeffentliche Beta. Architektur und Invarianten I1–I6 stehen in [ADR 0021](docs/adr/0021-kai-pay-self-custodial-wallet-product.md).
