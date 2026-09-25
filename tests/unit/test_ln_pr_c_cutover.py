@@ -300,7 +300,8 @@ def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
 ) -> None:
     """BL-2 end-to-end ueber den ECHTEN /oracle-Pfad: kaputtes Alt-Geldjournal,
     echter Empfangs-Gate-Aufruf (nur der lnd-Client ist gefaelscht) ⇒ 402 mit
-    Challenge. Vorher: 503 pro anonymer Anfrage + zwei Journal-Zeilen."""
+    Challenge. Die UC4-Node-Readiness ist hier explizit gesund; der Test isoliert
+    weiterhin ausschließlich die Geldjournal-Unabhängigkeit."""
     _break_money_journal()
     monkeypatch.setenv("APP_LN_ENABLED", "true")
     monkeypatch.setenv("APP_LN_RECEIVE_ENABLED", "true")
@@ -322,7 +323,24 @@ def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
             "r_hash": base64.b64encode(hashlib.sha256(b"x").digest()).decode(),
         }
     )
-    with patch("app.lightning.receive_gate._build_client", return_value=node):
+    chain = MagicMock(
+        state="ok",
+        reachable=True,
+        synced=True,
+        chain="main",
+        blocks=954871,
+        headers=954871,
+        best_block_hash="ab" * 32,
+        fee_sat_vb=1.0,
+        mempool_tx=0,
+    )
+    with (
+        patch("app.lightning.receive_gate._build_client", return_value=node),
+        patch(
+            "app.chain.cache.get_cached_chain_status",
+            AsyncMock(return_value=(chain, 1.0)),
+        ),
+    ):
         r = TestClient(app, raise_server_exceptions=False).get("/oracle/onchain-facts")
     assert r.status_code == 402, r.text
     assert 'invoice="lnbc10n1challenge"' in r.headers.get("WWW-Authenticate", "")

@@ -46,7 +46,7 @@ def test_mint_rate_limit_caps_minting(monkeypatch) -> None:
     reset_mint_limiter()
 
     client = TestClient(_app())
-    codes = [client.get("/oracle/onchain-facts").status_code for _ in range(3)]
+    codes = [client.get("/oracle/verdicts").status_code for _ in range(3)]
     # within the per-key cap (2): each attempt reaches the (unprovisioned) mint → 503
     assert codes[0] == 503 and codes[1] == 503
     # 3rd attempt exceeds the cap → blocked BEFORE minting

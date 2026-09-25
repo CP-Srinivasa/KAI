@@ -29,6 +29,7 @@ _DEMAND_PATH = Path("artifacts/ln_demand_ledger.jsonl")
 
 CHALLENGE_MINTED = "l402_challenge_minted"
 ACCESS_GRANTED = "l402_access_granted"
+PAID_UNAVAILABLE = "l402_paid_unavailable"
 
 
 def requester_fingerprint(client_ip: str, *, secret: str) -> str:
@@ -82,6 +83,7 @@ def read_recent_demand_events(path: Path | None = None, *, limit: int = 0) -> li
 __all__ = [
     "ACCESS_GRANTED",
     "CHALLENGE_MINTED",
+    "PAID_UNAVAILABLE",
     "append_demand_event",
     "read_recent_demand_events",
     "requester_fingerprint",

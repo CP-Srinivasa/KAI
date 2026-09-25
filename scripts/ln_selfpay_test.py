@@ -47,6 +47,28 @@ async def _poll_preimage(
     return None
 
 
+async def _get_paid_with_retry(
+    http: httpx.AsyncClient,
+    url: str,
+    *,
+    authorization: str,
+    retries: int,
+) -> httpx.Response:
+    """Retry a temporarily unavailable paid read with the same L402 token."""
+    response = await http.get(url, headers={"Authorization": authorization})
+    for _ in range(max(0, retries)):
+        if response.status_code != 503:
+            break
+        raw_delay = response.headers.get("Retry-After", "1")
+        try:
+            delay = min(10.0, max(0.0, float(raw_delay)))
+        except ValueError:
+            delay = 1.0
+        await asyncio.sleep(delay)
+        response = await http.get(url, headers={"Authorization": authorization})
+    return response
+
+
 async def _run(args: argparse.Namespace) -> int:
     url = args.url.rstrip("/") + args.path
     async with httpx.AsyncClient(timeout=15.0) as http:
@@ -78,7 +100,12 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"  settled! preimage={preimage[:16]}…")
 
         auth = build_l402_authorization(token, preimage)
-        paid = await http.get(url, headers={"Authorization": auth})
+        paid = await _get_paid_with_retry(
+            http,
+            url,
+            authorization=auth,
+            retries=args.paid_retries,
+        )
         if paid.status_code != 200:
             print(f"retry expected 200, got {paid.status_code}: {paid.text[:300]}")
             return 3
@@ -93,6 +120,12 @@ def main() -> int:
     ap.add_argument("--path", default="/oracle/onchain-facts")
     ap.add_argument("--timeout", type=int, default=300, help="max seconds to wait for settlement")
     ap.add_argument("--interval", type=int, default=3, help="poll interval seconds")
+    ap.add_argument(
+        "--paid-retries",
+        type=int,
+        default=3,
+        help="retries after a paid 503, honoring Retry-After with the same token",
+    )
     return asyncio.run(_run(ap.parse_args()))
 
 
