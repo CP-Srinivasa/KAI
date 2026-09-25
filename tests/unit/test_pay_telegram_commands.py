@@ -43,6 +43,7 @@ class FakeService:
     fee_limit_min_sat: int = 1
     fee_limit_max_sat: int = 200
     first_status: PaymentStatus = PaymentStatus.AWAITING_APPROVAL
+    replayed: bool = False
     execute_status: PaymentStatus = PaymentStatus.SETTLED
     execute_error: Exception | None = None
     authorize_error: Exception | None = None
@@ -68,7 +69,12 @@ class FakeService:
         self.requests.append(request)
         self.keys.append(key)
         self.status = self.first_status
-        return IntentView(intent_id="pi_test", status=self.status, decision=self.decision)
+        return IntentView(
+            intent_id="pi_test",
+            status=self.status,
+            replayed=self.replayed,
+            decision=self.decision,
+        )
 
     async def simulate(self, intent_id: str) -> SimulationView:
         self.calls.append(("simulate", intent_id))
@@ -226,6 +232,45 @@ async def test_a_service_refusal_is_a_reply_not_an_exception() -> None:
 
     reply = await run(PayFlow(), Refusing(), BOLT11)
     assert reply.startswith("❌") and "journal locked" in reply
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        PaymentStatus.FAILED_FINAL,
+        PaymentStatus.FAILED_RETRYABLE,
+        PaymentStatus.SETTLED,
+        PaymentStatus.SETTLED_REVERSIBLE,
+        PaymentStatus.REVERSED,
+        PaymentStatus.CANCELLED,
+        PaymentStatus.EXPIRED,
+        PaymentStatus.SUBMITTED,
+        PaymentStatus.IN_FLIGHT,
+        PaymentStatus.RECONCILIATION_REQUIRED,
+    ],
+)
+async def test_a_replayed_intent_past_approval_offers_no_ok(status: PaymentStatus) -> None:
+    # Live-Befund 24.09. (pi_d785a1c328f54a1e): dieselbe Rechnung nach
+    # FAILED_FINAL erneut geschickt -> Vorschau bot "/pay ok" an, obwohl der
+    # Service jeden zweiten Send als Replay abweist.
+    service = FakeService(first_status=status, replayed=True)
+    flow = PayFlow()
+    reply = await run(flow, service, BOLT11)
+    assert "/pay ok" not in reply
+    assert status.value in reply and "pi_test" in reply
+    assert CHAT not in flow.pending
+    assert ("simulate", "pi_test") not in service.calls
+    assert flow.last_intent[CHAT] == "pi_test"
+    assert "Keine offene Vorschau" in await run(flow, service, "ok")
+    assert ("execute", "pi_test") not in service.calls
+
+
+async def test_a_replayed_intent_still_awaiting_approval_keeps_the_ok_offer() -> None:
+    service = FakeService(replayed=True)
+    flow = PayFlow()
+    reply = await run(flow, service, BOLT11)
+    assert "Replay" in reply and "/pay ok <hotp>" in reply
+    assert CHAT in flow.pending
 
 
 # --------------------------------------------------------------------------- #
