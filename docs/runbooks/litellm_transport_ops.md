@@ -76,10 +76,15 @@ entsteht aus `requirements-transport.lock` mit `--require-hashes`. Danach wird
 der Freeze gegen den Lock geprüft (#1066). `pi_make_transport.sh` schaltet
 nichts um und startet nichts.
 
+`--transports` muss auf das Verzeichnis **mit** `litellm/` zeigen (das ist auch
+der Standard ohne Flag: `$HOME/transport/litellm`). Der Builder schreibt die
+venv-Pfade fest auf den Zielort. Ein am falschen Ort gebauter Baum lässt sich
+deshalb nicht verschieben, sondern muss neu gebaut werden.
+
 ```bash
 cd /home/ubuntu/current                     # Lock + pyproject des laufenden Release
-NEU=$(bash scripts/pi_make_transport.sh --repo . --transports /home/ubuntu/transport)
-echo "$NEU"                                 # /home/ubuntu/transport/litellm/<version>-<spec8>
+NEU=$(bash scripts/pi_make_transport.sh --repo . --transports /home/ubuntu/transport/litellm)
+echo "$NEU"                                 # /home/ubuntu/transport/litellm/<version>-<manifest8>
 cat "$NEU/transport.json"                   # spec_sha256 = sha256 des Locks
 ALT=$(readlink -f /home/ubuntu/transport/litellm/current)
 ln -sfn "$NEU" /home/ubuntu/transport/litellm/current
