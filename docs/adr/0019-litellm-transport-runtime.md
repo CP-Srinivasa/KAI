@@ -245,6 +245,9 @@ Rollback ist das Umschalten des Symlinks auf den vorherigen Baum. Aufbewahrung
 mindestens zwei Bäume; die Rotation ist **getrennt** von der Release-Rotation
 und darf einen Baum nicht entfernen, auf den ein lebender Prozessmarker zeigt.
 
+Die Handgriffe für Wechsel, Rollback und Smoke stehen in
+[`docs/runbooks/litellm_transport_ops.md`](../runbooks/litellm_transport_ops.md).
+
 Ein Transport-Wechsel erzwingt **keinen** KAI-Release. Das ist der eigentliche
 Gewinn dieses ADR: heute erzwingt jede Transport-Änderung einen neuen KAI-Baum
 samt Neustart aller fünf Dauerläufer.
