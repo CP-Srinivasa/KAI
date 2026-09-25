@@ -24,6 +24,32 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-285 (2026-09-25)
+**Entscheidung (Operator):** KAI-Pay wird ein oeffentliches, **selbstverwahrtes** Wallet-Produkt fuer Web und App, das sich funktional an Wallet of Satoshi orientiert und im KAI-Design gestaltet ist. Es entsteht als eigener Strang B **ausserhalb des KAI-Kerns**: eigenes Repo `kai-pay`, Laufzeit auf Cloudflare, Wallet-Kern Breez SDK (Spark). Plattformweg: zuerst PWA, dann Capacitor. Der Rechtstraeger wird spaeter geklaert und ist Vorbedingung fuer iOS und die oeffentliche Beta. Architektur und Invarianten I1–I6 stehen in [ADR 0021](docs/adr/0021-kai-pay-self-custodial-wallet-product.md).
+
+**Abgrenzung:**
+- Die Drittprodukt-Sperre aus ADR 0016 gilt nur fuer Strang B nicht.
+- Fuer KAI selbst (Strang A) gelten D-277 (4), D-CORE-005/006 sowie ADR 0016/0018 unveraendert: keine Wallet-UX im Dashboard, kein Benutzerkonto, kein zweiter Truth-State, genau ein Sendepfad.
+- KAI haelt keine Kundengelder und keine Schluessel.
+- Beide Straenge verbindet nur die oeffentliche Lightning-Zahlung (Rechnung, Link, QR).
+
+**Begruendung:**
+- Verwahrung fuer Dritte ist in DE seit 01.01.2026 ohne MiCA-CASP-Erlaubnis unzulaessig (BaFin-Merkblatt 03.01.2025, § 50 KMAG).
+- Selbstverwahrungs-Software ist erlaubnisfrei.
+- WoS selbst bietet in der EU seit 2026 nur den selbstverwahrten Spark-Modus an.
+- Ein Mehrnutzerumbau des Kerns braeche ADR 0018 §4/§5.
+
+**Limit:**
+- Oeffentlicher Betrieb erst nach Etappe E6 (Anwaltsfreigabe, Rechtstraeger, Security-Review, Recovery-Drills).
+- Keine eigenen Kauf-, Tausch- oder Stablecoin-Ablaeufe.
+- KI-Agenten schlagen Zahlungen nur vor.
+- Eingaenge von Dritten am eigenen Node brauchen eine eigene Freigabe (D-CORE-006 Stufe B).
+- Die Betriebsreihenfolge vom 23.09. bleibt. Strang-A-Arbeiten erst nach Release-Lauf und Abnahme.
+
+**Befund Domains:** Die vier kai-pay-Domains nutzen noch die Namecheap-Nameserver (`dns1/dns2.registrar-servers.com`) und sind nicht an Cloudflare delegiert. Das ist Operator-Schritt E0.
+
+**Beleg:** Operator-Antworten vom 2026-09-25 (Zielgruppe „oeffentlich, selbstverwahrt“, Plattform „PWA, dann Capacitor“, Rechtstraeger „klaert der Operator spaeter“); Ist-Inventar gegen Mainline `54ba098c`; `nslookup -type=NS` vom 2026-09-25.
+
 ### D-284 (2026-09-24)
 **Befund (D-277-Nachtrag, Pilot Tag 3):** Beide offenen Negativbeweise aus D-277 sind live belegt, per Operator-`/pay` nach `docs/runbooks/ln_rearm_sendpath.md` §4, ohne Config-Aenderung und ohne Restart.
 - (2) **Ueber-Cap-Deny:** Um 09:52:36Z wurde eine Rechnung ueber 1500 sat eingereicht (`pi_139fe0a5cbe14d8a`). Die Policy lehnte ab: `DENY`, Regel `amount_limits`, Grund `per_payment_max exceeded: 1500 > 1000`. Es gab kein `approval_granted`, kein `submitted` und keinen Node-Aufruf, `lncli listpayments` blieb unveraendert.
