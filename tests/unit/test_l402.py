@@ -53,6 +53,18 @@ def test_expired_token_rejected() -> None:
     assert not v.valid and v.reason == "token expired"
 
 
+def test_expired_token_can_be_fully_verified_for_existing_replay_only() -> None:
+    token = mint_token(_PAYMENT_HASH, secret=_SECRET, ttl_s=-1, scope="timestamp:abc")
+    verdict = verify(token, _PREIMAGE, secret=_SECRET, allow_expired=True)
+    assert verdict.valid is True
+    assert verdict.reason == "ok_expired"
+    assert verdict.payment_hash == _PAYMENT_HASH and verdict.scope == "timestamp:abc"
+
+    wrong = verify(token, "00" * 32, secret=_SECRET, allow_expired=True)
+    assert wrong.valid is False
+    assert wrong.reason == "preimage does not match payment_hash"
+
+
 def test_mint_rejects_bad_inputs() -> None:
     with pytest.raises(L402Error):
         mint_token("nothex", secret=_SECRET)

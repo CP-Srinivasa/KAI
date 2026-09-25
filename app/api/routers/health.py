@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any, Literal
 
@@ -378,3 +379,16 @@ async def health_config(
     a critical field missing there is running on a code default.
     """
     return redacted_config_snapshot(settings, extra_sections={"payments": get_payment_settings()})
+
+
+@router.get("/health/integrity/timestamp-jobs")
+async def timestamp_job_health(
+    response: Response,
+    settings: AppSettings = Depends(get_settings),  # noqa: B008
+) -> dict[str, int | float | str]:
+    """Protected, read-only capacity signal for paid UC-3 timestamp jobs."""
+    from app.integrity.timestamp_jobs import TimestampJobStore
+
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    store = TimestampJobStore(settings.integrity.timestamp_jobs_dir)
+    return await asyncio.to_thread(store.capacity_snapshot)

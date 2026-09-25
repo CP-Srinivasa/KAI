@@ -22,6 +22,8 @@ upgrade/classification actually runs.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,7 +104,29 @@ def _save_detached(detached: Any, path: Path) -> None:
 
     ctx = BytesSerializationContext()
     detached.serialize(ctx)
-    path.write_bytes(ctx.getbytes())
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            handle.write(ctx.getbytes())
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        if os.name != "nt":
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def read_proof_info(path: Path) -> ProofInfo:
@@ -170,7 +194,9 @@ def upgrade_pending_proofs(
     """
     out_dir = Path(proofs_dir)
     try:
-        proofs = sorted(out_dir.glob("*.ots"))
+        proofs = sorted(
+            path for path in out_dir.rglob("*.ots") if "work" not in path.relative_to(out_dir).parts
+        )
     except OSError as exc:
         logger.warning("[ots] proofs dir unreadable: %s", exc)
         return UpgradeReport()
@@ -193,6 +219,18 @@ def upgrade_pending_proofs(
 
         info = classify_timestamp(detached.timestamp)
         if info.state == CONFIRMED:
+            if path.name == "proof.ots":
+                from app.integrity.timestamp_jobs import mark_timestamp_job_confirmed
+
+                try:
+                    if not mark_timestamp_job_confirmed(path):
+                        logger.warning("[ots] UC-3 confirmed record not reconciled for %s", path)
+                        failed += 1
+                        continue
+                except OSError as exc:
+                    logger.warning("[ots] UC-3 record reconciliation failed for %s: %s", path, exc)
+                    failed += 1
+                    continue
             already += 1
             continue
         if info.state != PENDING:
@@ -203,6 +241,13 @@ def upgrade_pending_proofs(
         if classify_timestamp(detached.timestamp).state == CONFIRMED:
             try:
                 _save_detached(detached, path)
+                if path.name == "proof.ots":
+                    from app.integrity.timestamp_jobs import mark_timestamp_job_confirmed
+
+                    if not mark_timestamp_job_confirmed(path):
+                        logger.warning("[ots] UC-3 job record not reconciled for %s", path)
+                        failed += 1
+                        continue
                 upgraded += 1
             except OSError as exc:
                 logger.warning("[ots] could not persist upgraded proof %s: %s", path.name, exc)

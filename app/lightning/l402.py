@@ -88,7 +88,14 @@ class L402Verdict:
     scope: str = ""
 
 
-def verify(token: str, preimage_hex: str, *, secret: str, now: int | None = None) -> L402Verdict:
+def verify(
+    token: str,
+    preimage_hex: str,
+    *,
+    secret: str,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> L402Verdict:
     """Verify a token+preimage. Never raises — returns an honest verdict."""
     if not secret:
         return L402Verdict(False, "l402 secret not configured")
@@ -104,7 +111,8 @@ def verify(token: str, preimage_hex: str, *, secret: str, now: int | None = None
         scope = _unb64u(scope_b64).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         return L402Verdict(False, "malformed token fields")
-    if (now if now is not None else int(time.time())) > expiry:
+    expired = (now if now is not None else int(time.time())) > expiry
+    if expired and not allow_expired:
         return L402Verdict(False, "token expired", payment_hash=ph, scope=scope)
     try:
         preimage = bytes.fromhex(preimage_hex)
@@ -114,4 +122,4 @@ def verify(token: str, preimage_hex: str, *, secret: str, now: int | None = None
         return L402Verdict(
             False, "preimage does not match payment_hash", payment_hash=ph, scope=scope
         )
-    return L402Verdict(True, "ok", payment_hash=ph, scope=scope)
+    return L402Verdict(True, "ok_expired" if expired else "ok", payment_hash=ph, scope=scope)

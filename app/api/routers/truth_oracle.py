@@ -17,11 +17,14 @@ decoupled from the spend kill-switch via U1).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import math
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -38,6 +41,7 @@ from app.lightning.demand_ledger import (
 )
 from app.lightning.l402 import (
     L402Error,
+    L402Verdict,
     build_challenge_header,
     mint_token,
     parse_authorization,
@@ -53,6 +57,9 @@ router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
 # test seam.
 _mint_limiter: MintLimiter | None = None
 ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
+_timestamp_submit_slots = asyncio.Semaphore(2)
+# Oracle invoices expire after 300 s (``LndRestClient.add_invoice`` default expiry).
+_INVOICE_EXPIRY_MINUTES = 5
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -92,7 +99,7 @@ def _require_oracle_enabled() -> Any:
     return settings
 
 
-def _valid_paid_token(request: Request, scope: str) -> Any | None:
+def _valid_paid_token(request: Request, scope: str) -> L402Verdict | None:
     settings = _require_oracle_enabled()
     try:
         token, preimage = parse_authorization(request.headers.get("Authorization", ""))
@@ -102,7 +109,29 @@ def _valid_paid_token(request: Request, scope: str) -> Any | None:
     return verdict if verdict.valid and verdict.scope == scope else None
 
 
-async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
+def _valid_expired_replay_token(request: Request, scope: str) -> L402Verdict | None:
+    """Validate an expired token fully; callers must separately prove a stored job."""
+    settings = _require_oracle_enabled()
+    try:
+        token, preimage = parse_authorization(request.headers.get("Authorization", ""))
+    except L402Error:
+        return None
+    verdict = verify(
+        token,
+        preimage,
+        secret=settings.lightning.l402_secret,
+        allow_expired=True,
+    )
+    return (
+        verdict
+        if verdict.valid and verdict.reason == "ok_expired" and verdict.scope == scope
+        else None
+    )
+
+
+async def _issue_challenge(
+    scope: str, *, requester_fp: str = "", telemetry_scope: str | None = None
+) -> NoReturn:
     """Mint an invoice + token and raise a 402 challenge. Never returns.
 
     On a successful mint, logs a ``challenge_minted`` demand event (the interest
@@ -110,7 +139,8 @@ async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
     """
     settings = get_settings()
     price = settings.lightning.l402_default_price_sat
-    inv = await create_invoice(value_sat=price, memo=f"kai-oracle:{scope}", dry_run=False)
+    public_scope = telemetry_scope or scope
+    inv = await create_invoice(value_sat=price, memo=f"kai-oracle:{public_scope}", dry_run=False)
     if inv.state != "executed":
         # Oracle enabled but the receive path isn't provisioned (receive_enabled off /
         # node unreachable) → honest 503, never a fake invoice. The receive gate is
@@ -125,7 +155,7 @@ async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
     token = mint_token(payment_hash_hex, secret=settings.lightning.l402_secret, scope=scope)
     append_demand_event(
         CHALLENGE_MINTED,
-        scope=scope,
+        scope=public_scope,
         requester_fp=requester_fp,
         price_sat=int(price),
         payment_hash=payment_hash_hex,
@@ -137,17 +167,31 @@ async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
     )
 
 
-async def _require_paid(request: Request, scope: str) -> None:
-    """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid."""
+async def _require_paid(
+    request: Request,
+    scope: str,
+    *,
+    telemetry_scope: str | None = None,
+    before_mint: Callable[[], Awaitable[None]] | None = None,
+) -> L402Verdict:
+    """Enforce L402 for ``scope``; raise 402 (with a fresh invoice) when unpaid.
+
+    ``before_mint`` runs after the S-002 limiter and before the invoice, so
+    route-specific pre-mint checks never become work an unpaid flood can force.
+    """
     settings = _require_oracle_enabled()
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     verdict = _valid_paid_token(request, scope)
     if verdict is None:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
-        await _issue_challenge(scope, requester_fp=fp)
-        return  # unreachable (challenge raises)
+        if before_mint is not None:
+            await before_mint()
+        await _issue_challenge(scope, requester_fp=fp, telemetry_scope=telemetry_scope)
     # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
-    append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=verdict.payment_hash)
+    append_demand_event(
+        ACCESS_GRANTED, scope=telemetry_scope or scope, payment_hash=verdict.payment_hash
+    )
+    return verdict
 
 
 @router.get("/onchain-facts")
@@ -289,22 +333,85 @@ class TimestampRequest(BaseModel):
 @router.post("/timestamp")
 async def timestamp(request: Request, body: TimestampRequest) -> dict[str, Any]:
     """UC-3: anchor a caller hash via OpenTimestamps (L3), return the proof (L402-paid)."""
-    await _require_paid(request, "timestamp")
     digest = body.sha256_hex.strip().lower()
     if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
         raise HTTPException(status_code=422, detail="sha256_hex must be 32-byte hex")
-    import tempfile
-    from pathlib import Path
 
-    from app.integrity.anchor import AnchorUnavailableError, OpenTimestampsStamper
+    from app.integrity.timestamp_jobs import (
+        TimestampJobCapacityError,
+        TimestampJobConflictError,
+        TimestampJobStore,
+        TimestampJobUnavailableError,
+    )
+
+    # The signed L402 scope binds this payment to exactly one canonical digest.
+    scope = f"timestamp:{digest}"
+    settings = get_settings()
+    if not settings.integrity.enabled or settings.integrity.stamper != "opentimestamps":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "timestamp_service_disabled", "retriable": False},
+        )
+    jobs_root = Path(settings.integrity.timestamp_jobs_dir)
+    store = TimestampJobStore(jobs_root)
+    auth = _valid_paid_token(request, scope)
+    if auth is None:
+        replay = _valid_expired_replay_token(request, scope)
+        if replay is not None and await asyncio.to_thread(
+            store.has_binding, payment_hash=replay.payment_hash, digest=digest
+        ):
+            auth = replay
+    if auth is None:
+        # Capacity is checked after the S-002 limiter and before minting, so KAI
+        # never invoices for work it already knows it cannot durably accept and
+        # an unpaid flood cannot force store scans. Challenges reserve nothing,
+        # so keep headroom for every invoice that can still be paid.
+        reserve = settings.lightning.l402_mint_budget_per_min * _INVOICE_EXPIRY_MINUTES
+
+        async def _capacity_before_mint() -> None:
+            if not await asyncio.to_thread(store.has_capacity, reserve=reserve):
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "timestamp_capacity_exhausted", "retriable": False},
+                )
+
+        auth = await _require_paid(
+            request, scope, telemetry_scope="timestamp", before_mint=_capacity_before_mint
+        )
 
     try:
-        proof_path = OpenTimestampsStamper().stamp(digest, Path(tempfile.mkdtemp()))
-    except AnchorUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=f"anchoring unavailable: {exc}") from exc
-    proof_bytes = Path(proof_path).read_bytes()
+        async with _timestamp_submit_slots:
+            record, proof_bytes = await asyncio.to_thread(
+                store.submit,
+                payment_hash=auth.payment_hash,
+                digest=digest,
+            )
+    except TimestampJobConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail="payment already bound to another digest"
+        ) from exc
+    except TimestampJobCapacityError as exc:
+        # Paid but undeliverable: keep it visible in the demand ledger.
+        append_demand_event(PAID_UNAVAILABLE, scope="timestamp", payment_hash=auth.payment_hash)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "timestamp_capacity_exhausted", "retriable": False},
+        ) from exc
+    except (TimestampJobUnavailableError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "timestamp_pending_retry", "retriable": True},
+            headers={"Retry-After": "5"},
+        ) from exc
+    append_demand_event(ACCESS_GRANTED, scope="timestamp", payment_hash=auth.payment_hash)
     return {
         "sha256_hex": digest,
         "ots_proof_hex": proof_bytes.hex(),
-        "note": "verify/upgrade with `ots upgrade` once the calendar aggregation is mined",
+        "proof_sha256": record["proof_sha256"],
+        "status": record["state"],
+        "note": (
+            "Bitcoin-confirmed OpenTimestamps proof"
+            if record["state"] == "bitcoin_confirmed"
+            else "calendar commitment only; verify/upgrade after Bitcoin confirmation"
+        ),
     }

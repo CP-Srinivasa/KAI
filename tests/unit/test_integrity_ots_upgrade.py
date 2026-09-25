@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from opentimestamps.core.notary import BitcoinBlockHeaderAttestation, PendingAttestation
 from opentimestamps.core.op import OpSHA256
@@ -155,6 +156,126 @@ def test_upgrade_counts_unreadable_as_failed(tmp_path) -> None:
     assert report.scanned == 1
     assert report.failed == 1
     assert report.upgraded == 0
+
+
+def test_upgrade_discovers_nested_uc3_proof_and_reconciles_job(tmp_path) -> None:
+    job_dir = tmp_path / ("a" * 64)
+    job_dir.mkdir()
+    proof_path = job_dir / "proof.ots"
+    _write_proof(proof_path, digest=b"\x66" * 32)
+    (job_dir / "record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "payment_hash": "a" * 64,
+                "digest": "66" * 32,
+                "state": "pending_bitcoin",
+                "created_at": "2026-09-23T10:00:00+00:00",
+                "updated_at": "2026-09-23T10:00:00+00:00",
+                "attempts": 1,
+                "proof_sha256": "stale-after-upgrade",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900000))
+
+    assert report.scanned == 1 and report.upgraded == 1
+    record = json.loads((job_dir / "record.json").read_text(encoding="utf-8"))
+    assert record["state"] == "bitcoin_confirmed"
+    assert record["confirmed_at"]
+    assert read_proof_info(proof_path).bitcoin_height == 900000
+
+
+def test_confirmed_uc3_proof_heals_record_on_next_upgrade_pass(tmp_path) -> None:
+    job_dir = tmp_path / ("a" * 64)
+    job_dir.mkdir()
+    proof_path = job_dir / "proof.ots"
+    _write_proof(proof_path, digest=b"\x77" * 32)
+    (job_dir / "record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "payment_hash": "a" * 64,
+                "digest": "77" * 32,
+                "state": "pending_bitcoin",
+                "created_at": "2026-09-23T10:00:00+00:00",
+                "updated_at": "2026-09-23T10:00:00+00:00",
+                "attempts": 1,
+                "proof_sha256": "pre-upgrade-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch("app.integrity.timestamp_jobs.mark_timestamp_job_confirmed", return_value=False):
+        first = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900001))
+    assert first.failed == 1 and first.upgraded == 0
+
+    second = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900001))
+    assert second.already_confirmed == 1 and second.failed == 0
+    record = json.loads((job_dir / "record.json").read_text(encoding="utf-8"))
+    assert record["state"] == "bitcoin_confirmed"
+
+
+def _pending_job(tmp_path: Path, digest_byte: bytes) -> Path:
+    job_dir = tmp_path / ("a" * 64)
+    job_dir.mkdir()
+    _write_proof(job_dir / "proof.ots", digest=digest_byte * 32)
+    (job_dir / "record.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "payment_hash": "a" * 64,
+                "digest": digest_byte.hex() * 32,
+                "state": "pending_bitcoin",
+                "created_at": "2026-09-23T10:00:00+00:00",
+                "updated_at": "2026-09-23T10:00:00+00:00",
+                "attempts": 1,
+                "proof_sha256": "pre-upgrade-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return job_dir
+
+
+def test_uc3_record_heals_after_mark_raised_in_previous_pass(tmp_path) -> None:
+    """A lock/IO error while reconciling must not strand the paid job forever."""
+    job_dir = _pending_job(tmp_path, b"\x99")
+
+    with patch(
+        "app.integrity.timestamp_jobs.mark_timestamp_job_confirmed",
+        side_effect=OSError("record lock unavailable"),
+    ):
+        first = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900002))
+    assert first.failed == 1
+
+    second = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900002))
+    assert second.already_confirmed == 1 and second.failed == 0
+    record = json.loads((job_dir / "record.json").read_text(encoding="utf-8"))
+    assert record["state"] == "bitcoin_confirmed"
+
+
+def test_reconciled_uc3_record_is_not_rewritten_on_every_pass(tmp_path) -> None:
+    """Confirmed + matching hash is a no-op: no fsync churn on the SD card."""
+    job_dir = _pending_job(tmp_path, b"\xaa")
+    upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900003))
+    record_path = job_dir / "record.json"
+    settled = record_path.read_bytes()
+    assert json.loads(settled)["state"] == "bitcoin_confirmed"
+
+    again = upgrade_pending_proofs(tmp_path, calendar_factory=_fake_calendar_factory(900003))
+    assert again.already_confirmed == 1 and again.failed == 0
+    assert record_path.read_bytes() == settled
+
+
+def test_upgrade_ignores_transient_work_proofs(tmp_path) -> None:
+    work = tmp_path / ("a" * 64) / "work"
+    work.mkdir(parents=True)
+    _write_proof(work / "temporary.ots", digest=b"\x88" * 32)
+    assert upgrade_pending_proofs(tmp_path).scanned == 0
 
 
 # --- status surface: pending vs Bitcoin-confirmed --------------------------------
