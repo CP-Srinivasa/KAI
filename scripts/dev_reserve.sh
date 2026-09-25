@@ -67,6 +67,9 @@ cmd_proxy() {
         _ab "DEV_RESERVE_PORT_BUSY: $HOST:$PORT belegt -- laeuft der Dev-Proxy schon?"
     fi
 
+    # Preise aus der Kostenmap des Transport-Baums statt von GitHub `main`
+    # (wie kai-litellm.service); die Smoke-Kosten > 0 haengen daran.
+    export LITELLM_LOCAL_MODEL_COST_MAP=True
     echo "DEV_RESERVE_PROXY_START host=$HOST port=$PORT config=$konfig repo=$repo" >&2
     exec "$exec_skript" litellm --config "$konfig" --host "$HOST" --port "$PORT"
 }

@@ -27,6 +27,22 @@ def test_unit_uses_immutable_release_and_localhost_only() -> None:
     assert "ReadWritePaths=/home/kai/ai_analyst_trading_bot" in unit
 
 
+def test_die_kostenmap_kommt_aus_dem_transport_baum_nicht_aus_dem_netz() -> None:
+    """Ohne die Variable laedt LiteLLM die Preise beim Start von GitHub ``main``.
+
+    Am 2026-09-25 auf kai-pi5 gemessen (HTTPS_PROXY ins Leere): ohne Variable
+    drei Abrufwarnungen, mit Variable keine. ``environment_variables`` in der
+    Proxy-YAML wirkt NICHT: die Map wird beim Import geladen, vor der Config.
+    Deshalb muss sie in der Prozessumgebung stehen, sowohl fuer die Laufzeit
+    als auch fuer den Dev-Proxy.
+    """
+    assert "Environment=LITELLM_LOCAL_MODEL_COST_MAP=True" in UNIT.read_text(encoding="utf-8")
+    assert "export LITELLM_LOCAL_MODEL_COST_MAP=True" in Path("scripts/dev_reserve.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "LITELLM_LOCAL_MODEL_COST_MAP" not in CONFIG.read_text(encoding="utf-8")
+
+
 def test_das_binary_kommt_aus_dem_transport_baum_nicht_aus_dem_release_venv() -> None:
     """ADR 0019: `litellm[proxy]` verlangt `openai<3.0.0`, der Kern faehrt 3.6.0.
 

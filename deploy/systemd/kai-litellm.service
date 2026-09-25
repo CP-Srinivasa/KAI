@@ -10,6 +10,12 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/kai/current
 Environment=PYTHONDONTWRITEBYTECODE=1
+# Preise aus der Kostenmap DES TRANSPORT-BAUMS, nicht beim Start von GitHub
+# `main` nachgeladen: so sind sie an den gehashten Transport-Lock gebunden und
+# der Start braucht kein Netz. Muss in der Prozessumgebung stehen -- die Map
+# wird beim Import geladen, `environment_variables` in der YAML ist zu spaet
+# (gemessen 2026-09-25). Neue Preise kommen mit dem naechsten Transport-Update.
+Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 # No LiteLLM retry here: bounded retry has one policy owner in app/ai.
 #
