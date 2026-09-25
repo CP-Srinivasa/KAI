@@ -35,6 +35,7 @@ Bestehende Verweise (Memory, PRs, Commit-Messages, Docs) referenzieren diese Dat
 | [0017](0017-ai-control-plane-and-litellm-transport.md) | `app/ai` ist die AI-Control-Plane; LiteLLM ist Transport darunter | Accepted (2026-09-03, D-CORE-002) |
 | [0019](0019-litellm-transport-runtime.md) | Die LiteLLM-Runtime ist ein eigener Artefaktbaum, kein Teil des KAI-Release | **ACCEPTED — BINDEND (2026-09-08)** — Transport-Baum und Unit im Repo umgesetzt; Betrieb laut D-280 aktiviert, aktuelle Pi-Bestaetigung im Release-Sprint S3 offen |
 | [0020](0020-developer-independence-reserve.md) | KAI Developer Independence: herstellerneutrale Entwicklerreserve (OpenCode → LiteLLM-Dev-Proxy → `kai-dev-*`) neben, nicht in der Laufzeit | **ACCEPTED — BINDEND (2026-09-14, D-CORE-009)** — Repo-Seite gebaut; Schlüssel, erster Start, drei Kontrollaufgaben und Einstufung sind Operator-Schritte |
+| [0021](0021-kai-pay-self-custodial-wallet-product.md) | KAI-Pay-Produkt: selbstverwahrte Wallet (Web + App) außerhalb des KAI-Kerns, eigenes Repo, Cloudflare, Breez SDK (Spark) | **ACCEPTED — Architekturgrenze (2026-09-25, D-285)** — öffentlicher Betrieb erst nach E6 (Anwalt, Rechtsträger, Security-Review) |
 
 **Hinweis:** „0006a/0006b" sind nur Index-Labels dieses Dokuments zur Unterscheidung — die Dateien selbst heißen beide `0006-*` und behalten ihre Namen.
 
