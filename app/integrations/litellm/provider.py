@@ -130,7 +130,8 @@ def _provider_aus_modell(model_name: str) -> str:
 
     LiteLLM 1.99.0 sendet KEINEN Provider-Header -- weder
     ``x-litellm-model-provider`` noch ``x-litellm-provider`` stand in der
-    Antwort, die am 2026-09-08 auf kai-pi5 gemessen wurde. Ohne Anbieter bleibt
+    Antwort, die am 2026-09-08 auf kai-pi5 gemessen wurde; auch der Quelltext
+    von 1.102.1 setzt keinen (geprueft 2026-09-25). Ohne Anbieter bleibt
     :attr:`AttemptTrace.identity_proven` bei JEDEM Aufruf falsch, und damit auch
     ``model_substituted``: der Schatten koennte nie melden, dass ein anderes
     Modell geantwortet hat als angefordert.
