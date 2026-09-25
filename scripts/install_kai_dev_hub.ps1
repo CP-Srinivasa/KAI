@@ -1,13 +1,34 @@
 [CmdletBinding()]
 param(
     [string]$Repository,
-    [switch]$SkipScheduledTask
+    [switch]$SkipScheduledTask,
+    [switch]$SkipShortcut,
+    [string]$InstallRoot,
+    [string]$PythonExe
 )
 
+# Reihenfolge ist Vertrag (K7, Befund 24.09.2026): ERST alles aufloesen und
+# pruefen, DANN schreiben. Frueher brach der Installer bei detached HEAD an
+# `(git branch --show-current).Trim()` ab, nachdem die Hub-Dateien schon
+# kopiert waren -- zurueck blieb ein halber Versionsordner ohne install.json.
+
 $ErrorActionPreference = 'Stop'
+
+function Get-GitText {
+    # Null-sicher: leere Ausgabe wird '' statt $null. Exit-Code != 0 wirft.
+    param([Parameter(Mandatory)][string[]]$Arguments)
+    $ErrorActionPreference = 'Continue'
+    $out = & git @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') scheiterte (Exit $LASTEXITCODE)" }
+    return "$(@($out) -join "`n")".Trim()
+}
+
+# --- 1. Aufloesen und pruefen (keine Seiteneffekte) --------------------------
+
+if (-not $InstallRoot) { $InstallRoot = Join-Path $env:USERPROFILE '.kai\developer-hub' }
 $sourceRoot = (Resolve-Path -LiteralPath (Split-Path -Parent $PSScriptRoot)).Path
-$primary = (& git -C $sourceRoot worktree list --porcelain | Select-Object -First 1)
-if (-not $primary -or -not $primary.StartsWith('worktree ')) {
+$primary = (Get-GitText @('-C', $sourceRoot, 'worktree', 'list', '--porcelain')).Split("`n")[0]
+if (-not $primary.StartsWith('worktree ')) {
     throw 'Kanonischer KAI-Checkout konnte nicht aufgelöst werden.'
 }
 if (-not $Repository) {
@@ -26,50 +47,104 @@ foreach ($file in @($source, $sourceWorkflow)) {
     if (-not (Test-Path -LiteralPath $file)) { throw "Hub-Quelldatei fehlt: $file" }
 }
 
-$pythonExe = (& python -c 'import sys; print(sys.executable)').Trim()
-if (-not $pythonExe) { throw 'Python-Interpreter konnte nicht aufgelöst werden.' }
+if (-not $PythonExe) {
+    $PythonExe = "$(& python -c 'import sys; print(sys.executable)')".Trim()
+}
+if (-not $PythonExe -or -not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    throw "Python-Interpreter konnte nicht aufgelöst werden: '$PythonExe'"
+}
+$pythonExe = (Resolve-Path -LiteralPath $PythonExe).Path
 $pythonw = Join-Path (Split-Path -Parent $pythonExe) 'pythonw.exe'
-if (-not (Test-Path -LiteralPath $pythonw)) {
+if (-not $SkipShortcut -and -not (Test-Path -LiteralPath $pythonw)) {
     throw "pythonw.exe fehlt neben dem aktiven Interpreter: $pythonw"
 }
-$version = (& $pythonExe $source --version).Trim()
+$version = "$(& $pythonExe $source --version)".Trim()
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Ungültige Hub-Version: $version" }
-$installDir = Join-Path $env:USERPROFILE ('.kai\developer-hub\app\v' + $version)
-New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-$installedScript = Join-Path $installDir 'kai_dev_hub.py'
-$installedWorkflow = Join-Path $installDir 'kai_dev_workflow.py'
-Copy-Item -LiteralPath $source -Destination $installedScript -Force
-Copy-Item -LiteralPath $sourceWorkflow -Destination $installedWorkflow -Force
 
-$head = (& git -C $sourceRoot rev-parse HEAD).Trim()
-$manifest = [ordered]@{
-    schema_version = 1
-    hub_version = $version
-    installed_at_utc = (Get-Date).ToUniversalTime().ToString('o')
-    source_head = $head
-    source_branch = (& git -C $sourceRoot branch --show-current).Trim()
-    repository = $repositoryPath
-    hub_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedScript).Hash
-    workflow_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedWorkflow).Hash
+$head = Get-GitText @('-C', $sourceRoot, 'rev-parse', 'HEAD')
+if ($head -notmatch '^[0-9a-f]{40}$') { throw "Quell-HEAD ist kein voller Commit-SHA: '$head'" }
+# Detached HEAD ist zulaessig: dann gibt es keinen Branchnamen. Die Herkunft
+# belegt `source_head`, nicht der Name.
+$branch = Get-GitText @('-C', $sourceRoot, 'branch', '--show-current')
+$detached = -not $branch
+
+# --- 2. Schreiben: Staging, dann Umbenennen ----------------------------------
+
+$appDir = Join-Path $InstallRoot 'app'
+$installDir = Join-Path $appDir ('v' + $version)
+$suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+$staging = Join-Path $appDir ('.staging-v' + $version + '-' + $suffix)
+$replaced = Join-Path $appDir ('.replaced-v' + $version + '-' + $suffix)
+
+New-Item -ItemType Directory -Path $appDir -Force | Out-Null
+try {
+    New-Item -ItemType Directory -Path $staging | Out-Null
+    $stagedScript = Join-Path $staging 'kai_dev_hub.py'
+    $stagedWorkflow = Join-Path $staging 'kai_dev_workflow.py'
+    Copy-Item -LiteralPath $source -Destination $stagedScript
+    Copy-Item -LiteralPath $sourceWorkflow -Destination $stagedWorkflow
+
+    $manifest = [ordered]@{
+        schema_version = 1
+        hub_version = $version
+        installed_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+        source_head = $head
+        source_branch = $(if ($detached) { $null } else { $branch })
+        source_detached = [bool]$detached
+        repository = $repositoryPath
+        hub_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedScript).Hash
+        workflow_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedWorkflow).Hash
+    }
+    # UTF-8 ohne BOM, unabhaengig davon, ob powershell.exe oder pwsh laeuft.
+    [System.IO.File]::WriteAllText(
+        (Join-Path $staging 'install.json'),
+        ($manifest | ConvertTo-Json -Depth 4),
+        (New-Object System.Text.UTF8Encoding($false)))
+
+    if (Test-Path -LiteralPath $installDir) {
+        try {
+            [System.IO.Directory]::Move($installDir, $replaced)
+        } catch {
+            throw "Installation abgebrochen: $installDir ist gesperrt. Hub zuerst schließen. ($($_.Exception.Message))"
+        }
+    }
+    try {
+        [System.IO.Directory]::Move($staging, $installDir)
+    } catch {
+        if ((Test-Path -LiteralPath $replaced) -and -not (Test-Path -LiteralPath $installDir)) {
+            [System.IO.Directory]::Move($replaced, $installDir)
+        }
+        throw
+    }
+} catch {
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    throw
 }
-$manifestPath = Join-Path $installDir 'install.json'
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+if (Test-Path -LiteralPath $replaced) { Remove-Item -LiteralPath $replaced -Recurse -Force }
 
-$desktop = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktop 'KAI Developer Hub.lnk'
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $pythonw
-$shortcut.Arguments = ('"{0}" --repo "{1}" ui' -f $installedScript, $repositoryPath)
-$shortcut.WorkingDirectory = $repositoryPath
-$shortcut.Description = "KAI Developer Hub $version - OpenCode/Hermes/Kimi"
-$icon = Join-Path $env:USERPROFILE 'OneDrive\Pictures\kai-mark-light.ico'
-if (Test-Path -LiteralPath $icon) { $shortcut.IconLocation = "$icon,0" }
-$shortcut.Save()
+$installedScript = Join-Path $installDir 'kai_dev_hub.py'
+$manifestPath = Join-Path $installDir 'install.json'
+
+# --- 3. Shortcut und Health-Task (abschaltbar, z. B. fuer Tests) -------------
+
+$shortcutPath = ''
+if (-not $SkipShortcut) {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $shortcutPath = Join-Path $desktop 'KAI Developer Hub.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $pythonw
+    $shortcut.Arguments = ('"{0}" --repo "{1}" ui' -f $installedScript, $repositoryPath)
+    $shortcut.WorkingDirectory = $repositoryPath
+    $shortcut.Description = "KAI Developer Hub $version - OpenCode/Hermes/Kimi"
+    $icon = Join-Path $env:USERPROFILE 'OneDrive\Pictures\kai-mark-light.ico'
+    if (Test-Path -LiteralPath $icon) { $shortcut.IconLocation = "$icon,0" }
+    $shortcut.Save()
+}
 
 $taskName = 'KAI-Developer-Reserve-Health'
 if (-not $SkipScheduledTask) {
-    $healthFile = Join-Path $env:USERPROFILE '.kai\developer-hub\health\last.json'
+    $healthFile = Join-Path $InstallRoot 'health\last.json'
     $arguments = ('"{0}" --repo "{1}" doctor --mode offline --output "{2}"' -f $installedScript, $repositoryPath, $healthFile)
     $taskAction = New-ScheduledTaskAction -Execute $pythonExe -Argument $arguments -WorkingDirectory $repositoryPath
     $taskTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
@@ -85,6 +160,8 @@ if (-not $SkipScheduledTask) {
 Write-Output "HUB_VERSION=$version"
 Write-Output "INSTALLED_SCRIPT=$installedScript"
 Write-Output "INSTALL_MANIFEST=$manifestPath"
-Write-Output "DESKTOP_SHORTCUT=$shortcutPath"
+Write-Output "SOURCE_HEAD=$head"
+Write-Output "SOURCE_DETACHED=$detached"
+Write-Output "DESKTOP_SHORTCUT=$(if ($SkipShortcut) { 'skipped' } else { $shortcutPath })"
 Write-Output "REPOSITORY=$repositoryPath"
 Write-Output "LOCAL_HEALTH_TASK=$($taskName):$(-not $SkipScheduledTask)"
