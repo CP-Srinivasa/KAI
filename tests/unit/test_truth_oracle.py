@@ -948,3 +948,65 @@ def test_verdicts_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
             headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
         )
     assert r.status_code == 402  # scope mismatch → re-challenge
+
+
+# --- /oracle/verdicts/proof — Beweispaket bis zum Bitcoin-Block (D-288 Befund 4) ----
+
+
+def test_verdict_proof_paid_returns_the_bundle(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    bundle = {"schema": "kai-truth-proof-bundle/v1", "anchored_tip": {"seq": 7}}
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.truth.proof_bundle.build_verdict_bundle", return_value=bundle) as build,
+    ):
+        r = client.get(
+            "/oracle/verdicts/proof",
+            params={"attestation_hash": "a" * 64},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 200
+    assert r.json() == bundle
+    assert build.call_args.args[0] == "a" * 64
+
+
+def test_verdict_proof_unknown_hash_is_404(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.truth.proof_bundle.build_verdict_bundle", return_value=None),
+    ):
+        r = client.get(
+            "/oracle/verdicts/proof",
+            params={"attestation_hash": "b" * 64},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 404
+
+
+def test_verdict_proof_rejects_a_malformed_hash(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    with patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)):
+        r = client.get(
+            "/oracle/verdicts/proof",
+            params={"attestation_hash": "../../etc/passwd"},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 422
+
+
+def test_verdicts_listing_points_to_the_proof_bundle(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    rows = [{"attestation_hash": "a" * 64, "hypothesis": "h", "verdict": "FAILED"}]
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.research.verdict_report.list_verdict_reports", return_value=rows),
+        patch("app.truth.ledger.verify_ledger", return_value={"ok": True, "records": 5}),
+    ):
+        r = client.get(
+            "/oracle/verdicts",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.json()["verdicts"][0]["proof_bundle"] == (
+        "/oracle/verdicts/proof?attestation_hash=" + "a" * 64
+    )
