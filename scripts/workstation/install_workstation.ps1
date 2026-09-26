@@ -37,6 +37,8 @@ $Map = [ordered]@{
     'tasks\KAI-Vault-OnAttach.xml' = 'KAI-mirror\scripts\tasks\KAI-Vault-OnAttach.xml'
     'kai_session_lagebild.py'      = 'KAI-mirror\scripts\kai_session_lagebild.py'
     'kai_claim.py'                 = 'KAI-mirror\scripts\kai_claim.py'
+    'kai-ln-budget.ps1'            = 'KAI-mirror\scripts\kai-ln-budget.ps1'
+    'kai-ln-budget.cmd'            = 'AppData\Local\Microsoft\WindowsApps\kai-ln-budget.cmd'
 }
 
 function Get-Sha([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() }
