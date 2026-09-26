@@ -4,7 +4,7 @@ import { Copy, ShieldAlert, ShieldCheck, Play, Send } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { PayQr } from "@/components/panels/PayQr";
-import { lnValueAction, type LightningStatus, type LnActionResult } from "@/lib/api";
+import { lnValueAction, type LightningStatus, type LnActionResult, type LnPaymentPreview } from "@/lib/api";
 import type { AsyncState } from "@/lib/useApi";
 
 // Steuer-Cockpit für die gegatete Wert-Schicht (Sprint 5). Zeigt EHRLICH den
@@ -18,6 +18,35 @@ import type { AsyncState } from "@/lib/useApi";
 // eine Fähigkeit, die man nur freischalten müsste.
 const ACTIONS = ["pay_invoice", "create_invoice"] as const;
 const ACTION_LABELS = { pay_invoice: "Senden · Rechnung bezahlen", create_invoice: "Empfangen · Rechnung erstellen" };
+
+/** D-288: dieselbe Aussage wie /pay im Telegram — vor der Freigabe, nicht erst beim Senden. */
+function PreviewBlock({ preview }: { preview: LnPaymentPreview }) {
+  const denied = preview.verdict === "DENY";
+  const fee = preview.fee;
+  let feeText: string;
+  if (fee.warning === "no_route") {
+    feeText = `⚠️ Node findet per Probe keine Route (Limit ${fee.limit_sat} sat) — der Send wird voraussichtlich scheitern`;
+  } else if (fee.warning === "unavailable") {
+    feeText = `Gebühr: keine Schätzung (Limit ${fee.limit_sat} sat)`;
+  } else if (fee.warning === "probe_failed") {
+    feeText = `Gebühr: Node-Probe ohne Ergebnis — Settings-Schätzung ~${fee.estimate_sat} sat, Limit ${fee.limit_sat} sat`;
+  } else {
+    feeText = `Gebühr: ~${fee.estimate_sat} sat (${fee.source}), Limit ${fee.limit_sat} sat`;
+    if (fee.warning === "over_limit") feeText += " ⚠️ Schätzung liegt über dem Limit — der Send wird voraussichtlich scheitern";
+  }
+  return (
+    <div className="space-y-0.5 text-2xs">
+      <div className="flex items-center gap-2">
+        <span className="text-fg-subtle">Regelkette: {preview.verdict}</span>
+        {!preview.destination_known && <Badge tone="neg">Empfänger nicht dekodierbar</Badge>}
+      </div>
+      {denied && preview.reasons.length > 0 && (
+        <div className="text-neg">{preview.reasons.join("; ")}</div>
+      )}
+      <div className={fee.warning && fee.warning !== "unavailable" ? "text-warn" : "text-fg-subtle"}>{feeText}</div>
+    </div>
+  );
+}
 
 function decisionTone(d?: string): "pos" | "warn" | "neg" | "muted" {
   if (d === "receive_gate") return "pos";
@@ -261,6 +290,7 @@ export function LnControlPanel({
                 {result.plan.mode ? ` · ${result.plan.mode}` : ""}
               </div>
             )}
+            {result.plan?.preview && <PreviewBlock preview={result.plan.preview} />}
             {result.plan_hash && (
               <div className="font-mono text-2xs text-fg-subtle break-all">
                 plan_hash: {result.plan_hash.slice(0, 24)}…
@@ -269,7 +299,7 @@ export function LnControlPanel({
           </div>
         )}
 
-        {action === "pay_invoice" && result?.mode === "plan" && (
+        {action === "pay_invoice" && result?.mode === "plan" && !result.plan?.preview && (
           <p className="text-2xs text-fg-subtle">Die Vorschau zeigt Betrag und Gebührengrenze, aber prüft weder Empfänger-Allowlist noch Route. Darüber entscheidet erst der PaymentService beim Ausführen.</p>
         )}
 
@@ -282,6 +312,7 @@ export function LnControlPanel({
 
         {result?.mode === "plan" && result.plan_hash && result.policy &&
           result.policy.decision !== "denied" &&
+          result.plan?.preview?.verdict !== "DENY" &&
           result.plan?.state !== "disabled" && result.plan?.state !== "error" &&
           result.plan?.status !== "unavailable" &&
           (action !== "pay_invoice" || sendReady) && (
