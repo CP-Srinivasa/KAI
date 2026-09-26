@@ -992,6 +992,19 @@ export type LnActionRequest = {
   params: Record<string, unknown>;
   confirm?: LnActionConfirm;
 };
+export type LnFeeAssessment = {
+  estimate_sat: number | null;
+  source: string;
+  limit_sat: number;
+  warning: "" | "over_limit" | "no_route" | "probe_failed" | "unavailable";
+};
+export type LnPaymentPreview = {
+  verdict: "ALLOW" | "REQUIRES_APPROVAL" | "DENY" | string;
+  rule_ids: string[];
+  reasons: string[];
+  destination_known: boolean;
+  fee: LnFeeAssessment;
+};
 export type LnActionResult = {
   mode: "plan" | "execute";
   action: string;
@@ -1007,6 +1020,8 @@ export type LnActionResult = {
     amount_sat?: number;
     fee_limit_sat?: number | null;
     plan?: Record<string, unknown>;
+    /** D-288: gemeinsamer Vorschauvertrag mit /pay (Regelkette + Gebühr). */
+    preview?: LnPaymentPreview | null;
   };
   result?: {
     action: string;

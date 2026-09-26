@@ -61,6 +61,55 @@ describe("LnControlPanel", () => {
     expect(lnValueAction.mock.calls[2][0].confirm.idempotency_key).toBe(first.confirm.idempotency_key);
   });
 
+  it("zeigt die Regelkette der Vorschau und sperrt die Freigabe bei Ablehnung (D-288)", async () => {
+    lnValueAction.mockResolvedValue({
+      mode: "plan",
+      action: "pay_invoice",
+      policy: { decision: "payment_control_plane", reason: "ADR 0018 §12" },
+      plan_hash: "abc123",
+      plan: {
+        route: "payment_control_plane", mode: "live", amount_sat: 1000, fee_limit_sat: 5,
+        preview: {
+          verdict: "DENY", rule_ids: ["destination_allowlist"],
+          reasons: ["payee not allowlisted"], destination_known: true,
+          fee: { estimate_sat: null, source: "unavailable", limit_sat: 5, warning: "unavailable" },
+        },
+      },
+    });
+    render(<LnControlPanel status={status} />);
+    fireEvent.change(screen.getByLabelText("Aktion"), { target: { value: "pay_invoice" } });
+    fireEvent.change(screen.getByLabelText("Lightning-Rechnung"), { target: { value: "lnbc1invoice" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    await waitFor(() => expect(screen.getByText(/payee not allowlisted/)).toBeTruthy());
+    expect(screen.getByText(/Regelkette: DENY/)).toBeTruthy();
+    expect(screen.queryByLabelText("HOTP-Freigabe")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ausführen" })).toBeNull();
+  });
+
+  it("warnt vor der Freigabe, wenn die Node-Schätzung über dem Limit liegt", async () => {
+    lnValueAction.mockResolvedValue({
+      mode: "plan",
+      action: "pay_invoice",
+      policy: { decision: "payment_control_plane", reason: "ADR 0018 §12" },
+      plan_hash: "abc123",
+      plan: {
+        route: "payment_control_plane", mode: "live", amount_sat: 900, fee_limit_sat: 3,
+        preview: {
+          verdict: "REQUIRES_APPROVAL", rule_ids: ["approval_threshold"], reasons: [],
+          destination_known: true,
+          fee: { estimate_sat: 6, source: "node_estimate_route_fee", limit_sat: 3, warning: "over_limit" },
+        },
+      },
+    });
+    render(<LnControlPanel status={status} />);
+    fireEvent.change(screen.getByLabelText("Aktion"), { target: { value: "pay_invoice" } });
+    fireEvent.change(screen.getByLabelText("Lightning-Rechnung"), { target: { value: "lnbc1invoice" } });
+    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+    await waitFor(() => expect(screen.getByText(/~6 sat \(node_estimate_route_fee\)/)).toBeTruthy());
+    expect(screen.getByText(/über dem Limit/)).toBeTruthy();
+    expect(screen.queryByText(/prüft weder Empfänger-Allowlist noch Route/)).toBeNull();
+  });
+
   it("entwertet die Vorschau bei geänderter Rechnung und bietet Rechnungs-Erstellung ohne JSON an", async () => {
     lnValueAction.mockResolvedValue({
       mode: "plan",
