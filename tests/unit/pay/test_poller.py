@@ -186,3 +186,18 @@ async def test_eine_haengende_runde_wird_abgeschnitten(
     with pytest.raises(asyncio.CancelledError):
         await poller.run(harness.service)
     assert cycles == [1]
+
+
+async def test_die_runde_holt_faellige_callbacks_nach(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Befund 5: ohne diesen Aufruf bliebe ein gescheiterter Callback liegen."""
+    called: list[int] = []
+
+    async def _redeliver(limit: int = 20) -> int:
+        called.append(limit)
+        return 0
+
+    monkeypatch.setattr(harness.service, "redeliver_webhooks", _redeliver)
+    await poller.tick(harness.service)
+    assert called
