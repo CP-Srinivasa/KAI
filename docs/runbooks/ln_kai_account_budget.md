@@ -1,6 +1,6 @@
 # Node-seitiges Budget für KAIs Sendeschlüssel (litd-Account)
 
-> **Status: ENTWURF, nichts ausgeführt (26.09.2026).** Die Befehlsfolge für das Fenster steht in §9, der Ist-Stand am Node wurde am 26.09. abends gelesen (§3). Der Operator hat die Vorbereitung beauftragt. Jeder Schritt am Node und jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
+> **Status: IN UMSETZUNG (26.09.2026 abends).** Erledigt: Schritte 0–5, A1 und A3 bestanden (§10). Offen sind A2/A4/A6 (zwei Test-Sends mit HOTP) und Schritt 7. Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
 
 ## 1. Warum
 
@@ -30,7 +30,7 @@ Quelle: Lightning Labs, *LND Accounts* (docs.lightning.engineering, gelesen am 2
 
 **Nachgelesen am 26.09. abends (nur lesend):**
 - `bonus.lit.sh` installiert **LiT `0.14.1-alpha`**. Es lädt das Release, prüft Hash und GPG-Signatur und legt den Benutzer `lit` und `litd.service` an. Der Betrieb ist `lnd-mode=remote` gegen `127.0.0.1:10009` mit `admin.macaroon`. Der Benutzer `lit` existiert noch nicht.
-- **`rpcmiddleware.enable=true` steht bereits** in `lnd.conf` (`/mnt/disk_storage/app-data/lnd/lnd.conf`). lnd läuft seit 04.07. mit dieser Datei. Das Skript ändert dann nichts an `lnd.conf`, **ein lnd-Neustart ist nicht nötig** (Punkt 4.3 ist erledigt, die Kanäle bleiben verbunden). Es startet nur RTL neu.
+- **`rpcmiddleware.enable=true` steht bereits** in `lnd.conf` (`/mnt/disk_storage/app-data/lnd/lnd.conf`). lnd läuft seit 04.07. mit dieser Datei. **KORREKTUR nach der Ausführung:** Das Skript schreibt `lnd.conf` per `sed -i` trotzdem neu und startet lnd in Zeile 351 **bedingungslos neu** (`sudo systemctl restart lnd`). Bei der Vorbereitung war die Suche nach 45 Zeilen abgeschnitten. Folge am 26.09.: lnd-Neustart um 18:41Z, danach war die **Wallet gesperrt**, weil auf diesem Node kein Auto-Unlock eingerichtet ist. Der Operator hat mit Passwort C entsperrt, lnd war ab etwa 18:47Z wieder aktiv. In dieser Zeit war nichts unterwegs.
 - **Angriffsfläche:** Das Skript öffnet `ufw allow 8443` (LiT-Weboberfläche mit Passwort B) und legt **einen Tor-Onion-Dienst** für diese Oberfläche an. Beides braucht KAI nicht, §9 Schritt 2 nimmt es wieder zurück.
 - `admin` hat passwortloses `sudo` am Node.
 - **KAIs Sende-Macaroon** (`~/kai-secrets/lnd/kai-payment.macaroon` auf der Pi, nur der Identifier gelesen): Ops `offchain:read,write`. On-chain ist also nicht erreichbar, damit ist der offene Punkt der Matrix bestätigt. Er hat **`root_key_id = 0`**, ebenso `kai-invoice.macaroon`.
@@ -168,3 +168,19 @@ sudo systemctl restart kai-server
 - Kopien von `kai-payment.macaroon` außerhalb der Pi suchen (Laptop, D:-Vault, Escrow-Archiv) und löschen.
 - Danach auf der Pi `shred -u ~/kai-secrets/lnd/kai-payment.macaroon`, erst **nachdem** A1 bis A6 bestanden sind.
 - Grenze: `root_key_id = 0`. Wer vorher eine Kopie gezogen hat, kann sie weiter nutzen, bis alle Macaroons neu aufgebaut sind (§4.4, eigenes Vorhaben).
+
+## 10. Ergebnis der Umsetzung am 26.09.2026
+
+- **Schritt 1:** LiT 0.14.1-alpha installiert, SHA256 und GPG geprüft. lnd wurde neu gestartet (siehe Korrektur in §3), die Wallet war bis zum Entsperren durch den Operator gesperrt. KAI zeigte das korrekt als `degraded` mit `wallet_locked: true`.
+- **Schritt 2:** `httpslisten=127.0.0.1:8443`, die ufw-Regel für 8443 ist gelöscht (v4 und v6), der Tor-Onion-Dienst für lit ist entfernt. Von der Pi und aus dem LAN ist 8443 nicht erreichbar.
+- **A3 bestanden (K.-o.):**
+  - Solange litd läuft, zeigt der 1-sat-Test-Account `channelbalance` = 1 sat, also das virtuelle Guthaben.
+  - Bei gestopptem litd lehnt lnd ab: `caveat "lnd-custom account …" not satisfied: cannot accept macaroon with custom caveat 'account', no middleware registered to handle it`. Das Verhalten ist also **fail-closed**.
+  - Der Test-Account ist wieder entfernt.
+- **Schritt 4:** Der Account `kai` (`5c5dce181fedebaa`) hat 5 000 sat. Der Macaroon ging über den Laptop auf die Pi (`kai-account.macaroon`, Rechte 600, sha256 gleich), die Temp-Kopien sind gelöscht.
+- **Schritt 5:** Die `.env` ist gesichert (`env_backup.sh litd-account`) und `APP_LN_PAYMENT_MACAROON_PATH` zeigt auf den Account-Macaroon. kai-server wurde über `kai-service-control` neu gestartet.
+- **A1 bestanden:** Der Go-live-Preflight mit dem Account-Macaroon meldet GO (`macaroon_send_capable`, `router_send_supported`). KAI spricht weiter lnd-REST `:8080` an, es hat sich nur der Pfad geändert (4.2 beantwortet).
+- **A5 (Teil):** Reconcile 19:02Z `ok`, `complete`, 0 Orphans.
+- **A6 (Pi-Seite):** Die Pi erreicht litd nicht, hat kein `litcli` und keinen lit-Macaroon, kann das Budget also nicht ändern.
+- **`kai-ln-budget`:** `scripts/workstation/kai-ln-budget.ps1` samt Starter `.cmd` im PATH. `kai-ln-budget show` liest den Stand korrekt.
+- **Lehre:** Ein Installationsskript ist **komplett** zu lesen, nicht nur per `grep | head`. Vor jedem lnd-Neustart ist zu klären, ob Passwort C greifbar ist, weil es keinen Auto-Unlock gibt.
