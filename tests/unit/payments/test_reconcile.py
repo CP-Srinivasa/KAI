@@ -316,22 +316,35 @@ async def test_der_reconciler_sendet_nie(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_zahlung_ohne_intent_ist_eine_bekannte_wallet_zahlung(tmp_path: Path) -> None:
-    """D-278: Node-Zahlungen ohne Intent sind Wallet-Zahlungen: sichtbar, ohne Aufmerksamkeit."""
+async def test_zahlung_ohne_intent_wird_beobachtet_und_einmal_gemeldet(tmp_path: Path) -> None:
+    """D-289 (Operator 26.09., loest D-278 ab): eine Node-Zahlung ohne KAI-Intent ist
+    "beobachtet, nicht zugeordnet" -- sie wird gemeldet (attention -> OnFailure-Alarm),
+    und zwar genau im Lauf, der sie zuerst sieht. Zugeordnet wird sie nur vom Operator."""
     journal, rail, _service, _intent_id = await open_intent(tmp_path)
     rail.inject_payment("f" * 64, amount=sat(500))
 
     report = await run(journal, rail, tmp_path)
 
     assert "f" * 64 in report.wallet_settlements
-    assert report.status == "ok"
-    assert report.counts.get("WALLET_SETTLEMENT") == 1
+    assert report.status == "attention"
+    assert any("without KAI intent" in note for note in report.notes)
+    assert report.counts.get("UNATTRIBUTED_SPEND") == 1
     rows = [e for e in journal.events() if e.event_type == "wallet_settlement"]
     assert len(rows) == 1
     assert rows[0].payload["rail_dedup_key"] == "f" * 64
-    assert rows[0].payload["status"] == "known"
-    assert rows[0].payload["classification"] == "wallet_direct"
+    assert rows[0].payload["status"] == "observed"
+    assert rows[0].payload["classification"] == "unattributed"
     assert not [e for e in journal.events() if e.event_type == "orphan_settlement"]
+    state = reconcile.load_state(tmp_path / "reconcile_state.json")
+    assert state.last_unattributed == 1
+    assert state.last_unattributed_at == NOW.isoformat()
+
+    later = NOW + timedelta(minutes=15)
+    second = await run(journal, rail, tmp_path, clock=lambda: later, monotonic=lambda: 1900.0)
+    assert second.status == "ok"  # gemeldet ist gemeldet: kein Dauer-Alarm
+    state = reconcile.load_state(tmp_path / "reconcile_state.json")
+    assert state.last_unattributed == 0
+    assert state.last_unattributed_at == NOW.isoformat()  # der letzte Befund bleibt sichtbar
 
 
 async def test_eine_wallet_zahlung_wird_genau_einmal_journalisiert(tmp_path: Path) -> None:

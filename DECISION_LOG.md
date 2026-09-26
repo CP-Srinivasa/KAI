@@ -24,6 +24,18 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-289 (2026-09-26)
+**Entscheidung (Operator, loest D-278 ab):** Eine Node-Zahlung ohne KAI-Intent gilt ab jetzt als **„beobachtet, nicht zugeordnet“** und wird nicht mehr still als bekannte Wallet-Zahlung verbucht (Befund 2 aus D-288).
+- **Journal:** `wallet_settlement` mit `status=observed`, `classification=unattributed` (bisher `known`/`wallet_direct`). Das Record-Format ist unveraendert, der Dedup ueber `rail_dedup_key` auch.
+- **Meldung:**
+  - Der Reconcile-Lauf, der eine solche Ausgabe **zuerst** sieht, endet mit `attention` und der Notiz „node spend(s) without KAI intent: observed, not attributed“. Das loest ueber `OnFailure` einen Alarm aus.
+  - Der naechste Lauf ist wieder `ok`, es gibt also keinen Dauer-Alarm.
+  - `reconcile_state.json` traegt `last_unattributed` und `last_unattributed_at`. `/health/payment` zeigt `last_unattributed_spend`, der Digest zeigt 24 h lang „⚠️ fremde Ausgabe … (nicht zugeordnet)“.
+- **Zuordnung:** nur per Operator-Entscheid (`close_orphans_as_wallet`, `classification=wallet_direct`, `evidence_source=operator`).
+- **Begruendung:** Eine Klassifikation autorisiert keine Ausgabe. KAIs Caps, Allowlist und HOTP gelten nur fuer den KAI-Sendeweg. Eine Ausgabe ueber einen anderen Zugang (Alltags-Wallet, geleakter Macaroon) muss auffallen, statt als „bekannt“ zu verschwinden.
+- **Offen, Operator-Entscheid nach Messung:** ein technisch durchgesetztes Budget fuer die Alltags-Wallet (z. B. LND-Account via litd). Zuerst zeigt D-289, wie oft solche Ausgaben ueberhaupt vorkommen.
+**Beleg:** `app/payments/reconcile_passes.py::backward`, `app/payments/reconcile.py`, Tests `test_reconcile.py::test_zahlung_ohne_intent_wird_beobachtet_und_einmal_gemeldet`, `test_digest_ops_block.py::test_ln_line_reports_a_foreign_spend_of_the_last_day`.
+
 ### D-288 (2026-09-26)
 **Befund (Lueckenregister Lightning, externe Analyse, am Code gegengeprueft):** KAI hat **kein** vollstaendig geprueftes, durchgaengig automatisiertes Lightning-Oekosystem. Der Self-Use ist begrenzt belegt (D-281/D-286). Luecken gibt es bei Verifikation, Automatisierung und Betriebsabnahme.
 - **Bestaetigt und in diesem Eintrag behoben:**

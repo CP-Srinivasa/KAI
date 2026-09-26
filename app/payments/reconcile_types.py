@@ -114,6 +114,9 @@ class ReconcileState:
     last_complete: bool | None = None
     #: Zeitpunkt des letzten VOLLSTAENDIGEN Laufs — ein blinder Lauf ersetzt ihn nicht.
     last_complete_run_utc: str = ""
+    #: D-289: fremde Node-Ausgaben (ohne KAI-Intent) im letzten Lauf / zuletzt gesehen.
+    last_unattributed: int = 0
+    last_unattributed_at: str = ""
 
     def comparable_with(self, boot_ref: str) -> bool:
         """Darf die monotone Marke dieses Zustands verglichen werden?
@@ -137,6 +140,8 @@ class ReconcileState:
             "last_clock_anomaly": self.last_clock_anomaly,
             "last_complete": self.last_complete,
             "last_complete_run_utc": self.last_complete_run_utc,
+            "last_unattributed": self.last_unattributed,
+            "last_unattributed_at": self.last_unattributed_at,
         }
 
 
@@ -164,6 +169,8 @@ def load_state(path: Path) -> ReconcileState:
         last_clock_anomaly=bool(raw.get("last_clock_anomaly", False)),
         last_complete=raw["last_complete"] if isinstance(raw.get("last_complete"), bool) else None,
         last_complete_run_utc=str(raw.get("last_complete_run_utc", "") or ""),
+        last_unattributed=int(raw.get("last_unattributed", 0) or 0),
+        last_unattributed_at=str(raw.get("last_unattributed_at", "") or ""),
     )
 
 

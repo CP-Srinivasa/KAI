@@ -120,7 +120,11 @@ async def run(
         # Blind ist nicht "nichts gefunden": Warnung, aber kein Geld-Fehlerzustand.
         notes.append("node payment history incomplete: backward pass did not see every send")
     blind = not listing.complete
-    status = "attention" if (open_orphans or anomaly or unresolved_count or blind) else "ok"
+    if wallet:
+        # D-289: gemeldet, nicht still verbucht -- und nur in DIESEM Lauf.
+        notes.append(f"{len(wallet)} node spend(s) without KAI intent: observed, not attributed")
+    flagged = open_orphans or anomaly or unresolved_count or blind or wallet
+    status = "attention" if flagged else "ok"
     report = ReconcileReport(
         status=status,
         counts=counts,
@@ -151,6 +155,8 @@ async def run(
             last_complete_run_utc=(
                 now.isoformat() if listing.complete else previous.last_complete_run_utc
             ),
+            last_unattributed=len(wallet),
+            last_unattributed_at=now.isoformat() if wallet else previous.last_unattributed_at,
         ),
     )
     return report
