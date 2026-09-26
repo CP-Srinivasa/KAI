@@ -61,7 +61,20 @@ Quelle: Lightning Labs, *LND Accounts* (docs.lightning.engineering, gelesen am 2
 
 ## 7. Offene Operator-Entscheide
 
-- Die Budgethöhe (Vorschlag 5 000 sat, das Fünffache des Tages-Caps) und wie aufgefüllt wird (manuell per `litcli accounts update`).
+- ~~Die Budgethöhe~~ **Entschieden am 26.09. (D-290): 5 000 sat, aufgefüllt von Hand.**
+
+### 7a. Pflicht-Anforderung des Operators (26.09.): jederzeit einfach anpassbar
+
+Der Operator stimmt dem Account nur zu, wenn er das Budget **jederzeit einfach** ändern kann. Daraus folgt:
+
+- **Ändern NUR vom Laptop, nie von der Pi.** Ein Budget, das sich von der Pi aus erhöhen lässt (Telegram-Befehl, Dashboard-Knopf, Macaroon mit Account-Schreibrecht auf der Pi), schützt nicht: Wer auf der Pi Code ausführt, würde sich zuerst das Budget hochsetzen.
+- **Ein Befehl am Laptop**, gebaut als Teil der Umsetzung: `kai-ln-budget <neuer_betrag_sat>` bzw. `kai-ln-budget show`. Er arbeitet über den vorhandenen Laptop-SSH-Weg (`admin@192.168.178.51`, Schlüssel liegt nur auf dem Laptop) und führt nacheinander aus:
+  1. den Stand zeigen: Budget, Verbrauch, Restguthaben;
+  2. den neuen Wert setzen (`litcli accounts update <id> --new_balance …`);
+  3. den neuen Stand gegenlesen;
+  4. die Änderung mit Zeit, altem und neuem Wert lokal protokollieren (`%USERPROFILE%\.kai\logs\ln_budget.log`).
+- **Anzeigen darf die Pi:** Budget und Verbrauch erscheinen in Telegram (`/pay status`) und im Dashboard, aber nur lesend.
+- **Abnahme A6:** Eine Budgetänderung per `kai-ln-budget` wirkt sofort. Ein Send über dem alten und unter dem neuen Budget geht danach durch, und ein Änderungsversuch mit den Mitteln der Pi scheitert.
 - Ob die Alltags-Wallet ebenfalls einen eigenen Account bekommt.
 - Ob der alte Macaroon gezielt entwertet werden kann (4.4) oder ein Neuaufbau aller Macaroons geplant werden muss.
 
