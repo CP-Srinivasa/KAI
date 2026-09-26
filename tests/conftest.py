@@ -49,6 +49,9 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     # STAB-02: die Runtime-Identitaets-Probe meldet ein fehlendes Artefakt auf der
     # "Pi" — in Fixtures ohne laufenden Server waere das jedes Mal ein Befund.
     monkeypatch.setenv("KAI_RUNTIME_IDENTITY_PROBE", "off")
+    # MindBlow 2.0 E10/U-2: die Host-Hygiene fragt git, /run/reboot-required und
+    # /proc des HOSTS — auf einem CI-Runner waere das ein fremder Befund je Test.
+    monkeypatch.setenv("KAI_HOST_HYGIENE_PROBE", "off")
 
 
 @pytest.fixture(autouse=True)
