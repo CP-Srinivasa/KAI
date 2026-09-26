@@ -219,16 +219,12 @@ if (( hour >= 8 )) && [[ "$last_briefing" != "$today" ]]; then
     printf '%s' "$today" > "$briefing_marker"
 fi
 
-# Daily strategy review skeleton once per day after 08:00.
-strategy_marker="$ROOT/artifacts/.daily_strategy_date"
-last_strategy=""
-[[ -f "$strategy_marker" ]] && last_strategy=$(cat "$strategy_marker" 2>/dev/null)
-if (( hour >= 8 )) && [[ "$last_strategy" != "$today" ]]; then
-    write_log "daily-strategy bootstrap starting"
-    strat_out=$("$PYTHON" -m app.cli.main daily-strategy bootstrap 2>&1) || true
-    write_log "daily-strategy: $(printf '%s' "$strat_out" | tr -d '\n' | cut -c1-200)"
-    printf '%s' "$today" > "$strategy_marker"
-fi
+# Daily-Strategy-Skelett: NICHT mehr hier (MindBlow E6, 26.09.2026). Das erledigt
+# kai-daily-strategy.timer (08:00 Europe/Berlin, `daily-strategy bootstrap --no-sync`,
+# jeden Tag Result=success). Dieser Block rief `bootstrap` OHNE --no-sync: auf der
+# Pi versuchte das scp vom Pi-Host auf sich selbst — 8 Dateien x 2 Versuche = 16
+# fehlgeschlagene SSH-Logins je Tag im auth.log (112 in 7 Tagen), die echte
+# Angriffsversuche verdecken wuerden, plus ein redundanter Kaltstart.
 
 # Pipeline run-all every 4th run (~40 min).
 pipeline_marker="$ROOT/artifacts/.pipeline_counter"

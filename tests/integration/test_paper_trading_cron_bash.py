@@ -378,3 +378,21 @@ def test_oversized_log_moves_to_one_generation_before_the_tick(tmp_path: Path) -
     assert _run_cron(bash, sandbox, below).returncode == 0
     assert rotated.read_bytes() == old_tail.encode("utf-8")
     assert log_path.read_text(encoding="utf-8").count("--- cron start ---") == 2
+
+
+def test_cron_never_bootstraps_daily_strategy(tmp_path: Path) -> None:
+    """kai-daily-strategy.timer erledigt das mit --no-sync; der Cron-Aufruf ohne
+    --no-sync erzeugte auf der Pi 16 fehlgeschlagene SSH-Logins je Tag (scp auf sich selbst)."""
+    bash = _require_bash()
+    sandbox = _stage_sandbox(tmp_path)
+    stub = _write_python_stub(sandbox)
+    env = _cron_env(sandbox, stub)
+    assert _run_cron(bash, sandbox, env).returncode == 0
+    captured = (sandbox / "artifacts" / "python_args.log").read_text(encoding="utf-8")
+    assert "daily-strategy" not in captured
+    code = [
+        line
+        for line in CRON_SCRIPT.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    assert not any("daily-strategy" in line for line in code)
