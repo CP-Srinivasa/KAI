@@ -25,9 +25,13 @@ from app.alerts.alert_classes import (
 )
 
 _ALERTS_DIR = Path(__file__).resolve().parents[2] / "app" / "alerts"
-# health_check.py + die ausgelagerten Payment-/Input-Contract-Waechter: beide
-# Dateien emittieren HealthIssue-Komponenten, beide muessen die Registry treffen.
-HEALTH_CHECK_PATHS = (_ALERTS_DIR / "health_check.py", _ALERTS_DIR / "health_check_payments.py")
+# health_check.py + die ausgelagerten Waechter (Payment/Input-Contract, Host-Hygiene):
+# alle emittieren HealthIssue-Komponenten, alle muessen die Registry treffen.
+HEALTH_CHECK_PATHS = (
+    _ALERTS_DIR / "health_check.py",
+    _ALERTS_DIR / "health_check_payments.py",
+    _ALERTS_DIR / "health_check_host.py",
+)
 
 
 @dataclass(frozen=True)
