@@ -67,6 +67,13 @@ async def tick(service: PayService) -> int:
         except Exception:  # noqa: BLE001 - eine Forderung darf die Runde nicht toeten
             logger.warning("[kai-pay] refresh failed for %s", request.payment_id, exc_info=True)
         checked += 1
+    try:
+        # Outbox: bezahlte Forderungen, deren Callback noch aussteht (Befund 5).
+        await asyncio.wait_for(service.redeliver_webhooks(), timeout=REFRESH_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - die Nachzustellung darf die Runde nicht toeten
+        logger.warning("[kai-pay] webhook redelivery failed", exc_info=True)
     return checked
 
 

@@ -25,8 +25,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,11 @@ class PayRequest:
     #: Letzter Rail-Fehler, der eine Antwort verhindert hat. Reine Diagnose:
     #: er aendert den Zustand nie (fail-soft, siehe ``app/pay/status.py``).
     last_error: str = ""
+    #: Callback-Outbox (Lueckenregister 26.09.): abgeleitet aus den
+    #: ``webhook_*``-Ereignissen des Stroms, also ueber jeden Neustart hinweg.
+    webhook_delivered: bool = False
+    webhook_attempts: int = 0
+    webhook_last_attempt: datetime | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -177,6 +183,11 @@ class PayStore:
             # Ein Folgeereignis ohne Anlage: die Anlage-Zeile fehlt (Datei von
             # Hand gekuerzt). Nichts zu aktualisieren — und nichts zu erfinden.
             return
+        if event in (EVENT_WEBHOOK_SENT, EVENT_WEBHOOK_FAILED):
+            self._by_id[payment_id] = _with_attempt(
+                known, delivered=event == EVENT_WEBHOOK_SENT, at=_parse_at(payload, record)
+            )
+            return
         status = _EVENT_STATUS.get(event)
         if status is None:
             return
@@ -252,12 +263,56 @@ class PayStore:
         self._by_id[payment_id] = updated
         return updated
 
-    def webhook_result(self, payment_id: str, *, ok: bool, detail: str) -> None:
-        """Der Ausgang eines Callback-Versuchs — er aendert nie einen Zustand."""
+    def webhook_result(
+        self, payment_id: str, *, ok: bool, detail: str, at: datetime | None = None
+    ) -> None:
+        """Der Ausgang eines Callback-Versuchs — er aendert nie den Zahlungszustand.
+
+        Er fuehrt aber die Outbox: Zustellung und Versuchszahl stehen im Index
+        UND im Strom, damit ein Neustart dort weitermacht, wo er aufhoerte.
+        """
+        moment = at or datetime.now(UTC)
+        known = self._by_id.get(payment_id)
+        if known is not None:
+            self._by_id[payment_id] = _with_attempt(known, delivered=ok, at=moment)
         self._append(
             EVENT_WEBHOOK_SENT if ok else EVENT_WEBHOOK_FAILED,
-            {"payment_id": payment_id, "detail": detail[:200]},
+            {"payment_id": payment_id, "detail": detail[:200], "at": moment.isoformat()},
         )
+
+    def webhooks_due(
+        self,
+        now: datetime,
+        *,
+        max_rounds: int,
+        backoff: Callable[[int], timedelta],
+        limit: int,
+    ) -> list[PayRequest]:
+        """Bezahlte Forderungen, deren Callback noch aussteht und jetzt dran ist."""
+        due: list[PayRequest] = []
+        for payment_id in self._order:
+            request = self._by_id[payment_id]
+            if not _webhook_open(request) or request.webhook_attempts >= max_rounds:
+                continue
+            last = request.webhook_last_attempt
+            if last is not None and now - last < backoff(request.webhook_attempts):
+                continue
+            due.append(request)
+            if len(due) >= limit:
+                break
+        return due
+
+    def webhook_counts(self, *, max_rounds: int) -> tuple[int, int]:
+        """``(ausstehend, aufgegeben)`` ueber alle bezahlten Forderungen mit Ziel."""
+        pending = given_up = 0
+        for request in self._by_id.values():
+            if not _webhook_open(request):
+                continue
+            if request.webhook_attempts >= max_rounds:
+                given_up += 1
+            else:
+                pending += 1
+        return pending, given_up
 
     def _append(self, event: str, payload: dict[str, Any]) -> bool:
         """Eine Zeile, ein ``write``, ein ``fsync``. Wirft nie.
@@ -345,6 +400,35 @@ def _request_from_payload(payload: dict[str, Any]) -> PayRequest:
         idempotency_key_hash=str(payload.get("idempotency_key_hash", "")),
         status=PayStatus(str(payload.get("status", PayStatus.WAITING.value))),
     )
+
+
+def _webhook_open(request: PayRequest) -> bool:
+    return (
+        request.status is PayStatus.SETTLED
+        and bool(request.webhook_url)
+        and not request.webhook_delivered
+    )
+
+
+def _with_attempt(request: PayRequest, *, delivered: bool, at: datetime | None) -> PayRequest:
+    return replace(
+        request,
+        webhook_delivered=request.webhook_delivered or delivered,
+        webhook_attempts=request.webhook_attempts + 1,
+        webhook_last_attempt=at or request.webhook_last_attempt,
+    )
+
+
+def _parse_at(payload: dict[str, Any], record: dict[str, Any]) -> datetime | None:
+    for raw in (payload.get("at"), record.get("ts")):
+        if not raw:
+            continue
+        try:
+            moment = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+    return None
 
 
 __all__ = [

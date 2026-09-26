@@ -253,6 +253,9 @@ def test_health_meldet_betrieb_ohne_geldkennzahl(client: TestClient) -> None:
         "settled_total": 0,
         "last_settled_at": None,
         "poller_alive": False,
+        # Callback-Outbox (Lueckenregister 26.09.): Zaehler, keine Geldkennzahl.
+        "webhooks_pending": 0,
+        "webhooks_given_up": 0,
     }
 
 

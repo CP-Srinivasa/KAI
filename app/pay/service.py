@@ -33,7 +33,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.pay_settings import PaySettings
@@ -61,6 +61,20 @@ logger = logging.getLogger(__name__)
 #: Zahler, nicht fuer einen Menschen — deshalb ist der Default 15 Minuten.
 MIN_EXPIRY_SECONDS = 60
 MAX_EXPIRY_SECONDS = 86_400
+
+#: Callback-Outbox (Lueckenregister 26.09.): hoechstens so viele Zustellrunden
+#: je bezahlter Forderung; jede Runde macht selbst ``webhook.MAX_ATTEMPTS``
+#: schnelle Versuche. Danach gilt der Callback als aufgegeben und steht im
+#: Health-Block — bezahlt bleibt bezahlt, das Journal ist die Wahrheit.
+WEBHOOK_MAX_ROUNDS = 8
+WEBHOOK_BACKOFF_BASE = timedelta(seconds=60)
+WEBHOOK_BACKOFF_CAP = timedelta(hours=1)
+
+
+def webhook_backoff(attempts: int) -> timedelta:
+    """Wartezeit nach ``attempts`` Runden: 60 s, 2 min, 4 min … hoechstens 1 h."""
+    wait: timedelta = WEBHOOK_BACKOFF_BASE * (2 ** max(attempts - 1, 0))
+    return wait if wait < WEBHOOK_BACKOFF_CAP else WEBHOOK_BACKOFF_CAP
 
 
 class PayError(Exception):
@@ -344,12 +358,40 @@ class PayService:
             # Auch dieser Zeitpunkt kommt aus dem Journal, nicht aus dem Cache.
             settlement = settlement_of(self._payments.journal, newest.ref_hash)
             last_at = settlement.settled_at.isoformat() if settlement else None
+        pending, given_up = self._store.webhook_counts(max_rounds=WEBHOOK_MAX_ROUNDS)
         return {
             "enabled": self._settings.enabled,
             "open_requests": len(open_now),
             "settled_total": self._store.settled_count(),
             "last_settled_at": last_at,
+            "webhooks_pending": pending,
+            "webhooks_given_up": given_up,
         }
+
+    async def redeliver_webhooks(self, limit: int = 20) -> int:
+        """Faellige Callbacks nachholen (Outbox). Returns: Zustellversuche.
+
+        Faellig ist eine bezahlte Forderung mit Ziel, deren Callback noch nie
+        ankam und deren Backoff abgelaufen ist — auch nach einem Absturz
+        zwischen SETTLED und Versand. Ein Fehler bei einer Forderung nimmt die
+        anderen nicht mit.
+        """
+        due = self._store.webhooks_due(
+            self._clock(), max_rounds=WEBHOOK_MAX_ROUNDS, backoff=webhook_backoff, limit=limit
+        )
+        attempts = 0
+        for request in due:
+            settlement = settlement_of(self._payments.journal, request.ref_hash)
+            if settlement is None:
+                continue
+            try:
+                await self._deliver_settled(request, settlement)
+            except Exception as exc:  # noqa: BLE001 - ein Empfaenger darf die Runde nicht toeten
+                self._store.webhook_result(
+                    request.payment_id, ok=False, detail=type(exc).__name__, at=self._clock()
+                )
+            attempts += 1
+        return attempts
 
     # -- Intern ------------------------------------------------------------- #
 
@@ -364,22 +406,44 @@ class PayService:
         )
         if already or not updated.webhook_url:
             return updated
+        # SETTLED steht jetzt im Strom. Stirbt der Prozess hier, holt
+        # ``redeliver_webhooks`` den Callback nach — genau diese Luecke war Befund 5.
+        await self._deliver_settled(updated, settlement)
+        return updated
+
+    async def _deliver_settled(self, request: PayRequest, settlement: ReceivableSettlement) -> None:
+        """Einen Zustellversuch machen und ihn in der Outbox verbuchen.
+
+        ``event_id`` ist ueber alle Wiederholungen gleich: ein Empfaenger, der
+        zweimal dieselbe Meldung bekommt, erkennt sie daran als dieselbe.
+        """
         result = await deliver(
-            updated.webhook_url,
+            request.webhook_url,
             {
-                "payment_id": updated.payment_id,
+                "event_id": f"{request.payment_id}:settled",
+                "payment_id": request.payment_id,
                 "status": PayStatus.SETTLED.value,
-                "amount_sat": updated.amount_sat,
+                "amount_sat": request.amount_sat,
                 "paid_amount_sat": settlement.amount_settled_minor_units,
                 "paid_at": settlement.settled_at.isoformat(),
-                "reference": updated.reference,
-                "description": updated.description,
+                "reference": request.reference,
+                "description": request.description,
                 "ts": self._clock().isoformat(),
             },
             secret=self._settings.webhook_secret,
         )
-        self._store.webhook_result(updated.payment_id, ok=result.ok, detail=result.detail)
-        return updated
+        self._store.webhook_result(
+            request.payment_id, ok=result.ok, detail=result.detail, at=self._clock()
+        )
+        stored = self._store.get(request.payment_id)
+        if not result.ok and stored is not None and stored.webhook_attempts >= WEBHOOK_MAX_ROUNDS:
+            logger.error(
+                "[kai-pay] webhook given up after %d rounds for %s (%s) — "
+                "settlement stays provable in the payment journal",
+                stored.webhook_attempts,
+                request.payment_id,
+                result.detail,
+            )
 
     def _require(self, payment_id: str) -> PayRequest:
         request = self._store.get(payment_id)
