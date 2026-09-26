@@ -110,6 +110,10 @@ class ReconcileState:
     last_orphans: int = 0
     last_wallet_settlements: int = 0
     last_clock_anomaly: bool = False
+    #: Sah der letzte Lauf die GANZE Node-Historie? ``None`` = Altzustand ohne Feld.
+    last_complete: bool | None = None
+    #: Zeitpunkt des letzten VOLLSTAENDIGEN Laufs — ein blinder Lauf ersetzt ihn nicht.
+    last_complete_run_utc: str = ""
 
     def comparable_with(self, boot_ref: str) -> bool:
         """Darf die monotone Marke dieses Zustands verglichen werden?
@@ -131,6 +135,8 @@ class ReconcileState:
             "last_orphans": self.last_orphans,
             "last_wallet_settlements": self.last_wallet_settlements,
             "last_clock_anomaly": self.last_clock_anomaly,
+            "last_complete": self.last_complete,
+            "last_complete_run_utc": self.last_complete_run_utc,
         }
 
 
@@ -156,6 +162,8 @@ def load_state(path: Path) -> ReconcileState:
         last_orphans=int(raw.get("last_orphans", 0) or 0),
         last_wallet_settlements=int(raw.get("last_wallet_settlements", 0) or 0),
         last_clock_anomaly=bool(raw.get("last_clock_anomaly", False)),
+        last_complete=raw["last_complete"] if isinstance(raw.get("last_complete"), bool) else None,
+        last_complete_run_utc=str(raw.get("last_complete_run_utc", "") or ""),
     )
 
 

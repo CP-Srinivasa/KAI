@@ -139,6 +139,8 @@ def _reconciliation(
     if last_run.tzinfo is None:
         last_run = last_run.replace(tzinfo=UTC)
     status = state.last_status or "unknown"
+    if status == "ok" and state.last_complete is False:
+        status = "attention"  # ein blinder Lauf ist nie gruen, egal was er schrieb
     if now - last_run >= timedelta(minutes=RECONCILE_STALE_AFTER_MIN):
         status = "stale"
     return {
@@ -146,6 +148,8 @@ def _reconciliation(
         "last_run": state.last_run_utc,
         "orphans": state.last_orphans,
         "clock_anomaly": state.last_clock_anomaly,
+        "complete": state.last_complete,
+        "last_complete_run": state.last_complete_run_utc or None,
     }
 
 

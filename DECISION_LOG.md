@@ -24,6 +24,28 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-288 (2026-09-26)
+**Befund (Lueckenregister Lightning, externe Analyse, am Code gegengeprueft):** KAI hat **kein** vollstaendig geprueftes, durchgaengig automatisiertes Lightning-Oekosystem. Der Self-Use ist begrenzt belegt (D-281/D-286). Luecken gibt es bei Verifikation, Automatisierung und Betriebsabnahme.
+- **Bestaetigt und in diesem Eintrag behoben:**
+  - (1) Reconcile meldete auch dann `ok`, wenn die Rueckwaerts-Sicht blind war (`complete=false`, z. B. ListPayments-Ausfall). Jetzt wird der Lauf `attention` mit Notiz. Der Zustand speichert `last_complete` und `last_complete_run_utc`, `/health/payment` zeigt beides und meldet nie `ok`, wenn `complete=false` ist. Ein Geld-Fehlerzustand entsteht dabei nicht.
+  - Neu ist ausserdem der Release-Drain-Check `scripts/payment_drain_check.py`: `pi_release_deploy.sh` bricht mit Exit 3 ab, solange ein Intent `AUTHORIZED`, `SUBMITTED`, `IN_FLIGHT` oder `RECONCILIATION_REQUIRED` ist oder das Journal unlesbar ist. `--allow-inflight` gilt nur mit Operator-Freigabe.
+- **Bestaetigt, offen:**
+  - (4) `classify_timestamp` meldet `confirmed`, sobald eine Bitcoin-Attestation vorhanden ist, ohne sie gegen den Blockheader zu pruefen.
+  - (5) Die Webhook-Zustellung nach SETTLED hat keine dauerhafte Outbox; ein Absturz oder ein endgueltiger Fehler wird nicht nachgeholt.
+  - (6) Die Dashboard-Vorschau hat keine Allowlist-Pruefung und keine Node-Schaetzung.
+  - (3) L2-Kausalitaet (`causality_ok=false`): die Zeitpunkte Zyklusbeginn, Datenbeobachtung und Entscheidung sind nicht getrennt.
+- **Operator-Entscheid noetig:** (2) „0 Orphans“ heisst nicht „alle Ausgaben zugeordnet“. Nach D-278 sind `wallet_direct` bewusst `known`. Getrennt werden muesste „beobachtet“ von „nachweislich erlaubt“, und die Alltags-Wallet braucht ein durchgesetztes Budget, z. B. per LND-Account.
+- **Nachtrag zur Release-Folge:** D-286 sah fuer #1034 „fruehestens 24 h nach `350bf598`“ vor. Das Release `71e40592` kam am 2026-09-25T11:19Z, rund 2,5 h danach, **auf ausdruecklichen Operator-Entscheid („jetzt“, nach Hinweis auf die Ueberlagerung zweier Sendepfad-Aenderungen)**. Vorab bestaetigt waren: Review FREIGABE, voller Zielbaum gruen (12 118 passed), keine Zahlung unterwegs. Beide Neustarts im Pilotfenster (04:34Z needrestart, 08:51Z Release) stehen bereits in D-286. Ein neuer 72-h-Pilot folgt daraus nicht. Stattdessen setzt ab jetzt der Drain-Check technisch durch, dass kein Release laeuft, solange Geld unterwegs ist.
+- **Ueberholt in der Analyse:** Die LiteLLM-Unit mit `LITELLM_LOCAL_MODEL_COST_MAP` ist seit 2026-09-26T09:46Z angewendet und wirksam. #1083 ist gemergt.
+
+**Prioritaeten:**
+1. Geldbetrieb: (1) und Drain-Check (hier), danach (5), (6), (2) nach Operator-Entscheid.
+2. Truth/L2: (4), dann (3).
+3. Betrieb: LND-Upgradepfad 0.19.3 → 0.21.x fuer RaspiBlitz pruefen, Kernel-Reboot der Pi, Abschlussweg fuer Dependabot-PRs.
+
+LSP/AMP/PTLC schliessen keine dieser Luecken. Zuerst werden Liquiditaet und Erfolgsrate nach Betragsklasse gemessen.
+**Beleg:** `app/payments/reconcile.py` (Statuszeile ohne `listing.complete`), `app/integrity/upgrade.py::classify_timestamp`, `app/pay/service.py::_settled`, `app/api/routers/ln_control_delegate.py`; Tests `test_reconcile.py`/`test_health.py`/`test_payment_drain_check.py` in diesem Eintrag.
+
 ### D-287 (2026-09-26)
 **Befund (Node-Forensik, nur lesend, Operator-Auftrag):** Die Force-Close-Altlasten sind **vollstaendig geborgen**, bewiesen am Zustand der Bitcoin-Blockchain. Es fehlt kein Satoshi. Details stehen in [docs/evidence/ln_node_forensics_20260926.md](docs/evidence/ln_node_forensics_20260926.md).
 - **Limbo `cf5fe058…:0` (25 815 sat):** Die Closing-Tx `58ae2f35…` liegt auf Hoehe 862 481, ihr `vout 0` hat genau 25 815 sat (P2WKH to_remote). Der Sweep `2fd51c3d…` auf Hoehe 953 849 fasst ihn mit dem REMOTE_FORCE_CLOSE `94f9…:1` (820 634 sat) zusammen und zahlt 845 499 sat an eine eigene Adresse, 950 sat Gebuehr. Damit ist die Hypothese aus D-286 (c) bewiesen.

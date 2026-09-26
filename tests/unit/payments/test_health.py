@@ -336,3 +336,35 @@ async def test_kein_pfad_und_kein_geheimnis_im_schnappschuss(tmp_path: Path) -> 
     assert "/secret/place" not in blob
     assert "macaroon" not in blob
     assert "b" * 64 not in blob, "auch ein Proof-Hash gehoert nicht in einen Health-Body"
+
+
+async def test_ein_unvollstaendiger_abgleich_ist_nicht_gruen(tmp_path: Path) -> None:
+    """Auch ein Zustand mit last_status=ok wird durch complete=False nicht gruen."""
+    journal = _journal(tmp_path)
+    save_state(
+        tmp_path / "payments" / STATE_FILENAME,
+        ReconcileState(
+            last_run_utc=NOW.isoformat(),
+            last_status="ok",
+            last_complete=False,
+            last_complete_run_utc=(NOW - timedelta(hours=3)).isoformat(),
+        ),
+    )
+    snapshot = await _snapshot(tmp_path, journal, settings=PaymentSettings(mode="shadow"))
+
+    rec = snapshot["reconciliation"]
+    assert rec["status"] == "attention"
+    assert rec["complete"] is False
+    assert rec["last_complete_run"] == (NOW - timedelta(hours=3)).isoformat()
+    assert snapshot["status"] != "ok"
+
+
+async def test_ein_altzustand_ohne_vollstaendigkeitsfeld_bleibt_lesbar(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    save_state(
+        tmp_path / "payments" / STATE_FILENAME,
+        ReconcileState(last_run_utc=NOW.isoformat(), last_status="ok"),
+    )
+    snapshot = await _snapshot(tmp_path, journal, settings=PaymentSettings(mode="shadow"))
+    assert snapshot["reconciliation"]["status"] == "ok"
+    assert snapshot["reconciliation"]["complete"] is None
