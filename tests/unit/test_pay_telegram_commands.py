@@ -232,6 +232,13 @@ async def test_a_node_probe_without_route_is_spelled_out() -> None:
     assert "~3 sat" not in reply  # keine Scheinschaetzung
 
 
+async def test_a_failed_probe_is_not_reported_as_no_route() -> None:
+    service = FakeService(quote_fee=3, quote_source="node_probe_failed")
+    reply = await run(PayFlow(), service, BOLT11)
+    assert "keine Route" not in reply
+    assert "Probe ohne Ergebnis" in reply
+
+
 async def test_a_settings_estimate_carries_no_warning() -> None:
     reply = await run(PayFlow(), FakeService(quote_fee=3), BOLT11)
     assert "ueber dem Limit" not in reply and "keine Route" not in reply

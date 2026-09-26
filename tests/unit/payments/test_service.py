@@ -209,6 +209,26 @@ async def test_simulate_previews_without_sending(tmp_path: Path) -> None:
     assert "submitted" not in event_types(service, view.intent_id)
 
 
+async def test_simulate_never_quotes_a_denied_intent(tmp_path: Path) -> None:
+    """Eine Quote kann eine Netz-Probe sein — ein abgelehnter Empfaenger wird nie geprobt."""
+
+    class CountingRail(SimulationRail):
+        quotes = 0
+
+        async def quote(self, intent):  # type: ignore[no-untyped-def]
+            CountingRail.quotes += 1
+            return await super().quote(intent)
+
+    service = a_service(tmp_path, rail=CountingRail(now=NOW))
+    view = await service.create_intent(
+        a_request(destination="sim:settle:mallory"), "idem-0123456789abcdef"
+    )
+    assert view.status is PaymentStatus.DENIED
+    preview = await service.simulate(view.intent_id)
+    assert preview.quote is None
+    assert CountingRail.quotes == 0
+
+
 # --------------------------------------------------------------------------- #
 # authorize
 # --------------------------------------------------------------------------- #

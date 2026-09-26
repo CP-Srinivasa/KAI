@@ -373,11 +373,20 @@ async def test_a_probe_without_route_is_named_not_hidden() -> None:
     )  # 900 sat x 3000 ppm: Settings-Wert, keine erfundene Zahl
 
 
-async def test_a_broken_probe_falls_back_to_settings() -> None:
+async def test_a_probe_timeout_is_not_called_no_route() -> None:
+    client = ProbingClient(probe=RouteProbeFailedError("FAILURE_REASON_TIMEOUT"))
+    quote = await a_rail(client).quote(an_intent(amount_requested=sat(900)))
+    assert quote.estimate_source == "node_probe_failed"
+
+
+async def test_a_broken_probe_falls_back_to_settings(caplog: pytest.LogCaptureFixture) -> None:
     client = ProbingClient(probe=TimeoutError("probe timed out"))
-    quote = await a_rail(client).quote(an_intent())
+    with caplog.at_level("WARNING"):
+        quote = await a_rail(client).quote(an_intent())
     assert quote.estimate_source == "settings_ppm"
     assert quote.fee_estimate.minor_units == 3
+    assert "TimeoutError" in caplog.text  # still, aber nicht stumm
+    assert "probe timed out" not in caplog.text  # nur der Typ, nie der Text
 
 
 async def test_quote_never_touches_the_send_path() -> None:

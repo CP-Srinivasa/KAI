@@ -840,3 +840,43 @@ async def test_estimate_route_fee_rejects_a_missing_fee() -> None:
     )
     with pytest.raises(ValueError):
         await client.estimate_route_fee(payment_request="lnbc1probe")
+
+
+async def test_estimate_route_fee_accepts_a_zero_fee() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"routing_fee_msat": "0", "failure_reason": "FAILURE_REASON_NONE"}
+        )
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    assert await client.estimate_route_fee(payment_request="lnbc1probe") == 0
+
+
+async def test_estimate_route_fee_http_timeout_outlasts_the_probe_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_post(path: str, body: dict[str, object], *, timeout: float | None = None):
+        seen["timeout"] = timeout
+        return {"routing_fee_msat": "1000", "failure_reason": "FAILURE_REASON_NONE"}
+
+    client = LndRestClient(base_url="https://x:8080", macaroon_hex="ab")
+    monkeypatch.setattr(client, "_post", fake_post)
+    await client.estimate_route_fee(payment_request="lnbc1probe")
+    assert isinstance(seen["timeout"], float)
+    assert seen["timeout"] > client_module.ESTIMATE_ROUTE_FEE_TIMEOUT_SECONDS
+
+
+async def test_estimate_route_fee_surfaces_an_http_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"message": "permission denied"})
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    with pytest.raises(Exception) as caught:
+        await client.estimate_route_fee(payment_request="lnbc1probe")
+    assert not isinstance(caught.value, client_module.RouteProbeFailedError)

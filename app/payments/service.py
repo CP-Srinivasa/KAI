@@ -196,11 +196,13 @@ class PaymentService:
     async def simulate(self, intent_id: str) -> SimulationView:
         """Quote und Policy-Vorschau — ohne jeden Send (ADR §1)."""
         tracked = self._require(intent_id)
-        quote: Quote | None
-        try:
-            quote = await self._active_rail().quote(tracked.intent)
-        except RailError:
-            quote = None
+        quote: Quote | None = None
+        # Eine Quote kann eine Netz-Probe sein; ein abgelehnter Empfaenger wird nie geprobt.
+        if tracked.status is not PaymentStatus.DENIED:
+            try:
+                quote = await self._active_rail().quote(tracked.intent)
+            except RailError:
+                quote = None
         self._journal.append(
             intent_id,
             "rail_requested",

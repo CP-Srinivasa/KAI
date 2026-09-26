@@ -23,6 +23,7 @@ haelt beides fest.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,8 @@ from app.payments.rails.lightning_mapping import (
     wallet_is_locked,
 )
 from app.payments.rails.lightning_scan import scan_payments
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - nur fuer die Typpruefung
     from app.lightning.client import LndRestClient
@@ -188,11 +191,14 @@ class LightningRail:
                 observed = await estimator(payment_request=intent.destination)
                 estimate = int(observed)
                 source = "node_estimate_route_fee"
-            except RouteProbeFailedError:
+            except RouteProbeFailedError as exc:
                 estimate = fee_limit_for_amount(self._payments, amount)
-                source = "node_probe_no_route"
-            except Exception:  # noqa: BLE001 - eine Schaetzung darf nichts blockieren
+                no_route = str(exc) == "FAILURE_REASON_NO_ROUTE"
+                source = "node_probe_no_route" if no_route else "node_probe_failed"
+            except Exception as exc:  # noqa: BLE001 - eine Schaetzung darf nichts blockieren
                 estimate = fee_limit_for_amount(self._payments, amount)
+                # Nur der Typ: der Text kann Rail-Material tragen (ADR §9).
+                logger.warning("[PAY] fee probe unavailable: %s", type(exc).__name__)
 
         return Quote(
             rail=self.name,

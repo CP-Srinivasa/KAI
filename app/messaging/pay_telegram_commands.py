@@ -112,6 +112,11 @@ def _fee_line(quote: Any, fee_limit: int) -> str:
             "der Send wird voraussichtlich scheitern"
         )
     estimate = quote.fee_estimate.minor_units
+    if source == "node_probe_failed":
+        return (
+            f"Gebuehr: Node-Probe ohne Ergebnis — Settings-Schaetzung ~{estimate} sat, "
+            f"Limit {fee_limit} sat"
+        )
     line = f"Gebuehr: ~{estimate} sat ({source}), Limit {fee_limit} sat"
     if source.startswith("node_") and estimate > fee_limit:
         line += " ⚠️ Schaetzung liegt ueber dem Limit — der Send wird voraussichtlich scheitern"

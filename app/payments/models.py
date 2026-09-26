@@ -87,7 +87,7 @@ class Quote(BaseModel):
     route_hint_hash: str = Field(default="", max_length=HASH_LENGTH)
     valid_until: datetime
     #: Woher die Schaetzung stammt (``node_estimate_route_fee`` /
-    #: ``node_probe_no_route`` / ``settings_ppm`` / ``settings_floor`` /
+    #: ``node_probe_no_route`` / ``node_probe_failed`` / ``settings_ppm`` / ``settings_floor`` /
     #: ``settings_cap`` / ``simulation``). Eine Schaetzung ohne Herkunft ist eine Zahl ohne Gewicht.
     estimate_source: str = Field(min_length=1, max_length=32)
 
