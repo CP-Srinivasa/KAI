@@ -8,10 +8,12 @@ echt nach (git-Repo, Reboot-Marker, /proc-Karten), statt die Sonde zu mocken.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -199,6 +201,68 @@ def test_unreadable_or_stopped_process_is_silent(tmp_path: Path) -> None:
     )
 
 
+# ── Offsite-Beleg (E3) ─────────────────────────────────────────────────────
+
+
+def _receipt(gen_age_days: float, *, probe: str = "PASS", now: float) -> str:
+    gen_ts = datetime.fromtimestamp(now - gen_age_days * _DAY, tz=UTC)
+    return json.dumps(
+        {
+            "schema": "offpi_receipt/v1",
+            "ts_utc": datetime.fromtimestamp(now, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generation": gen_ts.strftime("%Y-%m-%dT%H-%M-%SZ"),
+            "generation_ts_utc": gen_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "probe": probe,
+        }
+    )
+
+
+def _write_receipts(adir: Path, lines: list[str]) -> None:
+    target = adir / hch.OFFPI_RECEIPTS_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_missing_receipts_mean_no_verified_offsite_copy(tmp_path: Path) -> None:
+    msg = hch.offpi_backup_finding(tmp_path)
+    assert msg is not None and "Keine verifizierte Offsite-Kopie" in msg
+
+
+def test_fresh_verified_generation_is_silent(tmp_path: Path) -> None:
+    now = time.time()
+    _write_receipts(tmp_path, [_receipt(1, now=now)])
+    assert hch.offpi_backup_finding(tmp_path, now=now) is None
+
+
+def test_old_verified_generation_is_reported(tmp_path: Path) -> None:
+    now = time.time()
+    _write_receipts(tmp_path, [_receipt(9, now=now)])
+    msg = hch.offpi_backup_finding(tmp_path, now=now)
+    assert msg is not None and "9 Tage alt" in msg and "KAI Backup" in msg
+
+
+def test_reprobing_an_old_generation_does_not_make_it_fresh(tmp_path: Path) -> None:
+    # Die Quittung ist von heute (ts_utc), die Generation aber 10 Tage alt.
+    now = time.time()
+    _write_receipts(tmp_path, [_receipt(10, now=now)])
+    assert "10 Tage alt" in (hch.offpi_backup_finding(tmp_path, now=now) or "")
+
+
+def test_failed_probes_foreign_schema_and_garbage_are_not_evidence(tmp_path: Path) -> None:
+    now = time.time()
+    foreign = json.dumps({"schema": "anderes/v1", "probe": "PASS", "generation_ts_utc": "x"})
+    _write_receipts(tmp_path, [_receipt(1, probe="FAIL", now=now), foreign, "{kaputt"])
+    msg = hch.offpi_backup_finding(tmp_path, now=now)
+    assert msg is not None and "Keine verifizierte Offsite-Kopie" in msg
+
+
+def test_newest_generation_wins(tmp_path: Path) -> None:
+    now = time.time()
+    lines = [_receipt(20, now=now), _receipt(2, now=now), _receipt(15, now=now)]
+    _write_receipts(tmp_path, lines)
+    assert hch.offpi_backup_finding(tmp_path, now=now) is None
+
+
 # ── Aufrufstelle ───────────────────────────────────────────────────────────
 
 
@@ -221,12 +285,16 @@ def test_check_maps_findings_to_warning_issues(
     monkeypatch.setattr(hch, "checkout_findings", lambda _root: ["checkout"])
     monkeypatch.setattr(hch, "reboot_pending_finding", lambda: "reboot")
     monkeypatch.setattr(hch, "stale_library_finding", lambda _root: "libs")
+    seen: list[Path] = []
+    monkeypatch.setattr(hch, "offpi_backup_finding", lambda adir: seen.append(adir) or "offpi")
     issues = hch.check(tmp_path, SimpleNamespace(runs_on_pi=True))
     assert [(i.severity, i.component, i.message) for i in issues] == [
         ("warning", "checkout_hygiene", "checkout"),
         ("warning", "reboot_pending", "reboot"),
         ("warning", "stale_libraries", "libs"),
+        ("warning", "offpi_backup", "offpi"),
     ]
+    assert seen == [tmp_path / "artifacts"]
 
 
 def test_health_report_includes_host_hygiene(

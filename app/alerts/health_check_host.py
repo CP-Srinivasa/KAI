@@ -19,15 +19,28 @@ unwirksam sein. Diese Sonde macht den Preis sichtbar, sobald er aelter als
 :data:`MAX_PENDING_DAYS` ist — der Kernel-Neustart ueber ``/run/reboot-required``,
 die Bibliotheken ueber ``(deleted)``-Eintraege in den Speicherkarten der Daemons.
 
-Alle drei Befunde sind ``warning``: sie kosten Aktualitaet, nie Geld.
+**Offsite-Beleg (E3).** Die einzige Kopie ausserhalb der Pi, die ohne das
+Windows-Profil des Laptops lesbar ist, liegt auf der Platte "KAI Backup"
+(``kai_vault.ps1``, Operator-Entscheid 25.09.: die Platte ist die Offsite-Kopie
+und haengt nur zum Sichern am Laptop). Nach jeder bestandenen Probe hinterlegt
+das Skript eine Quittung in ``artifacts/backup/offpi_receipts.jsonl``. Gemessen
+wird das Alter der neuesten VERIFIZIERTEN Generation, nicht das der Quittung —
+eine erneute Probe einer alten Generation macht die Kopie nicht frischer. Der
+Restore-Drill bleibt davon unberuehrt (``off_pi_redundancy: NOT_CLAIMED``): er
+beweist das Archiv auf der Pi, diese Sonde verweist auf einen eigenen Beweis an
+einem anderen Ort.
+
+Alle Befunde sind ``warning``: sie kosten Aktualitaet, nie Geld.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -42,6 +55,12 @@ REBOOT_PKGS_FILE: Final = Path("/run/reboot-required.pkgs")
 #: Abstand zum woechentlichen Wartungsfenster (U-1): wer ein Fenster verpasst,
 #: wird gemeldet, wer es nur abwartet, nicht.
 MAX_PENDING_DAYS: Final = 7.0
+#: Quittungen der Offsite-Kopie, relativ zu ``artifacts/`` (Schreiber: kai_vault.ps1).
+OFFPI_RECEIPTS_RELPATH: Final = Path("backup") / "offpi_receipts.jsonl"
+OFFPI_RECEIPT_SCHEMA: Final = "offpi_receipt/v1"
+#: Eine Woche Takt plus ein Tag Spielraum: die Platte wird zum Sichern angesteckt,
+#: nicht dauerhaft betrieben.
+MAX_OFFPI_AGE_DAYS: Final = 8.0
 _SHOW: Final = 3
 _DELETED: Final = " (deleted)"
 
@@ -206,6 +225,61 @@ def stale_library_finding(
     )
 
 
+def _utc_epoch(value: object) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def offpi_backup_finding(
+    artifacts_dir: Path, *, now: float | None = None, max_days: float = MAX_OFFPI_AGE_DAYS
+) -> str | None:
+    """Befund, wenn die neueste verifizierte Offsite-Generation fehlt oder zu alt ist.
+
+    Zaehlt nur Quittungen im eigenen Schema mit ``probe == "PASS"``; kaputte
+    Zeilen werden uebersprungen, nicht gemeldet — die Quittung ist Evidenz, die
+    Wahrheit liegt auf der Platte (``VERIFIED.json`` der Generation).
+    """
+    path = artifacts_dir / OFFPI_RECEIPTS_RELPATH
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        lines = []
+    except OSError:
+        return None  # nicht lesbar ist kein Beleg fuer "fehlt"
+    newest: tuple[float, dict[str, Any]] | None = None
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("schema") != OFFPI_RECEIPT_SCHEMA:
+            continue
+        ts = _utc_epoch(rec.get("generation_ts_utc"))
+        if rec.get("probe") != "PASS" or ts is None:
+            continue
+        if newest is None or ts > newest[0]:
+            newest = (ts, rec)
+    if newest is None:
+        where = f"artifacts/{OFFPI_RECEIPTS_RELPATH.as_posix()}"
+        return (
+            f"Keine verifizierte Offsite-Kopie belegt ({where} ohne PASS-Quittung) — Platte "
+            "'KAI Backup' am Laptop anstecken; kai_vault.ps1 sichert, prueft und quittiert "
+            "dann automatisch."
+        )
+    age_days = ((time.time() if now is None else now) - newest[0]) / 86400
+    if age_days < max_days:
+        return None
+    return (
+        f"Neueste verifizierte Offsite-Kopie ist {age_days:.0f} Tage alt "
+        f"(Generation {newest[1].get('generation', '?')}) — Platte 'KAI Backup' am Laptop "
+        "anstecken; kai_vault.ps1 sichert, prueft und quittiert dann automatisch."
+    )
+
+
 def check(repo_root: Path, report: Any) -> list[HealthIssue]:
     """Aufrufstelle in ``health_check.run_health_check_report`` — nur auf der Pi."""
     if os.environ.get(KILL_SWITCH_ENV, "").strip().lower() == "off":
@@ -217,14 +291,19 @@ def check(repo_root: Path, report: Any) -> list[HealthIssue]:
         issues.append(_issue("warning", "reboot_pending", msg))
     if msg := stale_library_finding(repo_root):
         issues.append(_issue("warning", "stale_libraries", msg))
+    if msg := offpi_backup_finding(repo_root / "artifacts"):
+        issues.append(_issue("warning", "offpi_backup", msg))
     return issues
 
 
 __all__ = [
     "KILL_SWITCH_ENV",
+    "MAX_OFFPI_AGE_DAYS",
     "MAX_PENDING_DAYS",
+    "OFFPI_RECEIPTS_RELPATH",
     "check",
     "checkout_findings",
+    "offpi_backup_finding",
     "reboot_pending_finding",
     "stale_library_finding",
 ]
