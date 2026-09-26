@@ -74,3 +74,12 @@ def test_ff_only_und_kein_force() -> None:
     text = SCRIPT.read_text("utf-8")
     assert "--ff-only" in text
     assert "--force" not in text and "reset --hard" not in text
+
+
+def test_drain_check_steht_vor_jedem_eingriff() -> None:
+    """Lueckenregister 26.09.: kein Neustart, solange Geld unterwegs ist."""
+    text = SCRIPT.read_text("utf-8")
+    code = "\n".join(z for z in text.splitlines() if not z.lstrip().startswith("#"))
+    assert "scripts.payment_drain_check" in code
+    assert code.index("scripts.payment_drain_check") < code.index("git fetch")
+    assert "--allow-inflight" in code

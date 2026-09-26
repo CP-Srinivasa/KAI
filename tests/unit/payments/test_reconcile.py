@@ -633,3 +633,47 @@ def test_das_ereignis_bleibt_im_vokabular_des_journals() -> None:
     from app.payments.enums import AUDIT_EVENT_TYPES
 
     assert "dual_journal_conflict" in AUDIT_EVENT_TYPES
+
+
+# --------------------------------------------------------------------------- #
+# Vollstaendigkeit (Lueckenregister 26.09., Befund 1)
+# --------------------------------------------------------------------------- #
+
+
+class BlindRail(SpyRail):
+    """Der Node antwortet nicht auf ListPayments — die Rueckwaerts-Sicht ist blind."""
+
+    async def list_payments(self, since: Any) -> Any:
+        from app.payments.rail import RailError
+
+        raise RailError("listpayments unavailable")
+
+
+async def test_ein_blinder_rueckwaertslauf_ist_nie_gruen(tmp_path: Path) -> None:
+    journal = PaymentJournal(tmp_path / "payments" / "payment_journal.jsonl")
+    journal.open()
+    report = await run(journal, BlindRail(now=NOW), tmp_path)
+
+    assert report.complete is False
+    assert report.status == "attention"
+    assert any("incomplete" in note for note in report.notes)
+    state = reconcile.load_state(tmp_path / "reconcile_state.json")
+    assert state.last_status == "attention"
+    assert state.last_complete is False
+    assert state.last_complete_run_utc == ""  # nie vollstaendig gewesen
+
+
+async def test_der_letzte_vollstaendige_lauf_bleibt_sichtbar(tmp_path: Path) -> None:
+    journal = PaymentJournal(tmp_path / "payments" / "payment_journal.jsonl")
+    journal.open()
+    first = await run(journal, SpyRail(now=NOW), tmp_path)
+    assert first.status == "ok" and first.complete is True
+
+    later = NOW + timedelta(minutes=15)
+    await run(
+        journal, BlindRail(now=later), tmp_path, clock=lambda: later, monotonic=lambda: 1900.0
+    )
+
+    state = reconcile.load_state(tmp_path / "reconcile_state.json")
+    assert state.last_complete is False
+    assert state.last_complete_run_utc == NOW.isoformat()  # der alte, echte Beleg

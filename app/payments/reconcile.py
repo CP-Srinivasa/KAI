@@ -116,7 +116,11 @@ async def run(
     # (orphan_settlement ohne schliessendes wallet_settlement) bleibt einer,
     # bis der Operator ihn schliesst (scripts/ln_close_orphans.py).
     open_orphans = len(journal.index.open_orphan_keys())
-    status = "attention" if (open_orphans or anomaly or unresolved_count) else "ok"
+    if not listing.complete:
+        # Blind ist nicht "nichts gefunden": Warnung, aber kein Geld-Fehlerzustand.
+        notes.append("node payment history incomplete: backward pass did not see every send")
+    blind = not listing.complete
+    status = "attention" if (open_orphans or anomaly or unresolved_count or blind) else "ok"
     report = ReconcileReport(
         status=status,
         counts=counts,
@@ -143,6 +147,10 @@ async def run(
             last_orphans=open_orphans,
             last_wallet_settlements=len(wallet),
             last_clock_anomaly=anomaly,
+            last_complete=listing.complete,
+            last_complete_run_utc=(
+                now.isoformat() if listing.complete else previous.last_complete_run_utc
+            ),
         ),
     )
     return report

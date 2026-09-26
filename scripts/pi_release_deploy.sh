@@ -15,6 +15,7 @@
 # Aufruf:
 #   bash scripts/pi_release_deploy.sh --sha <voller-sha> [--expect-current <voller-sha>]
 #        [--repo <checkout>] [--releases <dir>] [--current <link>] [--dry-run]
+#        [--allow-inflight]   (nur mit Operator-Freigabe: Deploy trotz Zahlung unterwegs)
 #
 # Exit: 0 = deployt und verifiziert · 3 = Vorbedingung verletzt (nichts
 # angefasst) · 1 = Bau/Aktivierung/Verifikation gescheitert (siehe Ausgabe).
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
         --releases) RELEASES="${2:-}"; shift 2 ;;
         --current) CURRENT="${2:-}"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
+        --allow-inflight) ALLOW_INFLIGHT=1; shift ;;
         *) echo "unbekanntes Argument: $1" >&2; exit 3 ;;
     esac
 done
@@ -78,6 +80,19 @@ if [ "$(systemctl --failed --no-legend | wc -l)" -ne 0 ]; then
 fi
 if [ "$aktiv" = "$RELEASES/$SHA" ]; then
     echo "ABBRUCH: $SHA ist bereits aktiv"; exit 3
+fi
+# Kein Geld unterwegs (Lueckenregister 26.09.): die Restarts treffen kai-server;
+# ein Neustart zwischen Freigabe und Node-Antwort muesste der Reconciler erst
+# hinterher klaeren. Rein lesend. Fehlt die Pruefung im Checkout (erster Deploy,
+# der sie mitbringt), wird das laut gesagt statt still uebersprungen.
+if [ "${ALLOW_INFLIGHT:-0}" -eq 1 ]; then
+    echo "WARNUNG: --allow-inflight gesetzt, Zahlungs-Drain-Check uebersprungen"
+elif [ -f "$REPO/scripts/payment_drain_check.py" ] && [ -x "$REPO/.venv/bin/python" ]; then
+    ( cd "$REPO" && ./.venv/bin/python -m scripts.payment_drain_check \
+        --journal "$REPO/artifacts/payments/payment_journal.jsonl" ) \
+        || { echo "ABBRUCH: Zahlung unterwegs oder Journal unlesbar (--allow-inflight nur mit Operator-Freigabe)"; exit 3; }
+else
+    echo "WARNUNG: Zahlungs-Drain-Check fehlt im Checkout (Bootstrap) -- ab dem naechsten Deploy aktiv"
 fi
 
 echo "== Checkout $SHA (ff-only)"
