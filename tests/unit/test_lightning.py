@@ -20,6 +20,7 @@ from app.lightning import (
     get_node_status,
 )
 from app.lightning import adapter as adapter_mod
+from app.lightning import client as client_module
 from app.lightning.adapter import _build_client
 
 
@@ -773,3 +774,16 @@ async def test_get_channels_pending_failure_keeps_open_channels(monkeypatch) -> 
     assert status.state == "ok"
     assert len(status.channels) == 1
     assert status.pending == []
+
+
+@pytest.mark.parametrize(
+    "raw", [float("inf"), float("-inf"), float("nan"), -1, True, "abc", "", None, [1]]
+)
+def test_unusable_fee_msat_is_dropped_never_raised(raw: object) -> None:
+    """Ein kaputtes ``fee_msat`` ist nur fehlender Zusatzbeleg — es darf weder werfen
+    noch die sat-Gebuehr veraendern (Review #1034, P3: ``Infinity`` -> OverflowError)."""
+    normalized = client_module._normalise_payment(
+        {"status": "SUCCEEDED", "payment_hash": "aa" * 32, "fee_sat": "3", "fee_msat": raw}
+    )
+    assert "fee_msat" not in normalized
+    assert normalized["fee_sat"] == 3

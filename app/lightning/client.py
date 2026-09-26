@@ -54,7 +54,7 @@ def _optional_nonnegative_int(raw: Any) -> int | None:
         return None
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: JSON-"Infinity"
         return None
     return value if value >= 0 else None
 

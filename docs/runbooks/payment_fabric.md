@@ -283,7 +283,8 @@ curl -sS -X POST -H "$KAI" -H 'Content-Type: application/json' \
      -d '{"hotp_code":"123456"}' "$BASE/payments/intents/$INTENT/execute"
 
 # 4. Zustand + Beleg
-curl -sS -H "$KAI" "$BASE/health/payment" | jq '{status, last_settlement, in_flight, fees_minor_units}'
+curl -sS -H "$KAI" "$BASE/health/payment" | jq '{status, last_settlement, in_flight, fees_minor_units, fees_msat_exact}'
+# fees_msat_exact: null = kein Settlement im Fenster ODER ein Altrecord ohne msat darin (Journal vor #1034)
 curl -sS -H "$KAI" "$BASE/payments/audit?intent_id=$INTENT" | jq '.events[].event_type'
 
 # 5. Reconciliation von Hand anstoßen

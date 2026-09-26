@@ -190,6 +190,20 @@ async def test_succeeded_wird_settled_mit_evidenz(tmp_path: Path) -> None:
     assert settled[-1].payload["proof_hash"] == "a" * 64
 
 
+async def test_settled_ohne_node_msat_schreibt_kein_msat_feld(tmp_path: Path) -> None:
+    """Liefert lnd kein ``fee_msat``, fehlt das Feld — kein 0, kein None im Journal."""
+    journal, rail, _service, intent_id = await open_intent(tmp_path)
+    key = journal.index.dedup_key(intent_id)
+    assert key is not None
+    rail.lookup_answers[key] = answer(key, RailOutcome.SETTLED, amount=1000, fee=3, with_proof=True)
+
+    await run(journal, rail, tmp_path)
+
+    settled = [e for e in journal.events(intent_id) if e.event_type == "settled"]
+    assert settled[-1].payload["fee_actual_minor_units"] == 3
+    assert "fee_actual_msat" not in settled[-1].payload
+
+
 async def test_failed_ohne_bekannten_grund_ist_final_nicht_wiederholbar(tmp_path: Path) -> None:
     """Fail-closed: ein Grund, den dieser Code nicht kennt, gibt keinen Retry frei."""
     journal, rail, _service, intent_id = await open_intent(tmp_path)
