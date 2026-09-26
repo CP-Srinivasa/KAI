@@ -16,6 +16,7 @@ from app.lightning.l402 import (
     build_challenge_header,
     mint_token,
     parse_authorization,
+    token_expiry,
     verify,
 )
 
@@ -90,3 +91,13 @@ def test_parse_authorization() -> None:
 def test_challenge_header_shape() -> None:
     h = build_challenge_header("tok123", "lnbc1...")
     assert h.startswith("L402 ") and 'token="tok123"' in h and 'invoice="lnbc1..."' in h
+
+
+def test_token_expiry_reads_the_signed_expiry() -> None:
+    token = mint_token(_PAYMENT_HASH, secret=_SECRET, ttl_s=3900, scope="verdicts")
+    assert token_expiry(token) == int(token.split(".")[1])
+
+
+def test_token_expiry_rejects_a_malformed_token() -> None:
+    with pytest.raises(L402Error):
+        token_expiry("kein-token")

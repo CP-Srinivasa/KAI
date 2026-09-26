@@ -45,6 +45,7 @@ from app.lightning.l402 import (
     build_challenge_header,
     mint_token,
     parse_authorization,
+    token_expiry,
     verify,
 )
 from app.lightning.mint_limiter import MintLimiter
@@ -60,6 +61,11 @@ ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
 _timestamp_submit_slots = asyncio.Semaphore(2)
 # Oracle invoices expire after 300 s (``LndRestClient.add_invoice`` default expiry).
 _INVOICE_EXPIRY_MINUTES = 5
+# D-291: access lasts one hour AFTER payment. The token is minted with the invoice,
+# and payment can land up to the invoice expiry later — so the token outlives the
+# latest possible payment by a full hour. Retries within it never cost again.
+_ACCESS_WINDOW_S = 3600
+_ACCESS_TTL_S = _ACCESS_WINDOW_S + _INVOICE_EXPIRY_MINUTES * 60
 
 
 def _get_mint_limiter() -> MintLimiter:
@@ -152,7 +158,12 @@ async def _issue_challenge(
         payment_hash_hex = base64.b64decode(r_hash_b64).hex()
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="invalid invoice from node") from exc
-    token = mint_token(payment_hash_hex, secret=settings.lightning.l402_secret, scope=scope)
+    token = mint_token(
+        payment_hash_hex,
+        secret=settings.lightning.l402_secret,
+        scope=scope,
+        ttl_s=_ACCESS_TTL_S,
+    )
     append_demand_event(
         CHALLENGE_MINTED,
         scope=public_scope,
@@ -163,7 +174,13 @@ async def _issue_challenge(
     raise HTTPException(
         status_code=402,
         detail="payment required",
-        headers={"WWW-Authenticate": build_challenge_header(token, payment_request)},
+        headers={
+            "WWW-Authenticate": build_challenge_header(token, payment_request),
+            # D-291: the access expiry as an unambiguous UTC instant.
+            "X-L402-Access-Expires": datetime.fromtimestamp(token_expiry(token), UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        },
     )
 
 
@@ -263,7 +280,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
     # Readiness precedes L402 minting: callers are never asked to pay for a fact
     # already known to be unavailable. A paid token is stateless and remains
     # reusable for the same scope when the cache becomes healthy again — but
-    # only within its L402 TTL (``app.lightning.l402._DEFAULT_TTL_S``, 3600 s).
+    # only within its access window (``_ACCESS_TTL_S``: >= 1 h after payment).
     # An outage longer than the remaining TTL leaves a paid call undelivered;
     # ``PAID_UNAVAILABLE`` above keeps that visible in the demand ledger.
     await _require_paid(request, "onchain-facts")
