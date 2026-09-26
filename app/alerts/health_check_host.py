@@ -43,16 +43,15 @@ Alle Befunde sind ``warning`` — sie kosten Aktualitaet, nie Geld —, bis auf
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from app.alerts.timer_schedule_probe import unscheduled_timer_finding
+from app.observability.offpi_receipts import newest_verified
 
 if TYPE_CHECKING:
     from app.alerts.health_check import HealthIssue
@@ -235,15 +234,6 @@ def stale_library_finding(
     )
 
 
-def _utc_epoch(value: object) -> float | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-
 def offpi_backup_finding(
     artifacts_dir: Path, *, now: float | None = None, max_days: float = MAX_OFFPI_AGE_DAYS
 ) -> str | None:
@@ -253,26 +243,10 @@ def offpi_backup_finding(
     Zeilen werden uebersprungen, nicht gemeldet — die Quittung ist Evidenz, die
     Wahrheit liegt auf der Platte (``VERIFIED.json`` der Generation).
     """
-    path = artifacts_dir / OFFPI_RECEIPTS_RELPATH
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except FileNotFoundError:
-        lines = []
+        newest = newest_verified(artifacts_dir)
     except OSError:
         return None  # nicht lesbar ist kein Beleg fuer "fehlt"
-    newest: tuple[float, dict[str, Any]] | None = None
-    for line in lines:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(rec, dict) or rec.get("schema") != OFFPI_RECEIPT_SCHEMA:
-            continue
-        ts = _utc_epoch(rec.get("generation_ts_utc"))
-        if rec.get("probe") != "PASS" or ts is None:
-            continue
-        if newest is None or ts > newest[0]:
-            newest = (ts, rec)
     if newest is None:
         where = f"artifacts/{OFFPI_RECEIPTS_RELPATH.as_posix()}"
         return (

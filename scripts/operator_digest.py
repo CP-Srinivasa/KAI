@@ -40,6 +40,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from digest_ops_block import collect_ops_status, format_ops_lines  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("operator-digest")
 # httpx loggt auf INFO die volle Request-URL — beim Telegram-Send enthielte das
@@ -795,8 +797,13 @@ def compose_digest_message(
     truth_anchor: dict[str, Any] | None = None,
     asset_rotation: dict[str, Any] | None = None,
     rotation_gate_24h: dict[str, int] | None = None,
+    ops_lines: list[str] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Testbar.
+
+    ``ops_lines`` (Backup-Kette + KI-Kosten, ``digest_ops_block``) stehen direkt
+    unter dem Modus: die Nachricht wird am 4096-Limit hinten gekuerzt, und die
+    Betriebszeilen sind die, die nie wegfallen duerfen.
 
     ``milestone_state`` (Reminder-Kadenz-Bookkeeping) steuert die threshold-
     getriggerten FÄLLIG-Nudges: fehlt es (``None``), feuert jeder Meilenstein wie
@@ -814,6 +821,9 @@ def compose_digest_message(
     else:
         route_str = ", ".join(routes) if routes else "keine Route offen"
         lines.append(f"⚙️ *Modus:* {mode} · offen: {route_str}")
+
+    # Betrieb (MindBlow E2): Backup-Kette + KI-Kosten.
+    lines.extend(ops_lines or [])
 
     # Paper-Lernströme 24h (inkl. Teil-Closes — Tier-Gewinne, PR-1 Plan 08-08).
     if fills_by_source:
@@ -1230,6 +1240,7 @@ def main(argv: list[str] | None = None) -> int:
             truth_anchor=collect_truth_anchor(),
             asset_rotation=collect_asset_rotation(),
             rotation_gate_24h=collect_rotation_gate_24h(),
+            ops_lines=format_ops_lines(collect_ops_status(_ARTIFACTS)),
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("digest compose failed")

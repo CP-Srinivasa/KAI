@@ -72,7 +72,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - Kern-Doku: `docs/KAI_CORE_V1.md` (8 Schichten → Komponente, KEEP/FIX/MERGE/DELETE/QUARANTINE/DEFER, Deploy-Pfad, Operator-Befehle)
 
 ### Digest / CLI / API / Audit / Regime
-- `scripts/operator_digest.py` (tägl. Telegram-Digest; `collect_*`→`compose_digest_message`; inkl. `collect_edge_discovery` = jüngster `artifacts/research/edge_search_*.json` als 🔎-Sektion) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`
+- `scripts/operator_digest.py` (tägl. Telegram-Digest; `collect_*`→`compose_digest_message`; inkl. `collect_edge_discovery` = jüngster `artifacts/research/edge_search_*.json` als 🔎-Sektion; Betriebsblock oben aus `scripts/digest_ops_block.py` = Pi-Tagesbackup, Restore-Drill, D:-Vault-Quittung, KI-Kosten) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`
 - `app/core/runtime_identity.py` → Runtime-Identität (STAB-02): Commit im Prozess vs. Checkout, Drift, Lock-Hash; `/health`-Felder `runtime_commit/checkout_commit/drift_commits`, Artefakt `artifacts/runtime/runtime_identity.json`, Health-Check `_check_runtime_identity`, Deploy-Token `RUNTIME_*` in `scripts/lib/pi_deploy_verdict.sh`
 - `app/cli/main.py` → Typer-Entry, Console-Scripts `kai` (kanonisch, D-236) + `trading-bot` (veralteter Alias) (Gruppen: ingest / pipeline / signals / alerts / analyze / trading / audit / learning)
 - `app/api/routers/` → `dashboard`, `signals`, `premium_signals`, `operator`, `alerts`, `health`, `tradingview`, `kyt`, `agents` …
