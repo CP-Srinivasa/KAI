@@ -10,13 +10,16 @@ Laptop haben es).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -135,13 +138,67 @@ def test_attach_task_fires_only_on_plug_in_of_the_vault_disk() -> None:
     assert policy is not None and policy.text == "IgnoreNew"
 
 
+def _lagebild() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "kai_session_lagebild", WS / "kai_session_lagebild.py"
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    # Kein __pycache__ neben den Betriebsskripten: der Installer-Abgleich unten
+    # zaehlt jede Datei in scripts/workstation/.
+    before, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = before
+    return mod
+
+
+def test_lagebild_shows_only_live_claims_and_counts_stale_ones() -> None:
+    """Abgelaufene Leases sind frei (Regel 2) und duerfen das Lagebild nicht fuellen."""
+    mod = _lagebild()
+    now = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+    table = "\n".join(
+        [
+            "| claim_id | owner | wt | scope | created_at | expires_at | status |",
+            "|---|---|---|---|---|---|---|",
+            "| live | a | wt | s | 2026-09-26T10:00Z | 2026-09-27T10:00Z | active |",
+            "| stale | b | wt | s | 2026-09-20T10:00Z | 2026-09-21T10:00Z | active |",
+            "| undated | c | wt | s | 2026-07-11 | — | active (nachgetragen) |",
+            "| blocked-live | d | wt | s | 2026-09-26T09:00Z | 2026-09-26T18:00+02:00 | blocked |",
+            "| done | e | wt | s | 2026-09-26T09:00Z | 2026-09-27T09:00Z | closed — gemergt |",
+            "| pipe | f | wt | a | b | 2026-09-26T09:00Z | 2026-09-27T09:00Z | **PAUSED** bis |",
+        ]
+    )
+    active, stale = mod.open_claims(table, now)
+    assert [row.split()[0] for row in active] == ["live", "blocked-live", "pipe"]
+    assert stale == ["stale", "undated"], "ohne expires_at gilt created_at + 24 h"
+
+
+def test_lagebild_never_fails_the_session_start(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne Repo, ohne gh-Treffer, ohne Claims: trotzdem Ausgabe statt Ausnahme."""
+    mod = _lagebild()
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod, "CLAIMS", tmp_path / "fehlt.md")
+    monkeypatch.setattr(mod, "GH_REPO", "invalid/does-not-exist")
+    mod.main()
+    out = capsys.readouterr().out
+    assert out.startswith("KAI-Lagebild ")
+    assert "Mainline origin/" in out and "nicht lesbar" in out
+    assert "Claims: ACTIVE_CLAIMS.md nicht lesbar" in out
+
+
 def test_every_workstation_file_is_installed_somewhere() -> None:
     src = INSTALL.read_text(encoding="utf-8")
     mapped = set(re.findall(r"^\s+'([^']+)'\s+=\s+'", src, re.M))
     present = {
         str(p.relative_to(WS)).replace("/", "\\")
         for p in WS.rglob("*")
-        if p.is_file() and p.name not in {"install_workstation.ps1", "README.md"}
+        if p.is_file()
+        and p.name not in {"install_workstation.ps1", "README.md"}
+        and "__pycache__" not in p.parts
     }
     assert present == mapped
 
