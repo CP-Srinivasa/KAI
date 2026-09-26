@@ -19,6 +19,7 @@ import pytest
 
 from app.core.lightning_settings import LightningSettings
 from app.core.payment_settings import PaymentSettings
+from app.lightning.client import RouteProbeFailedError
 from app.payments.enums import PaymentMode, RailOutcome
 from app.payments.models import Money, PaymentAttempt, PaymentIntent
 from app.payments.rail import InvoiceRequest, RailError
@@ -339,6 +340,44 @@ async def test_quote_is_capped_by_the_configured_maximum() -> None:
     quote = await rail.quote(an_intent())
     assert quote.fee_estimate.minor_units == 50
     assert quote.estimate_source == "settings_cap"
+
+
+class ProbingClient(FakeClient):
+    """Ein lnd mit ``EstimateRouteFee`` — Probe ohne Geldbewegung."""
+
+    async def estimate_route_fee(self, *, payment_request: str) -> int:
+        self.calls.append(("estimate_route_fee", {"payment_request": payment_request}))
+        value = self.behaviour.get("probe")
+        if isinstance(value, BaseException):
+            raise value
+        return int(value)
+
+
+async def test_quote_uses_the_node_probe_and_names_it() -> None:
+    client = ProbingClient(probe=6)
+    quote = await a_rail(client).quote(an_intent(amount_requested=sat(900)))
+    assert quote.estimate_source == "node_estimate_route_fee"
+    assert quote.fee_estimate.minor_units == 6
+    assert ("estimate_route_fee", {"payment_request": BOLT11}) in client.calls
+    assert not any(call == "pay_invoice" for call, _ in client.calls)
+
+
+async def test_a_probe_without_route_is_named_not_hidden() -> None:
+    # Live-Befund 24.09.: 900 sat, Limit 3 sat, Vorschau sagte nur "settings_floor",
+    # der Send scheiterte mit NO_ROUTE. Die Vorschau muss das vorher sagen koennen.
+    client = ProbingClient(probe=RouteProbeFailedError("FAILURE_REASON_NO_ROUTE"))
+    quote = await a_rail(client).quote(an_intent(amount_requested=sat(900)))
+    assert quote.estimate_source == "node_probe_no_route"
+    assert (
+        quote.fee_estimate.minor_units == 2
+    )  # 900 sat x 3000 ppm: Settings-Wert, keine erfundene Zahl
+
+
+async def test_a_broken_probe_falls_back_to_settings() -> None:
+    client = ProbingClient(probe=TimeoutError("probe timed out"))
+    quote = await a_rail(client).quote(an_intent())
+    assert quote.estimate_source == "settings_ppm"
+    assert quote.fee_estimate.minor_units == 3
 
 
 async def test_quote_never_touches_the_send_path() -> None:

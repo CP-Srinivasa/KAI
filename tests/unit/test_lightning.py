@@ -7,6 +7,7 @@ resolution (hex + file), and a happy-path getinfo through a mocked transport.
 from __future__ import annotations
 
 import binascii
+import json
 
 import httpx
 import pytest
@@ -787,3 +788,55 @@ def test_unusable_fee_msat_is_dropped_never_raised(raw: object) -> None:
     )
     assert "fee_msat" not in normalized
     assert normalized["fee_sat"] == 3
+
+
+async def test_estimate_route_fee_probes_with_the_invoice_and_rounds_up() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"], seen["path"] = request.method, request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "routing_fee_msat": "5050",
+                "time_lock_delay": "144",
+                "failure_reason": "FAILURE_REASON_NONE",
+            },
+        )
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    fee_sat = await client.estimate_route_fee(payment_request="lnbc1probe")
+
+    assert fee_sat == 6  # 5050 msat -> aufgerundet, nie zu niedrig geschaetzt
+    assert (seen["method"], seen["path"]) == ("POST", "/v2/router/route/estimatefee")
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["payment_request"] == "lnbc1probe"
+    assert 0 < int(body["timeout"]) <= 30
+
+
+async def test_estimate_route_fee_raises_on_a_failed_probe() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"routing_fee_msat": "0", "failure_reason": "FAILURE_REASON_NO_ROUTE"}
+        )
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    with pytest.raises(client_module.RouteProbeFailedError, match="NO_ROUTE"):
+        await client.estimate_route_fee(payment_request="lnbc1probe")
+
+
+async def test_estimate_route_fee_rejects_a_missing_fee() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"failure_reason": "FAILURE_REASON_NONE"})
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    with pytest.raises(ValueError):
+        await client.estimate_route_fee(payment_request="lnbc1probe")

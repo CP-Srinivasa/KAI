@@ -49,6 +49,7 @@ class FakeService:
     authorize_error: Exception | None = None
     simulate_error: Exception | None = None
     quote_fee: int | None = 7
+    quote_source: str = "settings_ppm"
     decision: Any = None
     calls: list[tuple[str, Any]] = field(default_factory=list)
     status: PaymentStatus | None = None
@@ -87,7 +88,7 @@ class FakeService:
                 amount=sat(1000),
                 fee_estimate=sat(self.quote_fee),
                 valid_until=NOW + timedelta(minutes=5),
-                estimate_source="settings_ppm",
+                estimate_source=self.quote_source,
             )
         assert self.status is not None
         return SimulationView(intent_id=intent_id, status=self.status, quote=quote)
@@ -215,6 +216,25 @@ async def test_a_denied_intent_reports_the_reasons_and_keeps_nothing_pending() -
     assert reply.startswith("⛔") and "daily cap exceeded" in reply
     assert CHAT not in flow.pending
     assert ("simulate", "pi_test") not in service.calls
+
+
+async def test_a_node_estimate_above_the_limit_is_flagged() -> None:
+    service = FakeService(quote_fee=6, quote_source="node_estimate_route_fee")
+    reply = await run(PayFlow(), service, BOLT11)
+    assert "~6 sat (node_estimate_route_fee)" in reply
+    assert "ueber dem Limit" in reply
+
+
+async def test_a_node_probe_without_route_is_spelled_out() -> None:
+    service = FakeService(quote_fee=3, quote_source="node_probe_no_route")
+    reply = await run(PayFlow(), service, BOLT11)
+    assert "keine Route" in reply
+    assert "~3 sat" not in reply  # keine Scheinschaetzung
+
+
+async def test_a_settings_estimate_carries_no_warning() -> None:
+    reply = await run(PayFlow(), FakeService(quote_fee=3), BOLT11)
+    assert "ueber dem Limit" not in reply and "keine Route" not in reply
 
 
 async def test_a_failed_simulation_still_offers_the_preview() -> None:
