@@ -16,16 +16,19 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
+
+# Claim-Parser teilen: kai_claim.py liegt im Repo und im Betrieb im selben Ordner.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import kai_claim  # noqa: E402
 
 REPO = Path(r"C:\Users\sasch\.local\bin\ai_analyst_trading_bot")
 MAINLINE = "claude/p7/reentry-ia-codex-cycle"
 GH_REPO = "CP-Srinivasa/KAI"
-CLAIMS = Path(r"C:\Users\sasch\KAI-mirror\ACTIVE_CLAIMS.md")
-OPEN_STATES = {"active", "open", "blocked", "paused", "uebergeben"}
-LEASE = timedelta(hours=24)  # Regel (2) des Claim-Registers
+CLAIMS = kai_claim.DEFAULT_FILE
 
 
 def run(args: list[str], timeout: float = 3.0) -> str | None:
@@ -49,36 +52,11 @@ def short(text: str, width: int = 72) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def parse_ts(raw: str) -> datetime | None:
-    try:
-        ts = datetime.fromisoformat(raw.strip().strip("`"))
-    except ValueError:
-        return None
-    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
-
-
 def open_claims(text: str, now: datetime) -> tuple[list[str], list[str]]:
-    """(aktive Zeilen, abgelaufene IDs). Ohne expires_at gilt created_at + 24 h."""
-    active: list[str] = []
-    stale: list[str] = []
-    for line in text.splitlines():
-        if not line.startswith("|") or line.startswith("|---") or "claim_id" in line:
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 7:
-            continue
-        state = cells[-1].replace("*", "").split(" ")[0].lower().rstrip(".,:")
-        if state not in OPEN_STATES:
-            continue
-        expires = parse_ts(cells[-2])
-        created = parse_ts(cells[-3])
-        if expires is None and created is not None:
-            expires = created + LEASE
-        if expires is not None and expires < now:
-            stale.append(cells[0])
-            continue
-        active.append(f"  {cells[0]} [{cells[1]}] {state} bis {cells[-2]}")
-    return active, stale
+    """(aktive Zeilen, abgelaufene IDs) — Regeln aus kai_claim (ohne expires_at: +24 h)."""
+    live, stale = kai_claim.split_live(kai_claim.parse(text), now)
+    rows = [f"  {c.claim_id} [{c.owner}] {c.state} bis {c.expires}" for c in live]
+    return rows, [c.claim_id for c in stale]
 
 
 def mainline_lines(now: datetime) -> list[str]:
@@ -128,7 +106,7 @@ def claim_lines(now: datetime) -> list[str]:
     active, stale = open_claims(text, now)
     out = [f"Aktive Claims ({len(active)}):", *active]
     if stale:
-        out.append(f"  + {len(stale)} abgelaufen, nie geschlossen (frei; als expired markieren)")
+        out.append(f"  + {len(stale)} abgelaufen, nie geschlossen (frei; `kai_claim.py expire`)")
     return out
 
 
