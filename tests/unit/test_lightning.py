@@ -880,3 +880,59 @@ async def test_estimate_route_fee_surfaces_an_http_error() -> None:
     with pytest.raises(Exception) as caught:
         await client.estimate_route_fee(payment_request="lnbc1probe")
     assert not isinstance(caught.value, client_module.RouteProbeFailedError)
+
+
+# --- payment_initiated (TrackPaymentV2, D-293) ------------------------------------
+
+_TRACK_HASH = "ab" * 32
+
+
+def _track_client(status: int, body: object) -> LndRestClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path.startswith("/v2/router/track/")
+        return httpx.Response(status, content=json.dumps(body).encode() + b"\n")
+
+    return LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+
+
+async def test_payment_initiated_is_false_only_for_lnds_explicit_not_initiated() -> None:
+    body = {"error": {"code": 5, "message": "payment isn't initiated", "details": []}}
+    assert await _track_client(404, body).payment_initiated(_TRACK_HASH) is False
+
+
+async def test_payment_initiated_is_true_for_any_payment_state() -> None:
+    body = {"result": {"status": "SUCCEEDED", "value_sat": "120", "fee_msat": "1540"}}
+    assert await _track_client(200, body).payment_initiated(_TRACK_HASH) is True
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (500, {"code": 2, "message": "permission denied", "details": []}),
+        (404, {"error": {"code": 5, "message": "something else not found"}}),
+        (404, {"error": {"code": 2, "message": "payment isn't initiated"}}),
+        (200, {"unexpected": True}),
+    ],
+)
+async def test_payment_initiated_without_a_clear_statement_raises(
+    status: int, body: object
+) -> None:
+    with pytest.raises(LightningUnavailableError):
+        await _track_client(status, body).payment_initiated(_TRACK_HASH)
+
+
+async def test_payment_initiated_encodes_the_hash_base64url() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, content=b'{"result": {"status": "IN_FLIGHT"}}\n')
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    await client.payment_initiated("ff" * 32)
+    assert seen["path"] == "/v2/router/track/" + "_" * 42 + "8="

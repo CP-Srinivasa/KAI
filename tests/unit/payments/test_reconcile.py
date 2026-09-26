@@ -26,7 +26,7 @@ from app.payments import reconcile
 from app.payments.enums import PaymentStatus, ProofKind, RailOutcome
 from app.payments.journal import PaymentJournal
 from app.payments.models import Money, Proof
-from app.payments.rail import InvoiceRequest, RailLookup
+from app.payments.rail import PAYMENT_NOT_INITIATED, InvoiceRequest, RailLookup
 from app.payments.rails.simulation import SimulationRail
 from app.payments.service import PaymentRequest, PaymentService
 
@@ -282,6 +282,75 @@ async def test_nicht_gefunden_nach_submit_bleibt_klaerungsbeduerftig(tmp_path: P
     await run(journal, rail, tmp_path)
 
     assert journal.index.intent_status(intent_id) == PaymentStatus.RECONCILIATION_REQUIRED.value
+
+
+def never_initiated(key: str) -> RailLookup:
+    """lnd: "payment isn't initiated" — z. B. litd hat den Send vor dem Router abgewiesen."""
+    return RailLookup(
+        rail="lightning",
+        found=False,
+        outcome=RailOutcome.FAILED,
+        rail_dedup_key=key,
+        observed_at=NOW,
+        failure_reason=PAYMENT_NOT_INITIATED,
+    )
+
+
+async def stuck_intent(tmp_path: Path) -> tuple[PaymentJournal, SpyRail, str]:
+    """Ein Send, dessen Antwort ausblieb: RECONCILIATION_REQUIRED, Node kennt ihn nie."""
+    journal, rail, _service, intent_id = await open_intent(tmp_path, "sim:unknown:alice")
+    assert journal.index.intent_status(intent_id) == PaymentStatus.RECONCILIATION_REQUIRED.value
+    key = journal.index.dedup_key(intent_id)
+    assert key is not None
+    rail.lookup_answers[key] = never_initiated(key)
+    return journal, rail, intent_id
+
+
+async def test_nie_gestartet_und_abgelaufen_wird_failed_final(tmp_path: Path) -> None:
+    """D-293: nach Ablauf sendet KAI nie mehr — "nie gestartet" ist dann endgueltig."""
+    journal, rail, intent_id = await stuck_intent(tmp_path)
+    later = NOW + timedelta(hours=2)
+    await run(journal, rail, tmp_path)  # Basislinie fuer den Uhr-Vergleich
+    report = await run(
+        journal, rail, tmp_path, clock=lambda: later, monotonic=lambda: 1000.0 + 7200.0
+    )
+
+    assert journal.index.intent_status(intent_id) == PaymentStatus.FAILED_FINAL.value
+    assert report.unresolved == 0
+    failed = [e for e in journal.events(intent_id) if e.event_type == "failed"]
+    assert failed[-1].payload["failure_reason"] == PAYMENT_NOT_INITIATED
+    assert failed[-1].payload["evidence_source"] == "rail_lookup"
+    assert rail.pay_calls == 1, "der Reconcile sendet nie"
+
+
+async def test_nie_gestartet_vor_dem_ablauf_bleibt_in_der_klaerung(tmp_path: Path) -> None:
+    journal, rail, intent_id = await stuck_intent(tmp_path)
+    await run(journal, rail, tmp_path)
+    await run(journal, rail, tmp_path, monotonic=lambda: 1060.0)
+
+    assert journal.index.intent_status(intent_id) == PaymentStatus.RECONCILIATION_REQUIRED.value
+
+
+async def test_nie_gestartet_ohne_vertrauenswuerdige_uhr_bleibt_in_der_klaerung(
+    tmp_path: Path,
+) -> None:
+    """Erster Lauf ohne Basislinie: "abgelaufen" ist dann kein Argument."""
+    journal, rail, intent_id = await stuck_intent(tmp_path)
+    await run(journal, rail, tmp_path, clock=lambda: NOW + timedelta(hours=2))
+
+    assert journal.index.intent_status(intent_id) == PaymentStatus.RECONCILIATION_REQUIRED.value
+
+
+def test_nie_gestartet_macht_nur_die_klaerung_terminal() -> None:
+    """Ein Send, der noch laeuft, wird bei "nie gestartet" hoechstens klaerungsbeduerftig."""
+    from app.payments.reconcile_passes import _target_for
+
+    lookup = never_initiated("a" * 64)
+    for current in (PaymentStatus.SUBMITTED, PaymentStatus.IN_FLIGHT):
+        assert _target_for(lookup, current=current, expired=True) is (
+            PaymentStatus.RECONCILIATION_REQUIRED
+        )
+    assert _target_for(lookup, current=PaymentStatus.FAILED_RETRYABLE, expired=True) is None
 
 
 async def test_zweimaliger_lauf_schreibt_keinen_zweiten_record(tmp_path: Path) -> None:
