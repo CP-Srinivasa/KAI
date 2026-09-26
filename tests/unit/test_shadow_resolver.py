@@ -87,6 +87,7 @@ def test_resolve_with_binance_wires_fetcher(tmp_path: Path, monkeypatch) -> None
         (t0_ms + 3600_000, 101.0, 99.5, 100.5),
     ]
     monkeypatch.setattr(sr, "binance_kline_fetcher", lambda *a, **k: synthetic)
+    monkeypatch.setattr(sr, "binance_known_symbols", lambda: frozenset({"BTCUSDT"}))
 
     counts = sr.resolve_with_binance(
         now=T0 + timedelta(hours=2), ledger_path=ledger, resolved_path=resolved
@@ -96,3 +97,52 @@ def test_resolve_with_binance_wires_fetcher(tmp_path: Path, monkeypatch) -> None
     assert rec["candidate_id"] == "c1"
     assert rec["mfe_bps"] == 150.0
     assert rec["stop_dist_bps"] == 100.0
+
+
+# ── Nur Paare, die Binance fuehrt (26.09.2026: 99 265 HTTP-400 in 24 h) ──────
+
+
+def test_unknown_pair_is_not_fetched_and_reported_once(caplog) -> None:
+    calls: list[str] = []
+    lookups: list[int] = []
+
+    def fetch(symbol: str, start_ms: int, end_ms: int):
+        calls.append(symbol)
+        return [(0, 1.0, 1.0, 1.0)]
+
+    def known():
+        lookups.append(1)
+        return frozenset({"BTCUSDT"})
+
+    fetcher = sr.known_pairs_only(fetch=fetch, known=known)
+    with caplog.at_level("INFO", logger=sr.__name__):
+        assert fetcher("VELVET/USDT", 0, 1) is None
+        assert fetcher("VELVET/USDT", 0, 1) is None
+        assert fetcher("BTC/USDT", 0, 1) == [(0, 1.0, 1.0, 1.0)]
+    assert calls == ["BTC/USDT"], "kein Netzaufruf fuer ein unbekanntes Paar"
+    assert lookups == [1], "Symbolliste nur einmal je Fetcher"
+    notes = [r.getMessage() for r in caplog.records if "VELVET" in r.getMessage()]
+    assert len(notes) == 1, "je Paar genau eine Meldung statt einer je Zeile"
+
+
+def test_without_symbol_list_everything_is_fetched_as_before() -> None:
+    calls: list[str] = []
+    fetcher = sr.known_pairs_only(fetch=lambda s, a, b: calls.append(s) or None, known=lambda: None)
+    fetcher("VELVET/USDT", 0, 1)
+    fetcher("BTC/USDT", 0, 1)
+    assert calls == ["VELVET/USDT", "BTC/USDT"]
+
+
+def test_halted_pair_counts_as_known(monkeypatch) -> None:
+    """Ein pausiertes Paar (status BREAK) liefert weiter historische Klines."""
+    monkeypatch.setattr(sr, "_spot_symbols_cache", None)
+    monkeypatch.setattr(sr, "_known_symbols_cache", None)
+    info = {
+        "symbols": [
+            {"symbol": "BTCUSDT", "status": "TRADING"},
+            {"symbol": "DEADUSDT", "status": "BREAK"},
+        ]
+    }
+    monkeypatch.setattr(sr.urllib.request, "urlopen", lambda *a, **k: _FakeResp(info))
+    assert sr.binance_known_symbols() == frozenset({"BTCUSDT", "DEADUSDT"})
+    assert sr.binance_spot_symbols() == frozenset({"BTCUSDT"}), "Screener-Filter unveraendert"

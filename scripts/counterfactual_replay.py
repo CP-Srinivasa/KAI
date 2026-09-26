@@ -28,7 +28,7 @@ from app.core.settings import get_settings  # noqa: E402
 from app.observability.counterfactual_replay_logger import (  # noqa: E402
     run_counterfactual_pass,
 )
-from app.observability.shadow_resolver import binance_kline_fetcher  # noqa: E402
+from app.observability.shadow_resolver import known_pairs_only  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("counterfactual-replay")
@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("counterfactual-replay: EXECUTION_DUAL_STREAM_DIAGNOSTICS off — no-op")
         return 0
     counts = run_counterfactual_pass(
-        fetch_klines=binance_kline_fetcher,
+        # Nur Paare, die Binance fuehrt (gleicher Filter wie der Shadow-Resolver).
+        fetch_klines=known_pairs_only(),
         threshold_bps=float(settings.execution.dual_stream_drift_bps),
     )
     logger.info("counterfactual-replay: %s", counts)

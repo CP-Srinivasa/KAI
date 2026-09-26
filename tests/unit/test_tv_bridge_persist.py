@@ -208,3 +208,50 @@ def test_bridge_never_invents_a_priority(tmp_path: Path) -> None:
         row = json.loads(line)
         assert row["channel"] == "tradingview_webhook"
         assert "priority" not in row
+
+
+# ---------------------------------------------------------------------------
+# Rauschen (26.09.2026): uebersprungene Ereignisse einmal je Prozess loggen
+# ---------------------------------------------------------------------------
+
+
+def test_skipped_event_is_logged_once_but_counted_every_tick(tmp_path: Path, monkeypatch) -> None:
+    """316 651 server.log-Zeilen fuer 1 408 Ereignisse: dieselbe Zeile je Takt neu."""
+    import app.alerts.tv_bridge as tvb
+
+    seen: list[tuple[str, dict]] = []
+
+    class _Recorder:
+        def info(self, event: str, **fields: object) -> None:
+            seen.append((event, fields))
+
+        def warning(self, event: str, **fields: object) -> None:
+            seen.append((event, fields))
+
+    monkeypatch.setattr(tvb, "log", _Recorder())
+    monkeypatch.setattr(tvb, "_SKIPS_LOGGED", set())
+    pending = tmp_path / "pending.jsonl"
+    unsupported = {**_event("nvda-1"), "ticker": "NVDAUSD"}
+    _write_pending(pending, [unsupported, _event("smoke-1", note="smoke test")])
+
+    for _tick in range(3):
+        counts = persist_tv_events_as_alert_audits(
+            tv_pending_path=pending, alert_audit_path=tmp_path / "audit.jsonl"
+        )
+        assert counts["skipped_unsupported"] == 1
+        assert counts["skipped_smoke"] == 1
+
+    names = [name for name, _ in seen]
+    assert names.count("tv_bridge.skip_unsupported_base") == 1
+    assert names.count("tv_bridge.skip_smoke") == 1
+
+
+def test_skip_memory_is_bounded(monkeypatch) -> None:
+    import app.alerts.tv_bridge as tvb
+
+    monkeypatch.setattr(tvb, "log", type("L", (), {"info": lambda self, *a, **k: None})())
+    monkeypatch.setattr(tvb, "_SKIPS_LOGGED", set())
+    monkeypatch.setattr(tvb, "_SKIPS_LOGGED_MAX", 3)
+    for i in range(10):
+        tvb._log_skip_once("tv_bridge.skip_smoke", f"e{i}")
+    assert len(tvb._SKIPS_LOGGED) <= 3

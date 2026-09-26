@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,6 +37,11 @@ _NON_BINANCE_HINT = "USDT"
 # Per-process cache of the Binance-spot symbol universe (changes rarely; the
 # screener runs as a short oneshot so this is fetched ~once per run).
 _spot_symbols_cache: frozenset[str] | None = None
+# Every symbol Binance knows, whatever its status (a halted pair still serves
+# historical klines). Filled from the same exchangeInfo response.
+_known_symbols_cache: frozenset[str] | None = None
+
+KlineFetcher = Callable[[str, int, int], Sequence[Bar] | None]
 
 
 def to_binance_pair(symbol: str) -> str:
@@ -53,24 +58,69 @@ def binance_spot_symbols(*, force: bool = False) -> frozenset[str] | None:
     Fail-soft: returns ``None`` on any network/parse error (caller keeps the
     unfiltered universe). ``force=True`` bypasses the cache.
     """
-    global _spot_symbols_cache
+    global _spot_symbols_cache, _known_symbols_cache
     if _spot_symbols_cache is not None and not force:
         return _spot_symbols_cache
     try:
         # Fixed https Binance endpoint; no user-controlled scheme/host.
         with urllib.request.urlopen(_BINANCE_EXCHANGE_INFO, timeout=10) as resp:  # noqa: S310  # nosec B310
             raw = json.loads(resp.read().decode())
-        syms = frozenset(
-            str(s["symbol"]).upper()
-            for s in raw.get("symbols", [])
-            if s.get("status") == "TRADING" and s.get("symbol")
-        )
+        entries = [s for s in raw.get("symbols", []) if s.get("symbol")]
+        syms = frozenset(str(s["symbol"]).upper() for s in entries if s.get("status") == "TRADING")
+        known = frozenset(str(s["symbol"]).upper() for s in entries)
     except Exception as exc:  # noqa: BLE001 — any network/parse error → unfiltered
         logger.info("[shadow] exchangeInfo fetch failed: %s", exc)
         return None
     if syms:
         _spot_symbols_cache = syms
+    if known:
+        _known_symbols_cache = known
     return syms or None
+
+
+def binance_known_symbols() -> frozenset[str] | None:
+    """All Binance-spot symbols of any status, or ``None`` if exchangeInfo failed."""
+    if _known_symbols_cache is None:
+        binance_spot_symbols(force=True)
+    return _known_symbols_cache
+
+
+def known_pairs_only(
+    fetch: KlineFetcher | None = None,
+    known: Callable[[], frozenset[str] | None] | None = None,
+) -> KlineFetcher:
+    """Kline-Fetcher, der Paare, die Binance gar nicht fuehrt, nicht erst abfragt.
+
+    Gemessen 26.09.2026 auf kai-pi5: 99 265 Kline-Abfragen in 24 h scheiterten mit
+    HTTP 400, 94 Symbole (VELVET/USDT, BTW/USDT, ...), die es bei Binance nicht gibt.
+    Jede Zeile des Ledgers fragte bei jedem Lauf erneut an, und jeder Fehlschlag
+    stand im Journal. Ergebnis fuer den Kandidaten ist dasselbe wie vorher (``None``
+    -> bleibt pending), nur ohne Netzaufruf; jedes solche Paar wird je Prozess
+    EINMAL gemeldet. Die Symbolliste wird einmal je Prozess geholt; scheitert das,
+    wird ungefiltert abgefragt wie bisher. ``fetch``/``known`` werden erst beim
+    Aufruf aufgeloest (Tests ersetzen die Modulfunktionen).
+    """
+    looked_up = False
+    universe: frozenset[str] | None = None
+    reported: set[str] = set()
+
+    def fetch_known_only(symbol: str, start_ms: int, end_ms: int) -> Sequence[Bar] | None:
+        nonlocal looked_up, universe
+        if not looked_up:
+            looked_up = True
+            universe = (known or binance_known_symbols)()
+        pair = to_binance_pair(symbol)
+        if universe is not None and pair not in universe:
+            if pair not in reported:
+                reported.add(pair)
+                logger.info(
+                    "[shadow] %s gibt es bei Binance nicht — keine Kline-Abfrage (bleibt pending)",
+                    symbol,
+                )
+            return None
+        return (fetch or binance_kline_fetcher)(symbol, start_ms, end_ms)
+
+    return fetch_known_only
 
 
 def binance_kline_fetcher(symbol: str, start_ms: int, end_ms: int) -> Sequence[Bar] | None:
@@ -112,7 +162,7 @@ def resolve_with_binance(
     is the explicit diagnostic option to resolve them too.
     """
     return resolve_pending(
-        fetch_klines=binance_kline_fetcher,
+        fetch_klines=known_pairs_only(),
         now=now or datetime.now(UTC),
         ledger_path=ledger_path,
         resolved_path=resolved_path,
@@ -121,8 +171,11 @@ def resolve_with_binance(
 
 
 __all__ = [
+    "KlineFetcher",
     "binance_kline_fetcher",
+    "binance_known_symbols",
     "binance_spot_symbols",
+    "known_pairs_only",
     "resolve_with_binance",
     "to_binance_pair",
 ]

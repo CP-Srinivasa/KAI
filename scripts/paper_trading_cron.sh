@@ -9,7 +9,8 @@
 # Usage (manual):   bash scripts/paper_trading_cron.sh
 # Systemd:          ExecStart=/home/kai/ai_analyst_trading_bot/scripts/paper_trading_cron.sh
 #
-# Log: artifacts/paper_trading_cron.log (append-only, UTF-8).
+# Log: artifacts/paper_trading_cron.log (append-only, UTF-8; ab PAPER_CRON_LOG_MAX_BYTES
+#      zu .log.1 verschoben, eine Generation — siehe rotate_log_if_large).
 
 set -uo pipefail  # no -e: single CLI failures must not abort the whole tick
 
@@ -30,6 +31,20 @@ write_log() {
     local ts
     ts=$(date +'%Y-%m-%d %H:%M:%S')
     printf '%s  %s\n' "$ts" "$1" >> "$LOG_FILE"
+}
+
+# Das Log liegt unter artifacts/, nicht unter logs/ — logrotate (deploy/logrotate/kai)
+# erfasst es nicht. Am 26.09.2026 waren es 29 MB seit dem 01.05. Einmal je Tick:
+# ueber der Grenze wird es zu .log.1 (die vorige .1 entfaellt). Leser suchen nur den
+# letzten "cron start" (CLI status) bzw. das Dateialter (Operator-API) — beides
+# bleibt gueltig, weil gleich danach die Startzeile geschrieben wird.
+rotate_log_if_large() {
+    local max="${PAPER_CRON_LOG_MAX_BYTES:-20971520}" size
+    [[ -f "$LOG_FILE" ]] || return 0
+    size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
+    if (( size > max )); then
+        mv -f "$LOG_FILE" "$LOG_FILE.1"
+    fi
 }
 
 # Canary profiles are explicit paper-only cron probes. Missing operator
@@ -134,6 +149,7 @@ entry_watch() {
 
 # --- main -------------------------------------------------------------------
 
+rotate_log_if_large
 write_log "--- cron start ---"
 write_log "profile  requested=$CRON_PROFILE_REQUEST  active=$CRON_ANALYSIS_PROFILE  mode=paper  safety=$CRON_PROFILE_SAFETY"
 
@@ -203,16 +219,12 @@ if (( hour >= 8 )) && [[ "$last_briefing" != "$today" ]]; then
     printf '%s' "$today" > "$briefing_marker"
 fi
 
-# Daily strategy review skeleton once per day after 08:00.
-strategy_marker="$ROOT/artifacts/.daily_strategy_date"
-last_strategy=""
-[[ -f "$strategy_marker" ]] && last_strategy=$(cat "$strategy_marker" 2>/dev/null)
-if (( hour >= 8 )) && [[ "$last_strategy" != "$today" ]]; then
-    write_log "daily-strategy bootstrap starting"
-    strat_out=$("$PYTHON" -m app.cli.main daily-strategy bootstrap 2>&1) || true
-    write_log "daily-strategy: $(printf '%s' "$strat_out" | tr -d '\n' | cut -c1-200)"
-    printf '%s' "$today" > "$strategy_marker"
-fi
+# Daily-Strategy-Skelett: NICHT mehr hier (MindBlow E6, 26.09.2026). Das erledigt
+# kai-daily-strategy.timer (08:00 Europe/Berlin, `daily-strategy bootstrap --no-sync`,
+# jeden Tag Result=success). Dieser Block rief `bootstrap` OHNE --no-sync: auf der
+# Pi versuchte das scp vom Pi-Host auf sich selbst — 8 Dateien x 2 Versuche = 16
+# fehlgeschlagene SSH-Logins je Tag im auth.log (112 in 7 Tagen), die echte
+# Angriffsversuche verdecken wuerden, plus ein redundanter Kaltstart.
 
 # Pipeline run-all every 4th run (~40 min).
 pipeline_marker="$ROOT/artifacts/.pipeline_counter"
