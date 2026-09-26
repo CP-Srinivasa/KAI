@@ -8,7 +8,7 @@
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
 - edge status: `WIDERLEGT — canonical-edge 2026-08-25: n=208, mean -20,9 bps, median -111 bps, P(mu_net>0)=0,204; ohne Best-Trade -39,6 bps / P=0,014. Keine Ausweitung der Execution.`
 - live execution: `OFF — paper/approval-mode only; Live-Gates ungeoeffnet`
-- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt. 72h-Pilot D-281 abgeschlossen: PASS (technisch, D-286), Sendepfad bleibt scharf mit unveraenderten Caps (1000/1000 sat, Freigabe ab 1 sat). Pilot-Sends 10/40/100 sat SETTLED (Node-Fees 1,05/1,2/1,45 sat), Receives 6/35 sat, 0 ungewollte Fehlschlaege, 0 Orphans. D-277-Negativbeweise live belegt (D-284). Runtime seit 2026-09-25 Release 350bf598. Verifizierte Einnahmen von Dritten lifetime = 0 sat. Strang B (KAI-Pay-Wallet-Produkt) ausserhalb des Kerns: D-285.`
+- lightning: `KAI PAY Self-Use LIVE seit 2026-09-22 auf genau einen externen Payee begrenzt. 72h-Pilot D-281 abgeschlossen: PASS (technisch, D-286), Sendepfad bleibt scharf mit unveraenderten Caps (1000/1000 sat, Freigabe ab 1 sat). Pilot-Sends 10/40/100 sat SETTLED (Node-Fees 1,05/1,2/1,45 sat), Receives 6/35 sat, 0 ungewollte Fehlschlaege, 0 Orphans. D-277-Negativbeweise live belegt (D-284). Runtime seit 2026-09-26 Release a90eb10a (D-288/D-289/D-290: Reconcile nie falsch-gruen, fremde Ausgaben gemeldet, exakte msat-Fees abgenommen, Vorschau mit Node-Probe, OTS gegen Bitcoin verifiziert). Verifizierte Einnahmen von Dritten lifetime = 0 sat. Strang B (KAI-Pay-Wallet-Produkt) ausserhalb des Kerns: D-285.`
 - policy: `Falsifikation vor Feature. Kein Aggregat ohne Zerlegung (D-244). Jede Schwelle wird gemessen, nicht gesetzt. Kein Auto-Merge bei Architektur-PRs.`
 - Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-268; die Nachtragsbloecke D-237..D-249 und D-250..D-268 sind nach Vergabe, nicht nach Datum sortiert).
 
@@ -23,6 +23,18 @@
 > Vergabereihenfolge, nicht der Chronologie** (D-235/D-236 waren am 25.08. bereits vergeben).
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
+
+### D-290 (2026-09-26)
+**Befund (Abnahme nach Release `a90eb10a`, Operator-Send):** Die exakten msat-Gebuehren (#1034) und die Vorschau mit Node-Probe (#1082/#1090/#1092) sind **live abgenommen**.
+- **Send:** `pi_321b8e95e4a44fa0`, 100 sat an den Pilot-Payee, per `/pay` mit HOTP, `SETTLED` nach 3 s (2026-09-26T14:04:02–05Z).
+- **msat-Gebuehr:** Journal `fee_actual_msat: 1500` ist gleich lnd `fee_msat: 1500` (1 HTLC). `fee_actual_minor_units` bleibt abgerundet bei 1 sat. Damit ist die in D-284 (a) belegte Rundungsluecke (1450 msat gebucht als 1 sat) geschlossen.
+- **Vorschau:** `rail_requested` zeigt `estimate_source=node_estimate_route_fee` mit 2 sat. Die tatsaechliche Gebuehr lag bei 1,5 sat, also unter der aufgerundeten Schaetzung und im Limit von 3 sat.
+- **Nach dem Send:** Der Reconcile um 14:16:36Z ist `ok`, `complete=true`, 0 Orphans, `last_unattributed=0`. Der eigene Send ist also korrekt dem Intent zugeordnet und nicht als fremde Ausgabe gemeldet (D-289).
+- **Release `a90eb10a`:** DEPLOY_VERIFIED um 13:27Z. Voller Zielbaum gruen (12 243 passed, vitest 416). Die SPA ist per `pi_deploy_web.sh` ausgeliefert. `DRAIN_OK` vor dem Send, Go-live-Preflight GO.
+
+**Entscheidung (Operator 2026-09-26):** Das Budget fuer den geplanten litd-Account des KAI-Sendeschluessels betraegt **5 000 sat**, aufgefuellt von Hand. Die Umsetzung folgt `docs/runbooks/ln_kai_account_budget.md` in einem eigenen Fenster am Node. Das K.-o.-Kriterium A3 (fail-closed bei litd-Ausfall) muss vorher bewiesen sein.
+**Limit:** Der Self-Use bleibt unveraendert (1 Payee, Caps 1000/1000, HOTP ab 1 sat). Eigenzahlungen belegen keine Marktnachfrage.
+**Beleg:** Pi `artifacts/payments/payment_journal.jsonl` (Zeilen 118–124), lnd `listpayments --include_incomplete`, `reconcile_state.json`, `~/release_deploy_a90eb10a.log`.
 
 ### D-289 (2026-09-26)
 **Entscheidung (Operator, loest D-278 ab):** Eine Node-Zahlung ohne KAI-Intent gilt ab jetzt als **„beobachtet, nicht zugeordnet“** und wird nicht mehr still als bekannte Wallet-Zahlung verbucht (Befund 2 aus D-288).

@@ -61,7 +61,7 @@ Quelle: Lightning Labs, *LND Accounts* (docs.lightning.engineering, gelesen am 2
 
 ## 7. Offene Operator-Entscheide
 
-- Die Budgethöhe (Vorschlag 5 000 sat, das Fünffache des Tages-Caps) und wie aufgefüllt wird (manuell per `litcli accounts update`).
+- ~~Die Budgethöhe~~ **Entschieden am 26.09. (D-290): 5 000 sat, aufgefüllt von Hand per `litcli accounts update`.**
 - Ob die Alltags-Wallet ebenfalls einen eigenen Account bekommt.
 - Ob der alte Macaroon gezielt entwertet werden kann (4.4) oder ein Neuaufbau aller Macaroons geplant werden muss.
 
