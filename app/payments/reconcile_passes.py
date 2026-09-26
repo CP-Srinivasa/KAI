@@ -217,11 +217,11 @@ async def backward(
 ) -> tuple[RailPaymentList, tuple[str, ...]]:
     """Was der Rail bewegt hat, ohne dass ein Intent es beauftragt haette.
 
-    D-278 (Operator 2026-09-15): solche Settlements sind Zahlungen der
-    Alltags-Wallet am selben Node (D-277 (4)). Sie werden sichtbar
-    journalisiert (``wallet_settlement``, ``status=known``), fordern aber keine
-    Aufmerksamkeit mehr. Vorher hiessen sie ``orphan_settlement`` mit
-    ``attention`` und blieben ungeschlossen stehen.
+    D-289 (loest D-278 ab): eine Node-Zahlung ohne KAI-Intent ist "beobachtet,
+    nicht zugeordnet" (``wallet_settlement``, ``observed``/``unattributed``).
+    Eine Klassifikation autorisiert keine Ausgabe: der Lauf, der sie zuerst
+    sieht, meldet sie (``attention``); zugeordnet (``wallet_direct``) wird sie
+    nur per Operator-Entscheid (:func:`close_orphans_as_wallet`).
     """
     since = now - timedelta(seconds=settings.max_inflight_window_s)
     try:
@@ -234,14 +234,14 @@ async def backward(
             _wallet_record_id(key),
             "wallet_settlement",
             {
-                "status": "known",
-                "classification": "wallet_direct",
+                "status": "observed",
+                "classification": "unattributed",
                 "rail_dedup_key": key,
                 "evidence_source": "rail_lookup",
             },
             ts=now,
         )
-        _bump(counts, "WALLET_SETTLEMENT")
+        _bump(counts, "UNATTRIBUTED_SPEND")
     return listing, fresh
 
 

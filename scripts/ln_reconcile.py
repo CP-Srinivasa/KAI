@@ -20,7 +20,9 @@ nicht vor.
 
 Exit-Code: 0 nur bei ``ok``. Ein ``attention`` (ungeschlossener Altbefund,
 ungeklaerter Send, Uhr-Sprung) ist ein Befund. Node-Zahlungen ohne Intent sind
-seit D-278 ``wallet_settlement`` (sichtbar, kein Befund) — zusaetzlich zum Health-Check-Pfad, der den
+seit D-289 ``wallet_settlement`` mit ``classification=unattributed``: der Lauf, der
+sie zuerst sieht, meldet sie (attention -> OnFailure-Alarm), danach bleiben sie
+sichtbar ohne Dauer-Alarm — zusaetzlich zum Health-Check-Pfad, der den
 persistierten Zustand liest und seit PR 2 auch dessen ALTER prueft
 (``check_payment_reconciliation``).
 """

@@ -150,6 +150,7 @@ def _reconciliation(
         "clock_anomaly": state.last_clock_anomaly,
         "complete": state.last_complete,
         "last_complete_run": state.last_complete_run_utc or None,
+        "last_unattributed_spend": state.last_unattributed_at or None,
     }
 
 

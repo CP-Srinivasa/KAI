@@ -243,3 +243,17 @@ def test_ln_line_warns_on_attention_orphans_blind_or_stale(
 def test_ln_line_without_reconcile_state_is_a_warning(tmp_path: Path) -> None:
     line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
     assert line.startswith("⚡ *Lightning:* ⚠️ Reconcile kein Zustand")
+
+
+def test_ln_line_reports_a_foreign_spend_of_the_last_day(tmp_path: Path) -> None:
+    """D-289: eine Node-Ausgabe ohne KAI-Intent steht 24 h mit ⚠️ im Digest."""
+    _reconcile(tmp_path, last_unattributed_at=(NOW - timedelta(hours=3)).isoformat())
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert "⚠️" in line
+    assert "fremde Ausgabe 26.09. 04:30Z (nicht zugeordnet)" in line
+
+
+def test_ln_line_forgets_a_foreign_spend_after_a_day(tmp_path: Path) -> None:
+    _reconcile(tmp_path, last_unattributed_at=(NOW - timedelta(hours=30)).isoformat())
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert "fremde Ausgabe" not in line and "⚠️" not in line

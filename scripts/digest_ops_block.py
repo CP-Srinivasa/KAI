@@ -148,6 +148,10 @@ def collect_ln(artifacts: Path, now: datetime) -> dict[str, Any]:
         "stale": last_run is None
         or (now - last_run).total_seconds() / 60 >= RECONCILE_STALE_AFTER_MIN,
     }
+    # D-289: fremde Node-Ausgabe (ohne KAI-Intent) in den letzten 24 h.
+    foreign = _parse_utc(state.last_unattributed_at)
+    if foreign is not None and (now - foreign).total_seconds() < 86400:
+        out["foreign_spend_at"] = foreign
     scb = artifacts / "scb_baseline.json"
     if scb.is_file():
         baseline = json.loads(scb.read_text(encoding="utf-8"))
@@ -230,13 +234,22 @@ def _ln_line(ln: dict[str, Any]) -> str:
         return f"⚡ *Lightning:* nicht lesbar ({ln['error']})"
     if not ln.get("available"):
         return "⚡ *Lightning:* ⚠️ Reconcile kein Zustand"
-    warn = ln["status"] != "ok" or ln["orphans"] > 0 or ln["complete"] is False or ln["stale"]
+    foreign = ln.get("foreign_spend_at")
+    warn = (
+        ln["status"] != "ok"
+        or ln["orphans"] > 0
+        or ln["complete"] is False
+        or ln["stale"]
+        or foreign is not None
+    )
     parts = [f"{'⚠️ ' if warn else ''}Reconcile {ln['ts']:%H:%MZ} {ln['status']}"]
     if ln["complete"] is False:
         parts[0] += " (blind)"
     if ln["stale"]:
         parts[0] += " (veraltet)"
     parts.append(f"{ln['orphans']} Orphans")
+    if foreign is not None:
+        parts.append(f"fremde Ausgabe {foreign:%d.%m. %H:%MZ} (nicht zugeordnet)")
     if ln.get("scb_sha"):
         since = f" (seit {_day(ln['scb_since'])})" if ln.get("scb_since") else ""
         parts.append(f"SCB {ln['scb_sha']}{since}")
