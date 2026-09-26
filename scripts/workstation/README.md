@@ -17,6 +17,7 @@ pwsh -File scripts/workstation/install_workstation.ps1 -Apply   # installieren (
 | `sync-memory.ps1` | `KAI-mirror\` | Spiegel des Claude-Memory (beide Projektverzeichnisse) |
 | `mirror_backups_offsite.ps1` | `.local\bin\` | Lokale Zweitkopie der Chiffrate auf C: — **nicht** offsite (OneDrive synchronisiert nicht) |
 | `tasks\KAI-Vault-OnAttach.xml` | `KAI-mirror\scripts\tasks\` | Task: Vault-Lauf beim Anstecken der Platte + tägliche Erinnerung |
+| `kai_session_lagebild.py` | `KAI-mirror\scripts\` | SessionStart-Hook des Haupt-Checkouts: Mainline, Checkout-Abstand, offene PRs, aktive Claims (~1,5 s statt 120 s pytest) |
 
 Schlüssel liegen nie hier und nie auf der Platte: `KAI_BACKUP_PASSPHRASE` kommt aus der Pi-`.env` (Rückfall:
 DPAPI-.env-Sicherung), `LN_SECRET_BACKUP_KEY` aus einer DPAPI-Arbeitskopie (`kai_vault.ps1 -StoreLnKey`); beide
