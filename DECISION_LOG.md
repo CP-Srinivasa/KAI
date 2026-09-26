@@ -24,6 +24,15 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-291 (2026-09-26)
+**Entscheidung (Operator 2026-09-26):** Bezahlte L402-Oracle-Abrufe werden **nicht erstattet**, auch nicht nach einem Ausfall (D-288 Befund 5, Truth-Seite).
+- **Nachlieferung statt Erstattung:** Ein L402-Token ist zustandslos und fuer seinen Scope bis zum TTL-Ende (3600 s) wiederverwendbar. Wer bezahlt hat und einen 503 bekommt, wiederholt die Anfrage mit demselben Token und zahlt nicht erneut.
+- **Vorbeugen:** `/onchain-facts`, `/timestamp` (Kapazitaet), `/verdicts/proof` (Hash und Paket) und `/fee-series` (Daten) pruefen die Lieferbarkeit **vor** dem Rechnungs-Mint (#1099). Fuer eine bekannt nicht lieferbare Antwort wird keine Rechnung ausgestellt.
+- **Sichtbarkeit:** Bezahlt, aber nicht geliefert wird als `l402_paid_unavailable` (ohne `access_granted`) protokolliert. Der Digest zeigt das 24 h lang als „⚠️ N× bezahlt, nicht geliefert“. Das ist ein Qualitaetssignal fuer den Betrieb, kein Erstattungsauftrag.
+- **Grenze:** Dauert ein Ausfall laenger als die Rest-TTL, bleibt der bezahlte Abruf ungeliefert. Diesen Rest traegt der Kaeufer.
+- **Offen:** Es gibt noch keine Bedingungsseite fuer Kaeufer, die das sagt. Sie gehoert vor einen oeffentlichen Verkauf.
+**Beleg:** `app/api/routers/truth_oracle.py`, `app/lightning/l402.py` (`_DEFAULT_TTL_S`), `scripts/digest_ops_block.py::_paid_unavailable_24h`.
+
 ### D-290 (2026-09-26)
 **Befund (Abnahme nach Release `a90eb10a`, Operator-Send):** Die exakten msat-Gebuehren (#1034) und die Vorschau mit Node-Probe (#1082/#1090/#1092) sind **live abgenommen**.
 - **Send:** `pi_321b8e95e4a44fa0`, 100 sat an den Pilot-Payee, per `/pay` mit HOTP, `SETTLED` nach 3 s (2026-09-26T14:04:02–05Z).
