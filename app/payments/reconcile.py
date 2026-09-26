@@ -105,7 +105,7 @@ async def run(
     elif not expiry_enabled:
         notes.append("expiry suspended: no comparable monotonic baseline (first run or reboot)")
 
-    checked = await forward(journal, rail, counts=counts, now=now)
+    checked = await forward(journal, rail, counts=counts, now=now, trust_clock=expiry_enabled)
     if expiry_enabled:
         expire(journal, counts=counts, now=now)
     listing, wallet = await backward(journal, rail, counts=counts, now=now, settings=settings)

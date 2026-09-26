@@ -173,6 +173,13 @@ class RailResult(BaseModel):
         return require_aware(value, "observed_at")
 
 
+#: ``RailLookup.failure_reason``, wenn der Node ausdruecklich sagt, dass er zu diesem
+#: Schluessel NIE eine Zahlung angelegt hat (lnd: "payment isn't initiated"). Die
+#: Aussage ist ``found=False`` + ``FAILED``; terminal wird sie erst im Reconcile nach
+#: Ablauf des Intents (D-293).
+PAYMENT_NOT_INITIATED = "PAYMENT_NOT_INITIATED"
+
+
 class RailLookup(BaseModel):
     """Was der Rail SPAETER ueber einen Send sagt (Reconciliation, ADR §8)."""
 
@@ -284,6 +291,7 @@ class RailError(RuntimeError):
 __all__ = [
     "MAX_MEMO_LENGTH",
     "MEMO_PREFIX",
+    "PAYMENT_NOT_INITIATED",
     "CaptureModel",
     "DecodedDestination",
     "DedupGuarantee",

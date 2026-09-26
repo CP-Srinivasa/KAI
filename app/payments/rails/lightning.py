@@ -33,6 +33,7 @@ from app.lightning.client import RouteProbeFailedError
 from app.payments.enums import RailOutcome, SettlementFinality
 from app.payments.models import Invoice, PaymentAttempt, PaymentIntent, Quote
 from app.payments.rail import (
+    PAYMENT_NOT_INITIATED,
     DecodedDestination,
     DedupGuarantee,
     InvoiceRequest,
@@ -271,9 +272,22 @@ class LightningRail:
             )
         except Exception:  # noqa: BLE001 - kein Node-Kontakt heisst nicht "nichts da"
             return unknown
-        if not scan.rows:
+        if scan.rows:
+            return lookup_from_payment(scan.rows[0], rail=self.name, moment=moment)
+        # Nicht in der Liste ist noch keine Aussage (Seite verfehlt, Node stumm).
+        # lnd direkt fragen: nur sein ausdrueckliches "payment isn't initiated"
+        # zaehlt — etwa wenn litd den Send vor dem Router abgewiesen hat (D-293).
+        if not wanted:
             return unknown
-        return lookup_from_payment(scan.rows[0], rail=self.name, moment=moment)
+        try:
+            initiated = await self._client("read").payment_initiated(wanted)
+        except Exception:  # noqa: BLE001 - keine Antwort ist keine Aussage
+            return unknown
+        if initiated:
+            return unknown
+        return unknown.model_copy(
+            update={"outcome": RailOutcome.FAILED, "failure_reason": PAYMENT_NOT_INITIATED}
+        )
 
     async def list_payments(self, since: datetime) -> RailPaymentList:
         """Alle erfolgreichen Sends, die lnd kennt (ADR §8, Rueckwaerts-Richtung).

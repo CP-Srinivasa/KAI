@@ -49,6 +49,12 @@ _NO_FAILURE = {"", "0", "NONE", "FAILURE_REASON_NONE"}
 ESTIMATE_ROUTE_FEE_PATH = "/v2/router/route/estimatefee"
 ESTIMATE_ROUTE_FEE_TIMEOUT_SECONDS = 15
 
+# routerrpc.TrackPaymentV2 (``GET /v2/router/track/{hash}``, Hash base64url). Fuer einen
+# Hash, zu dem lnd nie eine Zahlung angelegt hat, antwortet lnd mit gRPC NOT_FOUND
+# (5) "payment isn't initiated" — z. B. wenn litd den Send vor dem Router abweist.
+TRACK_PAYMENT_PATH = "/v2/router/track"
+_GRPC_NOT_FOUND = 5
+
 
 def _int_field(raw: Any) -> int:
     try:
@@ -89,6 +95,15 @@ def _normalise_payment(result: dict[str, Any]) -> dict[str, Any]:
     if fee_msat is not None:
         normalized["fee_msat"] = fee_msat
     return normalized
+
+
+def _is_not_initiated(message: dict[str, Any]) -> bool:
+    """lnds eindeutiges "zu diesem Hash gibt es keine Zahlung" — Code UND Text muessen passen."""
+    error = message.get("error")
+    if not isinstance(error, dict):
+        return False
+    text = str(error.get("message") or "").lower()
+    return error.get("code") == _GRPC_NOT_FOUND and "isn't initiated" in text
 
 
 def _stream_error_text(message: dict[str, Any]) -> str:
@@ -547,6 +562,47 @@ class LndRestClient:
         if fee_msat is None:
             raise ValueError("estimatefee response without routing_fee_msat")
         return -(-fee_msat // 1000)
+
+    async def payment_initiated(self, payment_hash_hex: str) -> bool:
+        """Hat lnd zu diesem Hash je eine Zahlung angelegt? (``TrackPaymentV2``, nur lesend)
+
+        ``False`` NUR bei lnds eindeutiger Antwort "payment isn't initiated"
+        (gRPC NOT_FOUND; am 26.09.2026 live gegen einen erfolgreichen Hash
+        gegengeprueft, der ``result`` liefert). ``True`` bei jedem ``result``.
+        Gelesen wird nur die erste Stream-Zeile; alles andere ist keine Aussage
+        und wirft :class:`LightningUnavailableError`.
+        """
+        raw = bytes.fromhex(payment_hash_hex)
+        if len(raw) != 32:
+            raise ValueError("payment hash must be 32 bytes")
+        path = f"{TRACK_PAYMENT_PATH}/{base64.urlsafe_b64encode(raw).decode('ascii')}"
+        client_kwargs: dict[str, Any] = {"timeout": self._timeout}
+        if self._transport is not None:
+            client_kwargs["transport"] = self._transport
+        else:
+            client_kwargs["verify"] = self._verify
+        try:
+            async with (
+                httpx.AsyncClient(**client_kwargs) as client,
+                client.stream("GET", f"{self._base_url}{path}", headers=self._headers) as resp,
+            ):
+                async for line in resp.aiter_lines():
+                    try:
+                        message = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(message, dict):
+                        break
+                    if isinstance(message.get("result"), dict):
+                        return True
+                    if _is_not_initiated(message):
+                        return False
+                    break
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(
+                f"lnd request failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        raise LightningUnavailableError(f"lnd track for {TRACK_PAYMENT_PATH} gave no statement")
 
     async def _post_stream(
         self, path: str, body: dict[str, Any], *, timeout: float

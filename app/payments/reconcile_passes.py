@@ -18,7 +18,13 @@ from app.core.payment_settings import PaymentSettings
 from app.payments.enums import PaymentStatus, RailOutcome
 from app.payments.journal import PaymentJournal
 from app.payments.journal_index import Receivable
-from app.payments.rail import PaymentRail, RailError, RailLookup, RailPaymentList
+from app.payments.rail import (
+    PAYMENT_NOT_INITIATED,
+    PaymentRail,
+    RailError,
+    RailLookup,
+    RailPaymentList,
+)
 from app.payments.receivables import settle_receivable
 from app.payments.status import RailEvidence, TransitionEvidence, transition
 
@@ -55,9 +61,18 @@ RETRYABLE_FAILURES: frozenset[str] = frozenset(
 
 
 async def forward(
-    journal: PaymentJournal, rail: PaymentRail, *, counts: dict[str, int], now: datetime
+    journal: PaymentJournal,
+    rail: PaymentRail,
+    *,
+    counts: dict[str, int],
+    now: datetime,
+    trust_clock: bool = False,
 ) -> int:
-    """Jeden offenen Send gegen den Node halten (ADR §8)."""
+    """Jeden offenen Send gegen den Node halten (ADR §8).
+
+    ``trust_clock`` kommt aus derselben Uhr-Pruefung wie die Ablaeufe: nur mit
+    vertrauenswuerdiger Uhr darf "der Intent ist abgelaufen" ein Argument sein.
+    """
     checked = 0
     for intent_id in sorted(journal.index.open_intents()):
         current = status_of(journal, intent_id)
@@ -71,7 +86,9 @@ async def forward(
             lookup = await rail.lookup(key)
         except RailError:
             continue
-        target = _target_for(lookup, current=current)
+        expires_at = journal.index.expires_at(intent_id)
+        expired = trust_clock and expires_at is not None and expires_at <= now.timestamp()
+        target = _target_for(lookup, current=current, expired=expired)
         if target is None or target is current:
             _bump(counts, "UNCHANGED")
             continue
@@ -80,14 +97,26 @@ async def forward(
     return checked
 
 
-def _target_for(lookup: RailLookup, *, current: PaymentStatus) -> PaymentStatus | None:
+def _target_for(
+    lookup: RailLookup, *, current: PaymentStatus, expired: bool = False
+) -> PaymentStatus | None:
     """Node-Aussage -> Zielzustand, oder ``None`` fuer "keine Aussage".
 
     ``found=False`` ist ausdruecklich KEINE Aussage: die Zahlung kann in einer
     Seite liegen, die der Scan nicht erreicht hat, oder der Node war stumm.
+    Einzige Ausnahme (D-293): der Node sagt ausdruecklich, er habe zu diesem
+    Hash NIE eine Zahlung angelegt, der Intent steckt in der Klaerung UND ist
+    abgelaufen. Nach dem Ablauf sendet KAI ihn nie mehr — "nie gestartet"
+    kann sich also nicht mehr aendern und ist ``FAILED_FINAL``.
     """
     if not lookup.found:
-        return _stay_in_clearing(current)
+        never_started = (
+            lookup.outcome is RailOutcome.FAILED
+            and lookup.failure_reason == PAYMENT_NOT_INITIATED
+            and current is S.RECONCILIATION_REQUIRED
+            and expired
+        )
+        return S.FAILED_FINAL if never_started else _stay_in_clearing(current)
     if lookup.outcome is RailOutcome.SETTLED:
         return S.SETTLED
     if lookup.outcome is RailOutcome.FAILED:

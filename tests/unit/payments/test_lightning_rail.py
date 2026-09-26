@@ -22,7 +22,7 @@ from app.core.payment_settings import PaymentSettings
 from app.lightning.client import RouteProbeFailedError
 from app.payments.enums import PaymentMode, RailOutcome
 from app.payments.models import Money, PaymentAttempt, PaymentIntent
-from app.payments.rail import InvoiceRequest, RailError
+from app.payments.rail import PAYMENT_NOT_INITIATED, InvoiceRequest, RailError
 from app.payments.rails.lightning import LightningRail
 
 from .rail_contract import RailContractTests
@@ -126,6 +126,13 @@ class FakeClient:
         if response is not None:
             return dict(response)
         return {"status": "SUCCEEDED", "payment_preimage": PREIMAGE_HASH, "fee_sat": 3}
+
+    async def payment_initiated(self, payment_hash_hex: str) -> bool:
+        self.calls.append(("payment_initiated", {"payment_hash": payment_hash_hex}))
+        initiated = self.behaviour.get("initiated", True)
+        if isinstance(initiated, Exception):
+            raise initiated
+        return bool(initiated)
 
     async def list_payments(self, **kwargs: Any) -> Any:
         self.calls.append(("list_payments", kwargs))
@@ -534,6 +541,31 @@ async def test_lookup_of_an_absent_payment_is_unknown_not_failed() -> None:
     lookup = await a_rail(client).lookup(PAYMENT_HASH)
     assert lookup.found is False
     assert lookup.outcome is RailOutcome.UNKNOWN
+
+
+async def test_lookup_uses_lnds_never_initiated_as_a_statement() -> None:
+    """D-293: litd weist den Send vor dem Router ab — lnd kennt den Hash nie."""
+    client = FakeClient(payments=[], initiated=False)
+    lookup = await a_rail(client).lookup(PAYMENT_HASH)
+    assert lookup.found is False
+    assert lookup.outcome is RailOutcome.FAILED
+    assert lookup.failure_reason == PAYMENT_NOT_INITIATED
+    assert ("payment_initiated", {"payment_hash": PAYMENT_HASH}) in client.calls
+
+
+async def test_lookup_asks_track_only_when_the_scan_finds_nothing() -> None:
+    client = FakeClient(payments=[FakeLndPayment(PAYMENT_HASH, "SUCCEEDED")], initiated=False)
+    lookup = await a_rail(client).lookup(PAYMENT_HASH)
+    assert lookup.outcome is RailOutcome.SETTLED
+    assert not [c for c in client.calls if c[0] == "payment_initiated"]
+
+
+@pytest.mark.parametrize("initiated", [True, TimeoutError("slow")])
+async def test_lookup_without_a_never_initiated_statement_stays_unknown(initiated: object) -> None:
+    lookup = await a_rail(FakeClient(payments=[], initiated=initiated)).lookup(PAYMENT_HASH)
+    assert lookup.found is False
+    assert lookup.outcome is RailOutcome.UNKNOWN
+    assert lookup.failure_reason == ""
 
 
 async def test_lookup_survives_a_node_error_as_unknown() -> None:

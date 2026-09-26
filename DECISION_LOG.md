@@ -24,6 +24,26 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-293 (2026-09-26)
+**Befund und Entscheidung (Umsetzung Runbook `ln_kai_account_budget.md`, Operator-Freigabe „gib gas“):** KAIs Sendeschlüssel ist jetzt ein **litd-Account mit 5 000 sat Budget, das der Node durchsetzt**. Alle Abnahmen A1–A6 sind live bestanden.
+- **Installation:** LiT 0.14.1-alpha über `bonus.lit.sh`, SHA256 und GPG geprüft.
+  - Das Skript hat lnd **bedingungslos neu gestartet**. Der Node hat keinen Auto-Unlock, deshalb war die Wallet von etwa 18:41 bis 18:47Z gesperrt, bis der Operator mit Passwort C entsperrt hat. In dieser Zeit war kein Geld unterwegs, KAI zeigte korrekt `degraded`/`wallet_locked`.
+  - Danach zurückgenommen: `httpslisten=127.0.0.1:8443`, ufw 8443 gelöscht, Tor-Onion für lit entfernt.
+- **A3 (K.-o.):** Solange litd läuft, zeigt der Test-Account 1 sat virtuell. Ist litd gestoppt, lehnt lnd ab: „cannot accept macaroon with custom caveat 'account', no middleware registered“. Das Verhalten ist **fail-closed**.
+- **Account und Umstellung:**
+  - Account `kai` (`5c5dce181fedebaa`) mit 5 000 sat. Die Pi-`.env` zeigt mit `APP_LN_PAYMENT_MACAROON_PATH` auf `kai-account.macaroon`.
+  - **A1:** Preflight GO.
+  - **A2:** 100 sat SETTLED um 19:17Z, `fee_actual_msat` 1450. Der Account zieht Betrag plus Gebühr msat-genau ab.
+- **A4:** Mit dem Budget auf 50 sat (`kai-ln-budget 50`, 19:19:31Z) wird ein Send über 105 sat 43 ms nach der Übergabe abgewiesen. **lnd hat keinen Zahlungsversuch angelegt**, das Limit sitzt also im Node.
+- **A6:** Mit `kai-ln-budget 5000` (19:21:47Z) geht der nächste Send über 120 sat durch, SETTLED um 19:27:27Z mit 1540 msat. Der Account zeigt 4 878 sat Rest und 2 Zahlungen. Die Pi erreicht litd nicht und kann das Budget nicht ändern.
+- **A5:** Reconcile `ok`, `complete`, keine fremde Ausgabe.
+- **Neuer Befund und Fix in diesem PR:** Die A4-Abweisung kam als Fehler vor dem Router. KAI setzt einen Send ohne Antwort korrekt auf `RECONCILIATION_REQUIRED`. Weil lnd diese Zahlung aber **nie kannte**, hätte „nicht in der Liste“ den Intent **für immer** in der Klärung gehalten, und der Drain-Check wäre dauerhaft blockiert gewesen (`pi_60f59dce…`).
+  - `LightningRail.lookup` fragt jetzt nach einem leeren Scan per `TrackPaymentV2` nach. Nur lnds ausdrückliches „payment isn't initiated“ (gRPC 5) wird zu `found=False` + `FAILED` + `PAYMENT_NOT_INITIATED`.
+  - Der Reconcile macht daraus `FAILED_FINAL` **nur**, wenn der Intent in der Klärung steckt **und** mit vertrauenswürdiger Uhr **abgelaufen** ist. Nach dem Ablauf sendet KAI ihn nie mehr, „nie gestartet“ ist dann endgültig.
+  - Der Endpunkt ist am 26.09. live gegen einen erfolgreichen Hash gegengeprüft (200 `SUCCEEDED`) und gegen den hängenden Hash (404 „isn't initiated“).
+**Limit:** Der alte `kai-payment.macaroon` hat `root_key_id 0` und ist nicht gezielt entwertbar. Er wird gelöscht (Schritt 7); der Neuaufbau aller Macaroons ist ein eigenes Vorhaben. Eigenzahlungen belegen keine Nachfrage.
+**Beleg:** Pi `payment_journal.jsonl` seq 126–145, `%USERPROFILE%\.kai\logs\ln_budget.log`, litd.log `ACNT` (create/update), lnd `listpayments` (kein Versuch um 19:21), Runbook §10.
+
 ### D-292 (2026-09-26)
 **Befund (Abnahme nach Release `27c6a312`, Operator-Zahlung):** Der Kaufweg des Beweispakets (D-288 Befund 4, #1098) ist **oeffentlich und bezahlt live abgenommen**, einschliesslich unabhaengiger Bitcoin-Pruefung.
 - **Release `27c6a312`:** DEPLOY_VERIFIED 17:18Z, der Operator hat den Deploy selbst gestartet. Zielbaum 12 305 passed. Enthalten sind #1097–#1102. Rollback-Punkt `a90eb10a`.

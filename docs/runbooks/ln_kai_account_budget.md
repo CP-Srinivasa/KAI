@@ -1,6 +1,6 @@
 # Node-seitiges Budget für KAIs Sendeschlüssel (litd-Account)
 
-> **Status: IN UMSETZUNG (26.09.2026 abends).** Erledigt: Schritte 0–5, A1 und A3 bestanden (§10). Offen sind A2/A4/A6 (zwei Test-Sends mit HOTP) und Schritt 7. Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
+> **Status: LIVE (26.09.2026, D-293).** Die Schritte 0–6 sind erledigt, A1–A6 bestanden (§10). Offen ist Schritt 7 (alten Macaroon löschen). Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
 
 ## 1. Warum
 
@@ -184,3 +184,7 @@ sudo systemctl restart kai-server
 - **A6 (Pi-Seite):** Die Pi erreicht litd nicht, hat kein `litcli` und keinen lit-Macaroon, kann das Budget also nicht ändern.
 - **`kai-ln-budget`:** `scripts/workstation/kai-ln-budget.ps1` samt Starter `.cmd` im PATH. `kai-ln-budget show` liest den Stand korrekt.
 - **Lehre:** Ein Installationsskript ist **komplett** zu lesen, nicht nur per `grep | head`. Vor jedem lnd-Neustart ist zu klären, ob Passwort C greifbar ist, weil es keinen Auto-Unlock gibt.
+- **A2 bestanden:** 100 sat, SETTLED um 19:17Z mit `fee_actual_msat` 1450. Der Account zieht 101,45 sat ab (msat-genau).
+- **A4 bestanden:** Das Budget steht auf 50 sat, ein Send über 105 sat wird 43 ms nach der Übergabe abgewiesen. lnd hat keinen Zahlungsversuch angelegt, der Node setzt das Limit also durch.
+  - Nebenbefund: KAI hing den Intent in `RECONCILIATION_REQUIRED` auf, und ohne Fix wäre er dort für immer geblieben. Der Fix mit `TrackPaymentV2` „isn't initiated“ nach Ablauf steht in D-293.
+- **A6 bestanden:** Nach `kai-ln-budget 5000` ist der Send über 120 sat um 19:27Z SETTLED. Der Account zeigt 4 878 sat Rest, `ln_budget.log` enthält beide Änderungen.
