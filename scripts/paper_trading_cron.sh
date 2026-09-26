@@ -9,7 +9,8 @@
 # Usage (manual):   bash scripts/paper_trading_cron.sh
 # Systemd:          ExecStart=/home/kai/ai_analyst_trading_bot/scripts/paper_trading_cron.sh
 #
-# Log: artifacts/paper_trading_cron.log (append-only, UTF-8).
+# Log: artifacts/paper_trading_cron.log (append-only, UTF-8; ab PAPER_CRON_LOG_MAX_BYTES
+#      zu .log.1 verschoben, eine Generation — siehe rotate_log_if_large).
 
 set -uo pipefail  # no -e: single CLI failures must not abort the whole tick
 
@@ -30,6 +31,20 @@ write_log() {
     local ts
     ts=$(date +'%Y-%m-%d %H:%M:%S')
     printf '%s  %s\n' "$ts" "$1" >> "$LOG_FILE"
+}
+
+# Das Log liegt unter artifacts/, nicht unter logs/ — logrotate (deploy/logrotate/kai)
+# erfasst es nicht. Am 26.09.2026 waren es 29 MB seit dem 01.05. Einmal je Tick:
+# ueber der Grenze wird es zu .log.1 (die vorige .1 entfaellt). Leser suchen nur den
+# letzten "cron start" (CLI status) bzw. das Dateialter (Operator-API) — beides
+# bleibt gueltig, weil gleich danach die Startzeile geschrieben wird.
+rotate_log_if_large() {
+    local max="${PAPER_CRON_LOG_MAX_BYTES:-20971520}" size
+    [[ -f "$LOG_FILE" ]] || return 0
+    size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
+    if (( size > max )); then
+        mv -f "$LOG_FILE" "$LOG_FILE.1"
+    fi
 }
 
 # Canary profiles are explicit paper-only cron probes. Missing operator
@@ -134,6 +149,7 @@ entry_watch() {
 
 # --- main -------------------------------------------------------------------
 
+rotate_log_if_large
 write_log "--- cron start ---"
 write_log "profile  requested=$CRON_PROFILE_REQUEST  active=$CRON_ANALYSIS_PROFILE  mode=paper  safety=$CRON_PROFILE_SAFETY"
 

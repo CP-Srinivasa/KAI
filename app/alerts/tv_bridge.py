@@ -62,6 +62,25 @@ _TV_SOURCE: str = "tradingview_webhook"
 # waits for the next tick. Default 500 is ~3x the expected daily peak.
 _DEFAULT_MAX_EVENTS_PER_TICK: int = 500
 
+# Die Pending-Datei wird nie abgeraeumt (V10, Modulkopf), der Scheduler liest sie
+# je Takt ganz. Ein uebersprungenes Ereignis stand deshalb bei JEDEM Takt erneut im
+# Log: am 26.09.2026 316 651 Zeilen fuer 1 408 Ereignisse im server.log (~60-70 MB
+# pro Tag). Jetzt einmal je Ereignis und Prozess; die Zaehler zaehlen weiter jeden
+# Takt. Obergrenze, damit ein wachsender Bestand den Speicher nicht mitwachsen laesst.
+_SKIPS_LOGGED: set[tuple[str, str]] = set()
+_SKIPS_LOGGED_MAX: int = 100_000
+
+
+def _log_skip_once(event_name: str, event_id: str, **fields: object) -> None:
+    key = (event_name, event_id)
+    if key in _SKIPS_LOGGED:
+        return
+    if len(_SKIPS_LOGGED) >= _SKIPS_LOGGED_MAX:
+        _SKIPS_LOGGED.clear()
+    _SKIPS_LOGGED.add(key)
+    log.info(event_name, event_id=event_id, **fields)
+
+
 # SENTR-F-006: log-hygiene — strip newlines/CR/tabs (log-injection guard)
 # and cap length so an attacker-controlled `note` can't forge fake log
 # lines or blow up line-based log shippers.
@@ -271,10 +290,8 @@ def persist_tv_events_as_alert_audits(
 
         if not include_smoke and _is_smoke_event(event.get("note")):
             counts["skipped_smoke"] += 1
-            log.info(
-                "tv_bridge.skip_smoke",
-                event_id=event_id,
-                note=_sanitize_for_log(event.get("note")),
+            _log_skip_once(
+                "tv_bridge.skip_smoke", event_id, note=_sanitize_for_log(event.get("note"))
             )
             continue
 
@@ -299,18 +316,18 @@ def persist_tv_events_as_alert_audits(
 
         split = _split_ticker(ticker)
         if split is None:
-            log.info("tv_bridge.skip_unsupported_quote", ticker=ticker, event_id=event_id)
+            _log_skip_once("tv_bridge.skip_unsupported_quote", event_id, ticker=ticker)
             counts["skipped_unsupported"] += 1
             continue
         base, quote = split
         if base not in _BASE_ASSET_TO_COINGECKO:
-            log.info("tv_bridge.skip_unsupported_base", base=base, event_id=event_id)
+            _log_skip_once("tv_bridge.skip_unsupported_base", event_id, base=base)
             counts["skipped_unsupported"] += 1
             continue
 
         sentiment = _ACTION_TO_SENTIMENT.get(action)
         if sentiment is None:
-            log.info("tv_bridge.skip_invalid_action", action=action, event_id=event_id)
+            _log_skip_once("tv_bridge.skip_invalid_action", event_id, action=action)
             counts["skipped_invalid"] += 1
             continue
 

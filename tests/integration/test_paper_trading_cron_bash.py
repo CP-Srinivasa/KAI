@@ -163,8 +163,9 @@ def _run_cron(bash: str, sandbox: Path, env: dict[str, str]) -> subprocess.Compl
             "HOME": env["HOME"],
             "PATH": env["PATH"],
         }
-        if "PAPER_CRON_PROFILE" in env:
-            inline_env["PAPER_CRON_PROFILE"] = env["PAPER_CRON_PROFILE"]
+        for optional in ("PAPER_CRON_PROFILE", "PAPER_CRON_LOG_MAX_BYTES"):
+            if optional in env:
+                inline_env[optional] = env[optional]
         command = " ".join(f"{key}={shlex.quote(value)}" for key, value in inline_env.items())
         command = f"{command} {shlex.quote(script)}"
         return subprocess.run(
@@ -349,3 +350,31 @@ def test_cron_profile_routing_never_enables_live_exchange_or_withdrawal_paths(
     assert "binance" not in captured
     assert "bybit" not in captured
     assert "withdraw" not in captured
+
+
+def test_oversized_log_moves_to_one_generation_before_the_tick(tmp_path: Path) -> None:
+    """artifacts/ liegt ausserhalb von logrotate: am 26.09.2026 29 MB seit dem 01.05."""
+    bash = _require_bash()
+    sandbox = _stage_sandbox(tmp_path)
+    stub = _write_python_stub(sandbox)
+    log_path = sandbox / "artifacts" / "paper_trading_cron.log"
+    old_tail = "2026-05-01 09:54:44  --- cron start ---\n" + "x" * 500 + "\n"
+    log_path.write_text(old_tail, encoding="utf-8", newline="\n")
+    (sandbox / "artifacts" / "paper_trading_cron.log.1").write_text(
+        "vorletzte\n", encoding="utf-8", newline="\n"
+    )
+
+    env = {**_cron_env(sandbox, stub), "PAPER_CRON_LOG_MAX_BYTES": "100"}
+    assert _run_cron(bash, sandbox, env).returncode == 0
+
+    rotated = sandbox / "artifacts" / "paper_trading_cron.log.1"
+    assert rotated.read_bytes() == old_tail.encode("utf-8"), "alte Datei 1:1 nach .1"
+    fresh = log_path.read_text(encoding="utf-8")
+    assert fresh.splitlines()[0].endswith("--- cron start ---"), "neue Datei beginnt mit dem Tick"
+    assert "x" * 500 not in fresh
+
+    # Unter der Grenze passiert nichts.
+    below = {**env, "PAPER_CRON_LOG_MAX_BYTES": "10000000"}
+    assert _run_cron(bash, sandbox, below).returncode == 0
+    assert rotated.read_bytes() == old_tail.encode("utf-8")
+    assert log_path.read_text(encoding="utf-8").count("--- cron start ---") == 2

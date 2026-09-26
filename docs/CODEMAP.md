@@ -36,7 +36,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 
 ### Edge / Shadow / Resolver
 - `app/observability/shadow_candidate_ledger.py` → `build_shadow_report`, `_median`/`_split` (median-only, `fwd_*_bps`)
-- `app/observability/shadow_resolver.py` → `resolve_with_binance` (Kline-Forward-Returns)
+- `app/observability/shadow_resolver.py` → `resolve_with_binance` (Kline-Forward-Returns) — fragt nur Paare ab, die Binance fuehrt (`known_pairs_only`, auch fuer `scripts/counterfactual_replay.py`)
 - `app/observability/edge_report.py` → Cohort-Edge + `_median`/`_winsorized_mean` (`WINSOR_LIMIT_BPS=500`, Median-GO-Gate)
 - `app/observability/generator_edge_collector.py` → `collect_edge_inputs_from_resolved` (IC/Brier-Paare) · `generator_edge.py`
 - **Edge-Discovery-Engine** (systematische Hypothesen-Suche auf eigenem OHLCV, NICHT live-Shadow): `app/research/{runner,evaluate,samples,stats,multiple_testing,ledger}.py` (Benjamini-Hochberg-FDR + Survival-Gates) ← `app/analysis/features/{feature_matrix,forward_returns}.py` (kausale Features + Forward-Label, No-Lookahead) ← `app/market_data/{history_loader,kline_windows}.py` (paginierter Backfill). Lauf: `python -m app.research.runner` → `artifacts/research/edge_search_*.json`; **Hypothesen-Ledger** (kumulativ, nie blind re-testen) → `artifacts/research/hypothesis_ledger.jsonl` (`ledger.hypothesis_key` = datenfenster-agnostische Config-ID). ⚠ Features kausal ≤i, Label vorwärts i+h — nie vermischen.
