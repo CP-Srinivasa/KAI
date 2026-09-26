@@ -36,7 +36,6 @@ from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_r
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
 from app.alerts.process_runtime_probe import deferred_unit_finding, process_runtime_finding
-from app.alerts.timer_schedule_probe import unscheduled_timer_finding
 from app.alerts.youtube_transcript_coverage import (
     COVERAGE_WINDOW_HOURS,
     TRANSCRIPT_MIN_CHARS,
@@ -498,6 +497,10 @@ def _check_pay_requests(adir: Path) -> list[HealthIssue]:
     return _hcpay.check_pay_requests(adir)  # Waechter-Def hier: Stream-Vertrag G4
 
 
+def _check_host(repo_root: Path, report: HealthReport) -> list[HealthIssue]:
+    return _hch.check(repo_root, report)  # Waechter-Def hier: offpi_receipts + Host-Hygiene
+
+
 def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
     """Append-able hint about paper_execution_audit staleness (V5 secondary signal).
 
@@ -733,21 +736,6 @@ def _check_runtime_identity(adir: Path, now: datetime, *, runs_on_pi: bool) -> l
         HealthIssue(severity=f.severity, component="runtime_identity", message=f.message)
         for f in evaluate_runtime_drift(report, checkout_stable_for_s=stable)
     ]
-
-
-def _check_timer_scheduleability(*, runs_on_pi: bool) -> list[HealthIssue]:
-    """Wiederkehrende Timer, die laufen und trotzdem keinen Termin haben.
-
-    Einsammeln und Bestaetigen stehen in ``timer_schedule_probe`` (V4,
-    2026-09-16: eine einzelne Momentaufnahme meldete zwei feuernde Timer als
-    tot). Fail-soft: laesst sich systemd nicht befragen, gibt es KEINEN Befund.
-    """
-    if not runs_on_pi:
-        return []
-    finding = unscheduled_timer_finding()
-    if finding is None:
-        return []
-    return [HealthIssue(severity="critical", component="timer_scheduleability", message=finding)]
 
 
 def _check_rejected_closes(adir: Path, now: datetime, *, lookback_hours: int) -> list[HealthIssue]:
@@ -1419,10 +1407,9 @@ def run_health_check_report(
     report.issues.extend(_check_rejected_closes(adir, now, lookback_hours=lookback_hours))
     report.issues.extend(_check_sudo_policy(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_privilege_broker(runs_on_pi=report.runs_on_pi))
-    report.issues.extend(_check_timer_scheduleability(runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_runtime_identity(adir, now, runs_on_pi=report.runs_on_pi))
     report.issues.extend(_check_alert_delivery(adir, now) + _check_prereg_reconciliation(adir))
-    report.issues.extend(_check_runtime_provenance(adir.parent) + _hch.check(adir.parent, report))
+    report.issues.extend(_check_runtime_provenance(adir.parent) + _check_host(adir.parent, report))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

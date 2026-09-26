@@ -103,6 +103,11 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     "sudo_policy": AlertClass.P1,
     "runtime_identity": AlertClass.P1,
     "timer_scheduleability": AlertClass.P1,
+    # Host-Hygiene (MindBlow E10, app/alerts/health_check_host.py): ein Pi-Checkout
+    # mit getrackten Aenderungen oder untracked Dateien, die der Upstream
+    # versioniert, laesst Timer auf unbelegtem Code laufen und bricht den naechsten
+    # Release-Fast-Forward ab (Befund N1, 25.09.2026). Drift, still bis zum Release.
+    "checkout_hygiene": AlertClass.P1,
     "document_ingest": AlertClass.P1,
     "youtube_transcript_coverage": AlertClass.P1,
     # Derselbe Messwert, andere Herkunft: die Transkript-Sperre liegt beim
@@ -152,6 +157,16 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # gemeldet wurde RUNTIME_CODE_DRIFT = 0).
     "process_runtime_marker": AlertClass.P0,
     "prereg_ledger_presence": AlertClass.P2,
+    # Host-Hygiene (MindBlow U-2): seit 50-kai.conf startet needrestart kai-* nicht
+    # mehr selbst neu. Ein installiertes, aber nach 7 Tagen noch nicht aktives Update
+    # ist richtig zu melden, aber nicht dringend — das Wartungsfenster erledigt es.
+    "reboot_pending": AlertClass.P2,
+    "stale_libraries": AlertClass.P2,
+    # Offsite-Beleg (MindBlow E3): die D:-Vault-Generation ist aelter als 8 Tage oder
+    # nicht belegt. Kein Backup-Ausfall (P0) — die verschluesselten Pi-Tagesarchive
+    # und die Laptop-Pulls laufen weiter —, sondern die Erinnerung, die Platte
+    # anzustecken. Taeglich in der Sammelmeldung genuegt.
+    "offpi_backup": AlertClass.P2,
     # --- P3: Hinweis -----------------------------------------------------
     # Sagt, WO die Sonde lief — eine Eigenschaft der Messung, kein Systemzustand.
     "probe_location": AlertClass.P3,
