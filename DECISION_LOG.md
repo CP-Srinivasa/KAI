@@ -24,6 +24,22 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-287 (2026-09-26)
+**Befund (Node-Forensik, nur lesend, Operator-Auftrag):** Die Force-Close-Altlasten sind **vollstaendig geborgen**, bewiesen am Zustand der Bitcoin-Blockchain. Es fehlt kein Satoshi. Details stehen in [docs/evidence/ln_node_forensics_20260926.md](docs/evidence/ln_node_forensics_20260926.md).
+- **Limbo `cf5fe058…:0` (25 815 sat):** Die Closing-Tx `58ae2f35…` liegt auf Hoehe 862 481, ihr `vout 0` hat genau 25 815 sat (P2WKH to_remote). Der Sweep `2fd51c3d…` auf Hoehe 953 849 fasst ihn mit dem REMOTE_FORCE_CLOSE `94f9…:1` (820 634 sat) zusammen und zahlt 845 499 sat an eine eigene Adresse, 950 sat Gebuehr. Damit ist die Hypothese aus D-286 (c) bewiesen.
+- **Drei LOCAL_FORCE_CLOSEs auf Hoehe 953 902 (neu):** lnd fuehrt sie mit `settled 0` und `UNCLAIMED`. Tatsaechlich hat der Sweep `e7618e85…` auf Hoehe 954 067 alle drei `to_local`-Outputs ueber den CSV-Zweig eingesammelt: 307 353 sat Eingang, 305 886 sat an eine eigene Adresse.
+- **Ursache der Buchungsreste:** Die Sweeps liefen ausserhalb des lnd-Resolvers (externes Recovery-Werkzeug), deshalb ist in lnd nichts aufgeloest. KAI zaehlt Limbo nie als verfuegbares Kapital (`app/lightning/treasury.py`).
+- **15-Minuten-Minter laeuft weiter:** Alle 15 min entsteht ein offenes 1-sat-Invoice `kai-pay: KAI receive`, keines ist bezahlt. KAI ist nicht die Quelle. LNbits auf dem Node ist aktiv und die wahrscheinliche Quelle. Der Befund entspricht A12-063–065 aus dem Master-Audit vom 27.08.
+- **`LN_SECRET_BACKUP_KEY` fehlt auf dem Laptop:** Er existiert laut Operator-Policy vom 27.08. in KeePass (42 Zeichen), ist aber weder als Umgebungsvariable noch als DPAPI-Kopie hinterlegt. Folge: Das Vault-Backup von `~/kai-secrets` (HOTP-Seed, Macaroons) bleibt PARTIAL. Geld ist dadurch nicht gefaehrdet, beides laesst sich neu erzeugen.
+
+**Entscheidung/Limit:**
+- **Kein Aufraeumen in lnd** (`abandonchannel`) ohne eigenen Operator-Entscheid. Der Eingriff ist irreversibel, rein kosmetisch und bringt keinen Satoshi zurueck.
+- Den Minter schaltet der Operator in LNbits ab, falls er nicht gewollt ist. KAI fasst LNbits nicht an.
+- Die Luecke bei `LN_SECRET_BACKUP_KEY` behebt der Operator mit `kai_vault.ps1 -StoreLnKey`.
+- Strang A (D-277/D-286) bleibt unveraendert.
+
+**Beleg:** `lncli pendingchannels`/`closedchannels`/`listchaintxns`/`listinvoices`, `bitcoin-cli getblock`/`getrawtransaction <blockhash>`/`decoderawtransaction` vom 2026-09-26; `KAI-mirror/node_pinning.json` (`ln_secret_backup_key_policy`); Vault-Generation `D:\KAI-VAULT\gen\2026-09-25T08-01-43Z`.
+
 ### D-286 (2026-09-25)
 **Befund (Pilotabschluss D-281, T0+72h = 2026-09-25T09:04:09Z):** Verdikt **PASS (technisch)** fuer KAI PAY Self-Use mit genau einem externen Payee. Journal, Node und Reconcile stimmen im ganzen Fenster ueberein, gelesen um 09:04:14Z.
 - **Sends im Fenster:** Drei Zahlungen, alle `SETTLED`: 10 sat (`pi_7e520e56931c4d75`, settled zu T0), 40 sat (`pi_fc3d0a4c234a43b4`) und 100 sat (`pi_bbfcdd9ffae841aa`). Zusammen 150 sat.
