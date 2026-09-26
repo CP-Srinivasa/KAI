@@ -41,6 +41,14 @@ SEND_PAYMENT_TIMEOUT_SECONDS = 60
 _SEND_HTTP_GRACE_SECONDS = 15.0
 _NO_FAILURE = {"", "0", "NONE", "FAILURE_REASON_NONE"}
 
+# routerrpc.EstimateRouteFee (``POST /v2/router/route/estimatefee``) mit
+# ``payment_request`` probt die Route mit einem unbekannten Payment-Hash: HTLCs
+# laufen bis kurz vor den Empfaenger und scheitern dort — es bewegt sich kein
+# Geld. Die Probe gehoert in die Vorschau, nie in den Sendepfad; ihr Budget ist
+# klein, damit eine Telegram-Vorschau nicht haengt.
+ESTIMATE_ROUTE_FEE_PATH = "/v2/router/route/estimatefee"
+ESTIMATE_ROUTE_FEE_TIMEOUT_SECONDS = 15
+
 
 def _int_field(raw: Any) -> int:
     try:
@@ -92,6 +100,10 @@ def _stream_error_text(message: dict[str, Any]) -> str:
 
 class LightningUnavailableError(RuntimeError):
     """Raised when the lnd node cannot be reached or returns an error."""
+
+
+class RouteProbeFailedError(RuntimeError):
+    """Die Routen-Probe fand keinen Weg (``failure_reason`` != NONE). Kein Transportfehler."""
 
 
 @dataclass(frozen=True)
@@ -513,6 +525,28 @@ class LndRestClient:
         """GET /v1/payreq/{pay_req} — decode and verify a BOLT11 before a send."""
         encoded = quote(payment_request, safe="")
         return await self._get(f"/v1/payreq/{encoded}")
+
+    async def estimate_route_fee(self, *, payment_request: str) -> int:
+        """Routing-Gebuehr per Probe schaetzen, in sat AUFGERUNDET (nie zu niedrig).
+
+        Wirft :class:`RouteProbeFailedError`, wenn lnd keine Route findet, und
+        ``ValueError``, wenn die Antwort keine Gebuehr traegt.
+        """
+        body = {"payment_request": payment_request, "timeout": ESTIMATE_ROUTE_FEE_TIMEOUT_SECONDS}
+        result = await self._post(
+            ESTIMATE_ROUTE_FEE_PATH,
+            body,
+            timeout=max(
+                self._timeout, ESTIMATE_ROUTE_FEE_TIMEOUT_SECONDS + _SEND_HTTP_GRACE_SECONDS
+            ),
+        )
+        failure = str(result.get("failure_reason") or "").strip().upper()
+        if failure not in _NO_FAILURE:
+            raise RouteProbeFailedError(failure)
+        fee_msat = _optional_nonnegative_int(result.get("routing_fee_msat"))
+        if fee_msat is None:
+            raise ValueError("estimatefee response without routing_fee_msat")
+        return -(-fee_msat // 1000)
 
     async def _post_stream(
         self, path: str, body: dict[str, Any], *, timeout: float

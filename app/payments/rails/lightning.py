@@ -23,11 +23,13 @@ haelt beides fest.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.core.lightning_settings import LightningSettings
 from app.core.payment_settings import PaymentSettings, fee_limit_for_amount
+from app.lightning.client import RouteProbeFailedError
 from app.payments.enums import RailOutcome, SettlementFinality
 from app.payments.models import Invoice, PaymentAttempt, PaymentIntent, Quote
 from app.payments.rail import (
@@ -54,6 +56,8 @@ from app.payments.rails.lightning_mapping import (
     wallet_is_locked,
 )
 from app.payments.rails.lightning_scan import scan_payments
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - nur fuer die Typpruefung
     from app.lightning.client import LndRestClient
@@ -164,12 +168,12 @@ class LightningRail:
     async def quote(self, intent: PaymentIntent) -> Quote:
         """Kostenvorschau — read-only, und immer mit genannter Herkunft.
 
-        Der Client hat heute keine ``queryroutes``/``estimateroutefee``-Methode.
-        Statt eine zu erfinden (und damit einen neuen Node-Aufruf im Geldpfad
-        einzufuehren, den niemand reviewt hat), rechnet der Adapter aus dem
-        konfigurierten ppm-Satz und sagt das im ``estimate_source``. Eine
-        Schaetzung, die ihre Herkunft verschweigt, wird spaeter fuer eine
-        Messung gehalten.
+        Hat der Client ``estimate_route_fee`` (lnd-Probe, keine Geldbewegung),
+        zaehlt dessen Zahl; findet die Probe keine Route, sagt die Quote das
+        (``node_probe_no_route``) statt es hinter einer Settings-Zahl zu
+        verstecken. Jeder andere Fehler faellt auf den konfigurierten ppm-Satz
+        zurueck. Eine Schaetzung, die ihre Herkunft verschweigt, wird spaeter
+        fuer eine Messung gehalten.
         """
         amount = intent.amount_requested.minor_units
         estimate = fee_limit_for_amount(self._payments, amount)
@@ -187,8 +191,14 @@ class LightningRail:
                 observed = await estimator(payment_request=intent.destination)
                 estimate = int(observed)
                 source = "node_estimate_route_fee"
-            except Exception:  # noqa: BLE001 - eine Schaetzung darf nichts blockieren
+            except RouteProbeFailedError as exc:
                 estimate = fee_limit_for_amount(self._payments, amount)
+                no_route = str(exc) == "FAILURE_REASON_NO_ROUTE"
+                source = "node_probe_no_route" if no_route else "node_probe_failed"
+            except Exception as exc:  # noqa: BLE001 - eine Schaetzung darf nichts blockieren
+                estimate = fee_limit_for_amount(self._payments, amount)
+                # Nur der Typ: der Text kann Rail-Material tragen (ADR §9).
+                logger.warning("[PAY] fee probe unavailable: %s", type(exc).__name__)
 
         return Quote(
             rail=self.name,

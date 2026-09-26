@@ -103,6 +103,26 @@ def _reasons(view: Any) -> str:
     return "; ".join(parts)
 
 
+def _fee_line(quote: Any, fee_limit: int) -> str:
+    """Gebuehrenzeile der Vorschau. Eine Node-Probe darf warnen, eine Settings-Zahl nicht."""
+    source = quote.estimate_source
+    if source == "node_probe_no_route":
+        return (
+            f"Gebuehr: ⚠️ Node findet per Probe keine Route (Limit {fee_limit} sat) — "
+            "der Send wird voraussichtlich scheitern"
+        )
+    estimate = quote.fee_estimate.minor_units
+    if source == "node_probe_failed":
+        return (
+            f"Gebuehr: Node-Probe ohne Ergebnis — Settings-Schaetzung ~{estimate} sat, "
+            f"Limit {fee_limit} sat"
+        )
+    line = f"Gebuehr: ~{estimate} sat ({source}), Limit {fee_limit} sat"
+    if source.startswith("node_") and estimate > fee_limit:
+        line += " ⚠️ Schaetzung liegt ueber dem Limit — der Send wird voraussichtlich scheitern"
+    return line
+
+
 async def _preview(flow: PayFlow, service: Any, chat_id: int, bolt11: str, now: datetime) -> str:
     amount = bolt11_amount_sat(bolt11)
     if amount <= 0:
@@ -143,10 +163,7 @@ async def _preview(flow: PayFlow, service: Any, chat_id: int, bolt11: str, now: 
     try:
         sim = await service.simulate(view.intent_id)
         if sim.quote is not None:
-            fee_line = (
-                f"Gebuehr: ~{sim.quote.fee_estimate.minor_units} sat "
-                f"({sim.quote.estimate_source}), Limit {fee_limit} sat"
-            )
+            fee_line = _fee_line(sim.quote, fee_limit)
     except PaymentServiceError as exc:
         fee_line = f"Gebuehr: Vorschau fehlgeschlagen ({exc}), Limit {fee_limit} sat"
 
