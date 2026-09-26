@@ -29,6 +29,7 @@ from typing import Any
 from app.core.bolt11 import bolt11_amount_sat
 from app.core.payment_settings import fee_limit_for_amount
 from app.payments.models import Money
+from app.payments.preview_contract import assess_fee
 from app.payments.service_types import PaymentRequest, PaymentServiceError
 
 logger = logging.getLogger(__name__)
@@ -104,21 +105,20 @@ def _reasons(view: Any) -> str:
 
 
 def _fee_line(quote: Any, fee_limit: int) -> str:
-    """Gebuehrenzeile der Vorschau. Eine Node-Probe darf warnen, eine Settings-Zahl nicht."""
-    source = quote.estimate_source
-    if source == "node_probe_no_route":
+    """Gebuehrenzeile der Vorschau — Warnlogik aus dem gemeinsamen Vertrag (D-288)."""
+    fee = assess_fee(quote, fee_limit)
+    if fee.warning == "no_route":
         return (
             f"Gebuehr: ⚠️ Node findet per Probe keine Route (Limit {fee_limit} sat) — "
             "der Send wird voraussichtlich scheitern"
         )
-    estimate = quote.fee_estimate.minor_units
-    if source == "node_probe_failed":
+    if fee.warning == "probe_failed":
         return (
-            f"Gebuehr: Node-Probe ohne Ergebnis — Settings-Schaetzung ~{estimate} sat, "
+            f"Gebuehr: Node-Probe ohne Ergebnis — Settings-Schaetzung ~{fee.estimate_sat} sat, "
             f"Limit {fee_limit} sat"
         )
-    line = f"Gebuehr: ~{estimate} sat ({source}), Limit {fee_limit} sat"
-    if source.startswith("node_") and estimate > fee_limit:
+    line = f"Gebuehr: ~{fee.estimate_sat} sat ({fee.source}), Limit {fee_limit} sat"
+    if fee.warning == "over_limit":
         line += " ⚠️ Schaetzung liegt ueber dem Limit — der Send wird voraussichtlich scheitern"
     return line
 

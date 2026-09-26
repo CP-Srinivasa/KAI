@@ -36,6 +36,7 @@ from fastapi import HTTPException, Request
 
 from app.core.payment_settings import fee_limit_for_amount
 from app.payments.models import Money
+from app.payments.preview_contract import preview_payment
 from app.payments.service import PaymentRequest, PaymentService, PaymentServiceError
 
 #: Verwendungszweck, wenn der Aufrufer keinen nennt. Bewusst NICHT im
@@ -78,23 +79,48 @@ def derive_fee_limit(service: PaymentService, amount_sat: int) -> int:
     return fee_limit_for_amount(settings, amount_sat)
 
 
-def plan_view(service: PaymentService | None, *, amount_sat: int, purpose: str) -> dict[str, Any]:
+async def plan_view(
+    service: PaymentService | None, *, amount_sat: int, purpose: str, payment_request: str = ""
+) -> dict[str, Any]:
     """Die Vorschau. Sie schreibt NICHTS — ein Plan ist kein Vorgang.
 
     ``service is None`` ist hier ausdruecklich kein Fehler: eine Vorschau ohne
     verdrahteten Control Plane ist unvollstaendig, aber harmlos, und das
     Policy-Verdikt darueber gilt unabhaengig davon. Nur der SEND verlangt den
     Control Plane — und der faellt ohne ihn auf 503.
+
+    Seit D-288 (Befund 6) traegt der Plan unter ``preview`` denselben Vertrag
+    wie ``/pay``: Regelkette (Empfaenger, Zweck, Caps) und Gebuehr samt
+    Node-Schaetzung und Warnung — vor der Freigabe, nicht erst beim Senden.
     """
-    return {
+    fee_limit = derive_fee_limit(service, amount_sat) if service else None
+    view: dict[str, Any] = {
         "action": "pay_invoice",
         "route": "payment_control_plane",
         "mode": service.settings.mode if service else "unavailable",
         "amount_sat": amount_sat,
-        "fee_limit_sat": derive_fee_limit(service, amount_sat) if service else None,
+        "fee_limit_sat": fee_limit,
         "purpose": purpose,
         "status": "planned" if service else "unavailable",
+        "preview": None,
     }
+    if service is not None and payment_request and fee_limit is not None:
+        try:
+            preview = await preview_payment(
+                service,
+                PaymentRequest(
+                    actor="operator",
+                    purpose=purpose,
+                    destination=payment_request,
+                    amount=_sat(amount_sat),
+                    fee_limit=_sat(fee_limit),
+                    correlation_id="ln_control_plan",
+                ),
+            )
+            view["preview"] = preview.to_dict()
+        except ValueError:
+            view["preview"] = None  # unbrauchbare Eingabe: der Send sagt es mit 422
+    return view
 
 
 def service_of(request: Request) -> PaymentService:
@@ -131,7 +157,12 @@ async def handle_pay_invoice(
             "action": "pay_invoice",
             "policy": policy,
             "plan_hash": plan_hash_value,
-            "plan": plan_view(service, amount_sat=amount_sat, purpose=purpose),
+            "plan": await plan_view(
+                service,
+                amount_sat=amount_sat,
+                purpose=purpose,
+                payment_request=str(params.get("payment_request", "")),
+            ),
         }
     result = await execute_pay_invoice(
         request,
