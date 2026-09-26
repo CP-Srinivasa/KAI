@@ -36,6 +36,7 @@ $Map = [ordered]@{
     'mirror_backups_offsite.ps1'   = '.local\bin\mirror_backups_offsite.ps1'
     'tasks\KAI-Vault-OnAttach.xml' = 'KAI-mirror\scripts\tasks\KAI-Vault-OnAttach.xml'
     'kai_session_lagebild.py'      = 'KAI-mirror\scripts\kai_session_lagebild.py'
+    'kai_claim.py'                 = 'KAI-mirror\scripts\kai_claim.py'
 }
 
 function Get-Sha([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() }

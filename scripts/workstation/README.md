@@ -18,6 +18,17 @@ pwsh -File scripts/workstation/install_workstation.ps1 -Apply   # installieren (
 | `mirror_backups_offsite.ps1` | `.local\bin\` | Lokale Zweitkopie der Chiffrate auf C: — **nicht** offsite (OneDrive synchronisiert nicht) |
 | `tasks\KAI-Vault-OnAttach.xml` | `KAI-mirror\scripts\tasks\` | Task: Vault-Lauf beim Anstecken der Platte + tägliche Erinnerung |
 | `kai_session_lagebild.py` | `KAI-mirror\scripts\` | SessionStart-Hook des Haupt-Checkouts: Mainline, Checkout-Abstand, offene PRs, aktive Claims (~1,5 s statt 120 s pytest) |
+| `kai_claim.py` | `KAI-mirror\scripts\` | Claims im Register `ACTIVE_CLAIMS.md` anlegen/schließen/ablaufen lassen und vor Worktree/PR prüfen (`check <pfade> --owner <ich>`); die Markdown-Tabelle bleibt die einzige Quelle |
+
+Claims-Kurzform (für alle Sitzungen, Handeintrag bleibt erlaubt):
+
+```bash
+python C:/Users/sasch/KAI-mirror/scripts/kai_claim.py check app/foo.py scripts/bar.sh --owner bin-ea   # Exit 1 = Kollision
+python C:/Users/sasch/KAI-mirror/scripts/kai_claim.py add --id 20260927-bin-ea-x --owner "claude bin-ea" \
+    --where "C:/tmp/kai-x / claude/x" --scope "app/foo.py, tests/unit/test_foo.py: Zweck"
+python C:/Users/sasch/KAI-mirror/scripts/kai_claim.py close --id 20260927-bin-ea-x --note "#1234 gemergt abcd1234"
+python C:/Users/sasch/KAI-mirror/scripts/kai_claim.py expire   # Regel (2): abgelaufene Leases markieren
+```
 
 Schlüssel liegen nie hier und nie auf der Platte: `KAI_BACKUP_PASSPHRASE` kommt aus der Pi-`.env` (Rückfall:
 DPAPI-.env-Sicherung), `LN_SECRET_BACKUP_KEY` aus einer DPAPI-Arbeitskopie (`kai_vault.ps1 -StoreLnKey`); beide
