@@ -160,7 +160,7 @@ def test_a_broken_part_does_not_take_the_others_down(
     monkeypatch.setattr(ob, "collect_ai_cost", boom)
     status = ob.collect_ops_status(tmp_path, NOW)
     assert status["ai_cost"] == {"error": "RuntimeError"}
-    backup_line, cost_line = ob.format_ops_lines(status)
+    backup_line, cost_line, *_ = ob.format_ops_lines(status)
     assert backup_line.startswith("🛟 *Backup:* Pi 26.09. 01:48Z ok · ⚠️ Drill kein Beweis")
     assert cost_line == "💶 *KI-Kosten:* nicht lesbar (RuntimeError)"
 
@@ -193,3 +193,53 @@ def test_digest_places_ops_block_directly_under_mode_line() -> None:
     lines = msg.splitlines()
     assert lines[1].startswith("⚙️ *Modus:*")
     assert lines[2:4] == ops
+
+
+# --------------------------------------------------------------------------- #
+# Lightning (Lueckenregister 26.09.) — nur lokale Zustaende, nie der Node
+# --------------------------------------------------------------------------- #
+
+
+def _reconcile(artifacts: Path, **fields: Any) -> None:
+    folder = artifacts / "payments"
+    folder.mkdir(parents=True, exist_ok=True)
+    base = {"last_run_utc": (NOW - timedelta(minutes=5)).isoformat(), "last_status": "ok"}
+    base.update(fields)
+    (folder / "reconcile_state.json").write_text(json.dumps(base), encoding="utf-8")
+
+
+def _scb(artifacts: Path) -> None:
+    artifacts.mkdir(parents=True, exist_ok=True)
+    (artifacts / "scb_baseline.json").write_text(
+        json.dumps({"sha256": "cb96165271c1800629cf", "recorded_at": "2026-09-25T05:27:40Z"}),
+        encoding="utf-8",
+    )
+
+
+def test_ln_line_confirms_a_fresh_complete_reconcile(tmp_path: Path) -> None:
+    _reconcile(tmp_path, last_orphans=0, last_complete=True)
+    _scb(tmp_path)
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert line == "⚡ *Lightning:* Reconcile 07:25Z ok · 0 Orphans · SCB cb961652 (seit 25.09.)"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"last_status": "attention"},
+        {"last_orphans": 2},
+        {"last_complete": False},
+        {"last_run_utc": (NOW - timedelta(hours=2)).isoformat()},
+    ],
+)
+def test_ln_line_warns_on_attention_orphans_blind_or_stale(
+    tmp_path: Path, fields: dict[str, Any]
+) -> None:
+    _reconcile(tmp_path, **fields)
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert "⚠️" in line
+
+
+def test_ln_line_without_reconcile_state_is_a_warning(tmp_path: Path) -> None:
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert line.startswith("⚡ *Lightning:* ⚠️ Reconcile kein Zustand")

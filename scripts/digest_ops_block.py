@@ -7,6 +7,7 @@ Dieser Block bestaetigt deshalb taeglich POSITIV, was sonst unsichtbar bleibt:
 
     🛟 Backup: Pi 26.09. 01:48Z ok · Drill 23.09. PASS · Vault 26.09. PASS (0 T)
     💶 KI-Kosten: Monat 12.34/31.00 USD (Hochrechnung 29.80) · heute 0.40/1.00 · OK
+    ⚡ Lightning: Reconcile 07:25Z ok · 0 Orphans · SCB cb961652 (seit 25.09.)
 
 Reine Leser; jeder Teil scheitert einzeln ("nicht lesbar") statt den Digest zu
 kippen. Alarmierung bleibt bei Health — hier steht nur ein ⚠️ vor dem Teil, der
@@ -128,6 +129,33 @@ def collect_ai_cost(now: datetime) -> dict[str, Any]:
     }
 
 
+def collect_ln(artifacts: Path, now: datetime) -> dict[str, Any]:
+    """Zahlungsabgleich + SCB aus lokalen Zustaenden — NIE der Node (D-288)."""
+    from app.payments.reconcile_types import RECONCILE_STALE_AFTER_MIN, STATE_FILENAME, load_state
+
+    path = artifacts / "payments" / STATE_FILENAME
+    if not path.is_file():
+        return {"available": False}
+    state = load_state(path)
+    last_run = _parse_utc(state.last_run_utc)
+    out: dict[str, Any] = {
+        "available": last_run is not None,
+        "ts": last_run,
+        "status": state.last_status or "unknown",
+        "orphans": state.last_orphans,
+        # Seit D-288; ein Altzustand ohne Feld liest sich als None (unbekannt).
+        "complete": state.last_complete,
+        "stale": last_run is None
+        or (now - last_run).total_seconds() / 60 >= RECONCILE_STALE_AFTER_MIN,
+    }
+    scb = artifacts / "scb_baseline.json"
+    if scb.is_file():
+        baseline = json.loads(scb.read_text(encoding="utf-8"))
+        out["scb_sha"] = str(baseline.get("sha256", ""))[:8]
+        out["scb_since"] = _parse_utc(baseline.get("recorded_at"))
+    return out
+
+
 def collect_ops_status(
     artifacts: Path = Path("artifacts"), now: datetime | None = None
 ) -> dict[str, dict[str, Any]]:
@@ -138,6 +166,7 @@ def collect_ops_status(
         "drill": lambda: collect_drill(artifacts, jetzt),
         "vault": lambda: collect_vault(artifacts, jetzt),
         "ai_cost": lambda: collect_ai_cost(jetzt),
+        "ln": lambda: collect_ln(artifacts, jetzt),
     }
     out: dict[str, dict[str, Any]] = {}
     for name, collect in parts.items():
@@ -196,8 +225,26 @@ def _cost_line(c: dict[str, Any]) -> str:
     return f"💶 *KI-Kosten:* {month} · {today} · {warn}{c['state']}"
 
 
+def _ln_line(ln: dict[str, Any]) -> str:
+    if "error" in ln:
+        return f"⚡ *Lightning:* nicht lesbar ({ln['error']})"
+    if not ln.get("available"):
+        return "⚡ *Lightning:* ⚠️ Reconcile kein Zustand"
+    warn = ln["status"] != "ok" or ln["orphans"] > 0 or ln["complete"] is False or ln["stale"]
+    parts = [f"{'⚠️ ' if warn else ''}Reconcile {ln['ts']:%H:%MZ} {ln['status']}"]
+    if ln["complete"] is False:
+        parts[0] += " (blind)"
+    if ln["stale"]:
+        parts[0] += " (veraltet)"
+    parts.append(f"{ln['orphans']} Orphans")
+    if ln.get("scb_sha"):
+        since = f" (seit {_day(ln['scb_since'])})" if ln.get("scb_since") else ""
+        parts.append(f"SCB {ln['scb_sha']}{since}")
+    return "⚡ *Lightning:* " + " · ".join(parts)
+
+
 def format_ops_lines(status: dict[str, dict[str, Any]]) -> list[str]:
-    """Zwei Zeilen fuer den Digest-Kopf."""
+    """Drei Zeilen fuer den Digest-Kopf: Backup, KI-Kosten, Lightning."""
     backup = " · ".join(
         (
             _backup_part(status.get("backup", {"error": "fehlt"})),
@@ -205,7 +252,11 @@ def format_ops_lines(status: dict[str, dict[str, Any]]) -> list[str]:
             _vault_part(status.get("vault", {"error": "fehlt"})),
         )
     )
-    return [f"🛟 *Backup:* {backup}", _cost_line(status.get("ai_cost", {"error": "fehlt"}))]
+    return [
+        f"🛟 *Backup:* {backup}",
+        _cost_line(status.get("ai_cost", {"error": "fehlt"})),
+        _ln_line(status.get("ln", {"error": "fehlt"})),
+    ]
 
 
 __all__ = [
