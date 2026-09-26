@@ -47,6 +47,10 @@ class IntegrityStatus:
     # (Bitcoin attestation present), "unreadable"/"unknown" (corrupt / lib absent).
     proof_state: str = ""
     bitcoin_height: int | None = None
+    # D-288 Befund 4: "confirmed" heisst nur "Attestation vorhanden". Ob sie gegen
+    # den Blockheader des eigenen bitcoind stimmt: "verified" / "mismatch" /
+    # "unverifiable" / "not_attested" / "unverified" (noch nie geprueft).
+    bitcoin_verification: str = ""
     reason: str = ""
 
 
@@ -102,13 +106,17 @@ def get_integrity_status(cfg: IntegritySettings | None = None) -> IntegrityStatu
     # missing opentimestamps lib must never crash this read-only surface.
     proof_state = ""
     bitcoin_height: int | None = None
+    bitcoin_verification = ""
     if proof_available:
         try:
+            from app.integrity.bitcoin_verify import read_verification
             from app.integrity.upgrade import read_proof_info
 
             info = read_proof_info(proof_path)
             proof_state = info.state
             bitcoin_height = info.bitcoin_height
+            if proof_state == "confirmed":
+                bitcoin_verification = read_verification(out_dir, proof_path.name)
         except Exception:  # noqa: BLE001 — lib absent / any error → don't crash the read
             proof_state = "unknown"
     return IntegrityStatus(
@@ -122,4 +130,5 @@ def get_integrity_status(cfg: IntegritySettings | None = None) -> IntegrityStatu
         proof_available=proof_available,
         proof_state=proof_state,
         bitcoin_height=bitcoin_height,
+        bitcoin_verification=bitcoin_verification,
     )

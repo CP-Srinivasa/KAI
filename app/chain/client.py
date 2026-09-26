@@ -109,6 +109,18 @@ class BitcoindRpcClient:
             raise ChainUnavailableError(f"bitcoind RPC error for {method}: {body['error']}")
         return body.get("result")
 
+    async def get_block_merkle_root(self, height: int) -> tuple[str, bytes]:
+        """``(block_hash, merkle_root)`` des Blocks auf ``height`` — read-only.
+
+        Die Merkle-Root kommt in der INTERNEN Byte-Reihenfolge zurueck: bitcoind
+        zeigt ``merkleroot`` byte-verdreht an, OpenTimestamps vergleicht gegen
+        die Header-Bytes (``verify_against_blockheader``).
+        """
+        block_hash = str(await self._call("getblockhash", [int(height)]))
+        header = await self._call("getblockheader", [block_hash, True])
+        root = bytes.fromhex(str(header["merkleroot"]))[::-1]
+        return block_hash, root
+
     async def get_block_count(self) -> int:
         return int(await self._call("getblockcount"))
 

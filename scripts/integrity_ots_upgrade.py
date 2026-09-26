@@ -30,18 +30,34 @@ Verschaerfung keinen Dauer-Alarm, sondern deckt den naechsten echten Fall auf.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from pathlib import Path
 
+from app.core.chain_settings import ChainSettings
 from app.core.integrity_settings import IntegritySettings
 from app.integrity.anchor import AnchorUnavailableError
+from app.integrity.bitcoin_verify import VerifyReport, header_source_from, verify_proofs_dir
 from app.integrity.upgrade import upgrade_pending_proofs
 
 
-def main(cfg: IntegritySettings | None = None) -> int:
+def run_bitcoin_verification(proofs_dir: Path, chain: ChainSettings) -> VerifyReport:
+    """D-288 Befund 4: jede Attestation gegen den Header des eigenen bitcoind halten."""
+    from app.chain.adapter import _build_client
+
+    client = _build_client(chain)
+    return asyncio.run(verify_proofs_dir(proofs_dir, header_source_from(client)))
+
+
+def main(cfg: IntegritySettings | None = None, chain: ChainSettings | None = None) -> int:
     if cfg is None:
         from app.core.settings import get_settings
 
-        cfg = get_settings().integrity
+        settings = get_settings()
+        cfg = settings.integrity
+        chain = chain or settings.chain
+    # Explizit uebergebene Integrity-Settings ohne Chain: kein Node-Kontakt (Tests).
+    chain = chain or ChainSettings()
 
     if not cfg.enabled:
         print("integrity-ots-upgrade: disabled (no-op) — set APP_INTEGRITY_ENABLED=true")
@@ -65,6 +81,25 @@ def main(cfg: IntegritySettings | None = None) -> int:
         f"confirmed_already={report.already_confirmed} "
         f"still_pending={report.still_pending} failed={report.failed}"
     )
+    verify_failed = False
+    if chain.enabled:
+        verified = run_bitcoin_verification(Path(cfg.proofs_dir), chain)
+        print(
+            "integrity-ots-upgrade: bitcoin_verify "
+            f"scanned={verified.scanned} verified={verified.verified} "
+            f"already_verified={verified.skipped} mismatch={verified.mismatch} "
+            f"unverifiable={verified.unverifiable} not_attested={verified.not_attested}"
+        )
+        if verified.mismatch:
+            print(
+                f"integrity-ots-upgrade: MISMATCH — {verified.mismatch} Proof(s) behaupten eine "
+                "Bitcoin-Verankerung, die der Block nicht traegt"
+            )
+            verify_failed = True
+    else:
+        print("integrity-ots-upgrade: bitcoin_verify: skipped (APP_CHAIN_ENABLED=false)")
+    if verify_failed:
+        return 1
     if report.failed:
         # Ein nicht fortschreibbarer Beweis ist ein Fehlschlag, kein Detail.
         # Exit 1 laesst die Unit fehlschlagen und damit OnFailure feuern.

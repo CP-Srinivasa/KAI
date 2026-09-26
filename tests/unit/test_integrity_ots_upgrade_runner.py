@@ -98,3 +98,59 @@ def test_runner_stays_green_when_nothing_failed(monkeypatch, tmp_path) -> None:
         )
         == 0
     )
+
+
+# --------------------------------------------------------------------------- #
+# Bitcoin-Pruefung nach dem Upgrade (D-288, Befund 4)
+# --------------------------------------------------------------------------- #
+
+
+def _armed(tmp_path):  # noqa: ANN001, ANN202
+    return IntegritySettings(
+        enabled=True, stamper="opentimestamps", proofs_dir=str(tmp_path / "proofs")
+    )
+
+
+def test_runner_verifies_against_bitcoin_when_chain_is_enabled(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    from app.core.chain_settings import ChainSettings
+    from app.integrity.bitcoin_verify import VerifyReport
+
+    monkeypatch.setattr(runner, "upgrade_pending_proofs", lambda proofs_dir: UpgradeReport())
+    seen: list[str] = []
+
+    def _verify(proofs_dir, chain):  # noqa: ANN001, ANN202
+        seen.append(str(proofs_dir))
+        return VerifyReport(scanned=3, verified=3)
+
+    monkeypatch.setattr(runner, "run_bitcoin_verification", _verify)
+    rc = main(_armed(tmp_path), chain=ChainSettings(enabled=True))
+    assert rc == 0
+    assert seen == [str(tmp_path / "proofs")]
+    assert "bitcoin_verify" in capsys.readouterr().out
+
+
+def test_runner_fails_on_a_bitcoin_mismatch(monkeypatch, tmp_path, capsys) -> None:
+    """Ein Proof, der eine Verankerung behauptet, die der Block nicht traegt, ist ein Befund."""
+    from app.core.chain_settings import ChainSettings
+    from app.integrity.bitcoin_verify import VerifyReport
+
+    monkeypatch.setattr(runner, "upgrade_pending_proofs", lambda proofs_dir: UpgradeReport())
+    monkeypatch.setattr(
+        runner, "run_bitcoin_verification", lambda proofs_dir, chain: VerifyReport(mismatch=1)
+    )
+    rc = main(_armed(tmp_path), chain=ChainSettings(enabled=True))
+    assert rc == 1
+    assert "MISMATCH" in capsys.readouterr().out
+
+
+def test_runner_skips_bitcoin_check_without_chain(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setattr(runner, "upgrade_pending_proofs", lambda proofs_dir: UpgradeReport())
+
+    def _must_not_run(proofs_dir, chain):  # noqa: ANN001, ANN202
+        raise AssertionError("no chain → no bitcoin verification")
+
+    monkeypatch.setattr(runner, "run_bitcoin_verification", _must_not_run)
+    assert main(_armed(tmp_path)) == 0
+    assert "bitcoin_verify: skipped" in capsys.readouterr().out
