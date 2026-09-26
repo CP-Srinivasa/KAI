@@ -282,6 +282,7 @@ def test_check_maps_findings_to_warning_issues(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv(hch.KILL_SWITCH_ENV, raising=False)
+    monkeypatch.setattr(hch, "unscheduled_timer_finding", lambda: "timer")
     monkeypatch.setattr(hch, "checkout_findings", lambda _root: ["checkout"])
     monkeypatch.setattr(hch, "reboot_pending_finding", lambda: "reboot")
     monkeypatch.setattr(hch, "stale_library_finding", lambda _root: "libs")
@@ -289,6 +290,8 @@ def test_check_maps_findings_to_warning_issues(
     monkeypatch.setattr(hch, "offpi_backup_finding", lambda adir: seen.append(adir) or "offpi")
     issues = hch.check(tmp_path, SimpleNamespace(runs_on_pi=True))
     assert [(i.severity, i.component, i.message) for i in issues] == [
+        # aus health_check.py verlegt: Komponente und Schwere unveraendert
+        ("critical", "timer_scheduleability", "timer"),
         ("warning", "checkout_hygiene", "checkout"),
         ("warning", "reboot_pending", "reboot"),
         ("warning", "stale_libraries", "libs"),
@@ -304,10 +307,26 @@ def test_health_report_includes_host_hygiene(
     from app.alerts.health_check import run_health_check_report
 
     monkeypatch.delenv(hch.KILL_SWITCH_ENV, raising=False)
+    monkeypatch.setattr(hch, "unscheduled_timer_finding", lambda: "timer ohne Termin")
     monkeypatch.setattr(hch, "checkout_findings", lambda _root: [])
     monkeypatch.setattr(hch, "reboot_pending_finding", lambda: "reboot faellig")
     monkeypatch.setattr(hch, "stale_library_finding", lambda _root: None)
     adir = tmp_path / "artifacts"
     adir.mkdir()
     report = run_health_check_report(artifacts_dir=adir)
-    assert any(i.component == "reboot_pending" for i in report.issues)
+    components = {i.component: i.severity for i in report.issues}
+    assert components.get("reboot_pending") == "warning"
+    # Keine Kopie belegt -> Befund; die Timer-Sonde laeuft jetzt ueber dieselbe Aufrufstelle.
+    assert components.get("offpi_backup") == "warning"
+    assert components.get("timer_scheduleability") == "critical"
+
+
+def test_stream_contract_watcher_is_wired() -> None:
+    """Der Vertrag fuer offpi_receipts.jsonl verweist auf einen verdrahteten Waechter."""
+    from app.alerts import health_check as hc
+
+    repo_root = Path(__file__).resolve().parents[2]
+    contracts = json.loads((repo_root / "config" / "stream_contracts.json").read_text("utf-8"))
+    entry = contracts["streams"]["offpi_receipts.jsonl"]
+    assert entry["monitoring"] == "alternative_watcher"
+    assert entry["watcher"] == "_check_host" and callable(hc._check_host)

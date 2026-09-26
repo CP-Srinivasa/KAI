@@ -30,7 +30,15 @@ Restore-Drill bleibt davon unberuehrt (``off_pi_redundancy: NOT_CLAIMED``): er
 beweist das Archiv auf der Pi, diese Sonde verweist auf einen eigenen Beweis an
 einem anderen Ort.
 
-Alle Befunde sind ``warning``: sie kosten Aktualitaet, nie Geld.
+**Timer ohne Termin.** Wiederkehrende Timer, die laufen und trotzdem keinen
+Termin haben (``timer_schedule_probe``, V4 2026-09-16), gehoeren ebenfalls zum
+Host-Zustand und liefen bis E3 als ``_check_timer_scheduleability`` in
+``health_check.py``. Hierher verlegt, um dort die 4 Zeilen des Waechters
+``_check_host`` (Stream-Vertrag ``offpi_receipts.jsonl``) ohne Baseline-
+Anhebung zu tragen. Komponente, Schwere und Pi-Bedingung sind unveraendert.
+
+Alle Befunde sind ``warning`` — sie kosten Aktualitaet, nie Geld —, bis auf
+``timer_scheduleability`` (``critical``, wie zuvor).
 """
 
 from __future__ import annotations
@@ -43,6 +51,8 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
+
+from app.alerts.timer_schedule_probe import unscheduled_timer_finding
 
 if TYPE_CHECKING:
     from app.alerts.health_check import HealthIssue
@@ -286,13 +296,20 @@ def check(repo_root: Path, report: Any) -> list[HealthIssue]:
         return []
     if not getattr(report, "runs_on_pi", False):
         return []  # Workstation-Checkouts sind absichtlich schmutzig
-    issues = [_issue("warning", "checkout_hygiene", m) for m in checkout_findings(repo_root)]
+    # Schluesselwort-Form mit Literal: tests/unit/test_alert_classes.py liest die
+    # Komponenten per AST und erzwingt fuer jede eine Alarmklasse (alert_classes).
+    issues: list[HealthIssue] = []
+    # Fail-soft wie zuvor in health_check.py: ohne befragbares systemd kein Befund.
+    if msg := unscheduled_timer_finding():
+        issues.append(_issue(severity="critical", component="timer_scheduleability", message=msg))
+    for msg in checkout_findings(repo_root):
+        issues.append(_issue(severity="warning", component="checkout_hygiene", message=msg))
     if msg := reboot_pending_finding():
-        issues.append(_issue("warning", "reboot_pending", msg))
+        issues.append(_issue(severity="warning", component="reboot_pending", message=msg))
     if msg := stale_library_finding(repo_root):
-        issues.append(_issue("warning", "stale_libraries", msg))
+        issues.append(_issue(severity="warning", component="stale_libraries", message=msg))
     if msg := offpi_backup_finding(repo_root / "artifacts"):
-        issues.append(_issue("warning", "offpi_backup", msg))
+        issues.append(_issue(severity="warning", component="offpi_backup", message=msg))
     return issues
 
 

@@ -59,6 +59,15 @@
       "monitoring": "alternative_watcher",
       "watcher": "_check_input_contract_rejection_streams"
     },
+    "offpi_receipts.jsonl": {
+      "reader": "app/alerts/health_check_host.py",
+      "failure_consequence": "Der Strom belegt auf der Pi, dass eine VERIFIZIERTE Offsite-Kopie existiert: die Generation auf der Platte 'KAI Backup' (kai_vault.ps1, Laptop), die einzige Off-Pi-Kopie, die ohne das Windows-Profil des Laptops lesbar ist. Stirbt er (Laptop-Skript schreibt nicht mehr, ssh scheitert), meldet die Sonde 'Keine verifizierte Offsite-Kopie' bzw. 'zu alt' - ohne den Strom altert die Offsite-Kopie dagegen unbemerkt, bis ein Pi-Totalverlust sie braucht. Er traegt keine Geld- oder Wahrheitsdaten; die Wahrheit liegt auf der Platte (VERIFIED.json je Generation).",
+      "failure_would_be_noticed_by": "_check_host in app/alerts/health_check.py (Implementierung: app/alerts/health_check_host.offpi_backup_finding) meldet bei jedem Health-Check-Lauf warning 'offpi_backup', wenn keine PASS-Quittung existiert oder die neueste verifizierte Generation aelter als 8 Tage ist.",
+      "time_to_notice": "Beim naechsten Health-Check-Lauf (15-Minuten-Timer) nach Ablauf der 8-Tage-Schwelle; eine fehlende Datei sofort.",
+      "decision_that_would_change": "Der Operator steckt die Platte 'KAI Backup' an (kai_vault.ps1 sichert, prueft und quittiert dann automatisch) bzw. repariert den ssh-Weg, BEVOR die Offsite-Kopie so alt ist, dass ein Pi-Totalverlust Tage an Journalen, Beweisen und Konfiguration kosten wuerde.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_host"
+    },
     "payment_journal.jsonl": {
       "reader": "app/alerts/health_check_payments.py",
       "failure_consequence": "Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung (ADR 0018 §5). Faellt es aus oder bricht seine Hash-Kette, kann kein Prozess mehr entscheiden, ob ein Intent bereits gesendet wurde — Idempotenz, Tages-Cap und Reconciliation verlieren gleichzeitig ihre Grundlage, und ein gebrochenes Journal sieht weiterhin aus wie ein Beweis.",
