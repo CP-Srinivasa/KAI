@@ -25,13 +25,20 @@
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
 ### D-291 (2026-09-26)
-**Entscheidung (Operator 2026-09-26):** Bezahlte L402-Oracle-Abrufe werden **nicht erstattet**, auch nicht nach einem Ausfall (D-288 Befund 5, Truth-Seite).
+**Entscheidung (Operator 2026-09-26):** Bezahlte L402-Oracle-Abrufe werden **nicht automatisch erstattet**, auch nicht nach einem Ausfall (D-288 Befund 5, Truth-Seite). Gesetzliche Ansprueche bleiben unberuehrt (siehe „Rechtliche Grenze“).
 - **Nachlieferung statt Erstattung:** Ein L402-Token ist zustandslos und fuer seinen Scope bis zum TTL-Ende (3600 s) wiederverwendbar. Wer bezahlt hat und einen 503 bekommt, wiederholt die Anfrage mit demselben Token und zahlt nicht erneut.
 - **Vorbeugen:** `/onchain-facts`, `/timestamp` (Kapazitaet), `/verdicts/proof` (Hash und Paket) und `/fee-series` (Daten) pruefen die Lieferbarkeit **vor** dem Rechnungs-Mint (#1099). Fuer eine bekannt nicht lieferbare Antwort wird keine Rechnung ausgestellt.
 - **Sichtbarkeit:** Bezahlt, aber nicht geliefert wird als `l402_paid_unavailable` (ohne `access_granted`) protokolliert. Der Digest zeigt das 24 h lang als „⚠️ N× bezahlt, nicht geliefert“. Das ist ein Qualitaetssignal fuer den Betrieb, kein Erstattungsauftrag.
-- **Grenze:** Dauert ein Ausfall laenger als die Rest-TTL, bleibt der bezahlte Abruf ungeliefert. Diesen Rest traegt der Kaeufer.
-- **Offen:** Es gibt noch keine Bedingungsseite fuer Kaeufer, die das sagt. Sie gehoert vor einen oeffentlichen Verkauf.
-**Beleg:** `app/api/routers/truth_oracle.py`, `app/lightning/l402.py` (`_DEFAULT_TTL_S`), `scripts/digest_ops_block.py::_paid_unavailable_24h`.
+- **Grenze:** Dauert ein Ausfall laenger als die Rest-TTL, endet die automatische Wiederholung.
+- **Rechtliche Grenze (Korrektur 2026-09-26, nach dem Bedingungsentwurf des Operators):** „Keine Erstattung“ heisst: **keine automatische oder freiwillige Erstattung**, kein Refund-Automat. Gesetzliche Ansprueche bei Nichtlieferung erloeschen damit NICHT. Bei Verbrauchervertraegen ueber digitale Produkte gelten §§ 327c/327o BGB, eine nachteilige Vorausabweichung ist nach § 327s BGB nicht durchsetzbar. Die fruehere Zeile „Diesen Rest traegt der Kaeufer“ ist deshalb zurueckgenommen.
+- **Massgeblicher Text:** Der Bedingungsentwurf `kai-pay/laws/KAI_Oracle_Ausfallbedingungen_DE-EN.md` v0.1 (60 Minuten Wiederholung, gesetzliche Rechte bleiben, erreichbarer Beschwerdeweg). Er ist noch nicht anwaltlich freigegeben.
+- **Ist-Stand gegen die Freigabebedingungen des Entwurfs (Teil E):**
+  - **E2 Fristbeginn:** Die TTL laeuft ab dem Rechnungs-Mint (402), nicht ab der Zahlung. Die Rechnung verfaellt nach 300 s, nach der Zahlung bleiben also 55 bis 60 Minuten, nicht garantierte 60. Das Ablaufdatum steckt im Token, wird aber nicht als Zeitpunkt angezeigt.
+  - **E3 Gleiche Anfrage:** Ein Token ist kein Einzelauftrag, sondern Zugang zu einem Scope fuer die TTL. `verdicts` deckt das Listing und alle Beweispakete ab, `fee-series` liefert je Abruf den aktuellen Stand. Nur `timestamp` ist an einen Digest gebunden. Die Produktregel und der Text muessen vor dem Launch angeglichen werden.
+  - **E6/E7:** Ein Beschwerde- und Pruefweg fuer Ausfaelle ueber die TTL hinaus fehlt noch, er darf manuell sein. Das ⚠️ im Digest erzeugt einen Pruefvorgang und keinen Verlust fuer den Kaeufer.
+  - **E1/E9:** Eine Bedingungsseite vor der Zahlung fehlt, ebenso ein vollstaendiger Checkout (Geschaeftsfuehrung, elektronischer Kontakt).
+- **Folge:** Kein oeffentlicher Verkauf ueber das Oracle, bevor E1–E10 erfuellt und anwaltlich abgeglichen sind. Der jetzige Betrieb (Self-Use, noindex) ist davon unberuehrt.
+**Beleg:** `app/api/routers/truth_oracle.py` (`_INVOICE_EXPIRY_MINUTES`), `app/lightning/l402.py` (`mint_token`, `_DEFAULT_TTL_S`), `scripts/digest_ops_block.py::_paid_unavailable_24h`.
 
 ### D-290 (2026-09-26)
 **Befund (Abnahme nach Release `a90eb10a`, Operator-Send):** Die exakten msat-Gebuehren (#1034) und die Vorschau mit Node-Probe (#1082/#1090/#1092) sind **live abgenommen**.
