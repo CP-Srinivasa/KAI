@@ -1106,3 +1106,37 @@ def test_paid_fee_series_with_data_is_served(client: TestClient) -> None:
         )
     assert r.status_code == 200
     assert r.json()["count"] == 1
+
+
+# --- D-291: Zugang gilt mindestens 60 Minuten ab Zahlung, Ablauf wird angezeigt -------
+
+
+def test_challenge_grants_an_hour_after_the_latest_possible_payment(client: TestClient) -> None:
+    import time
+    from datetime import datetime
+
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    before = int(time.time())
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.research.verdict_report.list_verdict_reports", return_value=[]),
+    ):
+        r = client.get("/oracle/verdicts")
+    assert r.status_code == 402
+    token = r.headers["WWW-Authenticate"].split('token="')[1].split('"')[0]
+    expiry = int(token.split(".")[1])
+    invoice_expiry_s = truth_oracle._INVOICE_EXPIRY_MINUTES * 60
+    # Zahlung ist spaetestens beim Rechnungsverfall moeglich; danach bleiben >= 3600 s.
+    assert expiry - (before + invoice_expiry_s) >= 3600
+    shown = datetime.fromisoformat(r.headers["X-L402-Access-Expires"].replace("Z", "+00:00"))
+    assert int(shown.timestamp()) == expiry
+    assert r.headers["X-L402-Access-Expires"].endswith("Z")

@@ -61,6 +61,17 @@ def mint_token(
     return f"{payload}.{_sig(secret, payload)}"
 
 
+def token_expiry(token: str) -> int:
+    """The signed expiry (epoch s) of a token KAI just minted — for display only.
+
+    Does NOT verify the signature; access decisions always go through ``verify``.
+    """
+    try:
+        return int(token.split(".", 3)[1])
+    except (IndexError, ValueError) as exc:
+        raise L402Error("malformed token") from exc
+
+
 def build_challenge_header(token: str, invoice: str) -> str:
     """The ``WWW-Authenticate`` value for the 402 response."""
     return f'L402 token="{token}", invoice="{invoice}"'
