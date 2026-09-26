@@ -257,3 +257,42 @@ def test_ln_line_forgets_a_foreign_spend_after_a_day(tmp_path: Path) -> None:
     _reconcile(tmp_path, last_unattributed_at=(NOW - timedelta(hours=30)).isoformat())
     line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
     assert "fremde Ausgabe" not in line and "⚠️" not in line
+
+
+def _demand(artifacts: Path, *rows: tuple[str, str, timedelta]) -> None:
+    artifacts.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(
+            {
+                "ts": (NOW - age).isoformat(),
+                "event": event,
+                "scope": "fee-series",
+                "payment_hash": ph,
+            }
+        )
+        for event, ph, age in rows
+    ]
+    (artifacts / "ln_demand_ledger.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_ln_line_reports_paid_but_undelivered_oracle_calls(tmp_path: Path) -> None:
+    """D-288 Befund 5: bezahlt, aber nicht geliefert — je Zahlung einmal, 24 h lang."""
+    _reconcile(tmp_path, last_orphans=0, last_complete=True)
+    _demand(
+        tmp_path,
+        ("l402_paid_unavailable", "aa" * 32, timedelta(hours=1)),
+        ("l402_paid_unavailable", "aa" * 32, timedelta(minutes=50)),  # Retry, gleiche Zahlung
+        ("l402_paid_unavailable", "bb" * 32, timedelta(hours=2)),
+        ("l402_paid_unavailable", "cc" * 32, timedelta(hours=30)),  # aelter als 24 h
+        ("l402_access_granted", "dd" * 32, timedelta(hours=1)),
+    )
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert "⚠️" in line
+    assert "2× bezahlt, nicht geliefert (24 h)" in line
+
+
+def test_ln_line_is_quiet_without_undelivered_payments(tmp_path: Path) -> None:
+    _reconcile(tmp_path, last_orphans=0, last_complete=True)
+    _demand(tmp_path, ("l402_access_granted", "dd" * 32, timedelta(hours=1)))
+    line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
+    assert "⚠️" not in line and "nicht geliefert" not in line
