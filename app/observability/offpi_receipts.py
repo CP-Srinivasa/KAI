@@ -75,6 +75,45 @@ def append_receipt(artifacts_dir: Path, record: dict[str, Any]) -> Path:
     return path
 
 
+def utc_epoch(value: object) -> float | None:
+    """Epoch-Sekunden eines ISO-Zeitstempels; ``None`` wenn keiner."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def newest_verified(artifacts_dir: Path) -> tuple[float, dict[str, Any]] | None:
+    """(Generationszeit, Quittung) der neuesten Generation mit ``probe == "PASS"``.
+
+    Zaehlt nur Quittungen im eigenen Schema; kaputte Zeilen werden uebersprungen.
+    Fehlt die Datei, ist das ``None`` ("kein Beleg"); ist sie unlesbar, wird der
+    ``OSError`` weitergereicht — unlesbar ist kein Beleg fuer "fehlt". Leser:
+    ``health_check_host.offpi_backup_finding`` und der Operator-Digest.
+    """
+    path = artifacts_dir / OFFPI_RECEIPTS_RELPATH
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return None
+    newest: tuple[float, dict[str, Any]] | None = None
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("schema") != SCHEMA:
+            continue
+        ts = utc_epoch(rec.get("generation_ts_utc"))
+        if rec.get("probe") != "PASS" or ts is None:
+            continue
+        if newest is None or ts > newest[0]:
+            newest = (ts, rec)
+    return newest
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.observability.offpi_receipts")
     parser.add_argument("command", choices=["append"])
@@ -109,5 +148,7 @@ __all__ = [
     "SCHEMA",
     "append_receipt",
     "main",
+    "newest_verified",
+    "utc_epoch",
     "validate",
 ]
