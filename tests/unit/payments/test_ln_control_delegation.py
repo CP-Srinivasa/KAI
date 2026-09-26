@@ -164,6 +164,44 @@ def test_plan_mode_nennt_den_control_plane_als_weg(
     assert body["plan"]["fee_limit_sat"] > 0
 
 
+def test_plan_mode_zeigt_regelkette_und_gebuehr_wie_telegram(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D-288 Befund 6: das Dashboard sieht vor der Freigabe dasselbe wie /pay."""
+    _patch(monkeypatch)
+    app = _app(tmp_path)
+    journal_path = app.state.payment_service.journal.path
+    before = journal_path.read_bytes() if journal_path.exists() else b""
+    body = (
+        TestClient(app)
+        .post(URL, json={"action": "pay_invoice", "params": {"payment_request": DESTINATION}})
+        .json()
+    )
+
+    preview = body["plan"]["preview"]
+    assert preview["verdict"] in {"ALLOW", "REQUIRES_APPROVAL"}
+    assert preview["destination_known"] is True
+    assert preview["fee"]["limit_sat"] == body["plan"]["fee_limit_sat"]
+    after = journal_path.read_bytes() if journal_path.exists() else b""
+    assert after == before  # ein Plan ist kein Vorgang
+
+
+def test_plan_mode_nennt_eine_regelablehnung_vor_der_freigabe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch(monkeypatch)
+    app = _app(tmp_path, destination_allowlist="0" * 64)
+    body = (
+        TestClient(app)
+        .post(URL, json={"action": "pay_invoice", "params": {"payment_request": DESTINATION}})
+        .json()
+    )
+
+    preview = body["plan"]["preview"]
+    assert preview["verdict"] == "DENY"
+    assert "destination_allowlist" in preview["rule_ids"]
+
+
 def test_kleinstzahlung_zeigt_und_verwendet_dasselbe_explizite_fee_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
