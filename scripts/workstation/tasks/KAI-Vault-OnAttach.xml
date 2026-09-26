@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  KAI-Vault (MindBlow 2.0, W0-4, 25.09.2026).
+  Ausloeser 1: Anstecken der WD_Black P50 "KAI Backup" (Partition/Diagnostic 1006,
+               Seriennummer 21493T400199, Capacity != 0 -> nicht beim Abziehen).
+  Ausloeser 2: taeglich 21:00 als Ersatz/Erinnerung. Ohne Platte endet der Lauf still;
+               ist die letzte verifizierte Generation >= 7 Tage alt, erinnert ein Toast.
+  kai_vault.ps1 laeuft hoechstens einmal je 20 h (Marker = letzte VERIFIED-Generation).
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>bin-ea (MindBlow 2.0)</Author>
+    <Description>KAI-Vault: verifizierte, verschluesselte Generation von Pi, Lightning-Material und Laptop auf der Platte "KAI Backup" beim Anstecken. Log: C:\Users\sasch\KAI-mirror\vault-logs</Description>
+    <URI>\KAI-Vault-OnAttach</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-Partition/Diagnostic"&gt;&lt;Select Path="Microsoft-Windows-Partition/Diagnostic"&gt;*[System[(EventID=1006)]] and *[EventData[Data[@Name='SerialNumber']='21493T400199']] and *[EventData[Data[@Name='Capacity']!='0']]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+      <Delay>PT20S</Delay>
+    </EventTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-09-25T21:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Users\sasch\AppData\Local\Microsoft\WindowsApps\pwsh.exe</Command>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\sasch\KAI-mirror\scripts\kai_vault.ps1" -Quiet -WaitForDiskSeconds 120</Arguments>
+      <WorkingDirectory>C:\Users\sasch\KAI-mirror\scripts</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
