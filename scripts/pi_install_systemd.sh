@@ -48,7 +48,15 @@ TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
 # Helferskript, auf das kai-standby-{data,system}.service per absolutem
 # Pfad zeigen. Ohne diesen Schritt installiert ein frischer Host die Units,
 # aber nicht ihr ExecStart-Ziel — die Sicherung waere von Anfang an tot.
-HELPER_SRC="${REPO_ROOT}/scripts/standby_to_usb.sh"
+#
+# Ausgerollt wird es NUR ueber den gepinnten Installer (Hash, bash -n,
+# atomarer Tausch). Bis 2026-09-26 kopierte dieser Schritt ungeprueft
+# scripts/standby_to_usb.sh — eine seit dem 04.09. abgehaengte Zweitfassung
+# ohne Release-Sicherung (#863) und ohne vollstaendige Inventarpruefung
+# (#884). Ein Installer-Lauf haette den geprueften Helfer (live seit 07.09.)
+# still durch den alten ersetzt; das System-Tier haette wieder gruen ohne
+# das laufende Release gemeldet.
+HELPER_INSTALLER="${REPO_ROOT}/deploy/bin/install_standby_backup.sh"
 # Privilegien-Broker (#734). Die sudoers-Policy erlaubt passwortfrei GENAU
 # diesen Pfad — er MUSS deshalb existieren, bevor die Policy gilt. Am
 # 2026-08-20 war er es nicht: sudoers verwies auf /usr/local/sbin/
@@ -499,12 +507,13 @@ install() {
         run command install -m 0644 "$src" "$dst"
     done
 
-    if [[ -f "$HELPER_SRC" ]]; then
-        echo ""
-        echo "Installing standby helper (ExecStart-Ziel der Cold-Standby-Units)…"
-        run command install -m 0755 "$HELPER_SRC" "$HELPER_DST"
-    else
-        echo "WARNING: $HELPER_SRC fehlt — kai-standby-* wuerden ins Leere zeigen." >&2
+    echo ""
+    echo "Installing standby helper $HELPER_DST (ExecStart-Ziel der Cold-Standby-Units)…"
+    # Scheitert der Pin, bleibt der bisher installierte Helfer unangetastet
+    # (der Installer tauscht atomar) — laut, aber kein Abbruch der Unit-Installation.
+    if ! run bash "$HELPER_INSTALLER"; then
+        echo "WARNING: Standby-Helfer NICHT installiert ($HELPER_INSTALLER) —" \
+             "bisherige Fassung bleibt; auf einem frischen Host zeigen kai-standby-* ins Leere." >&2
     fi
 
     install_broker

@@ -112,6 +112,11 @@ def test_absolute_execstart_ziele_werden_mitinstalliert() -> None:
     nur auf dem Pi; jetzt liegen beide im Repo — und das Skript muss auch
     ausgerollt werden, sonst installiert ein frischer Host eine Sicherung, die
     sofort fehlschlaegt.
+
+    Die Quelle muss es GENAU EINMAL geben. Bis 2026-09-26 lag das Skript unter
+    ``scripts/`` UND ``deploy/bin/`` — zwei seit dem 04.09. auseinandergelaufene
+    Fassungen; der Installer rollte die veraltete aus, der Pi lief mit der
+    gepinnten. Dieser Test hatte die Zweitfassung sogar erzwungen.
     """
     src = _script()
     external: set[str] = set()
@@ -124,14 +129,32 @@ def test_absolute_execstart_ziele_werden_mitinstalliert() -> None:
             if target.startswith("/usr/local/"):
                 external.add(target)
     for target in sorted(external):
-        if Path(target).name in _VENDOR_BINARIES:
+        name = Path(target).name
+        if name in _VENDOR_BINARIES:
             continue
-        repo_copy = _ROOT / "scripts" / Path(target).name
-        assert repo_copy.exists(), (
-            f"{target} ist ExecStart-Ziel einer Unit, hat aber keine kanonische "
-            "Quelle unter scripts/ — es existiert dann nur auf dem laufenden Host."
+        sources = [d / name for d in (_ROOT / "scripts", _ROOT / "deploy" / "bin")]
+        present = [str(p.relative_to(_ROOT)) for p in sources if p.exists()]
+        assert len(present) == 1, (
+            f"{target} ist ExecStart-Ziel einer Unit und braucht GENAU EINE kanonische "
+            f"Quelle unter scripts/ oder deploy/bin/, gefunden: {present}"
         )
         assert target in src, (
             f"{target} ist ExecStart-Ziel einer Unit, wird vom Install-Skript "
             "aber nicht ausgerollt."
         )
+
+
+def test_standby_helfer_wird_nur_ueber_den_gepinnten_installer_ausgerollt() -> None:
+    """Kein ungeprueftes ``install``/``cp`` des Backup-Vertrags am Pin vorbei.
+
+    ``deploy/bin/install_standby_backup.sh`` prueft Hash und Syntax und tauscht
+    atomar. Ein zweiter Weg daneben ist der Befund vom 26.09. in anderer Form.
+    """
+    src = _script()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert 'HELPER_INSTALLER="${REPO_ROOT}/deploy/bin/install_standby_backup.sh"' in code
+    assert 'run bash "$HELPER_INSTALLER"' in code
+    assert "scripts/standby_to_usb.sh" not in code, (
+        "der Installer verweist wieder auf die abgehaengte Zweitfassung"
+    )
+    assert "HELPER_SRC" not in code, "Standby-Helfer wird wieder direkt kopiert statt ueber den Pin"
