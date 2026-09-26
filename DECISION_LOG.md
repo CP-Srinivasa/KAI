@@ -24,6 +24,18 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-292 (2026-09-26)
+**Befund (Abnahme nach Release `27c6a312`, Operator-Zahlung):** Der Kaufweg des Beweispakets (D-288 Befund 4, #1098) ist **oeffentlich und bezahlt live abgenommen**, einschliesslich unabhaengiger Bitcoin-Pruefung.
+- **Release `27c6a312`:** DEPLOY_VERIFIED 17:18Z, der Operator hat den Deploy selbst gestartet. Zielbaum 12 305 passed. Enthalten sind #1097–#1102. Rollback-Punkt `a90eb10a`.
+- **Challenge:** `GET https://kai-trader.org/oracle/verdicts/proof?attestation_hash=d4c54c95…f6a9` → 402 mit 10-sat-Rechnung (payment_hash `8b8db4d5…92e0`, 17:56:33Z). `X-L402-Access-Expires` 19:01:33Z ist gleich dem Token-Ablauf, das ist die Rechnung plus 65 min (#1102).
+- **Zahlung:** Der Operator hat aus einer externen Wallet gezahlt, am Node SETTLED um 17:57:20Z. Eine Eigenzahlung vom Node an sich selbst war nicht moeglich: nur ein Kanal, keine Kreisroute.
+- **Lieferung:** Derselbe Token plus Preimage → 200 mit `kai-truth-proof-bundle/v1` (9 790 Bytes, verankerter Tip seq 136). Wiederholung und `/oracle/verdicts` mit demselben Token → 200, also Stunden-Zugang zum Bereich (D-291). Demand-Ledger: 1× `challenge_minted` und 3× `access_granted` (Scope `verdicts`). Einnahmen-Buchung: Um 18:10:09Z per Timer gebucht, `amount_sat=10`, `memo=kai-oracle:verdicts`, `source=oracle-l402`.
+- **Unabhaengige Pruefung:** `scripts/verify_truth_bundle.py --mempool` auf dem Laptop gegen mempool.space: alle sechs Checks OK, `VERIFIED bitcoin height=966998`, `RESULT: PASS`.
+- **Vor der Rechnung (#1099):** Oeffentlich gibt ein ungueltiger Hash 422 und ein unbekannter 404, beides ohne Mint.
+- **Pi-Wartung MW-1:** Kernel 1065, Neustarts um 16:43Z und 17:09Z. Beide Male war der Zahlungspfad ohne Folgen (Drain und Reconcile ok).
+**Limit:** Die 10 sat sind eine **Eigenzahlung des Operators** und belegen keine Marktnachfrage. Die G0-Probe zaehlt nur den Scope `fee-series` und ist nicht beruehrt. Vor einem oeffentlichen Verkauf gelten die Bedingungen aus D-291 (Bedingungsseite, Beschwerdeweg, anwaltliche Pruefung).
+**Beleg:** Pi `artifacts/ln_demand_ledger.jsonl` (payment_hash `8b8db4d5…`), `~/release_deploy_27c6a312.log`, lnd-Invoice-Status per `list_invoices`.
+
 ### D-291 (2026-09-26)
 **Entscheidung (Operator 2026-09-26):** Bezahlte L402-Oracle-Abrufe werden **nicht automatisch erstattet**, auch nicht nach einem Ausfall (D-288 Befund 5, Truth-Seite). Gesetzliche Ansprueche bleiben unberuehrt (siehe „Rechtliche Grenze“).
 - **Nachlieferung statt Erstattung:** Ein L402-Token ist zustandslos und fuer seinen Scope bis zum TTL-Ende (3600 s) wiederverwendbar. Wer bezahlt hat und einen 503 bekommt, wiederholt die Anfrage mit demselben Token und zahlt nicht erneut.
