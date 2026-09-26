@@ -311,7 +311,13 @@ async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
     from app.research.verdict_report import list_verdict_reports
     from app.truth.ledger import verify_ledger
 
-    rows = list_verdict_reports()
+    rows = [
+        {
+            **row,
+            "proof_bundle": f"/oracle/verdicts/proof?attestation_hash={row['attestation_hash']}",
+        }
+        for row in list_verdict_reports()
+    ]
     n = max(0, min(int(limit), 500))  # bound the response; -ve/huge limits clamp
     integrity = verify_ledger()
     return {
@@ -324,6 +330,30 @@ async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
             "JSON and compare to attestation_hash (app.truth.attestation.verify_attestation)"
         ),
     }
+
+
+@router.get("/verdicts/proof")
+async def verdict_proof(request: Request, attestation_hash: str) -> dict[str, Any]:
+    """Das vollstaendige Beweispaket zu einem Verdict (D-288, Befund 4).
+
+    Bericht, Ledger-Segment bis zum verankerten Tip, ``.ots`` und KAIs
+    Bitcoin-Pruefbeleg — genug, damit ein Kaeufer ohne KAI nachrechnet
+    (``scripts/verify_truth_bundle.py``, optional gegen mempool.space).
+    Dieselbe L402-Freischaltung wie ``/verdicts``.
+    """
+    await _require_paid(request, "verdicts")
+    if len(attestation_hash) != 64 or any(c not in "0123456789abcdef" for c in attestation_hash):
+        raise HTTPException(status_code=422, detail="attestation_hash must be 64 lowercase hex")
+    from app.truth.proof_bundle import build_verdict_bundle
+
+    bundle = build_verdict_bundle(
+        attestation_hash, proofs_dir=Path(get_settings().integrity.proofs_dir)
+    )
+    if bundle is None:
+        raise HTTPException(
+            status_code=404, detail="no attested and anchored verdict for this hash (yet)"
+        )
+    return bundle
 
 
 class TimestampRequest(BaseModel):
