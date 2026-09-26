@@ -1,0 +1,69 @@
+# Soll-Set: Units, die auf dem Produktions-Pi AKTIVIERT (enabled) sind.
+#
+# MindBlow 2.0, E4 Teil 2 (Operator-Entscheid 26.09.2026: nur sichtbar machen).
+# `scripts/pi_install_systemd.sh` schaltet auf einem frischen Host nur ENABLE_ON_INSTALL
+# scharf (Lehre #626/#627: neue Timer nie blind mit-enablen) — am 26.09. 19 Units, live
+# aktiviert waren 58. Diese Datei haelt den gewollten Live-Stand fest; die Health-Sonde
+# `enabled_set_finding` (app/alerts/health_check_host.py) meldet jede Abweichung (P2).
+# Der Installer liest diese Datei NICHT.
+#
+# Eine Unit bewusst (de)aktivieren = diese Liste per PR anpassen UND auf der Pi
+# `systemctl enable|disable`. Stand: Pi-Messung 2026-09-26 (58 aktiviert) ohne die zwei
+# abgelaufenen Einmal-Timer kai-edge-ic-check.timer und kai-shadow-report-oneshot.timer
+# (E5, Operator-sudo offen — bis dahin meldet die Sonde sie als "zusaetzlich aktiviert").
+cloudflared.service
+kai-agent-worker.service
+kai-asset-rotation-shadow.timer
+kai-audit-rotate.timer
+kai-auto-annotate-blocked.timer
+kai-auto-annotate.timer
+kai-backup-artifacts.timer
+kai-backup-restore-drill.timer
+kai-canonical-edge-attest.timer
+kai-coingecko-overview-refresh.timer
+kai-daily-strategy-reminder.timer
+kai-daily-strategy.timer
+kai-edge-ic-watch.timer
+kai-entry-watch.service
+kai-exploration-coverage.timer
+kai-forecaster-issue.timer
+kai-forecaster-resolve.timer
+kai-funding-refresh.timer
+kai-health-check.timer
+kai-hold-report.timer
+kai-integrity-anchor.timer
+kai-integrity-ots-upgrade.timer
+kai-liquidation-stream.service
+kai-litellm.service
+kai-ln-reconcile.timer
+kai-ln-scb-monitor.timer
+kai-min-turnover-calibration.timer
+kai-momentum-crosscheck.timer
+kai-momentum-universe-feed.timer
+kai-momentum-universe-refresh.timer
+kai-okx-announcements.timer
+kai-operator-digest.timer
+kai-oracle-earnings-booking.timer
+kai-paper-trading.timer
+kai-parser-feedback.timer
+kai-pi-health.timer
+kai-premium-healthcheck.timer
+kai-premium-latency-audit.timer
+kai-prereg-maturity.timer
+kai-real-analysis-paper-feed.timer
+kai-recalc-cycle.timer
+kai-regime-classify.timer
+kai-server-health-watchdog.timer
+kai-server.service
+kai-service-watchdog.timer
+kai-shadow-real-feed.timer
+kai-shadow-resolver.timer
+kai-source-discovery.timer
+kai-standby-data.timer
+kai-standby-system.timer
+kai-technical-screener.timer
+kai-tg-listener.service
+kai-truth-anchor.timer
+kai-truth-lint.timer
+kai-tv-auto-promote.timer
+kai-unlock-refresh.timer

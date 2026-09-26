@@ -37,6 +37,13 @@ Host-Zustand und liefen bis E3 als ``_check_timer_scheduleability`` in
 ``_check_host`` (Stream-Vertrag ``offpi_receipts.jsonl``) ohne Baseline-
 Anhebung zu tragen. Komponente, Schwere und Pi-Bedingung sind unveraendert.
 
+**Soll-Set der aktivierten Units (E4 Teil 2).** Der Installer schaltet auf einem
+frischen Host nur ``ENABLE_ON_INSTALL`` scharf (19 Units), live aktiviert waren am
+26.09. 58 — darunter Backup, Drill, Truth-Anker und Standby. Operator-Entscheid:
+nicht mehr scharfschalten, nur sichtbar machen. ``deploy/systemd/enabled_set.txt``
+haelt den gewollten Stand fest; jede Abweichung (fehlt aktiviert / zusaetzlich
+aktiviert, nur Units aus ``deploy/systemd/``) ist ein Befund.
+
 Alle Befunde sind ``warning`` — sie kosten Aktualitaet, nie Geld —, bis auf
 ``timer_scheduleability`` (``critical``, wie zuvor).
 """
@@ -70,6 +77,9 @@ OFFPI_RECEIPT_SCHEMA: Final = "offpi_receipt/v1"
 #: Eine Woche Takt plus ein Tag Spielraum: die Platte wird zum Sichern angesteckt,
 #: nicht dauerhaft betrieben.
 MAX_OFFPI_AGE_DAYS: Final = 8.0
+#: Soll-Set der aktivierten Units, relativ zum Repo (Leser: :func:`enabled_set_finding`).
+ENABLED_SET_RELPATH: Final = Path("deploy") / "systemd" / "enabled_set.txt"
+_UNIT_SUFFIXES: Final = (".service", ".timer")
 _SHOW: Final = 3
 _DELETED: Final = " (deleted)"
 
@@ -264,6 +274,47 @@ def offpi_backup_finding(
     )
 
 
+def read_enabled_set(repo_root: Path) -> set[str] | None:
+    """Units aus ``enabled_set.txt`` (``#`` leitet Kommentare ein); ``None`` ohne Datei."""
+    try:
+        text = (repo_root / ENABLED_SET_RELPATH).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return {entry for line in text.splitlines() if (entry := line.split("#", 1)[0].strip())}
+
+
+def enabled_set_finding(repo_root: Path, *, run: Runner = _run) -> str | None:
+    """Befund, wenn die aktivierten Repo-Units vom Soll-Set abweichen.
+
+    Verglichen werden nur Units, deren Datei in ``deploy/systemd/`` liegt — fremde
+    Systemdienste (ssh, needrestart, ...) gehen dieses Repo nichts an. Fehlt das
+    Soll-Set oder antwortet ``systemctl`` nicht, gibt es keinen Befund.
+    """
+    soll = read_enabled_set(repo_root)
+    if soll is None:
+        return None
+    unit_dir = repo_root / ENABLED_SET_RELPATH.parent
+    repo_units = {p.name for p in unit_dir.iterdir() if p.name.endswith(_UNIT_SUFFIXES)}
+    listing = run(["systemctl", "list-unit-files", "--state=enabled", "--no-legend", "--no-pager"])
+    if listing is None:
+        return None
+    ist = {parts[0] for line in listing.splitlines() if (parts := line.split())} & repo_units
+    missing = sorted(soll - ist)
+    extra = sorted(ist - soll)
+    if not missing and not extra:
+        return None
+    parts = []
+    if missing:
+        parts.append(f"{len(missing)} nicht aktiviert ({_preview(missing)})")
+    if extra:
+        parts.append(f"{len(extra)} zusaetzlich aktiviert ({_preview(extra)})")
+    return (
+        f"Aktivierte Units weichen vom Soll-Set ab ({ENABLED_SET_RELPATH.as_posix()}): "
+        f"{'; '.join(parts)} — gewollt: Soll per PR anpassen; sonst "
+        "`systemctl enable|disable` auf der Pi."
+    )
+
+
 def check(repo_root: Path, report: Any) -> list[HealthIssue]:
     """Aufrufstelle in ``health_check.run_health_check_report`` — nur auf der Pi."""
     if os.environ.get(KILL_SWITCH_ENV, "").strip().lower() == "off":
@@ -284,17 +335,22 @@ def check(repo_root: Path, report: Any) -> list[HealthIssue]:
         issues.append(_issue(severity="warning", component="stale_libraries", message=msg))
     if msg := offpi_backup_finding(repo_root / "artifacts"):
         issues.append(_issue(severity="warning", component="offpi_backup", message=msg))
+    if msg := enabled_set_finding(repo_root):
+        issues.append(_issue(severity="warning", component="enabled_set_drift", message=msg))
     return issues
 
 
 __all__ = [
+    "ENABLED_SET_RELPATH",
     "KILL_SWITCH_ENV",
     "MAX_OFFPI_AGE_DAYS",
     "MAX_PENDING_DAYS",
     "OFFPI_RECEIPTS_RELPATH",
     "check",
     "checkout_findings",
+    "enabled_set_finding",
     "offpi_backup_finding",
+    "read_enabled_set",
     "reboot_pending_finding",
     "stale_library_finding",
 ]

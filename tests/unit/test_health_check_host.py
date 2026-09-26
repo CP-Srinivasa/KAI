@@ -288,6 +288,7 @@ def test_check_maps_findings_to_warning_issues(
     monkeypatch.setattr(hch, "stale_library_finding", lambda _root: "libs")
     seen: list[Path] = []
     monkeypatch.setattr(hch, "offpi_backup_finding", lambda adir: seen.append(adir) or "offpi")
+    monkeypatch.setattr(hch, "enabled_set_finding", lambda _root: "drift")
     issues = hch.check(tmp_path, SimpleNamespace(runs_on_pi=True))
     assert [(i.severity, i.component, i.message) for i in issues] == [
         # aus health_check.py verlegt: Komponente und Schwere unveraendert
@@ -296,8 +297,77 @@ def test_check_maps_findings_to_warning_issues(
         ("warning", "reboot_pending", "reboot"),
         ("warning", "stale_libraries", "libs"),
         ("warning", "offpi_backup", "offpi"),
+        ("warning", "enabled_set_drift", "drift"),
     ]
     assert seen == [tmp_path / "artifacts"]
+
+
+# ── Soll-Set der aktivierten Units (E4 Teil 2) ─────────────────────────────
+
+
+def _unit_repo(tmp_path: Path, soll: str, units: list[str]) -> Path:
+    unit_dir = tmp_path / hch.ENABLED_SET_RELPATH.parent
+    unit_dir.mkdir(parents=True)
+    for name in units:
+        (unit_dir / name).write_text("[Unit]\n", encoding="utf-8")
+    (tmp_path / hch.ENABLED_SET_RELPATH).write_text(soll, encoding="utf-8")
+    return tmp_path
+
+
+def _listing(*enabled: str) -> hch.Runner:
+    rows = "".join(f"{name} enabled enabled\n" for name in enabled)
+    return lambda _cmd: rows
+
+
+_UNITS = ["kai-a.timer", "kai-a.service", "kai-b.timer", "kai-b.service", "cloudflared.service"]
+
+
+def test_matching_enabled_set_is_silent(tmp_path: Path) -> None:
+    repo = _unit_repo(tmp_path, "# Kommentar\nkai-a.timer\ncloudflared.service  # Tunnel\n", _UNITS)
+    run = _listing("kai-a.timer", "cloudflared.service", "ssh.service", "needrestart.service")
+    assert hch.enabled_set_finding(repo, run=run) is None, "fremde Systemdienste zaehlen nicht"
+
+
+def test_silently_disabled_and_unwanted_units_are_reported(tmp_path: Path) -> None:
+    repo = _unit_repo(tmp_path, "kai-a.timer\nkai-b.timer\n", _UNITS)
+    msg = hch.enabled_set_finding(repo, run=_listing("kai-a.timer", "kai-a.service"))
+    assert msg is not None
+    assert "1 nicht aktiviert (kai-b.timer)" in msg
+    assert "1 zusaetzlich aktiviert (kai-a.service)" in msg
+
+
+def test_no_enabled_set_or_no_systemctl_is_silent(tmp_path: Path) -> None:
+    assert hch.enabled_set_finding(tmp_path, run=_listing("kai-a.timer")) is None
+    repo = _unit_repo(tmp_path, "kai-a.timer\n", _UNITS)
+    assert hch.enabled_set_finding(repo, run=lambda _cmd: None) is None
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_repo_enabled_set_names_only_existing_units_once() -> None:
+    lines = [
+        line.split("#", 1)[0].strip()
+        for line in (_REPO / hch.ENABLED_SET_RELPATH).read_text(encoding="utf-8").splitlines()
+    ]
+    entries = [entry for entry in lines if entry]
+    assert len(entries) == len(set(entries)), "Doppelte Eintraege im Soll-Set"
+    unit_dir = _REPO / hch.ENABLED_SET_RELPATH.parent
+    missing = [e for e in entries if not (unit_dir / e).is_file()]
+    assert not missing, f"Soll-Set nennt Units ohne Datei in deploy/systemd/: {missing}"
+
+
+def test_everything_the_installer_enables_is_in_the_enabled_set() -> None:
+    """Was ein frischer Host scharfschaltet, muss auch gewollt aktiv sein."""
+    import re
+
+    script = (_REPO / "scripts" / "pi_install_systemd.sh").read_text(encoding="utf-8")
+    block = re.search(r"^ENABLE_ON_INSTALL=\((.*?)^\)", script, re.S | re.M)
+    assert block is not None
+    on_install = set(re.findall(r'"([^"]+)"', block.group(1)))
+    soll = hch.read_enabled_set(_REPO)
+    assert soll is not None
+    assert on_install <= soll, f"Installer aktiviert, Soll-Set nicht: {sorted(on_install - soll)}"
 
 
 def test_health_report_includes_host_hygiene(

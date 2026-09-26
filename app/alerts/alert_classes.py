@@ -167,6 +167,10 @@ COMPONENT_CLASSES: dict[str, AlertClass] = {
     # und die Laptop-Pulls laufen weiter —, sondern die Erinnerung, die Platte
     # anzustecken. Taeglich in der Sammelmeldung genuegt.
     "offpi_backup": AlertClass.P2,
+    # Soll-Set der aktivierten Units (MindBlow E4 Teil 2): eine still deaktivierte
+    # (oder ungewollt aktive) Unit ist Drift, kein Ausfall — die Dienste haben eigene
+    # Sonden. Taeglich in der Sammelmeldung genuegt.
+    "enabled_set_drift": AlertClass.P2,
     # --- P3: Hinweis -----------------------------------------------------
     # Sagt, WO die Sonde lief — eine Eigenschaft der Messung, kein Systemzustand.
     "probe_location": AlertClass.P3,
