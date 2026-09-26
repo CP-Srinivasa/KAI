@@ -9,6 +9,9 @@ Dieser Block bestaetigt deshalb taeglich POSITIV, was sonst unsichtbar bleibt:
     💶 KI-Kosten: Monat 12.34/31.00 USD (Hochrechnung 29.80) · heute 0.40/1.00 · OK
     ⚡ Lightning: Reconcile 07:25Z ok · 0 Orphans · SCB cb961652 (seit 25.09.)
 
+Lightning warnt zusaetzlich bei einer fremden Node-Ausgabe (D-289) und bei
+bezahlten, nicht gelieferten Oracle-Abrufen (D-288 Befund 5), je 24 h lang.
+
 Reine Leser; jeder Teil scheitert einzeln ("nicht lesbar") statt den Digest zu
 kippen. Alarmierung bleibt bei Health — hier steht nur ein ⚠️ vor dem Teil, der
 seine Schwelle reisst.
@@ -129,6 +132,26 @@ def collect_ai_cost(now: datetime) -> dict[str, Any]:
     }
 
 
+def _paid_unavailable_24h(path: Path, now: datetime) -> int:
+    """Verschiedene Zahlungen mit ``l402_paid_unavailable`` in den letzten 24 h."""
+    if not path.is_file():
+        return 0
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        tail = deque(fh, maxlen=2000)
+    seen: set[str] = set()
+    for line in tail:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("event") != "l402_paid_unavailable":
+            continue
+        ts = _parse_utc(row.get("ts"))
+        if ts is not None and (now - ts).total_seconds() < 86400:
+            seen.add(str(row.get("payment_hash") or f"ohne-hash-{len(seen)}"))
+    return len(seen)
+
+
 def collect_ln(artifacts: Path, now: datetime) -> dict[str, Any]:
     """Zahlungsabgleich + SCB aus lokalen Zustaenden — NIE der Node (D-288)."""
     from app.payments.reconcile_types import RECONCILE_STALE_AFTER_MIN, STATE_FILENAME, load_state
@@ -152,6 +175,10 @@ def collect_ln(artifacts: Path, now: datetime) -> dict[str, Any]:
     foreign = _parse_utc(state.last_unattributed_at)
     if foreign is not None and (now - foreign).total_seconds() < 86400:
         out["foreign_spend_at"] = foreign
+    # D-288 Befund 5: bezahlt, aber nicht geliefert — je Zahlung einmal, 24 h lang.
+    undelivered = _paid_unavailable_24h(artifacts / "ln_demand_ledger.jsonl", now)
+    if undelivered:
+        out["paid_unavailable"] = undelivered
     scb = artifacts / "scb_baseline.json"
     if scb.is_file():
         baseline = json.loads(scb.read_text(encoding="utf-8"))
@@ -241,6 +268,7 @@ def _ln_line(ln: dict[str, Any]) -> str:
         or ln["complete"] is False
         or ln["stale"]
         or foreign is not None
+        or bool(ln.get("paid_unavailable"))
     )
     parts = [f"{'⚠️ ' if warn else ''}Reconcile {ln['ts']:%H:%MZ} {ln['status']}"]
     if ln["complete"] is False:
@@ -250,6 +278,8 @@ def _ln_line(ln: dict[str, Any]) -> str:
     parts.append(f"{ln['orphans']} Orphans")
     if foreign is not None:
         parts.append(f"fremde Ausgabe {foreign:%d.%m. %H:%MZ} (nicht zugeordnet)")
+    if ln.get("paid_unavailable"):
+        parts.append(f"{ln['paid_unavailable']}× bezahlt, nicht geliefert (24 h)")
     if ln.get("scb_sha"):
         since = f" (seit {_day(ln['scb_since'])})" if ln.get("scb_since") else ""
         parts.append(f"SCB {ln['scb_sha']}{since}")

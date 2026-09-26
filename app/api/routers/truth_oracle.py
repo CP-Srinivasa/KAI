@@ -289,11 +289,37 @@ async def fee_series(request: Request) -> dict[str, Any]:
     Verifiable FACTS only — raw observations + deterministic min/median/max, never a
     forecast. Source is the L1 fee-shadow stream the chain scheduler already writes.
     """
-    await _require_paid(request, "fee-series")
     from app.chain.fee_series import build_fee_series
     from app.signals.l2_features import read_onchain_fee_shadow
 
-    records = read_onchain_fee_shadow("artifacts/onchain_fee_shadow.jsonl")
+    def _records() -> list[dict[str, Any]]:
+        return read_onchain_fee_shadow("artifacts/onchain_fee_shadow.jsonl")
+
+    unavailable = HTTPException(
+        status_code=503,
+        detail={"code": "fee_series_unavailable", "retriable": True},
+        headers={"Retry-After": "60"},
+    )
+
+    async def _data_before_mint() -> None:
+        if not _records():
+            raise unavailable
+
+    # D-288 Befund 5: never invoice an empty series. Unpaid → the data check runs
+    # after the S-002 limiter, before the invoice; this call always raises.
+    if _valid_paid_token(request, "fee-series") is None:
+        await _require_paid(request, "fee-series", before_mint=_data_before_mint)
+    records = _records()
+    if not records:
+        # Paid but undeliverable: visible, and the stateless token stays reusable.
+        paid = _valid_paid_token(request, "fee-series")
+        append_demand_event(
+            PAID_UNAVAILABLE,
+            scope="fee-series",
+            payment_hash=paid.payment_hash if paid else "",
+        )
+        raise unavailable
+    await _require_paid(request, "fee-series")
     return build_fee_series(records)
 
 
@@ -341,18 +367,32 @@ async def verdict_proof(request: Request, attestation_hash: str) -> dict[str, An
     (``scripts/verify_truth_bundle.py``, optional gegen mempool.space).
     Dieselbe L402-Freischaltung wie ``/verdicts``.
     """
-    await _require_paid(request, "verdicts")
+    _require_oracle_enabled()
     if len(attestation_hash) != 64 or any(c not in "0123456789abcdef" for c in attestation_hash):
         raise HTTPException(status_code=422, detail="attestation_hash must be 64 lowercase hex")
     from app.truth.proof_bundle import build_verdict_bundle
 
-    bundle = build_verdict_bundle(
-        attestation_hash, proofs_dir=Path(get_settings().integrity.proofs_dir)
-    )
-    if bundle is None:
-        raise HTTPException(
-            status_code=404, detail="no attested and anchored verdict for this hash (yet)"
+    def _bundle() -> dict[str, Any] | None:
+        return build_verdict_bundle(
+            attestation_hash, proofs_dir=Path(get_settings().integrity.proofs_dir)
         )
+
+    missing = HTTPException(
+        status_code=404, detail="no attested and anchored verdict for this hash (yet)"
+    )
+
+    async def _bundle_before_mint() -> None:
+        if _bundle() is None:
+            raise missing
+
+    # D-288 Befund 5: never invoice a proof that does not exist (yet). Unpaid → the
+    # lookup runs after the S-002 limiter, before the invoice; this call always raises.
+    if _valid_paid_token(request, "verdicts") is None:
+        await _require_paid(request, "verdicts", before_mint=_bundle_before_mint)
+    bundle = _bundle()
+    if bundle is None:
+        raise missing
+    await _require_paid(request, "verdicts")
     return bundle
 
 

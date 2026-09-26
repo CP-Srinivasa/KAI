@@ -1010,3 +1010,99 @@ def test_verdicts_listing_points_to_the_proof_bundle(client: TestClient) -> None
     assert r.json()["verdicts"][0]["proof_bundle"] == (
         "/oracle/verdicts/proof?attestation_hash=" + "a" * 64
     )
+
+
+# --- Befund 5 (Truth-Seite): nie fuer eine nicht lieferbare Antwort kassieren ----------
+
+
+def test_verdict_proof_malformed_hash_is_rejected_before_invoice_mint(client: TestClient) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+    ):
+        r = client.get("/oracle/verdicts/proof", params={"attestation_hash": "zz"})
+    assert r.status_code == 422
+    mint.assert_not_awaited()
+
+
+def test_verdict_proof_unknown_hash_is_404_before_invoice_mint(client: TestClient) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.truth.proof_bundle.build_verdict_bundle", return_value=None),
+    ):
+        r = client.get("/oracle/verdicts/proof", params={"attestation_hash": "b" * 64})
+    assert r.status_code == 404
+    mint.assert_not_awaited()
+
+
+def test_verdict_proof_known_hash_unpaid_is_challenged(client: TestClient) -> None:
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch("app.truth.proof_bundle.build_verdict_bundle", return_value={"schema": "x"}),
+    ):
+        r = client.get("/oracle/verdicts/proof", params={"attestation_hash": "a" * 64})
+    assert r.status_code == 402
+
+
+def test_fee_series_without_data_is_503_before_invoice_mint(client: TestClient) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.signals.l2_features.read_onchain_fee_shadow", return_value=[]),
+    ):
+        r = client.get("/oracle/fee-series")
+    assert r.status_code == 503
+    assert r.json()["detail"] == {"code": "fee_series_unavailable", "retriable": True}
+    mint.assert_not_awaited()
+
+
+def test_paid_fee_series_without_data_is_retriable_and_visible(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="fee-series")
+    events: list[str] = []
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(
+            truth_oracle,
+            "append_demand_event",
+            lambda event, **_payload: events.append(event),
+        ),
+        patch("app.signals.l2_features.read_onchain_fee_shadow", return_value=[]),
+    ):
+        r = client.get(
+            "/oracle/fee-series",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 503
+    assert r.json()["detail"]["retriable"] is True
+    assert r.headers.get("Retry-After")
+    assert ACCESS_GRANTED not in events
+    assert PAID_UNAVAILABLE in events
+
+
+def test_paid_fee_series_with_data_is_served(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="fee-series")
+    rows = [{"ts": "2026-09-26T00:00:00+00:00", "blocks": 1, "fee_sat_vb": 2.0}]
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.signals.l2_features.read_onchain_fee_shadow", return_value=rows),
+    ):
+        r = client.get(
+            "/oracle/fee-series",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
