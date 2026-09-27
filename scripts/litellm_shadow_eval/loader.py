@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.litellm_shadow_eval.models import EvidenceRecord, Side, ValidationIssue
+from scripts.litellm_shadow_eval.models import (
+    EvidenceRecord,
+    Side,
+    ValidationIssue,
+    is_exclusion_code,
+)
 
 #: Welche Zeilen dieser Leser annimmt.
 #:
@@ -288,6 +293,19 @@ def normalize_record(
         if value is not None and value < lower:
             _issue(issues, code, f"{label} is out of range", record_ref, route)
 
+    # Optional und rueckwaertskompatibel: fehlend oder `null` heisst "kein
+    # Grund". Vorhanden muss es ein Code sein -- er wird gezaehlt berichtet,
+    # und Freitext koennte dort Nutzlast in den Bericht tragen.
+    exclusion_reason = raw.get("exclusion_reason")
+    if exclusion_reason is not None and not is_exclusion_code(exclusion_reason):
+        _issue(
+            issues,
+            "INVALID_EXCLUSION_REASON",
+            "exclusion_reason must be a reason code [A-Za-z0-9_.:-]{1,64}",
+            record_ref,
+            route,
+        )
+
     if issues:
         return None, tuple(issues)
     assert schema_version is not None and route is not None and purpose is not None
@@ -324,6 +342,7 @@ def normalize_record(
             timestamp=timestamp,
             execution_authority=execution_authority,
             record_ref=record_ref,
+            exclusion_reason=exclusion_reason,
         ),
         (),
     )

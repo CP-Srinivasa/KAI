@@ -17,6 +17,12 @@ niemals PRIMARY werden. Wer die Erlaubnis wissen will, liest
 ``primary_ready_routes`` beziehungsweise ``decisions[route].primary_ready`` --
 nicht ``$?``.
 
+``--runtime-evidence``: JSON-Objekt. Jedes ``*_proven`` als Nachweisobjekt
+``{"proven": true, "artifact": ..., "artifact_sha256": <64 hex>, "proven_at":
+<ISO-8601 mit Zeitzone>, "version": <git sha/release>}``. Ein nacktes ``true``
+wird gelesen, gilt unter der Standardpolitik aber NICHT als Beleg
+(``RUNTIME_PROOF_UNREFERENCED:<flag>``); ein halbes Objekt ist Exit 2.
+
 Dieses Werkzeug aktiviert nichts. Es fuehrt keinen Netzaufruf aus, spricht
 weder LiteLLM noch einen Anbieter an und aendert keinen Modus.
 """

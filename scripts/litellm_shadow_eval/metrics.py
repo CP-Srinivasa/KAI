@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from statistics import fmean, median
 
 from scripts.litellm_shadow_eval.models import (
@@ -15,6 +16,10 @@ from scripts.litellm_shadow_eval.models import (
     RouteMetrics,
     ValidationIssue,
 )
+
+#: Schluessel fuer "kein Grund angegeben". Mit Klammern, damit er mit keinem
+#: gueltigen Ausschlusscode (``[A-Za-z0-9_.:-]``) zusammenfallen kann.
+NO_EXCLUSION_REASON = "(none)"
 
 
 def _stable(value: float | None) -> float | None:
@@ -47,17 +52,30 @@ def _distribution(values: Sequence[str | None]) -> dict[str, int]:
     return dict(sorted(counter.items()))
 
 
+def sample_keys_sha256(keys: Sequence[str]) -> str:
+    """sha256 ueber die SORTIERTEN Schluessel, je einer pro Zeile mit LF (UTF-8)."""
+    digest = hashlib.sha256()
+    for key in sorted(keys):
+        digest.update(key.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _quality(valid: list[EvidencePair]) -> QualityComparison:
-    observed = [
-        (pair.direct.quality_score, pair.shadow.quality_score)
+    scored = [
+        (pair.key, pair.direct.quality_score, pair.shadow.quality_score)
         for pair in valid
         if pair.direct is not None
         and pair.shadow is not None
         and pair.direct.quality_score is not None
         and pair.shadow.quality_score is not None
     ]
-    if not observed:
-        return QualityComparison("NOT_MEASURED", 0, None, None, None, None, 0, 0, 0)
+    coverage = _rate(len(scored), len(valid))
+    if not scored:
+        return QualityComparison(
+            "NOT_MEASURED", 0, None, None, None, None, 0, 0, 0, coverage=coverage
+        )
+    observed = [(direct_value, shadow_value) for _, direct_value, shadow_value in scored]
     direct = [item[0] for item in observed]
     shadow = [item[1] for item in observed]
     deltas = [shadow_value - direct_value for direct_value, shadow_value in observed]
@@ -71,6 +89,8 @@ def _quality(valid: list[EvidencePair]) -> QualityComparison:
         shadow_better_count=sum(delta > 0 for delta in deltas),
         direct_better_count=sum(delta < 0 for delta in deltas),
         equal_count=sum(delta == 0 for delta in deltas),
+        coverage=coverage,
+        sample_keys_sha256=sample_keys_sha256([key for key, _, _ in scored]),
     )
 
 
@@ -78,12 +98,24 @@ def _known(records: list[EvidenceRecord], attribute: str) -> list[float]:
     return [float(value) for record in records if (value := getattr(record, attribute)) is not None]
 
 
+def _exclusion_reason(pair: EvidencePair) -> str | None:
+    present = [record for record in (pair.direct, pair.shadow) if record is not None]
+    reasons = sorted({record.exclusion_reason for record in present if record.exclusion_reason})
+    return reasons[0] if len(reasons) == 1 else None
+
+
 def route_metrics(
     route: str,
     pairs: tuple[EvidencePair, ...],
     issues: tuple[ValidationIssue, ...],
+    *,
+    allowed_exclusion_reasons: Collection[str] = (),
 ) -> RouteMetrics:
-    """Compute metrics; rates use complete pairs unless explicitly observational."""
+    """Compute metrics; rates use complete pairs unless explicitly observational.
+
+    ``allowed_exclusion_reasons`` kommt aus der (routenwirksamen) Politik. Ohne
+    Angabe ist KEIN Grund zugelassen: jedes halbe Paar zaehlt als unerklaert.
+    """
     route_pairs = [pair for pair in pairs if pair.logical_route == route]
     valid = [pair for pair in route_pairs if pair.status is PairStatus.VALID]
     incomplete = [pair for pair in route_pairs if pair.status is PairStatus.INCOMPLETE]
@@ -149,6 +181,8 @@ def route_metrics(
     ]
     retry_known = [record for record in shadow if record.retry_count is not None]
     invalid_refs = {issue.record_ref for issue in issues if issue.logical_route == route}
+    incomplete_reasons = [_exclusion_reason(pair) for pair in incomplete]
+    unexplained = sum(reason not in allowed_exclusion_reasons for reason in incomplete_reasons)
 
     return RouteMetrics(
         logical_route=route,
@@ -255,8 +289,16 @@ def route_metrics(
             ),
             len(fingerprint_comparable),
         ),
+        unexplained_incomplete_pair_count=unexplained,
+        unexplained_incomplete_rate=_rate(unexplained, len(valid) + len(incomplete)),
+        exclusion_reason_distribution=dict(
+            sorted(Counter(reason or NO_EXCLUSION_REASON for reason in incomplete_reasons).items())
+        ),
+        unknown_attempt_accounting_count=sum(
+            record.retry_count is None or record.attempt_count is None for record in shadow
+        ),
         quality=_quality(valid),
     )
 
 
-__all__ = ["nearest_rank", "route_metrics"]
+__all__ = ["nearest_rank", "route_metrics", "sample_keys_sha256"]

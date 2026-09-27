@@ -15,9 +15,12 @@ from scripts.litellm_shadow_eval.models import (
     RuntimeEvidenceFlags,
 )
 from scripts.litellm_shadow_eval.pairing import pair_records
-from scripts.litellm_shadow_eval.policy import policy_hash
+from scripts.litellm_shadow_eval.policy import effective_policy, policy_hash
 
-TOOL_VERSION = "1.0.0"
+#: 1.1.0: strengere Reife (Qualitaetsumfang/-grenze, belegte Identitaet,
+#: Versuchs-/Kostenzaehlung, erklaerte halbe Paare, Ausfallnachweise,
+#: referenzierte und datierte Betriebsnachweise). Berichtsschema v2.
+TOOL_VERSION = "1.1.0"
 
 
 def _utc_now() -> datetime:
@@ -46,7 +49,20 @@ def evaluate(
             | {issue.logical_route for issue in issues if issue.logical_route}
         )
     )
-    metrics = {route: route_metrics(route, paired.pairs, issues) for route in routes}
+    metrics = {
+        route: route_metrics(
+            route,
+            paired.pairs,
+            issues,
+            allowed_exclusion_reasons=effective_policy(policy, route).allowed_exclusion_reasons,
+        )
+        for route in routes
+    }
+    # Vor den Entscheidungen: das Alter der Betriebsnachweise wird gegen genau
+    # den Zeitpunkt gemessen, der im Bericht als `generated_at` steht.
+    generated = clock()
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=UTC)
     # Vereinigung aus gueltigen Datensaetzen UND rohen Zeilen: eine verworfene
     # Consensus-Zeile darf die Decke nicht mitnehmen.
     consensus_routes = {
@@ -58,14 +74,12 @@ def evaluate(
             route_result,
             policy,
             runtime_flags,
+            evaluated_at=generated,
             consensus=route in consensus_routes,
             global_invalid_evidence=global_invalid,
         )
         for route, route_result in metrics.items()
     }
-    generated = clock()
-    if generated.tzinfo is None:
-        generated = generated.replace(tzinfo=UTC)
     return EvaluationReport(
         tool_version=TOOL_VERSION,
         policy_hash=policy_hash(policy),
@@ -78,6 +92,7 @@ def evaluate(
         validation_issues=issues,
         metrics=metrics,
         decisions=decisions,
+        runtime_evidence=runtime_flags,
     )
 
 
