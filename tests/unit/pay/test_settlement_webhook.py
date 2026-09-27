@@ -208,6 +208,145 @@ async def test_nach_der_obergrenze_wird_aufgegeben_und_gemeldet(
     assert health["webhooks_given_up"] == 1
 
 
+# --------------------------------------------------------------------------- #
+# Fairness der Nachzustellung (Audit 27.09., A2)
+# --------------------------------------------------------------------------- #
+
+SLOW = "https://slow.example/hook"
+FAST = "https://fast.example/hook"
+
+
+async def _unsent(harness: Harness, monkeypatch: pytest.MonkeyPatch, url: str) -> Any:
+    """Bezahlt, Callback nie verbucht (Absturz zwischen SETTLED und Versand)."""
+    entry = await harness.service.create_request(
+        amount_sat=1200, description="Beratung", webhook_url=url
+    )
+    harness.rail.settle(entry.ref_hash)
+
+    async def _crash(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("absturz nach SETTLED")
+
+    monkeypatch.setattr("app.pay.service.deliver", _crash)
+    with pytest.raises(RuntimeError):
+        await harness.service.refresh(entry.payment_id)
+    return entry
+
+
+def _slow_and_fast(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """SLOW haengt laenger als das Eintragsbudget, FAST antwortet sofort."""
+    import asyncio
+
+    calls: list[str] = []
+
+    async def _deliver(url: str, payload: dict[str, Any], *, secret: str, **_: Any) -> Any:
+        from app.pay.webhook import WebhookResult
+
+        calls.append(url)
+        if url == SLOW:
+            await asyncio.sleep(5)
+        return WebhookResult(ok=True, detail="http 200")
+
+    monkeypatch.setattr("app.pay.service.deliver", _deliver)
+    monkeypatch.setattr("app.pay.service.WEBHOOK_ENTRY_TIMEOUT_SECONDS", 0.05)
+    return calls
+
+
+def test_das_eintragsbudget_deckt_einen_vollen_zustellversuch() -> None:
+    from app.pay.service import WEBHOOK_ENTRY_TIMEOUT_SECONDS
+    from app.pay.webhook import BACKOFF_SECONDS, MAX_ATTEMPTS, TIMEOUT_SECONDS
+
+    assert WEBHOOK_ENTRY_TIMEOUT_SECONDS > MAX_ATTEMPTS * TIMEOUT_SECONDS + sum(BACKOFF_SECONDS)
+
+
+async def test_ein_haengender_empfaenger_wird_als_timeout_verbucht(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_secret(harness, "s3cr3t")
+    entry = await _unsent(harness, monkeypatch, SLOW)
+    _slow_and_fast(monkeypatch)
+
+    assert await harness.service.redeliver_webhooks() == 1
+
+    stored = harness.store.get(entry.payment_id)
+    assert stored is not None and stored.webhook_attempts == 1
+    assert _events(harness).count(EVENT_WEBHOOK_FAILED) == 1
+    assert '"detail": "timeout"' in harness.store.path.read_text(encoding="utf-8")
+    # Verbucht heisst: der Backoff greift, der naechste Aufruf fragt ihn nicht sofort wieder.
+    assert await harness.service.redeliver_webhooks() == 0
+
+
+async def test_ein_langsamer_empfaenger_verdraengt_die_anderen_nicht(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-Szenario: der erste Empfaenger haengt, der zweite kommt trotzdem dran."""
+    from datetime import timedelta
+
+    _with_secret(harness, "s3cr3t")
+    slow = await _unsent(harness, monkeypatch, SLOW)
+    fast = await _unsent(harness, monkeypatch, FAST)
+    calls = _slow_and_fast(monkeypatch)
+
+    for _ in range(3):
+        await harness.service.redeliver_webhooks()
+        harness.now = harness.now + timedelta(hours=2)
+
+    stored_fast = harness.store.get(fast.payment_id)
+    stored_slow = harness.store.get(slow.payment_id)
+    assert stored_fast is not None and stored_fast.webhook_delivered is True
+    assert calls.count(FAST) == 1, "zugestellt ist zugestellt"
+    assert stored_slow is not None and stored_slow.webhook_attempts == 3
+    assert _events(harness).count(EVENT_WEBHOOK_SENT) == 1
+
+
+async def test_nie_versuchte_callbacks_kommen_zuerst(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    from app.pay.service import WEBHOOK_MAX_ROUNDS, webhook_backoff
+
+    _with_secret(harness, "s3cr3t")
+    old = await _unsent(harness, monkeypatch, "https://a.example/hook")
+    recent = await _unsent(harness, monkeypatch, "https://b.example/hook")
+    never = await _unsent(harness, monkeypatch, "https://c.example/hook")
+    harness.store.webhook_result(
+        recent.payment_id, ok=False, detail="http 503", at=harness.now - timedelta(minutes=5)
+    )
+    harness.store.webhook_result(
+        old.payment_id, ok=False, detail="http 503", at=harness.now - timedelta(minutes=50)
+    )
+
+    due = harness.store.webhooks_due(
+        harness.now, max_rounds=WEBHOOK_MAX_ROUNDS, backoff=webhook_backoff, limit=2
+    )
+
+    assert [r.payment_id for r in due] == [never.payment_id, old.payment_id]
+
+
+async def test_das_rundenbudget_startet_keinen_eintrag_der_nicht_mehr_passt(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.pay.service import WEBHOOK_ENTRY_TIMEOUT_SECONDS
+
+    _with_secret(harness, "s3cr3t")
+    first = await _unsent(harness, monkeypatch, "https://a.example/hook")
+    second = await _unsent(harness, monkeypatch, "https://b.example/hook")
+    calls = _script(monkeypatch, [])
+    ticks = iter([0.0, 0.0, 20.0, 20.0, 20.0])
+    monkeypatch.setattr("app.pay.service._monotonic", lambda: next(ticks))
+
+    delivered = await harness.service.redeliver_webhooks(
+        budget_seconds=WEBHOOK_ENTRY_TIMEOUT_SECONDS + 15.0
+    )
+
+    assert delivered == 1
+    assert len(calls) == 1
+    done = harness.store.get(first.payment_id)
+    untouched = harness.store.get(second.payment_id)
+    assert done is not None and done.webhook_delivered is True
+    assert untouched is not None and untouched.webhook_attempts == 0
+
+
 async def test_ein_zugestellter_callback_ueberlebt_den_neustart(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

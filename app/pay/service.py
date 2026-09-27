@@ -28,8 +28,10 @@ Status frisch aus dem Kern ab.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,7 +46,13 @@ from app.pay.store import (
     PayRequest,
     PayStore,
 )
-from app.pay.webhook import deliver
+from app.pay.webhook import (
+    BACKOFF_SECONDS,
+    MAX_ATTEMPTS,
+    TIMEOUT_SECONDS,
+    WebhookResult,
+    deliver,
+)
 from app.payments.models import Money
 from app.payments.rail import InvoiceRequest, RailError
 from app.payments.receivables import (
@@ -69,6 +77,16 @@ MAX_EXPIRY_SECONDS = 86_400
 WEBHOOK_MAX_ROUNDS = 8
 WEBHOOK_BACKOFF_BASE = timedelta(seconds=60)
 WEBHOOK_BACKOFF_CAP = timedelta(hours=1)
+
+#: Zeitbudget fuer EINEN Zustellversuch (Audit 27.09., A2): ein Versuch darf so
+#: lange dauern wie ``webhook.MAX_ATTEMPTS`` Timeouts plus Pausen, und keine
+#: Sekunde laenger. Laeuft er darueber, wird das als ``timeout`` VERBUCHT —
+#: sonst bliebe der Zaehler bei null und derselbe haengende Empfaenger stuende
+#: in jeder Runde wieder vorn.
+WEBHOOK_ENTRY_TIMEOUT_SECONDS = MAX_ATTEMPTS * TIMEOUT_SECONDS + sum(BACKOFF_SECONDS) + 2.0
+
+#: Monotone Uhr fuer das Rundenbudget der Nachzustellung (Test-Naht).
+_monotonic = time.monotonic
 
 
 def webhook_backoff(attempts: int) -> timedelta:
@@ -368,19 +386,32 @@ class PayService:
             "webhooks_given_up": given_up,
         }
 
-    async def redeliver_webhooks(self, limit: int = 20) -> int:
+    async def redeliver_webhooks(
+        self, limit: int = 20, *, budget_seconds: float | None = None
+    ) -> int:
         """Faellige Callbacks nachholen (Outbox). Returns: Zustellversuche.
 
         Faellig ist eine bezahlte Forderung mit Ziel, deren Callback noch nie
         ankam und deren Backoff abgelaufen ist — auch nach einem Absturz
         zwischen SETTLED und Versand. Ein Fehler bei einer Forderung nimmt die
         anderen nicht mit.
+
+        Fairness (Audit 27.09., A2): jeder Versuch hat sein eigenes Budget und
+        wird auch bei Zeitueberschreitung verbucht; die Reihenfolge ist "am
+        laengsten nicht versucht" (``webhooks_due``). Mit ``budget_seconds``
+        beginnt ein weiterer Versuch nur, wenn er noch GANZ hineinpasst — ein
+        Rundenabbruch mitten im Versuch liesse ihn unverbucht.
         """
         due = self._store.webhooks_due(
             self._clock(), max_rounds=WEBHOOK_MAX_ROUNDS, backoff=webhook_backoff, limit=limit
         )
+        started = _monotonic()
         attempts = 0
         for request in due:
+            if budget_seconds is not None:
+                remaining = budget_seconds - (_monotonic() - started)
+                if remaining < WEBHOOK_ENTRY_TIMEOUT_SECONDS:
+                    break
             settlement = settlement_of(self._payments.journal, request.ref_hash)
             if settlement is None:
                 continue
@@ -416,22 +447,35 @@ class PayService:
 
         ``event_id`` ist ueber alle Wiederholungen gleich: ein Empfaenger, der
         zweimal dieselbe Meldung bekommt, erkennt sie daran als dieselbe.
+        Ein Empfaenger, der das Budget ``WEBHOOK_ENTRY_TIMEOUT_SECONDS``
+        ueberzieht, wird als ``timeout`` verbucht (Audit 27.09., A2).
         """
-        result = await deliver(
-            request.webhook_url,
-            {
-                "event_id": f"{request.payment_id}:settled",
-                "payment_id": request.payment_id,
-                "status": PayStatus.SETTLED.value,
-                "amount_sat": request.amount_sat,
-                "paid_amount_sat": settlement.amount_settled_minor_units,
-                "paid_at": settlement.settled_at.isoformat(),
-                "reference": request.reference,
-                "description": request.description,
-                "ts": self._clock().isoformat(),
-            },
-            secret=self._settings.webhook_secret,
-        )
+        try:
+            result = await asyncio.wait_for(
+                deliver(
+                    request.webhook_url,
+                    {
+                        "event_id": f"{request.payment_id}:settled",
+                        "payment_id": request.payment_id,
+                        "status": PayStatus.SETTLED.value,
+                        "amount_sat": request.amount_sat,
+                        "paid_amount_sat": settlement.amount_settled_minor_units,
+                        "paid_at": settlement.settled_at.isoformat(),
+                        "reference": request.reference,
+                        "description": request.description,
+                        "ts": self._clock().isoformat(),
+                    },
+                    secret=self._settings.webhook_secret,
+                ),
+                timeout=WEBHOOK_ENTRY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "[kai-pay] webhook for %s exceeded %.0fs — booked as timeout",
+                request.payment_id,
+                WEBHOOK_ENTRY_TIMEOUT_SECONDS,
+            )
+            result = WebhookResult(ok=False, detail="timeout")
         self._store.webhook_result(
             request.payment_id, ok=result.ok, detail=result.detail, at=self._clock()
         )

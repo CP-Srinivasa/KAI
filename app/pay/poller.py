@@ -42,6 +42,12 @@ REFRESH_TIMEOUT_SECONDS = 30.0
 #: naechste Runde nach — der Zustand liegt im Kern, nicht in dieser Schleife.
 ROUND_TIMEOUT_SECONDS = 300.0
 
+#: Budget fuer die Callback-Nachzustellung einer Runde (Audit 27.09., A2). Ein
+#: einzelner Zustellversuch darf ``app.pay.service.WEBHOOK_ENTRY_TIMEOUT_SECONDS``
+#: dauern (35 s) — das alte gemeinsame Limit von ``REFRESH_TIMEOUT_SECONDS``
+#: (30 s) brach ihn ab, bevor er verbucht war. Bleibt unter ``ROUND_TIMEOUT_SECONDS``.
+REDELIVERY_BUDGET_SECONDS = 120.0
+
 
 async def tick(service: PayService) -> int:
     """Eine Runde ueber die offenen Forderungen. Returns: geprueft.
@@ -69,7 +75,12 @@ async def tick(service: PayService) -> int:
         checked += 1
     try:
         # Outbox: bezahlte Forderungen, deren Callback noch aussteht (Befund 5).
-        await asyncio.wait_for(service.redeliver_webhooks(), timeout=REFRESH_TIMEOUT_SECONDS)
+        # Die Runde startet nur Versuche, die ganz ins Budget passen; ``wait_for``
+        # ist nur das Sicherheitsnetz dahinter.
+        await asyncio.wait_for(
+            service.redeliver_webhooks(budget_seconds=REDELIVERY_BUDGET_SECONDS),
+            timeout=REDELIVERY_BUDGET_SECONDS + 10.0,
+        )
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - die Nachzustellung darf die Runde nicht toeten
@@ -115,6 +126,7 @@ async def stop(task: asyncio.Task[None] | None) -> None:
 
 
 __all__ = [
+    "REDELIVERY_BUDGET_SECONDS",
     "REFRESH_TIMEOUT_SECONDS",
     "ROUND_TIMEOUT_SECONDS",
     "run",
