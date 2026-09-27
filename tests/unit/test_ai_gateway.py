@@ -231,8 +231,50 @@ def test_zwei_fehlschlaege_oeffnen_und_der_naechste_lauf_ueberspringt() -> None:
         circuit=book,
         circuit_policy=POLICY,
     )
-    assert gesehen == ["litellm", "direct"], "grob offen? nein — nur der feine Schluessel ist zu"
+    # Bis 04046c68 lief hier noch ein Versuch hinaus ("grob offen? nein --
+    # nur der feine Schluessel ist zu"). Ist der EINZIGE bekannte Upstream des
+    # Alias gesperrt, traefe der naechste Versuch aber genau ihn: der gestoerte
+    # Anbieter wurde weiter angesprochen (LiteLLM-Audit 27.09., Befund B).
+    assert gesehen == ["direct"], "der einzige bekannte Upstream ist zu -> kein Versuch"
     assert SKIP_CIRCUIT_OPEN in danach.skipped
+
+
+def test_eine_gesunde_alternative_haelt_den_alias_trotz_offenem_upstream_offen() -> None:
+    """ADR 0017 bleibt: ein kaputter Upstream nimmt die Alternative nicht mit."""
+    book = execute(
+        purpose="analysis",
+        alias="fast",
+        direct_call=_call("direct"),
+        litellm_call=_call("litellm", provider="openai"),
+        per_route={"standard": "shadow"},
+        ceiling="shadow",
+        circuit_policy=POLICY,
+    ).circuit
+    for _ in range(POLICY.failure_threshold):
+        book = execute(
+            purpose="analysis",
+            alias="fast",
+            direct_call=_call("direct"),
+            litellm_call=_call("litellm", ok=False, provider="gemini"),
+            per_route={"standard": "shadow"},
+            ceiling="shadow",
+            circuit=book,
+            circuit_policy=POLICY,
+            retry_policy=RetryPolicy(max_attempts=1),
+        ).circuit
+
+    gesehen: list[str] = []
+    execute(
+        purpose="analysis",
+        alias="fast",
+        direct_call=_call("direct", seen=gesehen),
+        litellm_call=_call("litellm", seen=gesehen, provider="openai"),
+        per_route={"standard": "shadow"},
+        ceiling="shadow",
+        circuit=book,
+        circuit_policy=POLICY,
+    )
+    assert gesehen == ["litellm", "direct"]
 
 
 # --------------------------------------------------------------------------

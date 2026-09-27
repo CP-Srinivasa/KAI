@@ -201,6 +201,22 @@ def _reset_settings_cache() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_ai_circuit_state() -> Iterator[None]:
+    """Der Circuit-Zustand ist prozessweit (LiteLLM-Audit 27.09., Befund B).
+
+    Genau das ist der Zweck: der naechste Aufruf sieht die Fehlschlaege des
+    vorigen. In der Suite hiesse es aber, dass Tests mit absichtlichen 503ern
+    den Kreis fuer fremde Tests oeffnen -- Reihenfolge und xdist-Verteilung
+    entschieden dann ueber Rot und Gruen.
+    """
+    from app.ai.runtime import reset_circuit_state
+
+    reset_circuit_state()
+    yield
+    reset_circuit_state()
+
+
+@pytest.fixture(autouse=True)
 def _reset_paper_engine_singleton() -> None:
     """Drop the PaperExecutionEngine singleton between tests (P1 #7).
 

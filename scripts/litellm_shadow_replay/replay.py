@@ -58,7 +58,7 @@ import httpx
 
 from app.ai.audit import llm_call_scope
 from app.ai.config import InferenceSettings
-from app.ai.runtime import LiteLLMRequest, invoke
+from app.ai.runtime import LiteLLMRequest, invoke, reset_circuit_state
 
 #: Der Alias, den die Standard-Route anfordert. Nur ein Etikett -- welches
 #: Modell tatsaechlich antwortete, sagt der Upstream, nicht KAI.
@@ -214,6 +214,12 @@ async def _einen_lauf(
     max_versuche: int,
 ) -> dict[str, Any]:
     """Einen logischen Aufruf durch die ECHTE Control-Plane fuehren."""
+    # Jeder Lauf ist ein eigenes Szenario mit eigener Versuchszahl. Seit der
+    # Circuit ueber Aufrufe haelt (LiteLLM-Audit 27.09., B), oeffnete sonst der
+    # zweite 5xx-Lauf nach insgesamt fuenf Fehlschlaegen und machte zwei statt
+    # drei Versuche -- ein Fall haette den naechsten verfaelscht. Dass der Kreis
+    # ueber Aufrufe haelt, belegt tests/unit/test_ai_circuit_persistence.py.
+    reset_circuit_state()
     gateway = _Gateway(fall.antworten)
 
     def client_factory(**kwargs: Any) -> httpx.AsyncClient:

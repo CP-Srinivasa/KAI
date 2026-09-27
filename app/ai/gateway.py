@@ -21,6 +21,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -34,7 +35,7 @@ from app.ai.budget import (
     BudgetState,
     decide,
 )
-from app.ai.circuit import CircuitBook, CircuitKey, CircuitPolicy, circuit_key
+from app.ai.circuit import CircuitBook, CircuitKey, CircuitPolicy, CircuitStore, circuit_key
 from app.ai.models import AttemptResult, AttemptTrace, InferenceResult
 from app.ai.modes import Mode, has_execution_authority, litellm_is_authoritative, resolve_mode
 from app.ai.retry import RetryPolicy, retry_delay_s, should_retry
@@ -146,17 +147,14 @@ def _run(
     feinen Schlüssel, damit ein defekter Anbieter nicht den Alias mitnimmt.
     """
     coarse = CircuitKey(route, alias)
-    if not book.allows(coarse, now_s=now_s, policy=policy):
-        return (), book, SKIP_CIRCUIT_OPEN
-
     attempts: list[AttemptTrace] = []
     for attempt_number in range(1, retry_policy.max_attempts + 1):
-        book = book.on_attempt(coarse, now_s=now_s, policy=policy)
+        admitted, book = book.admit(route, alias, now_s=now_s, policy=policy)
+        if not admitted:
+            return tuple(attempts), book, SKIP_CIRCUIT_OPEN
         attempt = call()
         attempts.append(attempt)
         precise = circuit_key(route, alias, attempt)
-        if not book.allows(precise, now_s=now_s, policy=policy):
-            return tuple(attempts), book, SKIP_CIRCUIT_OPEN
 
         book = (
             book.on_success(precise)
@@ -324,7 +322,7 @@ async def execute_async[T](
     litellm_call: AsyncTransportCall[T] | None = None,
     per_route: Mapping[str, object] | None = None,
     ceiling: object = "off",
-    circuit: CircuitBook | None = None,
+    circuit: CircuitBook | CircuitStore | None = None,
     circuit_policy: CircuitPolicy | None = None,
     budget_policy: BudgetPolicy | None = None,
     daily: BudgetState | None = None,
@@ -346,6 +344,10 @@ async def execute_async[T](
     for the hard OFF rollback path.
 
     Args:
+        circuit: ein :class:`CircuitStore` traegt den Zustand ueber diesen
+            Aufruf hinaus -- das ist der Betriebsfall (``app.ai.runtime``).
+            Ein blankes ``CircuitBook`` oder ``None`` gilt nur fuer diesen
+            einen Aufruf; das Ergebnis steht dann in ``gateway.circuit``.
         budget_blocked: nicht-leer heisst, das Budget ist ausgeschöpft ODER die
             Kostenlage ist unbekannt (``COST_UNKNOWN``). Der String ist der
             Grund und landet in der Ausnahme. LEER = heutiges Verhalten.
@@ -358,7 +360,7 @@ async def execute_async[T](
         detail["mode_clamped"] = "consensus_max_shadow"
 
     cpolicy = circuit_policy or CircuitPolicy()
-    book = circuit or CircuitBook()
+    store = circuit if isinstance(circuit, CircuitStore) else CircuitStore(circuit)
     empty = BudgetState(0.0, 0, 0)
     verdict = decide(
         daily=daily or empty,
@@ -416,7 +418,7 @@ async def execute_async[T](
             verdict=verdict,
             detail=detail,
             skipped=skipped,
-            book=book,
+            store=store,
             cpolicy=cpolicy,
             direct_call=direct_call,
             direct_task=direct_task,
@@ -441,7 +443,7 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
     verdict: BudgetDecision,
     detail: dict[str, object],
     skipped: list[SkipReason],
-    book: CircuitBook,
+    store: CircuitStore,
     cpolicy: CircuitPolicy,
     direct_call: AsyncTransportCall[T] | None,
     direct_task: asyncio.Task[AttemptResult[T]] | None,
@@ -469,88 +471,94 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
             skipped.append(SKIP_NO_TRANSPORT)
         else:
             coarse = CircuitKey(route, alias)
-            now_s = clock()
-            if not book.allows(coarse, now_s=now_s, policy=cpolicy):
-                skipped.append(SKIP_CIRCUIT_OPEN)
-            else:
-                policy = retry_policy or RetryPolicy()
-                for attempt_number in range(1, policy.max_attempts + 1):
-                    now_s = clock()
-                    book = book.on_attempt(coarse, now_s=now_s, policy=cpolicy)
+            policy = retry_policy or RetryPolicy()
+            for attempt_number in range(1, policy.max_attempts + 1):
+                now_s = clock()
+                # Zulassung und Probe-Vergabe am GETEILTEN Buch, in einem
+                # Schritt. Das Buch des vorigen Aufrufs gilt -- sonst begaenne
+                # jeder Aufruf bei null und der Kreis oeffnete nie (Befund B).
+                if not store.admit(route, alias, now_s=now_s, policy=cpolicy):
+                    skipped.append(SKIP_CIRCUIT_OPEN)
+                    break
+                try:
                     result = await litellm_call()
-                    litellm_attempts.append(result)
-                    precise = circuit_key(route, alias, result.trace)
-                    if not book.allows(precise, now_s=now_s, policy=cpolicy):
-                        skipped.append(SKIP_CIRCUIT_OPEN)
-                        break
-                    book = (
-                        book.on_success(precise)
-                        if result.trace.ok
-                        else book.on_failure(precise, now_s=now_s, policy=cpolicy)
+                except BaseException:
+                    # Abbruch mitten in der Probe: kein Urteil ueber den
+                    # Upstream, aber die Probe muss frei werden.
+                    store.update(lambda book: book.release_probes(route, alias))
+                    raise
+                litellm_attempts.append(result)
+                precise = circuit_key(route, alias, result.trace)
+                book = store.update(
+                    partial(
+                        CircuitBook.on_result,
+                        coarse=coarse,
+                        precise=precise,
+                        ok=result.trace.ok,
+                        now_s=now_s,
+                        policy=cpolicy,
                     )
-                    if coarse != precise and result.trace.ok:
-                        book = book.on_success(coarse)
-
-                    state = book.state(precise, now_s=now_s, policy=cpolicy)
-                    will_retry = (
-                        not result.trace.ok
-                        and state != "open"
-                        and should_retry(result.trace)
-                        and attempt_number < policy.max_attempts
-                    )
-                    # Hat DIESER VERSUCH ein Ergebnis geliefert? Bewusst die
-                    # Konjunktion und nicht nur `error is None`: ein Pfad, der
-                    # kuenftig einen Fehlschlag ohne Ausnahme meldet, soll hier
-                    # nicht als Erfolg durchgehen.
-                    gelungen = result.error is None and result.trace.ok
-                    record_attempt_trace(
-                        result.trace,
-                        correlation_id=correlation_id,
-                        evaluation_id=evaluation_id,
-                        purpose=purpose,
-                        logical_route=route,
-                        mode=mode,
-                        role=mode,
-                        attempt_number=attempt_number,
-                        budget_decision=verdict,
-                        circuit_state=state,
-                        execution_authority=has_execution_authority(mode),
-                        # `trace.ok` gehoert dem TRANSPORT, diese Felder
-                        # beschreiben den VERSUCH. Bei einer abgeschnittenen
-                        # Antwort faellt beides auseinander: der Transport war
-                        # erfolgreich (`ok`), aber die Runtime hat fail-closed
-                        # geurteilt und es entstand kein Wert. Auf `trace.ok`
-                        # gestuetzt meldete die Zeile dann `outcome="success"`
-                        # und `schema_status="valid"` fuer einen Aufruf ohne
-                        # Analyse -- und `scripts/litellm_shadow_eval` bildet
-                        # seine `outcome_distribution` genau daraus. Die erste
-                        # echte SHADOW-Auswertung haette abgeschnittene Laeufe
-                        # als Erfolge gezaehlt.
-                        schema_status=(
-                            "valid"
-                            if gelungen
-                            else "invalid"
-                            if result.trace.error_class == "schema"
-                            else None
-                        ),
-                        outcome=(
-                            "fallthrough" if will_retry else "success" if gelungen else "exhausted"
-                        ),
-                        fallback_from=(
-                            "litellm"
-                            if litellm_is_authoritative(mode) and not gelungen and not will_retry
-                            else None
-                        ),
-                        fallback_to=(
-                            "direct"
-                            if litellm_is_authoritative(mode) and not gelungen and not will_retry
-                            else None
-                        ),
-                        path=telemetry_path,
-                    )
-                    if not will_retry:
-                        break
-                    await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
+                )
+                state = book.state(precise, now_s=now_s, policy=cpolicy)
+                will_retry = (
+                    not result.trace.ok
+                    and state != "open"
+                    and should_retry(result.trace)
+                    and attempt_number < policy.max_attempts
+                )
+                # Hat DIESER VERSUCH ein Ergebnis geliefert? Bewusst die
+                # Konjunktion und nicht nur `error is None`: ein Pfad, der
+                # kuenftig einen Fehlschlag ohne Ausnahme meldet, soll hier
+                # nicht als Erfolg durchgehen.
+                gelungen = result.error is None and result.trace.ok
+                record_attempt_trace(
+                    result.trace,
+                    correlation_id=correlation_id,
+                    evaluation_id=evaluation_id,
+                    purpose=purpose,
+                    logical_route=route,
+                    mode=mode,
+                    role=mode,
+                    attempt_number=attempt_number,
+                    budget_decision=verdict,
+                    circuit_state=state,
+                    execution_authority=has_execution_authority(mode),
+                    # `trace.ok` gehoert dem TRANSPORT, diese Felder
+                    # beschreiben den VERSUCH. Bei einer abgeschnittenen
+                    # Antwort faellt beides auseinander: der Transport war
+                    # erfolgreich (`ok`), aber die Runtime hat fail-closed
+                    # geurteilt und es entstand kein Wert. Auf `trace.ok`
+                    # gestuetzt meldete die Zeile dann `outcome="success"`
+                    # und `schema_status="valid"` fuer einen Aufruf ohne
+                    # Analyse -- und `scripts/litellm_shadow_eval` bildet
+                    # seine `outcome_distribution` genau daraus. Die erste
+                    # echte SHADOW-Auswertung haette abgeschnittene Laeufe
+                    # als Erfolge gezaehlt.
+                    schema_status=(
+                        "valid"
+                        if gelungen
+                        else "invalid"
+                        if result.trace.error_class == "schema"
+                        else None
+                    ),
+                    outcome=(
+                        "fallthrough" if will_retry else "success" if gelungen else "exhausted"
+                    ),
+                    fallback_from=(
+                        "litellm"
+                        if litellm_is_authoritative(mode) and not gelungen and not will_retry
+                        else None
+                    ),
+                    fallback_to=(
+                        "direct"
+                        if litellm_is_authoritative(mode) and not gelungen and not will_retry
+                        else None
+                    ),
+                    path=telemetry_path,
+                )
+                if not will_retry:
+                    break
+                await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
     except BaseException:
         # Der Schattenlauf des Direktpfads darf nicht als unbeachtete Task
         # zurueckbleiben: der Aufrufer saehe nur den Fehler von hier, waehrend
@@ -601,7 +609,7 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
         purpose=purpose,
         mode=mode,
         budget=verdict,
-        circuit=book,
+        circuit=store.book,
         direct=direct_result,
         litellm=litellm_result,
         skipped=tuple(skipped),

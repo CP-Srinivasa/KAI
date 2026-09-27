@@ -38,6 +38,7 @@ from app.ai.budget import (
     decide_pot,
     voraussichtliche_kosten,
 )
+from app.ai.circuit import CircuitPolicy, CircuitStore
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
 from app.ai.models import AttemptResult, AttemptTrace
@@ -307,6 +308,40 @@ def inflight_reservations() -> dict[str, dict[str, float | int]]:
 def reset_inflight_reservations() -> None:
     """Reservierungen verwerfen (Tests)."""
     _UNTERWEGS.clear()
+
+
+#: Der Circuit-Zustand dieses Prozesses. Bis 04046c68 bekam das Gateway hier
+#: kein Buch, begann jeden Aufruf mit einem leeren und oeffnete deshalb nie:
+#: sechs Aufrufe gegen HTTP 503 ergaben sechs Transportanfragen, der Fehlerstand
+#: stand jedes Mal wieder auf 1 (LiteLLM-Audit 27.09., Befund B). Grenze wie bei
+#: ``_UNTERWEGS``, bewusst: prozessweit. kai-server und ein CLI-Lauf zaehlen
+#: getrennt -- ein Upstream, der beide stoert, oeffnet eben in beiden.
+_KREISE: Final[CircuitStore] = CircuitStore()
+_KREIS_POLITIK: Final[CircuitPolicy] = CircuitPolicy()
+
+
+def circuit_state(now_s: float | None = None) -> list[dict[str, Any]]:
+    """Alle Schluessel mit Zustand -- geschlossene ohne Fehler stehen nicht darin."""
+    jetzt = monotonic() if now_s is None else now_s
+    return [
+        {
+            "route": key.route,
+            "alias": key.alias,
+            "upstream": key.upstream or None,
+            "state": record.state(now_s=jetzt, policy=_KREIS_POLITIK),
+            "consecutive_failures": record.consecutive_failures,
+            "probe_in_flight": record.probe_pending(now_s=jetzt, policy=_KREIS_POLITIK),
+        }
+        for key, record in sorted(
+            _KREISE.book.records.items(),
+            key=lambda item: (item[0].route, item[0].alias, item[0].upstream),
+        )
+    ]
+
+
+def reset_circuit_state() -> None:
+    """Circuit-Zustand verwerfen (Tests, Neustart nach Konfigurationswechsel)."""
+    _KREISE.reset()
 
 
 def _reservierung(bild: _Budgetbild, verdict: PotVerdict) -> AbstractContextManager[None]:
@@ -734,6 +769,8 @@ async def invoke[T](
                 litellm_call=run_litellm,
                 per_route=configured.route_modes,
                 ceiling=ceiling,
+                circuit=_KREISE,
+                circuit_policy=_KREIS_POLITIK,
                 # Das Budget kommt jetzt AN. Bis 2026-09-08 uebergab diese
                 # Stelle weder Politik noch Zustand -- `execute_async` fiel auf
                 # `BudgetPolicy()` ohne Limits zurueck, und `decide()` antwortete
@@ -770,10 +807,12 @@ __all__ = [
     "LiteLLMCallError",
     "LiteLLMRequest",
     "RoutedValue",
+    "circuit_state",
     "environment_settings",
     "inference_settings",
     "inflight_reservations",
     "invoke",
     "reset_environment_settings",
+    "reset_circuit_state",
     "reset_inflight_reservations",
 ]
