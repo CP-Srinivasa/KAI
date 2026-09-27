@@ -12,14 +12,18 @@ import base64
 import re
 from typing import Any
 
-# Server challenge: `L402 token="<t>", invoice="<bolt11>"` (see
-# app.lightning.l402.build_challenge_header). Token carries no quotes; bolt11 none.
-_CHALLENGE_RE = re.compile(r'token="([^"]+)".*?invoice="([^"]+)"', re.IGNORECASE | re.DOTALL)
+from app.lightning.l402 import L402Error, token_payment_hash
+
+# Server challenge (L402 spec, Audit A5): `L402 macaroon="<b64>", invoice="<bolt11>"`;
+# pre-A5 servers sent `token="<t>"` — both parse. Neither value carries quotes.
+_CHALLENGE_RE = re.compile(
+    r'(?:macaroon|token)="([^"]+)".*?invoice="([^"]+)"', re.IGNORECASE | re.DOTALL
+)
 _HEX64_RE = re.compile(r"[0-9a-fA-F]{64}")
 
 
 def parse_l402_challenge(www_authenticate: str) -> tuple[str, str]:
-    """Parse a ``WWW-Authenticate: L402 token="…", invoice="…"`` header.
+    """Parse a ``WWW-Authenticate: L402 macaroon="…", invoice="…"`` header.
 
     Returns ``(token, bolt11_invoice)``; raises ``ValueError`` on a malformed one.
     """
@@ -32,7 +36,13 @@ def parse_l402_challenge(www_authenticate: str) -> tuple[str, str]:
 
 
 def payment_hash_from_token(token: str) -> str:
-    """The L402 token is ``ph.expiry.scope.sig`` — the payment_hash is field 0."""
+    """The payment_hash bound by the token: from the macaroon identifier (L402),
+    or field 0 of a pre-A5 ``ph.expiry.scope.sig`` token."""
+    if "." not in token:
+        try:
+            return token_payment_hash(token)
+        except L402Error as exc:
+            raise ValueError(str(exc)) from exc
     ph = token.split(".", 1)[0].strip().lower()
     if not ph:
         raise ValueError("token carries no payment_hash")

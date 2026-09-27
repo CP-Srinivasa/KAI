@@ -55,7 +55,7 @@ def _oracle_settings() -> SimpleNamespace:
 
 
 def _token_from_challenge(www_authenticate: str) -> str:
-    m = re.search(r'token="([^"]+)"', www_authenticate)
+    m = re.search(r'macaroon="([^"]+)"', www_authenticate)
     assert m, f"no token in challenge: {www_authenticate!r}"
     return m.group(1)
 
