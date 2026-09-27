@@ -22,7 +22,7 @@ Keine neue Dependency: ``httpx`` ist bereits im Lockfile.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlsplit
 
 import httpx
@@ -31,6 +31,9 @@ from app.ai.audit import ErrorClass, classify_error
 from app.ai.models import AttemptTrace
 
 TRANSPORT = "litellm"
+CHAT_ENDPOINT: Final = "/v1/chat/completions"
+#: Endpunkte, deren Antwort kein Chat ist, sondern ``{"text": ...}``.
+_TEXT_ENDPOINTS: Final = ("/audio/transcriptions", "/audio/translations")
 
 #: Header, unter denen LiteLLM den tatsächlichen Upstream meldet. Mehrere, weil
 #: die Namen sich zwischen Versionen unterscheiden — geraten wird nichts, es
@@ -182,7 +185,25 @@ def ist_abgeschnitten(body: dict[str, Any]) -> bool:
     return isinstance(erste, dict) and erste.get("finish_reason") == "length"
 
 
-def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
+def _liefert_text(endpoint: str) -> bool:
+    return endpoint.rstrip("/").endswith(_TEXT_ENDPOINTS)
+
+
+def _transkript_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
+    """Die Antwortform der Spracherkennung: ``{"text": "..."}`` statt ``choices``.
+
+    Bis 04046c68 lief auch sie durch die Chat-Pruefung. Eine vollstaendige
+    Transkription mit HTTP 200 wurde dort zu ``empty``/``no_choices`` -- und
+    fiel auf den Direktanbieter zurueck, also genau dann ins Leere, wenn der
+    ausgefallen war (LiteLLM-Audit 27.09., Befund C).
+    """
+    text = body.get("text")
+    if isinstance(text, str) and text.strip():
+        return False, ""
+    return True, "no_text" if text is None else "empty_text"
+
+
+def _antwort_ist_leer(body: dict[str, Any], endpoint: str = CHAT_ENDPOINT) -> tuple[bool, str]:
     """Traegt die 200 ueberhaupt Text? Und wenn nicht, warum nicht?
 
     Am 2026-09-08 auf kai-pi5 gemessen: Gemini 2.5 Flash verbraucht das
@@ -196,7 +217,12 @@ def _antwort_ist_leer(body: dict[str, Any]) -> tuple[bool, str]:
     groesseres Budget, "gestoppt und trotzdem leer" ist ein Modellverhalten,
     und "keine Auswahl" ist eine kaputte Antwort. Drei verschiedene naechste
     Schritte, die im Log unterscheidbar bleiben muessen.
+
+    Welche Form "Text" hat, bestimmt der Endpunkt: Chat antwortet mit
+    ``choices``, die Spracherkennung mit ``text``.
     """
+    if _liefert_text(endpoint):
+        return _transkript_ist_leer(body)
     auswahl = body.get("choices")
     if not isinstance(auswahl, list) or not auswahl:
         return True, "no_choices"
@@ -288,6 +314,7 @@ def trace_from_response(
     requested_model: str,
     latency_ms: float,
     max_tokens: int | None = None,
+    endpoint: str = CHAT_ENDPOINT,
 ) -> AttemptTrace:
     """Eine Antwort in einen Versuch übersetzen — rein, ohne Netz.
 
@@ -323,7 +350,7 @@ def trace_from_response(
     error_class: ErrorClass | None = None
     leer_grund = ""
     if response.status_code < 400:
-        ist_leer, leer_grund = _antwort_ist_leer(body)
+        ist_leer, leer_grund = _antwort_ist_leer(body, endpoint)
         if ist_leer:
             error_class = "empty"
     if response.status_code >= 400:
@@ -407,7 +434,7 @@ async def call_litellm_async(
     client: httpx.AsyncClient,
     monotonic: Any,
     correlation_id: str = "",
-    endpoint: str = "/v1/chat/completions",
+    endpoint: str = CHAT_ENDPOINT,
     payload: dict[str, Any] | None = None,
     files: Any = None,
     data: dict[str, Any] | None = None,
@@ -461,12 +488,14 @@ async def call_litellm_async(
             requested_model=model,
             latency_ms=(monotonic() - started) * 1000.0,
             max_tokens=_max_tokens(payload),
+            endpoint=endpoint,
         ),
         body=_response_body(response),
     )
 
 
 __all__ = [
+    "CHAT_ENDPOINT",
     "TRANSPORT",
     "ist_abgeschnitten",
     "LiteLLMConfig",

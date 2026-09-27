@@ -17,12 +17,16 @@ gröbere Sperre und kein Versehen. :func:`circuit_key` macht diesen Unterschied
 sichtbar, statt ihn zu verwischen.
 
 Rein: keine Uhr, kein I/O, kein globaler Zustand. Jede Funktion bekommt ``now_s``
-übergeben; wer die Zeit liefert, entscheidet der Aufrufer.
+übergeben; wer die Zeit liefert, entscheidet der Aufrufer. Der EINE veränderliche
+Teil ist :class:`CircuitStore` — ein Halter, der das unveränderliche Buch über
+Aufrufe hinweg trägt. Ohne ihn begann bis 04046c68 jeder Aufruf mit einem leeren
+Buch, und der Breaker öffnete nie (LiteLLM-Audit 27.09., Befund B).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal
 
@@ -82,6 +86,10 @@ class CircuitRecord:
     consecutive_failures: int = 0
     opened_at_s: float | None = None
     half_open_in_flight: bool = False
+    #: Wann die laufende Probe gestartet ist. Eine Probe, die nie zurückkommt
+    #: (Abbruch, Absturz, verlorene Task), darf den Kreis nicht für immer
+    #: halboffen-belegt halten: nach einem weiteren Cooldown verfällt sie.
+    probe_started_at_s: float | None = None
 
     def state(self, *, now_s: float, policy: CircuitPolicy) -> CircuitState:
         if self.opened_at_s is None:
@@ -90,12 +98,25 @@ class CircuitRecord:
             return "open"
         return "half_open"
 
+    def probe_pending(self, *, now_s: float, policy: CircuitPolicy) -> bool:
+        """Läuft gerade eine Probe, die noch zählt?"""
+        if not self.half_open_in_flight:
+            return False
+        if self.probe_started_at_s is None:
+            return True
+        return now_s - self.probe_started_at_s < policy.cooldown_s
+
 
 @dataclass(frozen=True)
 class CircuitBook:
     """Alle Schlüssel nebeneinander — ein defekter sperrt die anderen nicht."""
 
     records: Mapping[CircuitKey, CircuitRecord] = field(default_factory=dict)
+    #: Genaue Schlüssel, deren Upstream sich für seinen Alias schon einmal
+    #: benannt hat. Ohne dieses Gedächtnis wüsste :meth:`admit` nach einem
+    #: Erfolg nicht mehr, dass es eine Alternative gibt — der Erfolg löscht den
+    #: Datensatz ja vollständig.
+    known_upstreams: frozenset[CircuitKey] = frozenset()
 
     def record_for(self, key: CircuitKey) -> CircuitRecord:
         return self.records.get(key, CircuitRecord())
@@ -115,7 +136,7 @@ class CircuitBook:
             case "closed":
                 return True
             case "half_open":
-                return not record.half_open_in_flight
+                return not record.probe_pending(now_s=now_s, policy=policy)
             case _:
                 return False
 
@@ -125,21 +146,96 @@ class CircuitBook:
             merged.pop(key, None)
         else:
             merged[key] = record
-        return CircuitBook(merged)
+        known = self.known_upstreams | {key} if key.precise else self.known_upstreams
+        return CircuitBook(merged, known)
+
+    def _upstreams(self, route: Route, alias: str) -> tuple[CircuitKey, ...]:
+        keys = set(self.known_upstreams) | {k for k in self.records if k.precise}
+        return tuple(
+            sorted(
+                (k for k in keys if k.route == route and k.alias == alias),
+                key=lambda k: k.upstream,
+            )
+        )
+
+    def admit(
+        self, route: Route, alias: str, *, now_s: float, policy: CircuitPolicy
+    ) -> tuple[bool, CircuitBook]:
+        """Darf ein Versuch gegen diesen Alias hinaus — und wenn ja, als Probe?
+
+        Vor dem Aufruf ist nur der Alias bekannt. Gesperrt wird deshalb, wenn
+        der grobe Schlüssel zu ist ODER wenn JEDER bekannte Upstream des Alias
+        zu ist: dann gibt es keinen Beleg für einen Weg, der antworten würde,
+        und der nächste Versuch träfe mit hoher Wahrscheinlichkeit denselben
+        kaputten Upstream. Hat eine Alternative schon geantwortet, bleibt der
+        Alias offen — die Zusicherung aus ADR 0017 gilt weiter.
+
+        Zugelassen heisst zugleich: jeder halboffene Schlüssel des Alias
+        vergibt hier seine eine Probe. Entscheidung und Markierung sind EIN
+        Schritt; getrennt könnten zwei Aufrufe dieselbe Probe bekommen.
+        """
+        coarse = CircuitKey(route, alias)
+        if not self.allows(coarse, now_s=now_s, policy=policy):
+            return False, self
+        upstreams = self._upstreams(route, alias)
+        if upstreams and not any(self.allows(key, now_s=now_s, policy=policy) for key in upstreams):
+            return False, self
+        book = self.on_attempt(coarse, now_s=now_s, policy=policy)
+        for key in upstreams:
+            book = book.on_attempt(key, now_s=now_s, policy=policy)
+        return True, book
 
     def on_attempt(self, key: CircuitKey, *, now_s: float, policy: CircuitPolicy) -> CircuitBook:
         """Ein Versuch startet — im halboffenen Zustand die eine erlaubte Probe."""
         record = self.record_for(key)
-        if (
-            record.state(now_s=now_s, policy=policy) == "half_open"
-            and not record.half_open_in_flight
+        if record.state(now_s=now_s, policy=policy) == "half_open" and not record.probe_pending(
+            now_s=now_s, policy=policy
         ):
-            return self._with(key, replace(record, half_open_in_flight=True))
+            return self._with(
+                key, replace(record, half_open_in_flight=True, probe_started_at_s=now_s)
+            )
         return self
+
+    def release_probes(self, route: Route, alias: str) -> CircuitBook:
+        """Eine abgebrochene Probe gibt ihren Platz frei — ohne Urteil.
+
+        Ein Abbruch ist weder Erfolg noch Fehlschlag des Upstreams: gezählt
+        wird nichts, nur die Belegung fällt weg, damit der nächste Aufruf
+        proben darf.
+        """
+        book = self
+        for key, record in self.records.items():
+            if key.route == route and key.alias == alias and record.half_open_in_flight:
+                book = book._with(
+                    key, replace(record, half_open_in_flight=False, probe_started_at_s=None)
+                )
+        return book
 
     def on_success(self, key: CircuitKey) -> CircuitBook:
         """Erfolg schliesst den Kreis vollständig — kein Rest-Zähler bleibt stehen."""
         return self._with(key, CircuitRecord())
+
+    def on_result(
+        self,
+        *,
+        coarse: CircuitKey,
+        precise: CircuitKey,
+        ok: bool,
+        now_s: float,
+        policy: CircuitPolicy,
+    ) -> CircuitBook:
+        """Einen zurückgekehrten Versuch buchen — fein, und bei Erfolg auch grob.
+
+        Gebucht wird auf dem feinen Schlüssel, damit ein defekter Anbieter
+        nicht den Alias mitnimmt. Ein Erfolg schliesst zusätzlich den groben:
+        der Alias hat geantwortet, egal über welchen Upstream.
+        """
+        book = (
+            self.on_success(precise) if ok else self.on_failure(precise, now_s=now_s, policy=policy)
+        )
+        if coarse != precise and ok:
+            book = book.on_success(coarse)
+        return book
 
     def on_failure(self, key: CircuitKey, *, now_s: float, policy: CircuitPolicy) -> CircuitBook:
         """Fehlschlag zählt hoch und öffnet bei Erreichen der Schwelle.
@@ -178,6 +274,39 @@ class CircuitBook:
         )
 
 
+class CircuitStore:
+    """Der eine veränderliche Halter für das unveränderliche Buch.
+
+    Das Buch bleibt rein und prüfbar; dieser Halter sorgt nur dafür, dass der
+    nächste Aufruf das Buch des vorigen sieht. Jede Änderung ist EIN Schritt
+    unter einer Sperre — zwischen Lesen und Zurückschreiben liegt kein
+    ``await`` und kein anderer Thread, sonst überschriebe ein paralleler
+    Aufruf die Buchung des anderen.
+    """
+
+    def __init__(self, book: CircuitBook | None = None) -> None:
+        self._book = book or CircuitBook()
+        self._lock = threading.Lock()
+
+    @property
+    def book(self) -> CircuitBook:
+        return self._book
+
+    def update(self, change: Callable[[CircuitBook], CircuitBook]) -> CircuitBook:
+        with self._lock:
+            self._book = change(self._book)
+            return self._book
+
+    def admit(self, route: Route, alias: str, *, now_s: float, policy: CircuitPolicy) -> bool:
+        with self._lock:
+            admitted, self._book = self._book.admit(route, alias, now_s=now_s, policy=policy)
+            return admitted
+
+    def reset(self) -> None:
+        with self._lock:
+            self._book = CircuitBook()
+
+
 __all__ = [
     "DEFAULT_COOLDOWN_S",
     "DEFAULT_FAILURE_THRESHOLD",
@@ -186,5 +315,6 @@ __all__ = [
     "CircuitPolicy",
     "CircuitRecord",
     "CircuitState",
+    "CircuitStore",
     "circuit_key",
 ]
