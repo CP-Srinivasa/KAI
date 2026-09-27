@@ -16,7 +16,7 @@ python scripts/kai_dev_hub.py ui
 ```
 
 Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.3), schreibt `install.json` mit
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.4), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 Ein Worktree mit detached HEAD ist als Quelle zulässig. Die Herkunft belegt dann
@@ -126,6 +126,31 @@ Bei Anbieterausfall: Arbeit im Aufgaben-Worktree stoppen, `git status --short`
 prüfen, im Hub **Übergabe** samt Snapshot erzeugen, neuen Client auf derselben
 Aufgabe starten, Kontext übernehmen und die Antwort mit Challenge als Ack
 erfassen. Kein Modellwechsel innerhalb einer schreibenden Sitzung.
+
+### Schreibersperre, Wiederherstellung, Arbeit fortsetzen (ab 0.3.4)
+
+- **Ein Schreiber je Arbeitsbereich.** OpenCode (lokal/Cloud) und Hermes starten
+  nur, wenn im Worktree kein lebender Schreiber eingetragen ist
+  (`developer-hub\writers\<schlüssel>.json`: Client, PID, Host, Start, Übergabe-ID).
+  Prüfen, Starten und Eintragen laufen unter demselben Prozesslock wie das Ledger.
+  Ein zweiter Start wird mit Nennung des aktiven Schreibers abgewiesen. Endet
+  der Client oder stürzt er ab, gilt der Eintrag als tot und der nächste Start
+  übernimmt ihn (Protokoll in `writers\events.jsonl`). Einen lebenden Schreiber
+  ablösen geht nur ausdrücklich (`open … --take-over` bzw. Bestätigung im Hub),
+  mit Ledger-Eintrag `writer_takeover`; der alte Client wird dabei nicht beendet.
+  Kimi erhält keinen Eintrag, weil es nur berät und nicht lokal schreibt.
+- **Wiederherstellung.** `restore` listet die Snapshots, `restore --handoff-id <id>`
+  ist ein Trockenlauf: Manifest gegen Übergabebeleg, jede Datei gegen das Manifest,
+  geplante Änderungen, Ziel. `--apply` stellt in einen **neuen** Worktree und Branch
+  (`…-dev-restore-…`) wieder her, nie in den Quell-Arbeitsbereich und nicht, solange
+  dort ein Schreiber lebt. Ab 0.3.4 enthalten Snapshots zusätzlich die exakten Bytes
+  geänderter versionierter Dateien. Die Wiederherstellung ist damit auch unter
+  `core.autocrlf` byte-genau; ältere Snapshots gelten als „nicht byte-genau“.
+- **Arbeit fortsetzen.** `continue` (Alias `resume`, im Hub **Arbeit fortsetzen**)
+  nennt in Klartext Aufgabe, Arbeitsstand, aktiven Schreiber, lokalen Ersatz
+  (Modell installiert und Antwort bewiesen getrennt, Letzteres nur nach „Lokal
+  prüfen“), Cloud-Tunnel und den nächsten offenen Übergabeschritt. `--json`
+  liefert dieselben Angaben maschinenlesbar.
 
 Cloud-Reserve beenden: **Cloud-Tunnel stoppen** bzw. `stop-cloud`. Das räumt auch nach einem
 Absturz, Tunnelabbruch oder Neustart auf: Beendet wird nur eine noch lebende `ssh.exe` mit der
