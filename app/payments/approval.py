@@ -21,6 +21,45 @@ from app.payments.journal import PaymentJournal
 from app.payments.service_types import PaymentServiceError, Tracked
 from app.payments.status import TransitionEvidence, transition
 
+#: Zustaende VOR dem Send, in denen ein Ablauf noch folgenlos fuer Geld ist.
+_EXPIRABLE = frozenset({PaymentStatus.AWAITING_APPROVAL, PaymentStatus.AUTHORIZED})
+
+
+def refuse_if_expired(
+    journal: PaymentJournal, tracked: Tracked, *, moment: datetime, actor: str
+) -> None:
+    """Eine Freigabe gilt nur bis zum Ablauf des Intents (Audit A1, 27.09.2026).
+
+    Bisher verfiel ein Intent nur im Reconciler-Takt; ``grant`` und ``execute``
+    nahmen einen abgelaufenen Vorgang noch an. Jetzt wird er hier — vor dem
+    HOTP und vor dem Write-ahead — ``EXPIRED`` (derselbe Record wie beim
+    Reconciler) und laut verweigert. Eine springende Uhr kann hoechstens einen
+    gueltigen Vorgang ablehnen, nie einen abgelaufenen senden.
+    """
+    expires_at = tracked.intent.expires_at
+    if moment < expires_at:
+        return
+    if tracked.status in _EXPIRABLE:
+        tracked.status = transition(
+            tracked.status,
+            PaymentStatus.EXPIRED,
+            evidence=TransitionEvidence(
+                actor=actor, reason="intent expiry elapsed before send", occurred_at=moment
+            ),
+        )
+        journal.append(
+            tracked.intent.intent_id,
+            "expired",
+            {
+                "status": PaymentStatus.EXPIRED.value,
+                "expires_at_unix": int(expires_at.timestamp()),
+            },
+            ts=moment,
+        )
+    raise PaymentServiceError(
+        f"refused: intent expired at {expires_at.isoformat()} — create a new one"
+    )
+
 
 def grant(
     journal: PaymentJournal,
@@ -38,6 +77,7 @@ def grant(
             Unterschied steht im Journal.
     """
     intent_id = tracked.intent.intent_id
+    refuse_if_expired(journal, tracked, moment=moment, actor="operator")
     if hotp_verifier is None:
         raise PaymentServiceError(
             "no HOTP verifier configured — without a seed nobody can approve, "
@@ -71,4 +111,4 @@ def grant(
     return tracked.status
 
 
-__all__ = ["grant"]
+__all__ = ["grant", "refuse_if_expired"]

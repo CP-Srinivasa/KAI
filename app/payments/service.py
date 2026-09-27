@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.payment_settings import PaymentSettings
-from app.payments.approval import grant
+from app.payments.approval import grant, refuse_if_expired
 from app.payments.enums import PaymentMode, PaymentStatus
 from app.payments.execution import apply_rail_result, recover_open_intents, write_ahead
 from app.payments.idempotency import consume
@@ -257,6 +257,8 @@ class PaymentService:
 
         rail = self._active_rail()
         moment = self._clock()
+        # Audit A1: die Freigabe gilt zum Zahlungszeitpunkt, nicht zum Freigabezeitpunkt.
+        refuse_if_expired(self._journal, tracked, moment=moment, actor="service")
         attempt = PaymentAttempt(
             attempt_no=tracked.attempts + 1,
             intent_id=intent_id,
