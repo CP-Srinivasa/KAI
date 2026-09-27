@@ -288,7 +288,12 @@ class PayStore:
         backoff: Callable[[int], timedelta],
         limit: int,
     ) -> list[PayRequest]:
-        """Bezahlte Forderungen, deren Callback noch aussteht und jetzt dran ist."""
+        """Bezahlte Forderungen, deren Callback noch aussteht und jetzt dran ist.
+
+        Reihenfolge (Audit 27.09., A2): nie versuchte zuerst, danach die am
+        laengsten nicht versuchten — erst dann greift ``limit``. So kann ein
+        einzelner haengender Empfaenger die anderen nicht dauerhaft verdraengen.
+        """
         due: list[PayRequest] = []
         for payment_id in self._order:
             request = self._by_id[payment_id]
@@ -298,9 +303,8 @@ class PayStore:
             if last is not None and now - last < backoff(request.webhook_attempts):
                 continue
             due.append(request)
-            if len(due) >= limit:
-                break
-        return due
+        due.sort(key=lambda r: (r.webhook_last_attempt is not None, r.webhook_last_attempt or now))
+        return due[:limit]
 
     def webhook_counts(self, *, max_rounds: int) -> tuple[int, int]:
         """``(ausstehend, aufgegeben)`` ueber alle bezahlten Forderungen mit Ziel."""

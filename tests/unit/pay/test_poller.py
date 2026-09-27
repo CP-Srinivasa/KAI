@@ -192,12 +192,23 @@ async def test_die_runde_holt_faellige_callbacks_nach(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Befund 5: ohne diesen Aufruf bliebe ein gescheiterter Callback liegen."""
-    called: list[int] = []
+    called: list[float | None] = []
 
-    async def _redeliver(limit: int = 20) -> int:
-        called.append(limit)
+    async def _redeliver(limit: int = 20, *, budget_seconds: float | None = None) -> int:
+        called.append(budget_seconds)
         return 0
 
     monkeypatch.setattr(harness.service, "redeliver_webhooks", _redeliver)
     await poller.tick(harness.service)
-    assert called
+    # Audit A2: die Nachzustellung laeuft mit eigenem Budget, nicht mit dem 30-s-Limit.
+    assert called == [poller.REDELIVERY_BUDGET_SECONDS]
+
+
+def test_das_nachzustellbudget_traegt_einen_vollen_versuch_und_passt_in_die_runde() -> None:
+    from app.pay.service import WEBHOOK_ENTRY_TIMEOUT_SECONDS
+
+    assert poller.REDELIVERY_BUDGET_SECONDS >= WEBHOOK_ENTRY_TIMEOUT_SECONDS
+    assert poller.REDELIVERY_BUDGET_SECONDS + 10.0 < poller.ROUND_TIMEOUT_SECONDS
+    assert poller.REFRESH_TIMEOUT_SECONDS < WEBHOOK_ENTRY_TIMEOUT_SECONDS, (
+        "genau deshalb braucht die Nachzustellung ein eigenes Budget"
+    )
