@@ -125,6 +125,32 @@ Stand 25.09.2026 (7 Tage): 0 Aufrufe über `transport=litellm`. Die Research-Rou
 Standard-Shadow zuletzt am 10.09. (2 Aufrufe). Der Produktionsverbrauch läuft
 vollständig über `direct`.
 
+### Routen-Abnahmebericht erzeugen
+
+`scripts/litellm_route_report` macht diese Auswertung offline: je logischer Route,
+getrennt nach LiteLLM und Direkt, mit Version, letztem Erfolg, Identität, Kosten,
+Ausfallverhalten und Evidenzalter. Zustand je Route: `BELEGT`, `LUECKENHAFT`
+(mit den fehlenden Feldern) oder `KEINE_EVIDENZ`. Kein Modellaufruf, kein Netz,
+keine Freigabe.
+
+```bash
+cd /home/ubuntu/current
+S=/home/ubuntu/ai_analyst_trading_bot
+.venv/bin/python -m scripts.litellm_route_report.cli \
+    --telemetry $S/artifacts/llm_telemetry.jsonl \
+    --transport-log $S/logs/litellm.err.log \
+    --json-out /tmp/route_report.json --md-out /tmp/route_report.md
+# optional: --eval-report <JSON aus scripts.litellm_shadow_eval, v1 oder v2>,
+#           --now <ISO-8601 mit Zeitzone>, --max-age-hours <Standard 168>
+```
+
+Exit 0 heißt nur „Bericht geschrieben“, Exit 2 heißt ungültige Eingabe. Die
+LiteLLM-Version stammt aus der letzten `TRANSPORT_VERIFIED`-Zeile. Die Zeile trägt
+keinen Zeitstempel, sie belegt also den Baum und nicht den Zeitpunkt einzelner
+Aufrufe. Einen Release-SHA je Route belegt keine Eingabe, er steht als `null` mit
+Grund im Bericht. Direktzeilen im OFF-Modus tragen keine Route; der Bericht leitet
+sie aus dem Zweck ab und zählt das sichtbar mit.
+
 ## 5. Unerwartete Neustarts
 
 `needrestart` startet nach einem `unattended-upgrade` Dienste neu, deren
