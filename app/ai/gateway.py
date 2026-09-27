@@ -127,6 +127,42 @@ class AsyncGatewayOutcome[T]:
         return attempt.error if attempt is not None else None
 
 
+#: Schatten, die ihre Antwort ueberdauert haben und noch laufen. Eine starke
+#: Referenz, sonst sammelt der Garbage Collector eine laufende Task ein.
+_LOSE_SCHATTEN: set[asyncio.Task[None]] = set()
+#: Mehr gleichzeitig abgekoppelte Schatten werden nicht zugelassen: haengt der
+#: Proxy, darf sich nicht je Aufruf ein weiterer Lauf dahinter stauen.
+MAX_DETACHED_SHADOWS = 8
+
+
+async def _abkoppeln(
+    task: asyncio.Task[None],
+    on_detached: Callable[[asyncio.Task[None]], None] | None,
+) -> str:
+    """Einen Schatten ueber die Antwort hinaus weiterlaufen lassen -- begrenzt."""
+    if len(_LOSE_SCHATTEN) >= MAX_DETACHED_SHADOWS:
+        task.cancel()
+        with suppress(BaseException):
+            await task
+        return "cancelled_cap"
+    _LOSE_SCHATTEN.add(task)
+    task.add_done_callback(_LOSE_SCHATTEN.discard)
+    if on_detached is not None:
+        on_detached(task)
+    return "detached"
+
+
+def detached_shadow_count() -> int:
+    """Wie viele Schatten gerade abgekoppelt laufen (Health, Tests)."""
+    return len(_LOSE_SCHATTEN)
+
+
+async def drain_detached_shadows() -> None:
+    """Auf alle abgekoppelten Schatten warten (Tests, geordnetes Herunterfahren)."""
+    while _LOSE_SCHATTEN:
+        await asyncio.gather(*tuple(_LOSE_SCHATTEN), return_exceptions=True)
+
+
 def _run(
     call: TransportCall,
     *,
@@ -336,6 +372,8 @@ async def execute_async[T](
     evaluation_id: str | None = None,
     telemetry_path: Path | None = None,
     budget_blocked: str = "",
+    shadow_grace_s: float | None = None,
+    on_shadow_detached: Callable[[asyncio.Task[None]], None] | None = None,
 ) -> AsyncGatewayOutcome[T]:
     """Async execution mechanics with the same KAI policy as :func:`execute`.
 
@@ -351,6 +389,13 @@ async def execute_async[T](
         budget_blocked: nicht-leer heisst, das Budget ist ausgeschöpft ODER die
             Kostenlage ist unbekannt (``COST_UNKNOWN``). Der String ist der
             Grund und landet in der Ausnahme. LEER = heutiges Verhalten.
+        shadow_grace_s: im SCHATTEN die Nachfrist nach dem Direktpfad. ``None``
+            wartet auf den Schatten (Verhalten vor dem Audit, nur fuer direkte
+            Gateway-Aufrufer); die Runtime setzt immer eine Zahl.
+        on_shadow_detached: bekommt den noch laufenden Schatten, wenn er die
+            Nachfrist ueberdauert. Wer Client oder Reservierung haelt, muss sie
+            hier an den Schatten uebergeben -- sonst schliesst der Aufrufer
+            einen Client, den der Schatten noch benutzt.
     """
     route = route_for(purpose)
     mode = resolve_mode(route, per_route=per_route, ceiling=ceiling)
@@ -431,6 +476,8 @@ async def execute_async[T](
             correlation_id=correlation_id,
             evaluation_id=evaluation_id,
             telemetry_path=telemetry_path,
+            shadow_grace_s=shadow_grace_s,
+            on_shadow_detached=on_shadow_detached,
         )
 
 
@@ -456,118 +503,148 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
     correlation_id: str,
     evaluation_id: str | None,
     telemetry_path: Path | None,
+    shadow_grace_s: float | None,
+    on_shadow_detached: Callable[[asyncio.Task[None]], None] | None,
 ) -> AsyncGatewayOutcome[T]:
     """Transport-Mechanik von :func:`execute_async` — Politik ist oben entschieden.
 
     Nur herausgezogen, damit die Budget-Entscheidung dort ganz zu lesen ist,
     ohne dass die Schleife darunter um eine Einrückungsebene wandert.
     """
+
+    async def schleife() -> None:
+        """Die begrenzten LiteLLM-Versuche unter Circuit-Aufsicht."""
+        if litellm_call is None:
+            return
+        coarse = CircuitKey(route, alias)
+        policy = retry_policy or RetryPolicy()
+        for attempt_number in range(1, policy.max_attempts + 1):
+            now_s = clock()
+            # Zulassung und Probe-Vergabe am GETEILTEN Buch, in einem
+            # Schritt. Das Buch des vorigen Aufrufs gilt -- sonst begaenne
+            # jeder Aufruf bei null und der Kreis oeffnete nie (Befund B).
+            if not store.admit(route, alias, now_s=now_s, policy=cpolicy):
+                skipped.append(SKIP_CIRCUIT_OPEN)
+                break
+            try:
+                result = await litellm_call()
+            except BaseException:
+                # Abbruch mitten in der Probe: kein Urteil ueber den
+                # Upstream, aber die Probe muss frei werden.
+                store.update(lambda book: book.release_probes(route, alias))
+                raise
+            litellm_attempts.append(result)
+            precise = circuit_key(route, alias, result.trace)
+            book = store.update(
+                partial(
+                    CircuitBook.on_result,
+                    coarse=coarse,
+                    precise=precise,
+                    ok=result.trace.ok,
+                    now_s=now_s,
+                    policy=cpolicy,
+                )
+            )
+            state = book.state(precise, now_s=now_s, policy=cpolicy)
+            will_retry = (
+                not result.trace.ok
+                and state != "open"
+                and should_retry(result.trace)
+                and attempt_number < policy.max_attempts
+            )
+            # Hat DIESER VERSUCH ein Ergebnis geliefert? Bewusst die
+            # Konjunktion und nicht nur `error is None`: ein Pfad, der
+            # kuenftig einen Fehlschlag ohne Ausnahme meldet, soll hier
+            # nicht als Erfolg durchgehen.
+            gelungen = result.error is None and result.trace.ok
+            record_attempt_trace(
+                result.trace,
+                correlation_id=correlation_id,
+                evaluation_id=evaluation_id,
+                purpose=purpose,
+                logical_route=route,
+                mode=mode,
+                role=mode,
+                attempt_number=attempt_number,
+                budget_decision=verdict,
+                circuit_state=state,
+                execution_authority=has_execution_authority(mode),
+                # `trace.ok` gehoert dem TRANSPORT, diese Felder
+                # beschreiben den VERSUCH. Bei einer abgeschnittenen
+                # Antwort faellt beides auseinander: der Transport war
+                # erfolgreich (`ok`), aber die Runtime hat fail-closed
+                # geurteilt und es entstand kein Wert. Auf `trace.ok`
+                # gestuetzt meldete die Zeile dann `outcome="success"`
+                # und `schema_status="valid"` fuer einen Aufruf ohne
+                # Analyse -- und `scripts/litellm_shadow_eval` bildet
+                # seine `outcome_distribution` genau daraus. Die erste
+                # echte SHADOW-Auswertung haette abgeschnittene Laeufe
+                # als Erfolge gezaehlt.
+                schema_status=(
+                    "valid"
+                    if gelungen
+                    else "invalid"
+                    if result.trace.error_class == "schema"
+                    else None
+                ),
+                outcome=("fallthrough" if will_retry else "success" if gelungen else "exhausted"),
+                fallback_from=(
+                    "litellm"
+                    if litellm_is_authoritative(mode) and not gelungen and not will_retry
+                    else None
+                ),
+                fallback_to=(
+                    "direct"
+                    if litellm_is_authoritative(mode) and not gelungen and not will_retry
+                    else None
+                ),
+                path=telemetry_path,
+            )
+            if not will_retry:
+                break
+            await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
+
+    laeuft = False
+    if verdict == "reject":
+        skipped.append(SKIP_BUDGET_REJECT)
+    elif mode == "off":
+        skipped.append(SKIP_MODE_OFF)
+    elif litellm_call is None:
+        skipped.append(SKIP_NO_TRANSPORT)
+    else:
+        laeuft = True
+
+    direct_attempt: AttemptResult[T] | None = None
+    shadow_task: asyncio.Task[None] | None = None
     try:
-        if verdict == "reject":
-            skipped.append(SKIP_BUDGET_REJECT)
-        elif mode == "off":
-            skipped.append(SKIP_MODE_OFF)
-        elif litellm_call is None:
-            skipped.append(SKIP_NO_TRANSPORT)
-        else:
-            coarse = CircuitKey(route, alias)
-            policy = retry_policy or RetryPolicy()
-            for attempt_number in range(1, policy.max_attempts + 1):
-                now_s = clock()
-                # Zulassung und Probe-Vergabe am GETEILTEN Buch, in einem
-                # Schritt. Das Buch des vorigen Aufrufs gilt -- sonst begaenne
-                # jeder Aufruf bei null und der Kreis oeffnete nie (Befund B).
-                if not store.admit(route, alias, now_s=now_s, policy=cpolicy):
-                    skipped.append(SKIP_CIRCUIT_OPEN)
-                    break
-                try:
-                    result = await litellm_call()
-                except BaseException:
-                    # Abbruch mitten in der Probe: kein Urteil ueber den
-                    # Upstream, aber die Probe muss frei werden.
-                    store.update(lambda book: book.release_probes(route, alias))
-                    raise
-                litellm_attempts.append(result)
-                precise = circuit_key(route, alias, result.trace)
-                book = store.update(
-                    partial(
-                        CircuitBook.on_result,
-                        coarse=coarse,
-                        precise=precise,
-                        ok=result.trace.ok,
-                        now_s=now_s,
-                        policy=cpolicy,
-                    )
-                )
-                state = book.state(precise, now_s=now_s, policy=cpolicy)
-                will_retry = (
-                    not result.trace.ok
-                    and state != "open"
-                    and should_retry(result.trace)
-                    and attempt_number < policy.max_attempts
-                )
-                # Hat DIESER VERSUCH ein Ergebnis geliefert? Bewusst die
-                # Konjunktion und nicht nur `error is None`: ein Pfad, der
-                # kuenftig einen Fehlschlag ohne Ausnahme meldet, soll hier
-                # nicht als Erfolg durchgehen.
-                gelungen = result.error is None and result.trace.ok
-                record_attempt_trace(
-                    result.trace,
-                    correlation_id=correlation_id,
-                    evaluation_id=evaluation_id,
-                    purpose=purpose,
-                    logical_route=route,
-                    mode=mode,
-                    role=mode,
-                    attempt_number=attempt_number,
-                    budget_decision=verdict,
-                    circuit_state=state,
-                    execution_authority=has_execution_authority(mode),
-                    # `trace.ok` gehoert dem TRANSPORT, diese Felder
-                    # beschreiben den VERSUCH. Bei einer abgeschnittenen
-                    # Antwort faellt beides auseinander: der Transport war
-                    # erfolgreich (`ok`), aber die Runtime hat fail-closed
-                    # geurteilt und es entstand kein Wert. Auf `trace.ok`
-                    # gestuetzt meldete die Zeile dann `outcome="success"`
-                    # und `schema_status="valid"` fuer einen Aufruf ohne
-                    # Analyse -- und `scripts/litellm_shadow_eval` bildet
-                    # seine `outcome_distribution` genau daraus. Die erste
-                    # echte SHADOW-Auswertung haette abgeschnittene Laeufe
-                    # als Erfolge gezaehlt.
-                    schema_status=(
-                        "valid"
-                        if gelungen
-                        else "invalid"
-                        if result.trace.error_class == "schema"
-                        else None
-                    ),
-                    outcome=(
-                        "fallthrough" if will_retry else "success" if gelungen else "exhausted"
-                    ),
-                    fallback_from=(
-                        "litellm"
-                        if litellm_is_authoritative(mode) and not gelungen and not will_retry
-                        else None
-                    ),
-                    fallback_to=(
-                        "direct"
-                        if litellm_is_authoritative(mode) and not gelungen and not will_retry
-                        else None
-                    ),
-                    path=telemetry_path,
-                )
-                if not will_retry:
-                    break
-                await sleeper(retry_delay_s(attempt_number, policy, jitter=jitter))
+        if laeuft and direct_task is not None:
+            # SCHATTEN: beide Pfade laufen nebeneinander, die Antwort wartet
+            # aber nur auf den Direktpfad plus eine begrenzte Nachfrist. Bis
+            # 04046c68 wartete sie auf den GESAMTEN Schattenlauf, Wiederholungen
+            # eingeschlossen -- eine fertige Antwort blieb liegen, bis ein
+            # unverbindlicher Vergleich fertig war (LiteLLM-Audit 27.09., E).
+            shadow_task = asyncio.ensure_future(schleife())
+            direct_attempt = await direct_task
+            await asyncio.wait({shadow_task}, timeout=shadow_grace_s)
+        elif laeuft:
+            await schleife()
     except BaseException:
-        # Der Schattenlauf des Direktpfads darf nicht als unbeachtete Task
+        # Weder der Schatten noch der Direktpfad duerfen als unbeachtete Task
         # zurueckbleiben: der Aufrufer saehe nur den Fehler von hier, waehrend
         # asyncio spaeter eine zweite, herrenlose Ausnahme meldet.
-        if direct_task is not None:
-            direct_task.cancel()
-            with suppress(BaseException):
-                await direct_task
+        for offen in (shadow_task, direct_task):
+            if offen is not None:
+                offen.cancel()
+                with suppress(BaseException):
+                    await offen
         raise
+
+    if shadow_task is not None:
+        if not shadow_task.done():
+            detail["shadow_detached"] = await _abkoppeln(shadow_task, on_shadow_detached)
+        elif not shadow_task.cancelled() and shadow_task.exception() is not None:
+            # Der Schatten darf nichts bewirken -- auch nicht mit einem Fehler.
+            detail["shadow_error"] = type(shadow_task.exception()).__name__
 
     litellm_result = (
         InferenceResult(
@@ -584,11 +661,11 @@ async def _execute_transports[T](  # noqa: PLR0913 - eine Mechanik, kein Zustand
         litellm_is_authoritative(mode) and litellm_result is not None and litellm_result.ok
     )
 
-    direct_attempt: AttemptResult[T] | None = None
     if direct_call is None:
         skipped.append(SKIP_NO_TRANSPORT)
     elif direct_task is not None:
-        direct_attempt = await direct_task
+        if direct_attempt is None:
+            direct_attempt = await direct_task
     elif not litellm_carried:
         direct_attempt = await direct_call()
 
@@ -633,11 +710,14 @@ __all__ = [
     "SKIP_CIRCUIT_OPEN",
     "SKIP_MODE_OFF",
     "SKIP_NO_TRANSPORT",
+    "MAX_DETACHED_SHADOWS",
     "GatewayOutcome",
     "AsyncGatewayOutcome",
     "AsyncTransportCall",
     "SkipReason",
     "TransportCall",
+    "detached_shadow_count",
+    "drain_detached_shadows",
     "execute",
     "execute_async",
 ]

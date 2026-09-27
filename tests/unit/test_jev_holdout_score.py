@@ -232,6 +232,7 @@ def test_pipeline_replay_report_is_scored_via_mapping(tmp_path: Path) -> None:
                 "git_sha": "c" * 40,
                 "crypto_gate_mode": "enforce",
                 "input_sha256": "d" * 64,
+                "monitor_sha256": {"keywords.txt": "e" * 64},
                 "case_count": 4,
                 "cases": [
                     {
@@ -249,6 +250,7 @@ def test_pipeline_replay_report_is_scored_via_mapping(tmp_path: Path) -> None:
     report = score(review, mapping_path, replay)
     assert report["prediction_source"]["kind"] == "pipeline_replay"
     assert report["prediction_source"]["git_sha"] == "c" * 40
+    assert report["prediction_source"]["monitor_sha256"] == {"keywords.txt": "e" * 64}
     # labels: 0 and 2 relevant; predicted: 0 and 1
     assert report["metrics"]["true_positive"] == 1
     assert report["metrics"]["false_positive"] == 1

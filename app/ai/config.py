@@ -113,6 +113,18 @@ class InferenceSettings(BaseSettings):
     backoff_base_seconds: float = Field(default=0.25, ge=0.0, le=10.0)
     backoff_max_seconds: float = Field(default=2.0, ge=0.0, le=30.0)
     jitter_max_seconds: float = Field(default=0.1, ge=0.0, le=5.0)
+    #: Logische Route -> Gesamtfrist EINES Aufrufs in Sekunden: alle
+    #: LiteLLM-Versuche, Pausen UND der Rueckfall auf den Direktpfad zusammen.
+    #: Ohne Eintrag gilt: Versuche x Timeout + Pausen + ein Timeout fuer den
+    #: Rueckfall (``app.ai.runtime._gesamtfrist``). Vorher gab es keine Frist
+    #: ueber allem (LiteLLM-Audit 27.09., Befund E). OFF ist ausgenommen: dort
+    #: gibt es keinen Rueckfall, und der Direktpfad bleibt Wort fuer Wort.
+    route_deadline_seconds: dict[str, float] = Field(default_factory=dict)
+    #: Wie lange die Antwort im SCHATTEN nach dem Direktpfad noch auf den
+    #: LiteLLM-Lauf wartet. Danach kehrt sie zurueck; der Schatten laeuft
+    #: abgekoppelt zu Ende und schreibt seine Zeile trotzdem -- die Evidenz
+    #: bleibt, nur die Wartezeit des Benutzers nicht.
+    shadow_grace_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
 
     _strip_api_key = field_validator("litellm_api_key", mode="before")(_strip_secret)
 
@@ -121,6 +133,13 @@ class InferenceSettings(BaseSettings):
     def _route_timeouts_are_bounded(cls, value: dict[str, float]) -> dict[str, float]:
         if any(seconds <= 0.0 or seconds > 300.0 for seconds in value.values()):
             raise ValueError("route timeouts must be > 0 and <= 300 seconds")
+        return value
+
+    @field_validator("route_deadline_seconds")
+    @classmethod
+    def _route_deadlines_are_bounded(cls, value: dict[str, float]) -> dict[str, float]:
+        if any(seconds <= 0.0 or seconds > 1800.0 for seconds in value.values()):
+            raise ValueError("route deadlines must be > 0 and <= 1800 seconds")
         return value
 
     @field_validator("route_reasoning_effort")

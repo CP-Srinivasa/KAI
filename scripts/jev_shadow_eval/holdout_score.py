@@ -101,6 +101,9 @@ def score(
             "git_sha": baseline.get("git_sha"),
             "crypto_gate_mode": baseline.get("crypto_gate_mode"),
             "input_sha256": baseline.get("input_sha256"),
+            # Aeltere Replays (v1 vor dem Audit 27.09.) tragen sie nicht: dann
+            # steht hier ehrlich `None` statt einer geratenen Konfiguration.
+            "monitor_sha256": baseline.get("monitor_sha256"),
         }
         baseline = _baseline_from_replay(baseline, mapping)
     if review.get("schema_version") != "jev-holdout-blind-review/v1":
