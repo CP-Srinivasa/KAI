@@ -16,7 +16,7 @@ python scripts/kai_dev_hub.py ui
 ```
 
 Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.2), schreibt `install.json` mit
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.3), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 Ein Worktree mit detached HEAD ist als Quelle zulässig. Die Herkunft belegt dann
@@ -92,7 +92,10 @@ nicht jedoch die reale Identität eines externen Modells. Der Empfänger muss
 die individuelle `ACK:`-Challenge und die offene Aufgabe in seiner Antwort
 bestätigen. Diese Antwort wird als verkettetes Ack-Ereignis erfasst. Ohne Ack
 bleibt die Übergabe im Hub-Status sichtbar offen. Ein Ack ist ein dokumentierter
-Empfangsbeleg, keine kryptographische Modell-Authentisierung.
+Empfangsbeleg, keine kryptographische Modell-Authentisierung. Ab 0.3.3 laufen
+Anlegen, Ack und Ablösen vollständig unter einem prozessübergreifenden Lock
+(`ledger.jsonl.lock`). Ein zweiter Hub-Prozess wartet höchstens 10 s und bricht
+dann ab, ohne zu schreiben; die Kette kann so nicht mehr gabeln.
 
 Ab Hub 0.3.0 (Beleg-Schema 2) nennt das Kontextpaket die **Übergabe-ID**
 getrennt von der Session-ID, dazu den Beleg-SHA-256, den Vorgänger-Beleg und den
@@ -131,7 +134,11 @@ Befehlszeilenprüfung beendet. Der Zustand bleibt stehen, solange die Pi nicht e
 sodass ein späterer Aufruf das Aufräumen abschließt. Ein Fehlstart räumt sich selbst auf.
 
 Diagnose ohne Pi/Anbieter: `doctor --mode local-inference` prüft eine echte
-Ollama-Antwort. `doctor --mode cloud` prüft Economy und Code mit echter kurzer
+Ollama-Antwort des 64K-Modells, das beide lokalen Startwege nutzen (bis 0.3.2
+prüften Status und Probe das ungenutzte 16K-Modell). `local_prerequisites_ok`
+(Clients, Modelle, Kette) und `local_response_proven` (erzeugte Antwort) stehen
+getrennt; `local_inference_ready`/`offline_ready` bleiben Aliase für die
+Voraussetzungen. `doctor --mode cloud` prüft Economy und Code mit echter kurzer
 Antwort, Modellfeld und positivem Kostenkopf; Frontier wird nicht automatisch
 aufgerufen. `automations` zeigt lokale KAI-Tasks mit Zustand, letztem Lauf,
 Ergebnis und nächstem Termin; `last_success`/`last_failure` stammen aus Event 201

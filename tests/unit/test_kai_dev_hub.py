@@ -6,8 +6,10 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -161,12 +163,95 @@ def test_cloud_boundary_uses_only_loopback_and_dedicated_dev_names() -> None:
 
 
 def test_local_route_is_pinned_to_installed_kai_model() -> None:
-    assert hub.LOCAL_MODEL == "kai-qwen3-coder:30b-16k"
+    # Audit 27.09.: LOCAL_MODEL was the 16K model while both start paths use
+    # 64K, so status and probe checked a model nobody starts.
+    assert hub.LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
     assert hub.HERMES_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
     # OpenCode's own prompt plus one read file exceeds 16K (Ollama truncated
     # 16942 -> 16384 tokens in the 23.09. acceptance); coding runs need 64K.
     assert hub.OPENCODE_LOCAL_MODEL == "kai-qwen3-coder:30b-64k"
     assert hub.DEV_MODELS == {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
+
+
+def test_status_checks_the_model_the_local_start_paths_use(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Audit 27.09.: with only the 16K model installed the status said
+    # "installed", yet OpenCode and Hermes both refuse to start without 64K.
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_port_open", lambda port: port == hub.OLLAMA_PORT)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {"kai-qwen3-coder:30b-16k"})
+    assert hub.status(kai_repo)["local_model_installed"] is False
+
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {"kai-qwen3-coder:30b-64k"})
+    values = hub.status(kai_repo)
+    assert values["local_model_installed"] is True
+    assert values["local_model"] == hub.OPENCODE_LOCAL_MODEL == hub.HERMES_LOCAL_MODEL
+
+
+def test_local_probe_proves_an_answer_from_the_start_path_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A proven answer from a model no start path uses proves nothing about
+    # local work; the probe asks the model OpenCode and Hermes run.
+    monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.OPENCODE_LOCAL_MODEL})
+    sent: list[dict[str, Any]] = []
+
+    def answer(request: Any, timeout: int) -> io.BytesIO:
+        sent.append(json.loads(request.data))
+        return io.BytesIO(json.dumps({"response": "KAI_LOCAL_OK"}).encode())
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", answer)
+
+    report = hub._local_inference_probe()
+
+    assert sent[0]["model"] == hub.OPENCODE_LOCAL_MODEL == hub.HERMES_LOCAL_MODEL
+    assert report == {
+        "route": "ollama-local",
+        "model": hub.OPENCODE_LOCAL_MODEL,
+        "response_proven": True,
+    }
+
+
+def test_prerequisites_are_reported_apart_from_a_proven_answer(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Audit 27.09.: "ready" only meant installed clients, models and a valid
+    # chain; no answer had been generated. The two are separate fields now.
+    _managed(kai_repo, tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_port_open", lambda port: port == hub.OLLAMA_PORT)
+    monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.LOCAL_MODEL})
+    monkeypatch.setattr(hub, "_command", lambda _name: "installed")
+    monkeypatch.setattr(hub, "automation_inventory", lambda: {"available": True, "tasks": []})
+
+    offline = hub.doctor(kai_repo, "offline")["checks"]
+    assert offline["local_prerequisites_ok"] is True
+    assert offline["local_response_proven"] is False
+    # Compatibility aliases keep their old meaning: prerequisites only.
+    assert offline["local_inference_ready"] is True
+    assert offline["offline_ready"] is True
+
+    monkeypatch.setattr(
+        hub,
+        "_local_inference_probe",
+        lambda: {"route": "ollama-local", "model": hub.LOCAL_MODEL, "response_proven": True},
+    )
+    assert hub.doctor(kai_repo, "local-inference")["checks"]["local_response_proven"] is True
+
+    # The hourly Health task runs offline mode; status must not present its
+    # result as a proven answer, also not for a file written by 0.3.2.
+    health = hub.STATE_ROOT / "health" / "last.json"
+    health.parent.mkdir(parents=True)
+    for checks in (offline, {"offline_ready": True}):
+        health.write_text(
+            json.dumps({"checked_at": "2026-09-27T12:00:00+00:00", "checks": checks}),
+            encoding="utf-8",
+        )
+        values = hub.status(kai_repo)
+        assert values["last_prerequisites_ok"] is True
+        assert values["last_response_proven"] is False
+        assert "last_independent_result" not in values
 
 
 def test_handoff_ack_requires_recipient_challenge_and_preserves_chain(
@@ -643,7 +728,7 @@ def test_doctor_separates_inference_from_task_startability(
 
 def test_hub_version_and_offline_basis_are_operator_visible() -> None:
     text = HUB_PATH.read_text(encoding="utf-8")
-    assert 'HUB_VERSION = "0.3.2"' in text
+    assert 'HUB_VERSION = "0.3.3"' in text
     assert "Offline-Start von" in text
     assert "OFFLINE-BASIS" in text
 
@@ -824,6 +909,154 @@ def test_verify_rejects_ack_written_after_supersede(
     valid, detail = hub.verify_handoffs()
     assert valid is False
     assert "Empfangsbestätigung" in detail
+
+
+# --- Audit 27.09.: ledger writes of parallel hub processes -------------------
+
+# A second hub process (UI + CLI, or two UIs) superseding one handoff. Its
+# clock is read after the chain tip was read and before the append -- the
+# window a peer races into. "race" only widens it, "hold" parks there.
+_PEER_PROCESS = """
+import importlib.util, sys, time
+from datetime import datetime
+from pathlib import Path
+
+hub_path, signals = Path(sys.argv[1]), Path(sys.argv[2])
+handoff_id, mode = sys.argv[3], sys.argv[4]
+sys.path.insert(0, str(hub_path.parent))
+spec = importlib.util.spec_from_file_location("kai_dev_hub", hub_path)
+hub = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hub)
+
+
+class PeerClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        (signals / f"inside-{handoff_id}").touch()
+        if mode == "hold":
+            deadline = time.monotonic() + 60
+            while not (signals / "release").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        else:
+            time.sleep(0.4)
+        return datetime.now(tz)
+
+
+hub.datetime = PeerClock
+(signals / f"ready-{handoff_id}").touch()
+while not (signals / "go").exists():
+    time.sleep(0.001)
+hub.supersede_handoff(handoff_id, "concurrent peer process")
+"""
+
+
+def _start_peers(signals: Path, ids: list[str], mode: str) -> list[subprocess.Popen[str]]:
+    env = {**os.environ, "KAI_DEV_HUB_HOME": str(hub.STATE_ROOT)}
+    return [
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, "-B", "-c", _PEER_PROCESS, str(HUB_PATH), str(signals), hid, mode],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for hid in ids
+    ]
+
+
+def _await_checkpoint(peers: list[subprocess.Popen[str]], marks: list[Path]) -> None:
+    deadline = time.monotonic() + 60
+    while not all(mark.exists() for mark in marks):
+        for peer in peers:
+            if peer.poll() is not None:
+                pytest.fail(f"Peer-Prozess vorzeitig beendet: {peer.communicate()[1]}")
+        if time.monotonic() > deadline:
+            pytest.fail("Peer-Prozesse haben den Prüfpunkt nicht erreicht.")
+        time.sleep(0.01)
+
+
+def _finish(peers: list[subprocess.Popen[str]]) -> list[str]:
+    errors = []
+    for peer in peers:
+        try:
+            errors.append(peer.communicate(timeout=60)[1])
+        except subprocess.TimeoutExpired:
+            peer.kill()
+            errors.append("TIMEOUT " + peer.communicate()[1])
+    return errors
+
+
+def test_parallel_hub_processes_cannot_fork_the_handoff_chain(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without a shared lock all four read the same tip and append onto it:
+    # the chain forks, and append-only means it cannot be repaired.
+    _managed(kai_repo, tmp_path, monkeypatch)
+    ids = [str(_handoff(kai_repo)["handoff_id"]) for _ in range(4)]
+    signals = tmp_path / "signals"
+    signals.mkdir()
+    peers = _start_peers(signals, ids, "race")
+    try:
+        _await_checkpoint(peers, [signals / f"ready-{hid}" for hid in ids])
+    finally:
+        (signals / "go").touch()
+        errors = _finish(peers)
+
+    assert [peer.returncode for peer in peers] == [0, 0, 0, 0], errors
+    assert hub.verify_handoffs() == (
+        True,
+        "4 Übergabe(n), 0 bestätigt, 4 abgelöst; Hash-Kette unverändert.",
+    )
+    ledger, _ = hub._handoff_paths()
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 8
+
+
+@pytest.mark.parametrize("operation", ["create", "ack", "supersede"])
+def test_ledger_write_waits_for_a_peer_and_fails_closed_on_timeout(
+    kai_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    _managed(kai_repo, tmp_path, monkeypatch)
+    held = str(_handoff(kai_repo)["handoff_id"])
+    target = _handoff(kai_repo)
+    # raising=False: against a hub without the lock this test must fail on
+    # behaviour (the write goes through), not on a missing attribute.
+    monkeypatch.setattr(hub, "LEDGER_LOCK_TIMEOUT_S", 0.5, raising=False)
+
+    def write() -> object:
+        if operation == "create":
+            return _handoff(kai_repo)
+        if operation == "ack":
+            return hub.acknowledge_handoff(
+                kai_repo,
+                handoff_id=str(target["handoff_id"]),
+                agent="Kimi",
+                response=(
+                    f"{target['ack_challenge']} Handoff {target['handoff_id']} received; "
+                    "I will continue the documented task from its included sources."
+                ),
+            )
+        return hub.supersede_handoff(str(target["handoff_id"]), "obsolete")
+
+    signals = tmp_path / "signals"
+    signals.mkdir()
+    (signals / "go").touch()
+    ledger, _ = hub._handoff_paths()
+    peers = _start_peers(signals, [held], "hold")
+    try:
+        _await_checkpoint(peers, [signals / f"inside-{held}"])
+        before = ledger.read_bytes()
+        started = time.monotonic()
+        with pytest.raises(hub.HubError, match="gesperrt"):
+            write()
+        assert time.monotonic() - started >= 0.4, "wartet auf den Peer statt sofort abzubrechen"
+        assert ledger.read_bytes() == before, "nichts geschrieben, solange der Peer hält"
+    finally:
+        (signals / "release").touch()
+        errors = _finish(peers)
+
+    assert peers[0].returncode == 0, errors
+    write()
+    assert hub.verify_handoffs()[0] is True
 
 
 def test_task_sources_are_pinned_hashed_and_truncation_is_visible(

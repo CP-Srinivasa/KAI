@@ -8,7 +8,9 @@ This is an operator tool, not part of KAI's inference runtime. It never imports
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
+import functools
 import hashlib
 import json
 import os
@@ -24,26 +26,29 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.3.2"
+HUB_VERSION = "0.3.3"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
 OLLAMA_PORT = 11434
 PI_HOST = "192.168.178.23"
 PI_USER = "ubuntu"
-LOCAL_MODEL = "kai-qwen3-coder:30b-16k"
-HERMES_LOCAL_MODEL = "kai-qwen3-coder:30b-64k"
 # OpenCode's system prompt plus a read file exceeds 16K tokens (Ollama
-# truncated 16942 -> 16384 on 23.09.); coding sessions use the 64K model.
-OPENCODE_LOCAL_MODEL = HERMES_LOCAL_MODEL
+# truncated 16942 -> 16384 on 23.09.); both local start paths use the 64K
+# model. Status and response probe check exactly this one (audit 27.09.:
+# they checked the unused 16K model).
+LOCAL_MODEL = "kai-qwen3-coder:30b-64k"
+HERMES_LOCAL_MODEL = LOCAL_MODEL
+OPENCODE_LOCAL_MODEL = LOCAL_MODEL
 DEV_MODELS = {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
+LEDGER_LOCK_TIMEOUT_S = 10.0
 REMOTE_ENV = "/home/kai/ai_analyst_trading_bot/.env"
 REMOTE_PROXY = "/home/kai/current/scripts/dev_reserve.sh"
 REMOTE_PID_FILE = "/tmp/kai-dev-hub-proxy.pid"
@@ -409,7 +414,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         checks["dev_routes"] = [
             _cloud_inference_probe(key, route) for route in ("kai-dev-economy", "kai-dev-code")
         ]
-    checks["local_inference_ready"] = all(
+    checks["local_prerequisites_ok"] = all(
         checks[name]
         for name in (
             "opencode_installed",
@@ -420,6 +425,9 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
             "handoff_chain",
         )
     )
+    # Only the local-inference probe proves a generated answer; installed
+    # clients and models are prerequisites, not proof (audit 27.09.).
+    checks["local_response_proven"] = bool(checks.get("local_inference", {}).get("response_proven"))
     try:
         primary = workflow._primary_checkout(repo)
         checks["local_task_startable"] = (
@@ -427,9 +435,10 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
         )
     except (workflow.WorkflowError, OSError, subprocess.SubprocessError):
         checks["local_task_startable"] = False
-    # Compatibility alias for callers of 0.3.1: it described local inference,
-    # not whether a fresh Git worktree could be created during an outage.
-    checks["offline_ready"] = checks["local_inference_ready"]
+    # Compatibility aliases (0.3.1/0.3.2 callers, Health-Task exit code). Both
+    # mean prerequisites only, never a proven answer or a startable worktree.
+    checks["local_inference_ready"] = checks["local_prerequisites_ok"]
+    checks["offline_ready"] = checks["local_prerequisites_ok"]
     return report
 
 
@@ -791,6 +800,63 @@ def _handoff_paths() -> tuple[Path, Path]:
     return root / "ledger.jsonl", root / "CURRENT_HANDOFF.md"
 
 
+def _lock_first_byte(handle: BinaryIO, *, release: bool = False) -> None:
+    """Non-blocking lock (or release) of byte 0; busy raises BlockingIOError/PermissionError."""
+    handle.seek(0)
+    if sys.platform == "win32":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK if release else msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN if release else fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextlib.contextmanager
+def _ledger_lock(ledger: Path) -> Iterator[None]:
+    """Exclusive cross-process lock for one read-check-append of the ledger.
+
+    Without it two hub processes (UI and CLI, or two UIs) read the same tip
+    and both append onto it: the hash chain forks, and append-only means it
+    cannot be repaired (audit 27.09.). Same sidecar convention as
+    ``app/core/file_lock.py`` in strict mode, but stdlib-only and with a
+    bounded wait: the installed hub ships without ``app/``, and a hung peer
+    must not block the operator indefinitely.
+    """
+    lock_path = ledger.with_name(ledger.name + ".lock")
+    deadline = time.monotonic() + LEDGER_LOCK_TIMEOUT_S
+    with lock_path.open("a+b") as handle:
+        while True:
+            try:
+                _lock_first_byte(handle)
+                break
+            except (BlockingIOError, PermissionError):
+                if time.monotonic() >= deadline:
+                    raise HubError(
+                        f"Übergabe-Ledger seit {LEDGER_LOCK_TIMEOUT_S:g} s von einem anderen "
+                        f"Hub-Prozess gesperrt ({lock_path}); nichts geschrieben, bitte "
+                        "erneut versuchen."
+                    ) from None
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            _lock_first_byte(handle, release=True)
+
+
+def _ledger_serialized[**P, R](operation: Callable[P, R]) -> Callable[P, R]:
+    """Run a ledger-writing operation entirely under the ledger lock."""
+
+    @functools.wraps(operation)
+    def locked(*args: P.args, **kwargs: P.kwargs) -> R:
+        with _ledger_lock(_handoff_paths()[0]):
+            return operation(*args, **kwargs)
+
+    return locked
+
+
+@_ledger_serialized
 def create_handoff(
     repo: Path,
     *,
@@ -891,6 +957,7 @@ def create_handoff(
     return payload
 
 
+@_ledger_serialized
 def acknowledge_handoff(
     repo: Path, *, handoff_id: str, agent: str, response: str
 ) -> dict[str, Any]:
@@ -948,6 +1015,7 @@ def acknowledge_handoff(
     return event
 
 
+@_ledger_serialized
 def supersede_handoff(
     handoff_id: str, reason: str, replaced_by: str | None = None
 ) -> dict[str, Any]:
@@ -1115,6 +1183,7 @@ def status(repo: Path) -> dict[str, Any]:
         )
     except (OSError, json.JSONDecodeError):
         last_health = None
+    last_checks = last_health.get("checks", {}) if last_health else {}
     return {
         "hub_version": HUB_VERSION,
         "repository": str(repo),
@@ -1126,6 +1195,7 @@ def status(repo: Path) -> dict[str, Any]:
         "hermes": bool(_command("hermes")),
         "kimi": bool(_command("kimi")),
         "ollama_online": ollama_online,
+        "local_model": LOCAL_MODEL,
         "local_model_installed": LOCAL_MODEL in models if ollama_online else None,
         "hermes_64k_model_installed": HERMES_LOCAL_MODEL in models if ollama_online else None,
         "litellm_tunnel_online": _port_open(DEV_PORT),
@@ -1136,8 +1206,15 @@ def status(repo: Path) -> dict[str, Any]:
             not row.get("orphaned", False) for row in workflow.list_sessions(STATE_ROOT)
         ),
         "last_independent_check": last_health["checked_at"] if last_health else "NOT_RUN",
-        "last_independent_result": (
-            last_health.get("checks", {}).get("offline_ready") if last_health else "NOT_RUN"
+        # The hourly Health task runs doctor --mode offline: prerequisites only.
+        # 0.3.2 files carry just the offline_ready alias.
+        "last_prerequisites_ok": (
+            last_checks.get("local_prerequisites_ok", last_checks.get("offline_ready"))
+            if last_health
+            else "NOT_RUN"
+        ),
+        "last_response_proven": (
+            bool(last_checks.get("local_response_proven")) if last_health else "NOT_RUN"
         ),
     }
 
