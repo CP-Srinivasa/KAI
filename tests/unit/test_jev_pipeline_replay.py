@@ -59,6 +59,10 @@ async def test_replay_runs_development_corpus_through_real_pipeline(tmp_path: Pa
     assert report["jev_called"] is False
     assert report["primary_ready"] is False
     assert "app/analysis/pipeline.py" in report["code_sha256"]
+    # Gleicher Code und gleicher Text reichen nicht: Keywords und Watchlists
+    # entscheiden mit (LiteLLM-Audit 27.09., Replay-Provenienz).
+    for name in ("keywords.txt", "watchlists.yml", "entity_aliases.yml"):
+        assert len(report["monitor_sha256"][name]) == 64
     assert all(
         case["skip_reason"] or case["would_call_llm"] or case["error"] for case in report["cases"]
     )

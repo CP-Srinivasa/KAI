@@ -207,6 +207,21 @@ def _code_hashes() -> dict[str, str]:
     }
 
 
+def _monitor_hashes(monitor: Path) -> dict[str, str]:
+    """Jede Datei der verwendeten Monitor-Konfiguration mit ihrem SHA-256.
+
+    Gleicher Code und gleicher Text reichen zur Reproduktion nicht: Keywords,
+    Watchlists und Aliase entscheiden mit, ob ein Dokument das LLM erreicht
+    (LiteLLM-Audit 27.09.). Der ganze Ordner und nicht nur die drei Dateien
+    der ``KeywordEngine``, damit auch spaetere Leser der Pipeline gedeckt sind.
+    """
+    return {
+        path.relative_to(monitor).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(monitor.rglob("*"))
+        if path.is_file()
+    }
+
+
 async def replay(path: Path, *, crypto_gate_mode: str, monitor: Path) -> dict[str, Any]:
     if crypto_gate_mode not in {"off", "shadow", "enforce"}:
         raise ValueError("crypto gate mode must be off, shadow, or enforce")
@@ -259,6 +274,7 @@ async def replay(path: Path, *, crypto_gate_mode: str, monitor: Path) -> dict[st
         "case_count": len(cases),
         "provider_call_count": len(provider.calls),
         "code_sha256": _code_hashes(),
+        "monitor_sha256": _monitor_hashes(monitor),
         "cases": cases,
     }
 
