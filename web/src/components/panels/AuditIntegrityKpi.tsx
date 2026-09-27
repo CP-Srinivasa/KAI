@@ -12,15 +12,24 @@ import { useApi } from "@/lib/useApi";
 import { fetchIntegrity } from "@/lib/api";
 import type { StatusKind } from "@/lib/status";
 
-/** Integritäts-State (+ Proof-State) → kanonischer StatusKind. "disabled" wird
- *  separat als ruhiger muted-Badge gezeigt (nicht hierüber). Ehrlich: nur ein
- *  Bitcoin-confirmed Proof gilt als "verified" — ein bloß eingereichter (pending)
- *  OTS-Proof bleibt "pending", bis die Bitcoin-Attestation gemined ist.
+/** Integritäts-State (+ Proof-State + Bitcoin-Prüfung) → kanonischer StatusKind.
+ *  "disabled" wird separat als ruhiger muted-Badge gezeigt (nicht hierüber).
+ *  Ehrlich (Audit A3): "verified" NUR, wenn der Proof eine Bitcoin-Attestation trägt
+ *  (proof_state "confirmed") UND die Prüfung gegen den echten Blockheader für GENAU
+ *  diesen Proof-Inhalt "verified" ergab. Eine Attestation allein ist nur behauptet.
  *  Pure/testbar. */
-export function integrityStateToStatus(state: string, proofState: string): StatusKind {
+export function integrityStateToStatus(
+  state: string,
+  proofState: string,
+  bitcoinVerification = "",
+): StatusKind {
   switch (state) {
     case "ok":
-      return proofState === "confirmed" ? "verified" : "pending";
+      if (proofState !== "confirmed") return "pending";
+      if (bitcoinVerification === "verified") return "verified";
+      if (bitcoinVerification === "mismatch") return "critical";
+      if (bitcoinVerification === "unverifiable") return "degraded";
+      return "pending";
     case "no_anchor":
       return "pending";
     case "unavailable":
@@ -28,6 +37,25 @@ export function integrityStateToStatus(state: string, proofState: string): Statu
     default:
       return "unverified";
   }
+}
+
+/** Kurzes deutsches Label zum Status oben. Pure/testbar. */
+export function integrityLabel(
+  state: string,
+  proofState: string,
+  bitcoinVerification: string,
+  proofAvailable: boolean,
+): string {
+  if (state === "no_anchor") return "kein Anchor";
+  if (state !== "ok") return state;
+  if (proofState === "confirmed") {
+    if (bitcoinVerification === "verified") return "Bitcoin-geprüft";
+    if (bitcoinVerification === "mismatch") return "Beweis UNGÜLTIG";
+    if (bitcoinVerification === "unverifiable") return "nicht prüfbar";
+    return "bestätigt, Bitcoin-Prüfung ausstehend";
+  }
+  if (proofState === "pending") return "OTS pending";
+  return proofAvailable ? "OTS-Proof" : "aufgezeichnet";
 }
 
 export function AuditIntegrityKpi() {
@@ -48,20 +76,13 @@ export function AuditIntegrityKpi() {
           </Badge>
         ) : (
           <StatusPill
-            kind={integrityStateToStatus(d.state, d.proof_state)}
-            label={
-              d.state === "ok"
-                ? d.proof_state === "confirmed"
-                  ? "Bitcoin-verankert"
-                  : d.proof_state === "pending"
-                    ? "OTS pending"
-                    : d.proof_available
-                      ? "OTS-Proof"
-                      : "aufgezeichnet"
-                : d.state === "no_anchor"
-                  ? "kein Anchor"
-                  : d.state
-            }
+            kind={integrityStateToStatus(d.state, d.proof_state, d.bitcoin_verification)}
+            label={integrityLabel(
+              d.state,
+              d.proof_state,
+              d.bitcoin_verification,
+              d.proof_available,
+            )}
           />
         )}
       </div>
@@ -71,7 +92,9 @@ export function AuditIntegrityKpi() {
             {d.anchor_count} Anchor{d.anchor_count === 1 ? "" : "s"}
             {d.last_anchored_at ? ` · ${d.last_anchored_at.substring(0, 16).replace("T", " ")}` : ""}
             {d.proof_state === "confirmed"
-              ? ` · Bitcoin #${d.bitcoin_height ?? "?"}`
+              ? ` · Bitcoin #${d.bitcoin_height ?? "?"}${
+                  d.bitcoin_verification === "verified" ? " (Header geprüft)" : " (ungeprüft)"
+                }`
               : d.proof_state === "pending"
                 ? " · wartet auf Bitcoin-Bestätigung"
                 : d.proof_available
