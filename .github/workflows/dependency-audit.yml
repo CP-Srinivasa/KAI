@@ -1,0 +1,31 @@
+name: Dependency Audit (nightly)
+
+# Die PR-CI prueft Abhaengigkeiten nur, wenn gerade ein PR laeuft. Eine neue CVE in
+# einem UNVERAENDERTEN Paket fiel so erst auf, wenn irgendein fremder PR an ihr
+# scheiterte (Audit 27.09.2026). Dieser Lauf prueft beide Python-Locks und web/
+# jede Nacht gegen die aktuelle Advisory-Lage — derselbe Aufruf wie in der PR-CI.
+# Ein roter Nachtlauf meldet GitHub per Mail; die Behebung ist ein normaler PR.
+
+on:
+  schedule:
+    # 04:30 UTC = 06:30 CEST, vor dem Operator-Digest
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install pip-audit
+      - run: bash scripts/dependency_audit.sh all

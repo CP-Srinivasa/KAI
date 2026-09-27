@@ -135,16 +135,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit bandit
-      - name: Dependency vulnerability scan (pip-audit on lockfile)
-        # Lock-File-Migration (DS-20260527-V5): pip-audit scannt direkt das
-        # requirements.lock statt erst zu installieren. Schneller + deterministisch.
-        # pip-CVEs (CVE-2026-3219 no-fix, CVE-2026-6357 fix-pending in pip 26.1)
-        # ignored — pip ist Build-Tool, keine Project-Dependency.
-        run: pip-audit -r requirements.lock --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
-      - name: Transport dependency vulnerability scan
-        # Gepinnter, vollstaendig gehashter Pi-Baum (aarch64): nur die
-        # Versionen gegen die Advisory-DB pruefen, nichts auf x86 installieren.
-        run: pip-audit -r requirements-transport.lock --no-deps --disable-pip
+      - name: Dependency vulnerability scan (pip-audit, beide Locks)
+        # Lock-File-Migration (DS-20260527-V5): pip-audit scannt direkt die Locks
+        # statt erst zu installieren. Ausnahmen (pip-CVEs, Build-Tool) stehen mit
+        # Begruendung NUR in scripts/dependency_audit.sh — derselbe Aufruf laeuft
+        # naechtlich in dependency-audit.yml.
+        run: bash scripts/dependency_audit.sh python
       - name: Static security analysis (bandit)
         run: |
           bandit -r app/ \
@@ -404,6 +400,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+      # Audit 27.09.2026: web/ hatte kein Dependency-Audit. Laufzeit-Pakete ab high,
+      # Build-/Test-Werkzeuge ab critical (Details/Ausnahmen: scripts/dependency_audit.sh).
+      - name: Dependency vulnerability scan (npm audit)
+        run: bash ../scripts/dependency_audit.sh web
       - run: npm run lint    # tsc -b --noEmit (type-check gate)
       - run: npm run lint:data-sources  # jedes Panel muss @data-source: deklarieren (DALI #5)
       - run: npm run build   # tsc -b && vite build (build gate)
