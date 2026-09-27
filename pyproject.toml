@@ -36,6 +36,15 @@ dependencies = [
     "anthropic>=0.40.0",
     "google-genai>=1.0.0",
     "aiosqlite>=0.17.0",
+    # Direkt importiert, bisher nur beilaeufig ueber andere Pakete da (27.09.2026,
+    # Befundklasse greenlet/#1121; Waechter tests/unit/test_direct_imports_declared.py):
+    # cryptography: Payment-Intent-Vault (AESGCM) + LN-TLS-Check (kam via google-auth/pyjwt)
+    "cryptography>=42.0.0",
+    # websockets: Binance-Liquidations-Stream (kam via uvicorn[standard]/google-genai)
+    "websockets>=12.0",
+    # jeepney: DBus-Abfrage im Premium-Pipeline-Health. Stand NIE im Lock -> jede
+    # Release-venv ohne jeepney -> /health/premium_pipeline dauerhaft falsch 503.
+    "jeepney>=0.8.0; sys_platform == 'linux'",
     "structlog>=24.4.0",
     "typer>=0.15.0",
     "rich>=13.9.0",
