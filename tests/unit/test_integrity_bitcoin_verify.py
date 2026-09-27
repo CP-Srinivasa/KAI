@@ -9,6 +9,7 @@ die Merkle-Root des Blocks, den der eigene bitcoind liefert.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -125,13 +126,71 @@ async def test_der_client_liefert_die_merkle_root_in_ots_reihenfolge() -> None:
     assert await client.get_block_merkle_root(HEIGHT) == (BLOCK_HASH, MERKLE)
 
 
-@pytest.mark.parametrize("sidecar", [bv.MISMATCH])
+def _receipt(proofs_dir: Path, name: str, result: str, *, bound: bool = True) -> None:
+    """Ein Beleg wie ``_write_receipt`` — optional ohne ``proof_sha256`` (Altbeleg)."""
+    body: dict[str, object] = {"result": result}
+    if bound:
+        body["proof_sha256"] = hashlib.sha256((proofs_dir / name).read_bytes()).hexdigest()
+    (proofs_dir / bv.VERIFIED_DIR).mkdir(exist_ok=True)
+    stem = Path(name).with_suffix("").as_posix()
+    (proofs_dir / bv.VERIFIED_DIR / f"{stem}.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+@pytest.mark.parametrize("sidecar", [bv.MISMATCH, bv.VERIFIED])
 def test_status_liest_das_pruefergebnis(tmp_path: Path, sidecar: str) -> None:
-    (tmp_path / bv.VERIFIED_DIR).mkdir()
-    (tmp_path / bv.VERIFIED_DIR / "audit-x.json").write_text(
-        json.dumps({"result": sidecar}), encoding="utf-8"
-    )
+    _write_proof(tmp_path / "audit-x.ots", MERKLE)
+    _receipt(tmp_path, "audit-x.ots", sidecar)
     assert bv.read_verification(tmp_path, "audit-x.ots") == sidecar
+
+
+# --- Audit A3: der Beleg gilt nur fuer genau den Proof-Inhalt, den er geprueft hat ---
+
+
+async def test_der_beleg_traegt_den_hash_des_gepruefte_proofs(tmp_path: Path) -> None:
+    _write_proof(tmp_path / "audit-good.ots", MERKLE)
+    await bv.verify_proofs_dir(tmp_path, _source({HEIGHT: (BLOCK_HASH, MERKLE)}))
+
+    receipt = json.loads((tmp_path / bv.VERIFIED_DIR / "audit-good.json").read_text("utf-8"))
+    expected = hashlib.sha256((tmp_path / "audit-good.ots").read_bytes()).hexdigest()
+    assert receipt["proof_sha256"] == expected
+    assert bv.read_verification(tmp_path, "audit-good.ots") == bv.VERIFIED
+
+
+async def test_ein_geaenderter_proof_verliert_seinen_beleg_und_wird_neu_geprueft(
+    tmp_path: Path,
+) -> None:
+    proof = tmp_path / "audit-good.ots"
+    _write_proof(proof, MERKLE)
+    source = _source({HEIGHT: (BLOCK_HASH, MERKLE)})
+    await bv.verify_proofs_dir(tmp_path, source)
+    assert bv.read_verification(tmp_path, "audit-good.ots") == bv.VERIFIED
+
+    _write_proof(proof, b"\x44" * 32)  # neuer Inhalt unter altem Namen
+    assert bv.read_verification(tmp_path, "audit-good.ots") == bv.UNVERIFIED
+
+    report = await bv.verify_proofs_dir(tmp_path, source)
+    assert report.skipped == 0 and report.mismatch == 1
+    assert source.calls == [HEIGHT, HEIGHT]  # type: ignore[attr-defined]
+    assert bv.read_verification(tmp_path, "audit-good.ots") == bv.MISMATCH
+
+
+async def test_ein_altbeleg_ohne_proof_hash_gilt_als_ungeprueft(tmp_path: Path) -> None:
+    _write_proof(tmp_path / "audit-old.ots", MERKLE)
+    _receipt(tmp_path, "audit-old.ots", bv.VERIFIED, bound=False)
+    assert bv.read_verification(tmp_path, "audit-old.ots") == bv.UNVERIFIED
+
+    source = _source({HEIGHT: (BLOCK_HASH, MERKLE)})
+    report = await bv.verify_proofs_dir(tmp_path, source)
+    assert (report.verified, report.skipped) == (1, 0)
+    assert bv.read_verification(tmp_path, "audit-old.ots") == bv.VERIFIED
+
+
+def test_ein_beleg_ohne_proof_datei_gilt_nicht(tmp_path: Path) -> None:
+    _write_proof(tmp_path / "audit-gone.ots", MERKLE)
+    _receipt(tmp_path, "audit-gone.ots", bv.VERIFIED)
+    (tmp_path / "audit-gone.ots").unlink()
+    assert bv.read_verification(tmp_path, "audit-gone.ots") == bv.UNVERIFIED
+    assert bv.read_receipt(tmp_path, "audit-gone.ots") is None
 
 
 def test_status_zeigt_die_bitcoin_pruefung_des_letzten_proofs(tmp_path: Path) -> None:
@@ -143,10 +202,7 @@ def test_status_zeigt_die_bitcoin_pruefung_des_letzten_proofs(tmp_path: Path) ->
         json.dumps({"digest": digest, "ts": "2026-09-26T00:00:00Z"}), encoding="utf-8"
     )
     _write_proof(tmp_path / f"audit-{digest[:16]}.ots", MERKLE)
-    (tmp_path / bv.VERIFIED_DIR).mkdir()
-    (tmp_path / bv.VERIFIED_DIR / f"audit-{digest[:16]}.json").write_text(
-        json.dumps({"result": bv.VERIFIED}), encoding="utf-8"
-    )
+    _receipt(tmp_path, f"audit-{digest[:16]}.ots", bv.VERIFIED)
     status = get_integrity_status(
         IntegritySettings(enabled=True, stamper="opentimestamps", proofs_dir=str(tmp_path))
     )

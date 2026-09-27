@@ -25,9 +25,10 @@ from typing import Any
 
 from app.integrity.bitcoin_verify import (
     UNVERIFIABLE,
+    UNVERIFIED,
     VERIFIED,
     HeaderSource,
-    read_verification,
+    read_receipt,
     verify_timestamp,
 )
 from app.research.verdict_report import DEFAULT_VERDICTS_DIR
@@ -83,10 +84,8 @@ def build_verdict_bundle(
         anchor = json.loads(anchor_json.read_text(encoding="utf-8"))
         if anchor.get("digest") != tip_hash:
             continue
-        receipt_path = proofs_dir / "bitcoin_verified" / f"truthledger-{tip_hash[:16]}.json"
-        receipt = (
-            json.loads(receipt_path.read_text(encoding="utf-8")) if receipt_path.is_file() else None
-        )
+        # Audit A3: nur ein Beleg, der GENAU diesen Proof-Inhalt geprueft hat.
+        receipt = read_receipt(proofs_dir, ots_path.name)
         return {
             "schema": BUNDLE_SCHEMA,
             "verdict_report": report,
@@ -95,8 +94,7 @@ def build_verdict_bundle(
             "anchor": {
                 "record": anchor,
                 "ots_base64": base64.b64encode(ots_path.read_bytes()).decode("ascii"),
-                "kai_bitcoin_verification": receipt
-                or {"result": read_verification(proofs_dir, ots_path.name)},
+                "kai_bitcoin_verification": receipt or {"result": UNVERIFIED},
             },
             "how_to_verify": [
                 "1 sha256(canonical JSON of verdict_report.payload) == attestation.hash",

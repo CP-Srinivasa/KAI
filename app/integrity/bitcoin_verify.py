@@ -19,6 +19,7 @@ Rein lesend gegenueber Node und Proofs; kein Kapitalpfad.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -106,20 +107,50 @@ def _receipt_path(proofs_dir: Path, proof_rel: str) -> Path:
     return proofs_dir / VERIFIED_DIR / f"{stem}.json"
 
 
-def read_verification(proofs_dir: Path, proof_rel: str) -> str:
-    """Ergebnis fuer einen Proof (Pfad relativ zu ``proofs_dir``); nie geprueft: ``UNVERIFIED``."""
-    path = _receipt_path(proofs_dir, proof_rel)
+def _sha256_file(path: Path) -> str | None:
     try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("result", UNVERIFIED))
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def read_receipt(proofs_dir: Path, proof_rel: str) -> dict[str, Any] | None:
+    """Der Beleg zu einem Proof — nur, wenn er genau den AKTUELLEN Proof-Inhalt geprueft hat.
+
+    Audit A3: Ein Beleg ohne ``proof_sha256`` (Altbeleg) oder mit einem anderen
+    Hash als dem der Datei heute gilt nicht. Ein Proof, der nach der Pruefung
+    ersetzt wurde, erbt so kein "verifiziert"; der naechste Lauf prueft ihn neu.
+    """
+    try:
+        receipt = json.loads(_receipt_path(proofs_dir, proof_rel).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return UNVERIFIED
+        return None
+    if not isinstance(receipt, dict):
+        return None
+    bound = receipt.get("proof_sha256")
+    if not isinstance(bound, str) or bound != _sha256_file(proofs_dir / proof_rel):
+        return None
+    return receipt
 
 
-def _write_receipt(proofs_dir: Path, proof: Path, outcome: BitcoinVerification) -> None:
+def read_verification(proofs_dir: Path, proof_rel: str) -> str:
+    """Ergebnis fuer einen Proof (Pfad relativ zu ``proofs_dir``).
+
+    Nie geprueft, Altbeleg oder seit der Pruefung geaendert: ``UNVERIFIED``.
+    """
+    receipt = read_receipt(proofs_dir, proof_rel)
+    return UNVERIFIED if receipt is None else str(receipt.get("result", UNVERIFIED))
+
+
+def _write_receipt(
+    proofs_dir: Path, proof: Path, outcome: BitcoinVerification, *, proof_sha256: str
+) -> None:
+    """``proof_sha256`` stammt von GENAU den Bytes, die geprueft wurden (kein Nachlesen)."""
     target = _receipt_path(proofs_dir, proof.relative_to(proofs_dir).as_posix())
     target.parent.mkdir(parents=True, exist_ok=True)
     body = {
         "proof": str(proof.relative_to(proofs_dir)),
+        "proof_sha256": proof_sha256,
         "result": outcome.result,
         "height": outcome.height,
         "block_hash": outcome.block_hash,
@@ -134,12 +165,15 @@ def _write_receipt(proofs_dir: Path, proof: Path, outcome: BitcoinVerification) 
 async def verify_proofs_dir(proofs_dir: Path, header_source: HeaderSource) -> VerifyReport:
     """Alle noch nicht verifizierten Proofs pruefen und Belege schreiben.
 
-    Ein bereits ``VERIFIED`` Beleg wird nicht erneut abgefragt (Bitcoin-Bloecke
-    aendern sich nach Bestaetigung nicht). Alles andere wird wiederholt:
-    ``UNVERIFIABLE`` war ein Ausfall, ``NOT_ATTESTED`` ist ein noch nicht
-    aufgewerteter Proof, ``MISMATCH`` soll bei jedem Lauf wieder auffallen.
+    Ein ``VERIFIED`` Beleg fuer den UNVERAENDERTEN Proof wird nicht erneut
+    abgefragt (Bitcoin-Bloecke aendern sich nach Bestaetigung nicht). Alles
+    andere wird wiederholt: ``UNVERIFIABLE`` war ein Ausfall, ``NOT_ATTESTED``
+    ist ein noch nicht aufgewerteter Proof, ``MISMATCH`` soll bei jedem Lauf
+    wieder auffallen, und ein Altbeleg oder ein geaenderter Proof (Audit A3)
+    gilt als ungeprueft.
     """
-    from app.integrity.upgrade import _load_detached
+    from opentimestamps.core.serialize import BytesDeserializationContext
+    from opentimestamps.core.timestamp import DetachedTimestampFile
 
     counts = {VERIFIED: 0, MISMATCH: 0, UNVERIFIABLE: 0, NOT_ATTESTED: 0}
     scanned = skipped = 0
@@ -149,7 +183,8 @@ async def verify_proofs_dir(proofs_dir: Path, header_source: HeaderSource) -> Ve
             skipped += 1
             continue
         try:
-            detached = _load_detached(proof)
+            blob = proof.read_bytes()
+            detached = DetachedTimestampFile.deserialize(BytesDeserializationContext(blob))
         except Exception as exc:  # noqa: BLE001 - ein kaputter Proof nimmt den Lauf nicht mit
             logger.info("[ots-verify] unreadable proof %s: %s", proof.name, type(exc).__name__)
             continue
@@ -161,7 +196,7 @@ async def verify_proofs_dir(proofs_dir: Path, header_source: HeaderSource) -> Ve
                 proof.name,
                 outcome.height,
             )
-        _write_receipt(proofs_dir, proof, outcome)
+        _write_receipt(proofs_dir, proof, outcome, proof_sha256=hashlib.sha256(blob).hexdigest())
     return VerifyReport(
         scanned=scanned,
         verified=counts[VERIFIED],
@@ -198,6 +233,7 @@ __all__ = [
     "BitcoinVerification",
     "VerifyReport",
     "header_source_from",
+    "read_receipt",
     "read_verification",
     "verify_proofs_dir",
     "verify_timestamp",

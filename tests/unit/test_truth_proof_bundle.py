@@ -124,3 +124,22 @@ async def test_ohne_bitcoin_quelle_bleibt_der_beweis_offen_nicht_gruen(tmp_path:
 def test_ein_unbekannter_hash_liefert_kein_paket(tmp_path: Path) -> None:
     world = _world(tmp_path)
     assert pb.build_verdict_bundle("ff" * 32, **world["kw"]) is None
+
+
+async def test_das_paket_traegt_nur_einen_beleg_zum_aktuellen_proof(tmp_path: Path) -> None:
+    """Audit A3: ein Beleg, der einen anderen Proof-Inhalt geprueft hat, reist nicht mit."""
+    from app.integrity import bitcoin_verify as bv
+
+    world = _world(tmp_path)
+    proofs = world["kw"]["proofs_dir"]
+    await bv.verify_proofs_dir(proofs, _headers(world["tip"]))
+    bundle = pb.build_verdict_bundle(world["hash"], **world["kw"])
+    assert bundle is not None
+    receipt = bundle["anchor"]["kai_bitcoin_verification"]
+    assert receipt["result"] == bv.VERIFIED and receipt["proof_sha256"]
+
+    ots = proofs / f"truthledger-{world['tip'][:16]}.ots"
+    _write_ots(ots, b"\x55" * 32)  # Proof unter altem Namen ersetzt
+    stale = pb.build_verdict_bundle(world["hash"], **world["kw"])
+    assert stale is not None
+    assert stale["anchor"]["kai_bitcoin_verification"] == {"result": bv.UNVERIFIED}

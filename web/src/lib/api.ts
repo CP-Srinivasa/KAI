@@ -534,6 +534,10 @@ export type IntegrityStatus = {
   proof_available: boolean;
   proof_state: string; // "" | "pending" | "confirmed" | "unreadable" | "unknown"
   bitcoin_height: number | null;
+  // Ergebnis der Pruefung gegen den echten Blockheader (app/integrity/bitcoin_verify.py),
+  // gebunden an den aktuellen Proof-Inhalt (Audit A3): "" (nicht confirmed) |
+  // "unverified" | "verified" | "mismatch" | "unverifiable" | "not_attested".
+  bitcoin_verification: string;
   reason: string;
   generated_at: string;
 };
