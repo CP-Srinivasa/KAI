@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -879,6 +881,19 @@ def test_onchain_facts_mint_limit_applies_with_healthy_node(client: TestClient) 
 # --- /oracle/verdicts — the auditable falsification-verdict product (Stage 3) -----
 
 
+_VERDICT_ROWS = [{"attestation_hash": "a" * 64, "hypothesis": "h", "verdict": "FAILED"}]
+
+
+@contextlib.contextmanager
+def _verdicts_deliverable() -> Iterator[None]:
+    """/verdicts ist lieferbar: ein Bericht, Ledger lesbar (Audit A4: Pruefung vor der Rechnung)."""
+    with (
+        patch("app.research.verdict_report.list_verdict_reports", return_value=_VERDICT_ROWS),
+        patch("app.truth.ledger.verify_ledger", return_value={"ok": True, "records": 1}),
+    ):
+        yield
+
+
 def test_verdicts_unpaid_returns_402_challenge(client: TestClient) -> None:
     inv = ValueLayerResult(
         "create_invoice",
@@ -892,6 +907,7 @@ def test_verdicts_unpaid_returns_402_challenge(client: TestClient) -> None:
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        _verdicts_deliverable(),
     ):
         r = client.get("/oracle/verdicts")
     assert r.status_code == 402
@@ -942,6 +958,7 @@ def test_verdicts_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        _verdicts_deliverable(),
     ):
         r = client.get(
             "/oracle/verdicts",
@@ -1128,7 +1145,7 @@ def test_challenge_grants_an_hour_after_the_latest_possible_payment(client: Test
     with (
         patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
         patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
-        patch("app.research.verdict_report.list_verdict_reports", return_value=[]),
+        _verdicts_deliverable(),
     ):
         r = client.get("/oracle/verdicts")
     assert r.status_code == 402
@@ -1140,3 +1157,122 @@ def test_challenge_grants_an_hour_after_the_latest_possible_payment(client: Test
     shown = datetime.fromisoformat(r.headers["X-L402-Access-Expires"].replace("Z", "+00:00"))
     assert int(shown.timestamp()) == expiry
     assert r.headers["X-L402-Access-Expires"].endswith("Z")
+
+
+# --- Audit A4: jede bezahlte Nichtlieferung wird erfasst, /verdicts prueft vorher -------
+
+
+def _capture_events() -> tuple[list[tuple[str, dict[str, Any]]], Any]:
+    events: list[tuple[str, dict[str, Any]]] = []
+    return events, patch.object(
+        truth_oracle,
+        "append_demand_event",
+        lambda event, **payload: events.append((event, payload)),
+    )
+
+
+def test_verdicts_without_reports_is_503_before_invoice_mint(client: TestClient) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.research.verdict_report.list_verdict_reports", return_value=[]),
+        patch("app.truth.ledger.verify_ledger", return_value={"ok": True, "records": 0}),
+    ):
+        r = client.get("/oracle/verdicts")
+    assert r.status_code == 503
+    assert r.json()["detail"] == {"code": "verdicts_unavailable", "retriable": True}
+    assert r.headers.get("Retry-After")
+    mint.assert_not_awaited()
+
+
+def test_verdicts_with_an_unreadable_ledger_is_503_before_invoice_mint(
+    client: TestClient,
+) -> None:
+    mint = AsyncMock()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", mint),
+        patch("app.research.verdict_report.list_verdict_reports", return_value=_VERDICT_ROWS),
+        patch("app.truth.ledger.verify_ledger", side_effect=OSError("disk")),
+    ):
+        r = client.get("/oracle/verdicts")
+    assert r.status_code == 503
+    mint.assert_not_awaited()
+
+
+def test_paid_verdicts_without_reports_is_retriable_and_visible(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    events, capture = _capture_events()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        capture,
+        patch("app.research.verdict_report.list_verdict_reports", return_value=[]),
+        patch("app.truth.ledger.verify_ledger", return_value={"ok": True, "records": 0}),
+    ):
+        r = client.get("/oracle/verdicts", headers={"Authorization": f"L402 {token}:{_PREIMAGE}"})
+    assert r.status_code == 503
+    assert r.json()["detail"]["retriable"] is True
+    names = [event for event, _ in events]
+    assert PAID_UNAVAILABLE in names
+    assert ACCESS_GRANTED not in names
+    assert events[names.index(PAID_UNAVAILABLE)][1]["payment_hash"] == _PH_HEX
+    assert events[names.index(PAID_UNAVAILABLE)][1]["scope"] == "verdicts"
+
+
+def test_paid_verdicts_with_reports_is_served_and_granted(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    events, capture = _capture_events()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        capture,
+        _verdicts_deliverable(),
+    ):
+        r = client.get("/oracle/verdicts", headers={"Authorization": f"L402 {token}:{_PREIMAGE}"})
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
+    names = [event for event, _ in events]
+    assert ACCESS_GRANTED in names and PAID_UNAVAILABLE not in names
+
+
+def test_paid_proof_whose_builder_crashes_is_503_and_visible(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="verdicts")
+    events, capture = _capture_events()
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        capture,
+        patch(
+            "app.truth.proof_bundle.build_verdict_bundle", side_effect=RuntimeError("ledger torn")
+        ),
+    ):
+        r = client.get(
+            "/oracle/verdicts/proof",
+            params={"attestation_hash": "a" * 64},
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 503
+    assert r.json()["detail"] == {"code": "verdicts_delivery_failed", "retriable": True}
+    names = [event for event, _ in events]
+    assert PAID_UNAVAILABLE in names
+    assert ACCESS_GRANTED not in names
+
+
+def test_paid_fee_series_whose_builder_crashes_is_503_and_visible(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="fee-series")
+    events, capture = _capture_events()
+    rows = [{"ts": "2026-09-26T00:00:00+00:00", "blocks": 1, "fee_sat_vb": 2.0}]
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        capture,
+        patch("app.signals.l2_features.read_onchain_fee_shadow", return_value=rows),
+        patch("app.chain.fee_series.build_fee_series", side_effect=RuntimeError("bad row")),
+    ):
+        r = client.get(
+            "/oracle/fee-series",
+            headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+        )
+    assert r.status_code == 503
+    assert r.json()["detail"] == {"code": "fee_series_delivery_failed", "retriable": True}
+    names = [event for event, _ in events]
+    assert PAID_UNAVAILABLE in names
+    assert ACCESS_GRANTED not in names

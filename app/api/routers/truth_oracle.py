@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
@@ -52,6 +54,7 @@ from app.lightning.mint_limiter import MintLimiter
 from app.lightning.receive_gate import create_invoice
 
 router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
+logger = logging.getLogger(__name__)
 
 # S-002 — process-local invoice-mint rate limiter. Built lazily from settings so a
 # config change (caps) takes effect on next build; ``reset_mint_limiter`` is the
@@ -211,6 +214,38 @@ async def _require_paid(
     return verdict
 
 
+def _paid_unavailable(request: Request, scope: str) -> None:
+    """Bezahlt, aber nicht geliefert: im Demand-Ledger sichtbar (D-291, Audit A4)."""
+    paid = _valid_paid_token(request, scope)
+    append_demand_event(
+        PAID_UNAVAILABLE, scope=scope, payment_hash=paid.payment_hash if paid else ""
+    )
+
+
+@contextlib.contextmanager
+def _paid_delivery(request: Request, scope: str) -> Iterator[None]:
+    """Der Teil einer Route NACH dem Zahlungspunkt (Audit A4).
+
+    Jede unerwartete Exception hier ist eine bezahlte Nichtlieferung: sie wird als
+    ``PAID_UNAVAILABLE`` erfasst und als 503 retriable beantwortet — nie als 500,
+    denn der zustandslose Token bleibt fuer eine Wiederholung gueltig.
+    ``HTTPException`` (404, 422, 503 …) ist bereits eine bewusste Antwort und
+    geht unveraendert durch.
+    """
+    try:
+        yield
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[oracle] paid %s not delivered: %s", scope, type(exc).__name__)
+        _paid_unavailable(request, scope)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": f"{scope.replace('-', '_')}_delivery_failed", "retriable": True},
+            headers={"Retry-After": "60"},
+        ) from exc
+
+
 @router.get("/onchain-facts")
 async def onchain_facts(request: Request) -> dict[str, Any]:
     """UC-4: verifiable on-chain facts from KAI's own node (L402-paid)."""
@@ -259,13 +294,8 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
             public_state = state
         else:
             public_state = "not_ready"
-        paid = _valid_paid_token(request, "onchain-facts")
-        if paid is not None:
-            append_demand_event(
-                PAID_UNAVAILABLE,
-                scope="onchain-facts",
-                payment_hash=paid.payment_hash,
-            )
+        if _valid_paid_token(request, "onchain-facts") is not None:
+            _paid_unavailable(request, "onchain-facts")
         raise HTTPException(
             status_code=503,
             detail={
@@ -283,20 +313,24 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
     # only within its access window (``_ACCESS_TTL_S``: >= 1 h after payment).
     # An outage longer than the remaining TTL leaves a paid call undelivered;
     # ``PAID_UNAVAILABLE`` above keeps that visible in the demand ledger.
+    if _valid_paid_token(request, "onchain-facts") is None:
+        await _require_paid(request, "onchain-facts")  # unpaid: always raises (402/429/503)
+    with _paid_delivery(request, "onchain-facts"):
+        observed_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
+        facts = {
+            "source": "kai_sovereign_bitcoind",
+            "chain": chain,
+            "block_height": blocks,
+            "headers": headers,
+            "best_block_hash": best_block_hash.lower(),
+            "synced": status.synced,
+            "fee_sat_vb": status.fee_sat_vb,
+            "mempool_tx": status.mempool_tx,
+            "observed_at_utc": observed_at.isoformat(),
+            "as_of_age_seconds": age_seconds,
+        }
     await _require_paid(request, "onchain-facts")
-    observed_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
-    return {
-        "source": "kai_sovereign_bitcoind",
-        "chain": chain,
-        "block_height": blocks,
-        "headers": headers,
-        "best_block_hash": best_block_hash.lower(),
-        "synced": status.synced,
-        "fee_sat_vb": status.fee_sat_vb,
-        "mempool_tx": status.mempool_tx,
-        "observed_at_utc": observed_at.isoformat(),
-        "as_of_age_seconds": age_seconds,
-    }
+    return facts
 
 
 @router.get("/fee-series")
@@ -326,18 +360,15 @@ async def fee_series(request: Request) -> dict[str, Any]:
     # after the S-002 limiter, before the invoice; this call always raises.
     if _valid_paid_token(request, "fee-series") is None:
         await _require_paid(request, "fee-series", before_mint=_data_before_mint)
-    records = _records()
-    if not records:
-        # Paid but undeliverable: visible, and the stateless token stays reusable.
-        paid = _valid_paid_token(request, "fee-series")
-        append_demand_event(
-            PAID_UNAVAILABLE,
-            scope="fee-series",
-            payment_hash=paid.payment_hash if paid else "",
-        )
-        raise unavailable
+    with _paid_delivery(request, "fee-series"):
+        records = _records()
+        if not records:
+            # Paid but undeliverable: visible, and the stateless token stays reusable.
+            _paid_unavailable(request, "fee-series")
+            raise unavailable
+        series = build_fee_series(records)
     await _require_paid(request, "fee-series")
-    return build_fee_series(records)
+    return series
 
 
 @router.get("/verdicts")
@@ -350,29 +381,61 @@ async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
     any buyer can re-verify the claim was not altered after the fact, and the
     tamper-evident attestation ledger's integrity is reported alongside. L402-paid.
     """
-    await _require_paid(request, "verdicts")
     from app.research.verdict_report import list_verdict_reports
     from app.truth.ledger import verify_ledger
 
-    rows = [
-        {
-            **row,
-            "proof_bundle": f"/oracle/verdicts/proof?attestation_hash={row['attestation_hash']}",
+    unavailable = HTTPException(
+        status_code=503,
+        detail={"code": "verdicts_unavailable", "retriable": True},
+        headers={"Retry-After": "60"},
+    )
+
+    def _deliverable() -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+        """Berichte + Ledger-Pruefung — oder ``None``, wenn nichts Lieferbares da ist."""
+        try:
+            reports = list_verdict_reports()
+            integrity = verify_ledger()
+        except Exception as exc:  # noqa: BLE001 - unlesbar heisst: nicht lieferbar
+            logger.warning("[oracle] verdicts not deliverable: %s", type(exc).__name__)
+            return None
+        return (reports, integrity) if reports else None
+
+    async def _verdicts_before_mint() -> None:
+        if _deliverable() is None:
+            raise unavailable
+
+    # Audit A4: never invoice an empty or unreadable listing. Unpaid → the check runs
+    # after the S-002 limiter, before the invoice; this call always raises.
+    if _valid_paid_token(request, "verdicts") is None:
+        await _require_paid(request, "verdicts", before_mint=_verdicts_before_mint)
+    with _paid_delivery(request, "verdicts"):
+        found = _deliverable()
+        if found is None:
+            _paid_unavailable(request, "verdicts")
+            raise unavailable
+        reports, integrity = found
+        rows = [
+            {
+                **row,
+                "proof_bundle": (
+                    f"/oracle/verdicts/proof?attestation_hash={row['attestation_hash']}"
+                ),
+            }
+            for row in reports
+        ]
+        n = max(0, min(int(limit), 500))  # bound the response; -ve/huge limits clamp
+        listing = {
+            "source": "kai_falsification_platform",
+            "count": len(rows),
+            "verdicts": rows[:n],
+            "attestation_ledger": {"chain_ok": integrity["ok"], "records": integrity["records"]},
+            "verify": (
+                "recompute SHA-256 over each report's canonical (sorted-keys, compact) payload "
+                "JSON and compare to attestation_hash (app.truth.attestation.verify_attestation)"
+            ),
         }
-        for row in list_verdict_reports()
-    ]
-    n = max(0, min(int(limit), 500))  # bound the response; -ve/huge limits clamp
-    integrity = verify_ledger()
-    return {
-        "source": "kai_falsification_platform",
-        "count": len(rows),
-        "verdicts": rows[:n],
-        "attestation_ledger": {"chain_ok": integrity["ok"], "records": integrity["records"]},
-        "verify": (
-            "recompute SHA-256 over each report's canonical (sorted-keys, compact) payload "
-            "JSON and compare to attestation_hash (app.truth.attestation.verify_attestation)"
-        ),
-    }
+    await _require_paid(request, "verdicts")
+    return listing
 
 
 @router.get("/verdicts/proof")
@@ -406,7 +469,8 @@ async def verdict_proof(request: Request, attestation_hash: str) -> dict[str, An
     # lookup runs after the S-002 limiter, before the invoice; this call always raises.
     if _valid_paid_token(request, "verdicts") is None:
         await _require_paid(request, "verdicts", before_mint=_bundle_before_mint)
-    bundle = _bundle()
+    with _paid_delivery(request, "verdicts"):
+        bundle = _bundle()
     if bundle is None:
         raise missing
     await _require_paid(request, "verdicts")
