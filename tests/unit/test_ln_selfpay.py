@@ -27,6 +27,21 @@ def test_parse_challenge_extracts_token_and_invoice() -> None:
     assert invoice == _BOLT11
 
 
+def test_parse_challenge_reads_the_l402_macaroon_form() -> None:
+    """Audit A5: der Server sendet jetzt ``macaroon=`` — der eigene Client liest beide."""
+    import hashlib
+
+    from app.lightning.l402 import build_challenge_header, mint_token
+
+    payment_hash = hashlib.sha256(b"\x11" * 32).hexdigest()
+    token = mint_token(payment_hash, secret="s", scope="verdicts")
+    parsed, invoice = parse_l402_challenge(build_challenge_header(token, _BOLT11))
+    assert (parsed, invoice) == (token, _BOLT11)
+    assert payment_hash_from_token(parsed) == payment_hash
+    with pytest.raises(ValueError):
+        payment_hash_from_token("kein-macaroon")
+
+
 def test_parse_challenge_rejects_malformed() -> None:
     with pytest.raises(ValueError, match="missing"):
         parse_l402_challenge("")

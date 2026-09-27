@@ -37,9 +37,10 @@ manual steps below document the same flow for a custom/signet setup.
 1. **Readiness:** `python scripts/ln_golive_preflight.py` → must be `GO` (includes the
    macaroon-scope probe: a `pay_invoice` probe MUST be permission-denied).
 2. **Challenge:** `curl -i https://<host>/oracle/fee-series` → `402` +
-   `WWW-Authenticate: L402 token="…", invoice="…"`.
+   `WWW-Authenticate: L402 macaroon="…", invoice="…"` (L402-Spec, seit Audit A5 ein echter V2-Macaroon;
+   `lnget`/aperture-Clients lesen ihn unveraendert).
 3. **Pay** the bolt11 from the payer (`lncli payinvoice <bolt11>`) → learn the preimage.
-4. **Access:** `curl -H "Authorization: L402 <token>:<preimage>" …/oracle/fee-series` →
+4. **Access:** `curl -H "Authorization: L402 <macaroon>:<preimage>" …/oracle/fee-series` →
    `200` + the fee-series JSON.
 5. **Book:** the `kai-oracle-earnings-booking.timer` (or `python
    scripts/book_oracle_earnings.py`) books the settled invoice into the earnings ledger.

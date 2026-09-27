@@ -113,7 +113,7 @@ def test_unpaid_returns_402_with_invoice_challenge(client: TestClient) -> None:
         r = client.get("/oracle/onchain-facts")
     assert r.status_code == 402
     wa = r.headers.get("WWW-Authenticate", "")
-    assert wa.startswith("L402 ") and 'invoice="lnbc10n1..."' in wa and "token=" in wa
+    assert wa.startswith("L402 ") and 'invoice="lnbc10n1..."' in wa and "macaroon=" in wa
 
 
 def test_paid_token_returns_facts(client: TestClient) -> None:
@@ -185,7 +185,7 @@ def test_timestamp_unpaid_challenge_is_bound_to_requested_digest(client: TestCli
         response = client.post("/oracle/timestamp", json={"sha256_hex": digest.upper()})
     assert response.status_code == 402
     header = response.headers["WWW-Authenticate"]
-    token = header.split('token="', 1)[1].split('"', 1)[0]
+    token = header.split('macaroon="', 1)[1].split('"', 1)[0]
     from app.lightning.l402 import verify
 
     verdict = verify(token, _PREIMAGE, secret=_SECRET)
@@ -1149,8 +1149,8 @@ def test_challenge_grants_an_hour_after_the_latest_possible_payment(client: Test
     ):
         r = client.get("/oracle/verdicts")
     assert r.status_code == 402
-    token = r.headers["WWW-Authenticate"].split('token="')[1].split('"')[0]
-    expiry = int(token.split(".")[1])
+    token = r.headers["WWW-Authenticate"].split('macaroon="')[1].split('"')[0]
+    expiry = truth_oracle.token_expiry(token)
     invoice_expiry_s = truth_oracle._INVOICE_EXPIRY_MINUTES * 60
     # Zahlung ist spaetestens beim Rechnungsverfall moeglich; danach bleiben >= 3600 s.
     assert expiry - (before + invoice_expiry_s) >= 3600
