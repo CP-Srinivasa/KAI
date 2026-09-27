@@ -1,6 +1,6 @@
 # Node-seitiges Budget für KAIs Sendeschlüssel (litd-Account)
 
-> **Status: LIVE (26.09.2026, D-293).** Die Schritte 0–6 sind erledigt, A1–A6 bestanden (§10). Offen ist Schritt 7 (alten Macaroon löschen). Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
+> **Status: LIVE (26.09.2026, D-293).** Die Schritte 0–7 sind erledigt, A1–A6 bestanden (§10). Offen ist nur der Neuaufbau aller Macaroons (§4.4, eigenes Vorhaben). Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
 
 ## 1. Warum
 
@@ -188,3 +188,4 @@ sudo systemctl restart kai-server
 - **A4 bestanden:** Das Budget steht auf 50 sat, ein Send über 105 sat wird 43 ms nach der Übergabe abgewiesen. lnd hat keinen Zahlungsversuch angelegt, der Node setzt das Limit also durch.
   - Nebenbefund: KAI hing den Intent in `RECONCILIATION_REQUIRED` auf, und ohne Fix wäre er dort für immer geblieben. Der Fix mit `TrackPaymentV2` „isn't initiated“ nach Ablauf steht in D-293.
 - **A6 bestanden:** Nach `kai-ln-budget 5000` ist der Send über 120 sat um 19:27Z SETTLED. Der Account zeigt 4 878 sat Rest, `ln_budget.log` enthält beide Änderungen.
+- **Schritt 7 erledigt (26.09. ~20:05Z, Operator-Freigabe):** Vorab geprüft, dass weder `.env` noch eine Unit noch ein laufender Prozess `kai-payment.macaroon` nutzt. Danach auf der Pi `shred -u ~/kai-secrets/lnd/kai-payment.macaroon`. Laptop und D: haben keine Klartext-Kopien (Dateisuche, nur pytest-Attrappen). **Restrisiko:** Die D:-Vault-Generationen enthalten `~/kai-secrets` verschlüsselt mit `LN_SECRET_BACKUP_KEY` (Original in KeePass). Weil `root_key_id 0` nicht gezielt entwertbar ist, bleibt der alte Schlüssel am Node gültig, bis alle Macaroons neu aufgebaut sind.
