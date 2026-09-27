@@ -40,11 +40,11 @@ VERIFY_INTERVAL_S="${KAI_PI_VERIFY_INTERVAL_S:-5}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --sha) SHA="${2:-}"; shift 2 ;;
-        --expect-current) EXPECT="${2:-}"; shift 2 ;;
-        --repo) REPO="${2:-}"; shift 2 ;;
-        --releases) RELEASES="${2:-}"; shift 2 ;;
-        --current) CURRENT="${2:-}"; shift 2 ;;
+        --sha) [ $# -ge 2 ] || { echo "ABBRUCH: --sha braucht einen Wert" >&2; exit 3; }; SHA="$2"; shift 2 ;;
+        --expect-current) [ $# -ge 2 ] || { echo "ABBRUCH: --expect-current braucht einen Wert" >&2; exit 3; }; EXPECT="$2"; shift 2 ;;
+        --repo) [ $# -ge 2 ] || { echo "ABBRUCH: --repo braucht einen Wert" >&2; exit 3; }; REPO="$2"; shift 2 ;;
+        --releases) [ $# -ge 2 ] || { echo "ABBRUCH: --releases braucht einen Wert" >&2; exit 3; }; RELEASES="$2"; shift 2 ;;
+        --current) [ $# -ge 2 ] || { echo "ABBRUCH: --current braucht einen Wert" >&2; exit 3; }; CURRENT="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         --allow-inflight) ALLOW_INFLIGHT=1; shift ;;
         *) echo "unbekanntes Argument: $1" >&2; exit 3 ;;

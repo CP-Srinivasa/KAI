@@ -37,10 +37,10 @@ checks=""
 unit_check=1
 while [ $# -gt 0 ]; do
     case "$1" in
-        --base) base="${2:-}"; shift 2 ;;
-        --branch) branch="${2:-}"; shift 2 ;;
-        --restart) restart="${2:-}"; shift 2 ;;
-        --check) checks="$checks ${2:-}"; shift 2 ;;
+        --base) [ $# -ge 2 ] || { echo "ABBRUCH: --base braucht einen Wert" >&2; exit 2; }; base="$2"; shift 2 ;;
+        --branch) [ $# -ge 2 ] || { echo "ABBRUCH: --branch braucht einen Wert" >&2; exit 2; }; branch="$2"; shift 2 ;;
+        --restart) [ $# -ge 2 ] || { echo "ABBRUCH: --restart braucht einen Wert" >&2; exit 2; }; restart="$2"; shift 2 ;;
+        --check) [ $# -ge 2 ] || { echo "ABBRUCH: --check braucht einen Wert" >&2; exit 2; }; checks="$checks $2"; shift 2 ;;
         --no-unit-sync) unit_check=0; shift ;;
         *) shift ;;
     esac

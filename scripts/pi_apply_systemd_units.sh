@@ -65,8 +65,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry=1; shift ;;
         --yes | -y) assume_yes=1; shift ;;
-        --src) SRC="${2:-}"; shift 2 ;;
-        --dst) DST="${2:-}"; shift 2 ;;
+        --src) [ $# -ge 2 ] || { echo "ABBRUCH: --src braucht einen Wert" >&2; exit 2; }; SRC="$2"; shift 2 ;;
+        --dst) [ $# -ge 2 ] || { echo "ABBRUCH: --dst braucht einen Wert" >&2; exit 2; }; DST="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
