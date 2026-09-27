@@ -54,6 +54,11 @@ from app.lightning.mint_limiter import MintLimiter
 from app.lightning.receive_gate import create_invoice
 
 router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
+
+# Bezahlte GET-Routen beantworten auch HEAD wie GET (27.09.2026): L402-Clients wie
+# lnget pruefen mit ``--dry-run`` per HEAD, ob und was eine Ressource kostet.
+# Vorher 405 -> der Client hielt KAI fuer kostenlos. Den Body verwirft der Server.
+_GET_AND_HEAD = ["GET", "HEAD"]
 logger = logging.getLogger(__name__)
 
 # S-002 — process-local invoice-mint rate limiter. Built lazily from settings so a
@@ -246,7 +251,7 @@ def _paid_delivery(request: Request, scope: str) -> Iterator[None]:
         ) from exc
 
 
-@router.get("/onchain-facts")
+@router.api_route("/onchain-facts", methods=_GET_AND_HEAD)
 async def onchain_facts(request: Request) -> dict[str, Any]:
     """UC-4: verifiable on-chain facts from KAI's own node (L402-paid)."""
     from app.chain.cache import get_cached_chain_status
@@ -333,7 +338,7 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
     return facts
 
 
-@router.get("/fee-series")
+@router.api_route("/fee-series", methods=_GET_AND_HEAD)
 async def fee_series(request: Request) -> dict[str, Any]:
     """UC-5: sovereign fee/mempool time series from KAI's own L1 stream (L402-paid).
 
@@ -371,7 +376,7 @@ async def fee_series(request: Request) -> dict[str, Any]:
     return series
 
 
-@router.get("/verdicts")
+@router.api_route("/verdicts", methods=_GET_AND_HEAD)
 async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
     """UC-2 (fact flavour): the auditable falsification VERDICTS KAI has published.
 
@@ -438,7 +443,7 @@ async def verdicts(request: Request, limit: int = 50) -> dict[str, Any]:
     return listing
 
 
-@router.get("/verdicts/proof")
+@router.api_route("/verdicts/proof", methods=_GET_AND_HEAD)
 async def verdict_proof(request: Request, attestation_hash: str) -> dict[str, Any]:
     """Das vollstaendige Beweispaket zu einem Verdict (D-288, Befund 4).
 

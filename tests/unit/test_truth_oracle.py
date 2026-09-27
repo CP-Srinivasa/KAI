@@ -1276,3 +1276,47 @@ def test_paid_fee_series_whose_builder_crashes_is_503_and_visible(client: TestCl
     names = [event for event, _ in events]
     assert PAID_UNAVAILABLE in names
     assert ACCESS_GRANTED not in names
+
+
+# --- HEAD wie GET (lnget --dry-run fragt per HEAD, 27.09.2026) ------------------------
+
+
+def test_head_on_a_paid_route_answers_with_the_same_l402_challenge(client: TestClient) -> None:
+    """lnget ``--dry-run`` prueft per HEAD, ob und was eine Ressource kostet.
+
+    Vorher: 405 ``allow: GET`` -> der Client hielt KAI fuer kostenlos.
+    """
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        _verdicts_deliverable(),
+    ):
+        r = client.head("/oracle/verdicts")
+    assert r.status_code == 402
+    assert r.headers.get("WWW-Authenticate", "").startswith('L402 macaroon="')
+    assert r.content == b""
+
+
+def test_every_paid_get_route_also_answers_head() -> None:
+    paid = {
+        "/oracle/onchain-facts",
+        "/oracle/fee-series",
+        "/oracle/verdicts",
+        "/oracle/verdicts/proof",
+    }
+    methods = {
+        route.path: route.methods
+        for route in truth_oracle.router.routes
+        if getattr(route, "path", "") in paid
+    }
+    assert set(methods) == paid
+    assert all({"GET", "HEAD"} <= m for m in methods.values()), methods
