@@ -12,7 +12,7 @@ import logging
 import httpx
 
 from app.ai.audit import llm_call_scope
-from app.ai.runtime import LiteLLMRequest, invoke
+from app.ai.runtime import LiteLLMRequest, invoke, litellm_can_carry, unconfigured_direct
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,9 @@ class VoiceTranscriber:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self._bot_token) and bool(self._openai_api_key)
+        # Ohne OpenAI-Schluessel genuegt eine freigegebene Route, die STT
+        # traegt (LiteLLM-Audit 27.09., Befund D). Telegram bleibt Pflicht.
+        return bool(self._bot_token) and (bool(self._openai_api_key) or litellm_can_carry("stt"))
 
     async def transcribe(self, file_id: str) -> str | None:
         """Download voice from Telegram and transcribe via Whisper.
@@ -89,7 +91,7 @@ class VoiceTranscriber:
         files = {"file": (f"voice.{ext}", audio_data, "audio/ogg")}
         data = {"model": self._whisper_model, "language": "de"}
 
-        async def direct_call() -> str:
+        async def whisper_call() -> str:
             async with llm_call_scope(purpose="stt", provider="openai", model=self._whisper_model):
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
@@ -108,7 +110,9 @@ class VoiceTranscriber:
         try:
             routed = await invoke(
                 purpose="stt",
-                direct_call=direct_call,
+                direct_call=(
+                    whisper_call if self._openai_api_key else unconfigured_direct("openai")
+                ),
                 direct_provider="openai",
                 direct_model=self._whisper_model,
                 litellm=LiteLLMRequest(

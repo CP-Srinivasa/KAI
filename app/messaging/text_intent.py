@@ -19,7 +19,8 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.ai.audit import llm_call_scope
-from app.ai.runtime import LiteLLMRequest, invoke
+from app.ai.runtime import LiteLLMRequest, invoke, litellm_can_carry, unconfigured_direct
+from app.integrations.openai.client import SDK_RETRY_OWNER, counted_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,9 @@ class TextIntentProcessor:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self._api_key)
+        # Eingerichtet ist, was eine freigegebene Route traegt -- nicht nur,
+        # wofuer ein OpenAI-Schluessel existiert (LiteLLM-Audit 27.09., D).
+        return bool(self._api_key) or litellm_can_carry("intent")
 
     async def process(
         self, text: str, context: str = "", *, correlation_id: str | None = None
@@ -132,7 +135,7 @@ class TextIntentProcessor:
             every existing call site stays valid; when absent the audit scope
             generates one (NEO-F-008).
         """
-        if not self._api_key:
+        if not self.is_configured:
             return _NOT_CONFIGURED
 
         # Build user message with optional context
@@ -162,8 +165,13 @@ class TextIntentProcessor:
                 raise ValueError("intent response has no content")
             return parse_content(content)
 
-        async def direct_call() -> dict[str, object]:
-            client = AsyncOpenAI(api_key=self._api_key, timeout=self._timeout)
+        async def openai_call() -> dict[str, object]:
+            client = AsyncOpenAI(
+                api_key=self._api_key,
+                timeout=self._timeout,
+                max_retries=SDK_RETRY_OWNER,
+                http_client=counted_http_client(),
+            )
             async with llm_call_scope(
                 purpose="intent",
                 provider="openai",
@@ -189,7 +197,7 @@ class TextIntentProcessor:
         try:
             routed = await invoke(
                 purpose="intent",
-                direct_call=direct_call,
+                direct_call=openai_call if self._api_key else unconfigured_direct("openai"),
                 direct_provider="openai",
                 direct_model=self._model,
                 litellm=LiteLLMRequest(

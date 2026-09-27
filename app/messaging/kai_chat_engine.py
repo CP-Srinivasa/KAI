@@ -21,9 +21,10 @@ from typing import Any, Literal
 
 from app.ai.audit import llm_call_scope
 from app.ai.budget import BudgetExceeded
-from app.ai.runtime import LiteLLMRequest, invoke
+from app.ai.runtime import LiteLLMRequest, invoke, litellm_can_carry, unconfigured_direct
 from app.core.settings import get_settings
 from app.execution.portfolio_read import build_portfolio_snapshot
+from app.integrations.openai.client import SDK_RETRY_OWNER, counted_http_client
 from app.messaging.kai_persona import KaiPersonaConfigError, load_kai_persona
 
 logger = logging.getLogger(__name__)
@@ -211,8 +212,10 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     api_key = settings.providers.openai_api_key
     model = settings.providers.openai_model
 
-    if not api_key:
-        logger.warning("[kai-chat] no openai_api_key configured")
+    # Verfuegbar ist, was eine freigegebene Route traegt -- nicht nur, wofuer
+    # ein OpenAI-Schluessel existiert (LiteLLM-Audit 27.09., Befund D).
+    if not api_key and not litellm_can_carry("chat", settings):
+        logger.warning("[kai-chat] no openai_api_key configured and no LiteLLM route carries chat")
         if language == "de":
             return ChatReply(
                 reply="Smalltalk-Modus offline. Frag mich was zum Trading.",
@@ -245,8 +248,13 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
             raise ValueError("empty_completion")
         return text
 
-    async def direct_call() -> str:
-        client = AsyncOpenAI(api_key=api_key, timeout=20.0)
+    async def openai_call() -> str:
+        client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=20.0,
+            max_retries=SDK_RETRY_OWNER,
+            http_client=counted_http_client(),
+        )
         async with llm_call_scope(purpose="chat", provider="openai", model=model) as scope:
             response = await client.chat.completions.create(
                 model=model,
@@ -268,7 +276,7 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
     try:
         routed = await invoke(
             purpose="chat",
-            direct_call=direct_call,
+            direct_call=openai_call if api_key else unconfigured_direct("openai"),
             direct_provider="openai",
             direct_model=model,
             litellm=LiteLLMRequest(
@@ -401,8 +409,8 @@ async def transcribe_audio_via_whisper(
     """
     settings = get_settings()
     api_key = settings.providers.openai_api_key
-    if not api_key:
-        logger.warning("[kai-voice] no openai_api_key configured")
+    if not api_key and not litellm_can_carry("stt", settings):
+        logger.warning("[kai-voice] no openai_api_key configured and no LiteLLM route carries stt")
         return None
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
@@ -433,8 +441,13 @@ async def transcribe_audio_via_whisper(
 
     try:
 
-        async def direct_call() -> str:
-            client = AsyncOpenAI(api_key=api_key, timeout=90.0)
+        async def openai_call() -> str:
+            client = AsyncOpenAI(
+                api_key=api_key,
+                timeout=90.0,
+                max_retries=SDK_RETRY_OWNER,
+                http_client=counted_http_client(),
+            )
             async with llm_call_scope(purpose="stt", provider="openai", model="whisper-1"):
                 transcription = await client.audio.transcriptions.create(
                     model="whisper-1",
@@ -454,7 +467,7 @@ async def transcribe_audio_via_whisper(
 
         routed = await invoke(
             purpose="stt",
-            direct_call=direct_call,
+            direct_call=openai_call if api_key else unconfigured_direct("openai"),
             direct_provider="openai",
             direct_model="whisper-1",
             litellm=LiteLLMRequest(

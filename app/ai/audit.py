@@ -235,10 +235,21 @@ class _AttemptCounter:
     beschrieben und von aussen gelesen — genau die Richtung, die gebraucht wird.
     """
 
-    __slots__ = ("retries",)
+    __slots__ = ("http_requests", "retries")
 
     def __init__(self) -> None:
         self.retries = 0
+        #: Tatsaechlich abgeschickte HTTP-Anfragen, gezaehlt am Transport
+        #: (:func:`note_http_request`). ``retries`` zaehlt nur, was Tenacity
+        #: beschlossen hat; die Wiederholungen INNERHALB des SDK sah bis
+        #: 04046c68 niemand -- mit dem lokalen SDK wurden aus einem logischen
+        #: Aufruf neun HTTP-Versuche (LiteLLM-Audit 27.09., Befund E).
+        self.http_requests = 0
+
+    @property
+    def physical_retries(self) -> int:
+        """Wiederholungen, gemessen an dem, was wirklich hinausging."""
+        return max(self.retries, self.http_requests - 1)
 
 
 _ATTEMPT_COUNTER: ContextVar[_AttemptCounter | None] = ContextVar(
@@ -374,10 +385,21 @@ def note_retry_attempt(retry_state: object = None) -> None:
         counter.retries += 1
 
 
+async def note_http_request(request: object = None) -> None:
+    """httpx-``request``-Hook: eine HTTP-Anfrage geht tatsaechlich hinaus.
+
+    Zaehlt jede physische Anfrage, auch die, die ein SDK intern wiederholt.
+    Aendert nichts an der Wiederholung selbst und wirft nie.
+    """
+    counter = _ATTEMPT_COUNTER.get()
+    if counter is not None:
+        counter.http_requests += 1
+
+
 def current_retry_count() -> int:
     """Wiederholungen im laufenden Zähl-Scope; ``0`` ohne Scope."""
     counter = _ATTEMPT_COUNTER.get()
-    return counter.retries if counter is not None else 0
+    return counter.physical_retries if counter is not None else 0
 
 
 @contextmanager
@@ -747,7 +769,7 @@ async def llm_call_scope(
             use_case=resolve_use_case(scope.purpose),
             escalation_reason=_ESCALATION_REASON.get(),
             budget_pot=_BUDGET_POT.get(),
-            retry_count=counter.retries,
+            retry_count=counter.physical_retries,
         )
         raise
     finally:
@@ -774,5 +796,5 @@ async def llm_call_scope(
         use_case=resolve_use_case(scope.purpose),
         escalation_reason=_ESCALATION_REASON.get(),
         budget_pot=_BUDGET_POT.get(),
-        retry_count=counter.retries,
+        retry_count=counter.physical_retries,
     )

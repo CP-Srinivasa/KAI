@@ -7,6 +7,7 @@ authority remain inside ``app.ai``.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
@@ -42,8 +43,8 @@ from app.ai.circuit import CircuitPolicy, CircuitStore
 from app.ai.config import InferenceSettings
 from app.ai.gateway import AsyncGatewayOutcome, execute_async
 from app.ai.models import AttemptResult, AttemptTrace
-from app.ai.modes import resolve_mode, unknown_route_keys
-from app.ai.retry import RetryPolicy
+from app.ai.modes import Mode, litellm_is_authoritative, resolve_mode, unknown_route_keys
+from app.ai.retry import RetryPolicy, worst_case_backoff_s
 from app.ai.routes import escalation_reason_for, route_for
 from app.core.logging import get_logger
 from app.integrations.litellm.provider import LiteLLMConfig, call_litellm_async
@@ -53,6 +54,18 @@ logger = get_logger(__name__)
 
 class LiteLLMCallError(RuntimeError):
     """A typed LiteLLM result was unavailable and no direct fallback existed."""
+
+
+class InferenceDeadlineExceededError(TimeoutError):
+    """Die Gesamtfrist eines Aufrufs ist abgelaufen -- Rueckfall eingeschlossen."""
+
+
+class DirectProviderNotConfiguredError(RuntimeError):
+    """Der Direktanbieter ist bewusst nicht eingerichtet -- kein Ausfall.
+
+    Getrennt von einem Anbieterfehler, damit ein Rueckfall, der ins Leere
+    geht, im Log als "nicht eingerichtet" steht und nicht als "OpenAI down".
+    """
 
 
 @dataclass(frozen=True)
@@ -122,6 +135,77 @@ def inference_settings(source: Any | None = None) -> InferenceSettings:
     if isinstance(candidate, InferenceSettings):
         return candidate
     return environment_settings()
+
+
+#: Puffer ueber der rechnerischen Frist: Client-Aufbau, Parser, Telemetrie.
+_FRIST_PUFFER_S: Final = 5.0
+
+
+def _gesamtfrist(configured: InferenceSettings, route: str, retry: RetryPolicy) -> float:
+    """Die Frist ueber ALLES, was ein Aufruf ausserhalb von OFF tun darf.
+
+    Rechnerisch: jeder LiteLLM-Versuch sein Timeout, die Pausen im schlimmsten
+    Fall und EIN Timeout fuer den Rueckfall auf den Direktpfad. Ein Eintrag in
+    ``route_deadline_seconds`` ersetzt die Rechnung.
+    """
+    gesetzt = configured.route_deadline_seconds.get(route)
+    if gesetzt is not None:
+        return gesetzt
+    timeout = configured.route_timeout_seconds.get(route, configured.timeout_seconds)
+    return timeout * retry.max_attempts + worst_case_backoff_s(retry) + timeout + _FRIST_PUFFER_S
+
+
+#: Aufraeum-Tasks fuer Clients abgekoppelter Schatten -- starke Referenz.
+_NACHLAUF: set[asyncio.Task[None]] = set()
+
+
+def _nach_dem_schatten(task: asyncio.Task[None], rest: AsyncExitStack) -> None:
+    """Client und Reservierung gehoeren ab jetzt dem Schatten, bis er fertig ist."""
+
+    def schliessen(_: asyncio.Task[None]) -> None:
+        aufraeumen = asyncio.ensure_future(rest.aclose())
+        _NACHLAUF.add(aufraeumen)
+        aufraeumen.add_done_callback(_NACHLAUF.discard)
+
+    task.add_done_callback(schliessen)
+
+
+def _wirksamer_modus(purpose: Purpose, configured: InferenceSettings) -> Mode:
+    """Der Modus, den :func:`invoke` fuer diesen Zweck waehlen wuerde."""
+    ceiling = configured.mode_ceiling if configured.enabled else "off"
+    mode = resolve_mode(route_for(purpose), per_route=configured.route_modes, ceiling=ceiling)
+    if purpose == "consensus" and mode == "primary":
+        return "shadow"
+    return mode
+
+
+def litellm_can_carry(purpose: Purpose, settings: InferenceSettings | Any | None = None) -> bool:
+    """Traegt die freigegebene Route diesen Zweck OHNE Direktanbieter?
+
+    Die Eingaenge von Chat, Intent und Spracherkennung fragten bis 04046c68 nur
+    nach einem OpenAI-Schluessel. "OpenAI eingerichtet, aber ausgefallen" und
+    "OpenAI bewusst nicht eingerichtet" waren damit zwei verschiedene Faelle:
+    der zweite wurde abgewiesen, bevor die zentrale Route ueberhaupt gefragt
+    wurde (LiteLLM-Audit 27.09., Befund D). Verfuegbar ist ein Zweck, wenn
+    der Direktanbieter eingerichtet ist ODER diese Funktion ``True`` sagt.
+
+    ``True`` nur, wenn LiteLLM in diesem Modus autoritativ ist (primary,
+    research-advisory) und die Adresse innerhalb der lokalen Grenze liegt. Im
+    Schatten traegt der Direktpfad die Antwort -- ohne ihn gibt es keine.
+    """
+    configured = inference_settings(settings)
+    if not litellm_is_authoritative(_wirksamer_modus(purpose, configured)):
+        return False
+    return LiteLLMConfig(base_url=configured.litellm_base_url).is_local
+
+
+def unconfigured_direct(provider: str) -> Callable[[], Awaitable[Any]]:
+    """Ein Direktpfad, der ehrlich meldet, dass es ihn nicht gibt."""
+
+    async def direct_call() -> Any:
+        raise DirectProviderNotConfiguredError(f"{provider} ist nicht eingerichtet")
+
+    return direct_call
 
 
 def _transportfehler(exc: Exception, *, alias: str, woher: str) -> AttemptResult[Any]:
@@ -542,9 +626,7 @@ async def invoke[T](
         logger.warning("ai_gateway_unknown_route_keys", route_keys=invalid_routes)
 
     ceiling = configured.mode_ceiling if configured.enabled else "off"
-    mode = resolve_mode(route, per_route=configured.route_modes, ceiling=ceiling)
-    if purpose == "consensus" and mode == "primary":
-        mode = "shadow"
+    mode = _wirksamer_modus(purpose, configured)
 
     bild = _budget_lage(telemetry_path)
     lage = bild.status
@@ -577,9 +659,6 @@ async def invoke[T](
             return RoutedValue(value=await direct_call(), transport="direct")
 
     with (
-        # Der Topf bleibt gehalten, bis der Aufruf zurueck ist — auch ueber
-        # Retry und Schattenpfad hinweg, die alle aus demselben Topf zahlen.
-        _reservierung(bild, verdict),
         correlation_scope(correlation_id) as active_correlation,
         # Ab hier gehoert alles Telemetrierte zu EINER Auswertung -- auch die
         # Zeile, die der Altpfad ueber `llm_call_scope` selbst schreibt. Ohne
@@ -656,6 +735,11 @@ async def invoke[T](
         # Antwort ueberhaupt nicht braucht. Der Stack deckt Konstruktion UND
         # Eintritt ab; beides ist Transport, nicht Politik.
         async with AsyncExitStack() as stack:
+            # Der Topf bleibt gehalten, bis der Aufruf zurueck ist — auch ueber
+            # Retry und Schattenpfad hinweg, die alle aus demselben Topf zahlen.
+            # Im Stack und nicht davor: laeuft ein Schatten ueber die Antwort
+            # hinaus, geht die Reservierung mit ihm (siehe ``uebergeben``).
+            stack.enter_context(_reservierung(bild, verdict))
             client: httpx.AsyncClient | None = None
             aufbau_fehler: Exception | None = None
             try:
@@ -761,36 +845,58 @@ async def invoke[T](
             kwargs: dict[str, Any] = {}
             if sleeper is not None:
                 kwargs["sleeper"] = sleeper
-            outcome = await execute_async(
-                purpose=purpose,
-                alias=configured.route_aliases.get(route, route),
-                evaluation_id=active_evaluation,
-                direct_call=run_direct,
-                litellm_call=run_litellm,
-                per_route=configured.route_modes,
-                ceiling=ceiling,
-                circuit=_KREISE,
-                circuit_policy=_KREIS_POLITIK,
-                # Das Budget kommt jetzt AN. Bis 2026-09-08 uebergab diese
-                # Stelle weder Politik noch Zustand -- `execute_async` fiel auf
-                # `BudgetPolicy()` ohne Limits zurueck, und `decide()` antwortete
-                # ausnahmslos `allow`. Ein Budget ohne Aufrufer ist keine Bremse.
-                budget_policy=bild.policy_for(verdict.pot),
-                daily=bild.daily_for(verdict.pot),
-                monthly=lage.monthly,
-                budget_blocked=_gateway_sperre(bild, verdict),
-                retry_policy=RetryPolicy(
-                    max_attempts=configured.max_attempts,
-                    base_backoff_s=configured.backoff_base_seconds,
-                    max_backoff_s=configured.backoff_max_seconds,
-                    max_jitter_s=configured.jitter_max_seconds,
-                ),
-                jitter=jitter,
-                clock=clock,
-                correlation_id=active_correlation,
-                telemetry_path=telemetry_path,
-                **kwargs,
+            retry = RetryPolicy(
+                max_attempts=configured.max_attempts,
+                base_backoff_s=configured.backoff_base_seconds,
+                max_backoff_s=configured.backoff_max_seconds,
+                max_jitter_s=configured.jitter_max_seconds,
             )
+
+            def uebergeben(task: asyncio.Task[None]) -> None:
+                # Der Schatten ueberdauert die Antwort: Client UND Reservierung
+                # wandern mit ihm. Blieben sie hier, schloesse der Stack einen
+                # Client, den der Schatten noch benutzt.
+                _nach_dem_schatten(task, stack.pop_all())
+
+            frist = _gesamtfrist(configured, route, retry)
+            fristwaechter = asyncio.timeout(frist)
+            try:
+                async with fristwaechter:
+                    outcome = await execute_async(
+                        purpose=purpose,
+                        alias=configured.route_aliases.get(route, route),
+                        evaluation_id=active_evaluation,
+                        direct_call=run_direct,
+                        litellm_call=run_litellm,
+                        per_route=configured.route_modes,
+                        ceiling=ceiling,
+                        circuit=_KREISE,
+                        circuit_policy=_KREIS_POLITIK,
+                        # Das Budget kommt jetzt AN. Bis 2026-09-08 uebergab diese
+                        # Stelle weder Politik noch Zustand -- `execute_async` fiel auf
+                        # `BudgetPolicy()` ohne Limits zurueck, und `decide()` antwortete
+                        # ausnahmslos `allow`. Ein Budget ohne Aufrufer ist keine Bremse.
+                        budget_policy=bild.policy_for(verdict.pot),
+                        daily=bild.daily_for(verdict.pot),
+                        monthly=lage.monthly,
+                        budget_blocked=_gateway_sperre(bild, verdict),
+                        retry_policy=retry,
+                        jitter=jitter,
+                        clock=clock,
+                        correlation_id=active_correlation,
+                        telemetry_path=telemetry_path,
+                        shadow_grace_s=configured.shadow_grace_seconds,
+                        on_shadow_detached=uebergeben,
+                        **kwargs,
+                    )
+            except TimeoutError as exc:
+                if not fristwaechter.expired():
+                    raise
+                # OFF ist ausgenommen (dort gibt es keinen Rueckfall); hier umfasst
+                # die Frist LiteLLM-Versuche, Pausen UND den Direktpfad.
+                raise InferenceDeadlineExceededError(
+                    f"Gesamtfrist {frist:.1f}s fuer Route {route} abgelaufen"
+                ) from exc
 
     selected = outcome.authoritative_attempt
     if selected is None:
@@ -804,6 +910,8 @@ async def invoke[T](
 
 
 __all__ = [
+    "DirectProviderNotConfiguredError",
+    "InferenceDeadlineExceededError",
     "LiteLLMCallError",
     "LiteLLMRequest",
     "RoutedValue",
@@ -812,7 +920,9 @@ __all__ = [
     "inference_settings",
     "inflight_reservations",
     "invoke",
+    "litellm_can_carry",
     "reset_environment_settings",
     "reset_circuit_state",
     "reset_inflight_reservations",
+    "unconfigured_direct",
 ]

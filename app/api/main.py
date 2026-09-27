@@ -30,6 +30,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.ai.runtime import litellm_can_carry
 from app.analysis.factory import create_primary_provider, create_provider
 from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
@@ -239,7 +240,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     op = settings.operator
     text_processor = None
     voice_transcriber = None
-    if op.telegram_polling_enabled and settings.providers.openai_api_key:
+    # Ein OpenAI-Schluessel ODER eine freigegebene Route (LiteLLM-Audit 27.09., D).
+    kann_intent = bool(settings.providers.openai_api_key) or litellm_can_carry("intent", settings)
+    if op.telegram_polling_enabled and kann_intent:
         text_processor = TextIntentProcessor(
             api_key=settings.providers.openai_api_key,
             model=settings.providers.openai_model,

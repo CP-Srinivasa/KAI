@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from openai import AsyncOpenAI
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.ai.audit import is_retryable_error, note_retry_attempt
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT, format_user_prompt
+from app.integrations.openai.client import OUTER_RETRY_OWNER, counted_async_openai
 
 _MAX_TEXT_CHARS = 6000  # ~1500 tokens — leaves room for prompt + response
 
@@ -39,7 +39,11 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
         timeout: int = 30,
         max_tokens: int = 1024,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout)
+        # Tenacity auf `analyze` besitzt die Wiederholung; das SDK wiederholt
+        # nicht noch einmal darunter (3 x 3 = 9 HTTP-Versuche, Befund E).
+        self._client = counted_async_openai(
+            api_key=api_key, timeout=timeout, max_retries=OUTER_RETRY_OWNER
+        )
         self._model = model
         self._max_tokens = max_tokens
 
