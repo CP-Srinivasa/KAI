@@ -17,12 +17,12 @@ Versionen aus ``requirements.lock``.
 
 from __future__ import annotations
 
+import importlib
 import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 from tenacity import wait_none
 
@@ -46,32 +46,46 @@ def _einstellungen(modus: str, *routen: str, base_url: str = LITELLM) -> Inferen
     )
 
 
-def _netz(
-    monkeypatch: pytest.MonkeyPatch, antwort: Callable[[httpx.Request], httpx.Response]
-) -> list[str]:
+def _antwort(request: Any, status: int, **kwargs: Any) -> Any:
+    """Eine Antwort aus DERSELBEN Bibliothek wie die Anfrage.
+
+    Die gelockten SDKs (openai 3.x, anthropic 1.x) sprechen ``httpx2``, der
+    LiteLLM-Client und Telegram ``httpx``. Ein Test, der nur eine der beiden
+    abfaengt, liefe mit der anderen ins echte Netz.
+    """
+    modul = importlib.import_module(type(request).__module__.split(".")[0])
+    return modul.Response(status, request=request, **kwargs)
+
+
+def _netz(monkeypatch: pytest.MonkeyPatch, antwort: Callable[[Any], Any]) -> list[str]:
     gesehen: list[str] = []
 
-    async def handle(self: Any, request: httpx.Request) -> httpx.Response:
+    async def handle(self: Any, request: Any) -> Any:
         gesehen.append(str(request.url))
         return antwort(request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
+    for name in ("httpx", "httpx2"):
+        try:
+            modul = importlib.import_module(name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(modul.AsyncHTTPTransport, "handle_async_request", handle)
     return gesehen
 
 
-def _chat_antwort(request: httpx.Request, text: str = "lite") -> httpx.Response:
-    return httpx.Response(
+def _chat_antwort(request: Any, text: str = "lite") -> Any:
+    return _antwort(
+        request,
         200,
         json={"choices": [{"message": {"content": text}, "finish_reason": "stop"}]},
         headers={"x-litellm-model-name": "gemini/gemini-3.6-flash"},
-        request=request,
     )
 
 
-def _kaputt(request: httpx.Request) -> httpx.Response:
+def _kaputt(request: Any) -> Any:
     # retry-after-ms haelt die SDK-eigenen Pausen im Test kurz.
-    return httpx.Response(
-        503, json={"error": {"message": "down"}}, headers={"retry-after-ms": "1"}, request=request
+    return _antwort(
+        request, 503, json={"error": {"message": "down"}}, headers={"retry-after-ms": "1"}
     )
 
 
@@ -166,14 +180,14 @@ async def test_voice_ohne_openai_laeuft_ueber_die_freigegebene_route(
 ) -> None:
     from app.messaging.voice_transcriber import VoiceTranscriber
 
-    def antwort(request: httpx.Request) -> httpx.Response:
+    def antwort(request: Any) -> Any:
         url = str(request.url)
         if "getFile" in url:
-            return httpx.Response(200, json={"ok": True, "result": {"file_path": "voice/a.oga"}})
+            return _antwort(request, 200, json={"ok": True, "result": {"file_path": "voice/a.oga"}})
         if "api.telegram.org/file/" in url:
-            return httpx.Response(200, content=b"OggS-audio")
+            return _antwort(request, 200, content=b"OggS-audio")
         if url.startswith(LITELLM):
-            return httpx.Response(200, json={"text": "Hallo KAI"}, request=request)
+            return _antwort(request, 200, json={"text": "Hallo KAI"})
         raise AssertionError(f"unerwartete Adresse {url}")
 
     gesehen = _netz(monkeypatch, antwort)
@@ -235,9 +249,7 @@ async def test_ein_analyseaufruf_macht_hoechstens_drei_http_versuche(
 
     provider = Anbieter(api_key="k", model="m")
     with pytest.raises(Exception):  # noqa: B017,PT011 - die Klasse ist SDK-spezifisch
-        async with llm_call_scope(
-            purpose="analysis", provider=anbieter, model="m", path=senke
-        ):
+        async with llm_call_scope(purpose="analysis", provider=anbieter, model="m", path=senke):
             await provider.analyze(title="t", text="x")
 
     assert len(gesehen) == 3
@@ -248,8 +260,9 @@ async def test_der_direkte_chatpfad_zaehlt_die_sdk_wiederholungen(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Ohne aeussere Schicht besitzt das SDK die Wiederholung -- sichtbar gezaehlt."""
-    from app.integrations.openai.client import SDK_RETRY_OWNER, counted_http_client
     from openai import AsyncOpenAI
+
+    from app.integrations.openai.client import SDK_RETRY_OWNER, counted_http_client
 
     gesehen = _netz(monkeypatch, _kaputt)
     senke = tmp_path / "llm.jsonl"
