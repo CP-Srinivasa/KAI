@@ -23,7 +23,11 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
     "httpx>=0.28.0",
-    "sqlalchemy>=2.0.36",
+    # [asyncio] zieht greenlet ausdruecklich — KAI nutzt AsyncSession/aiosqlite.
+    # Unter 2.0 kam greenlet nur beilaeufig mit; der Lock-Refresh vom 27.09.2026
+    # (#1119) hob auf 2.1.1 und verlor greenlet -> Async-DB-Pfade waeren auf der Pi
+    # zur Laufzeit gebrochen. <2.1, bis der Sprung auf 2.1 eigens geprueft ist.
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "alembic>=1.14.0",
     "defusedxml>=0.7.1",
     "feedparser>=6.0.11",
