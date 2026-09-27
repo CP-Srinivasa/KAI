@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -296,11 +296,15 @@ def test_der_erzeugungszeitpunkt_faellt_beim_vergleich_heraus(tmp_path: Path) ->
     frueh = evaluate(
         [pfad], GraduationPolicy(minimum_sample_count=1), proven_flags(), clock=lambda: NOW
     )
+    # Einen Tag spaeter, nicht Monate: seit die Betriebsnachweise ein Alter
+    # haben, ist der Auswertungszeitpunkt fuer ihre Frische eine echte Eingabe.
+    # Diese Probe misst weiterhin nur, dass `generated_at` SELBST beim
+    # Vergleich herausfaellt -- innerhalb der Frist aendert er sonst nichts.
     spaet = evaluate(
         [pfad],
         GraduationPolicy(minimum_sample_count=1),
         proven_flags(),
-        clock=lambda: datetime(2027, 1, 1, tzinfo=UTC),
+        clock=lambda: NOW + timedelta(days=1),
     )
 
     assert canonical_json(frueh) != canonical_json(spaet), "der Zeitpunkt steht im Bericht"
@@ -446,9 +450,30 @@ def test_die_praeregistrierte_politik_liegt_im_repo_und_ist_streng() -> None:
         "require_trading_gate_unchanged",
         "require_identity_observability",
         "require_quality_evidence",
+        "require_complete_attempt_accounting",
+        "require_cost_known",
+        "require_timeout_retry_proven",
+        "require_rate_limit_retry_proven",
+        "require_server_error_retry_proven",
+        "require_circuit_proven",
+        "require_referenced_runtime_evidence",
     ):
         assert roh[tor] is True, tor
+    assert roh["minimum_quality_sample_count"] is None, "folgt minimum_sample_count"
+    assert roh["minimum_quality_coverage"] == 1.0
+    assert roh["maximum_quality_regression"] == 0.02
+    assert roh["maximum_unexplained_incomplete_rate"] == 0.0
+    assert roh["allowed_exclusion_reasons"] == [], "kein Ausschlussgrund ist vorab erlaubt"
+    assert roh["maximum_runtime_proof_age_days"] == 30
     assert roh["route_overrides"] == {}, "keine Route ist vorab ausgenommen"
+
+
+def test_die_praeregistrierte_politik_ist_die_strenge_standardpolitik() -> None:
+    """Die Datei im Repo und die Code-Defaults duerfen nicht auseinanderlaufen."""
+    from scripts.litellm_shadow_eval.policy import policy_from_dict, policy_hash
+
+    roh = json.loads(Path("config/litellm_graduation_policy.json").read_text(encoding="utf-8"))
+    assert policy_hash(policy_from_dict(roh)) == policy_hash(GraduationPolicy())
 
 
 def test_der_policy_hash_reagiert_auf_jede_lockerung() -> None:

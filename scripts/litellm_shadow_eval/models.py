@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
+
+#: Ein Ausschlussgrund ist ein Code, kein Freitext: er landet gezaehlt im
+#: Bericht, und ein Bericht traegt keine Prompts und keine Nutzlast.
+_EXCLUSION_CODE = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+
+
+def is_exclusion_code(value: object) -> bool:
+    return isinstance(value, str) and _EXCLUSION_CODE.fullmatch(value) is not None
 
 
 class Side(StrEnum):
@@ -71,6 +80,11 @@ class EvidenceRecord:
     #: drei Versuche als `timeout, timeout, ok` enden, ist `ok` das Ergebnis,
     #: aber die zwei Timeouts sind die Beobachtung. Leer heisst: ein Versuch.
     attempt_error_classes: tuple[str, ...] = ()
+    #: Warum dieser Seite das Gegenstueck fehlt -- ein Code, kein Freitext.
+    #: Wirkt NUR bei unvollstaendigen Paaren und nur, wenn die Politik den
+    #: Code vorab zugelassen hat. Ein vollstaendiges Paar entfernt er nie aus
+    #: der Population: sonst liesse sich jeder Schattenausfall wegerklaeren.
+    exclusion_reason: str | None = None
 
     @property
     def pair_key(self) -> str | None:
@@ -101,6 +115,14 @@ class QualityComparison:
     shadow_better_count: int
     direct_better_count: int
     equal_count: int
+    #: Anteil der vollstaendigen Paare, die in der Stichprobe stecken. `None`
+    #: nur ohne vollstaendige Paare; 0.0 heisst "keines bewertet".
+    coverage: float | None = None
+    #: sha256 ueber die sortierten Paarschluessel der Stichprobe, je Schluessel
+    #: eine Zeile mit abschliessendem ``\n`` (UTF-8). Macht die AUSWAHL
+    #: nachpruefbar: wer dieselbe Stichprobe behauptet, muss denselben Hash
+    #: vorzeigen. `None`, wenn nichts bewertet wurde.
+    sample_keys_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +168,15 @@ class RouteMetrics:
     schema_divergence_rate: float | None
     success_divergence_rate: float | None
     response_divergence_rate: float | None
+    #: Unvollstaendige Paare OHNE vorregistrierten Ausschlussgrund und ihr
+    #: Anteil an allen Paaren (vollstaendig + unvollstaendig).
+    unexplained_incomplete_pair_count: int
+    unexplained_incomplete_rate: float | None
+    #: Ausschlussgruende der unvollstaendigen Paare, wie geliefert -- auch die
+    #: nicht zugelassenen. ``(none)`` = kein Grund angegeben.
+    exclusion_reason_distribution: dict[str, int]
+    #: SHADOW-Seiten ohne bekannten `retry_count` ODER `attempt_count`.
+    unknown_attempt_accounting_count: int
     quality: QualityComparison
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,12 +192,53 @@ class RouteMetrics:
                 "quality_shadow_mean": self.quality.shadow_mean,
                 "quality_delta_mean": self.quality.delta_mean,
                 "quality_delta_median": self.quality.delta_median,
+                "quality_coverage": self.quality.coverage,
+                "quality_sample_keys_sha256": self.quality.sample_keys_sha256,
                 "shadow_better_count": self.quality.shadow_better_count,
                 "direct_better_count": self.quality.direct_better_count,
                 "equal_count": self.quality.equal_count,
             }
         )
         return value
+
+
+#: Betriebsnachweise, die als datiertes, referenziertes Artefakt vorliegen
+#: koennen. Die beiden ``*_gate_changed``-Schalter gehoeren NICHT dazu: sie sind
+#: Zustandsaussagen, keine Nachweise, und bleiben Booleans.
+RUNTIME_PROOF_FLAGS: tuple[str, ...] = (
+    "off_mode_proven",
+    "rollback_proven",
+    "gateway_down_proven",
+    "timeout_retry_proven",
+    "rate_limit_retry_proven",
+    "auth_no_retry_proven",
+    "server_error_retry_proven",
+    "circuit_proven",
+    "direct_fallback_proven",
+)
+RUNTIME_GATE_FLAGS: tuple[str, ...] = ("trading_gate_changed", "execution_gate_changed")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeProof:
+    """Worauf sich ein ``*_proven`` stuetzt: Artefakt, Hash, Zeitpunkt, Stand.
+
+    Ein nacktes ``true`` sagt nur, DASS jemand etwas behauptet. Eine Freigabe
+    muss auf etwas zeigen koennen, das man nachlesen und datieren kann.
+    ``proven_at`` ist ISO-8601 in UTC (vom Parser normalisiert).
+    """
+
+    proven: bool
+    artifact: str | None = None
+    artifact_sha256: str | None = None
+    proven_at: str | None = None
+    version: str | None = None
+
+    @property
+    def referenced(self) -> bool:
+        return self.proven and all(
+            (self.artifact, self.artifact_sha256, self.proven_at, self.version)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +254,31 @@ class RuntimeEvidenceFlags:
     direct_fallback_proven: bool = False
     trading_gate_changed: bool = False
     execution_gate_changed: bool = False
+    #: Belegobjekte je ``*_proven``-Flag, soweit als Objekt geliefert. Ein Flag
+    #: ohne Eintrag hier kam als nacktes Boolean -- und gilt unter
+    #: ``require_referenced_runtime_evidence`` als NICHT belegt.
+    proofs: dict[str, RuntimeProof] = field(default_factory=dict)
+
+    def proof(self, flag: str) -> RuntimeProof | None:
+        return self.proofs.get(flag)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Berichtsform: jeder Nachweis als Objekt, auch der unbelegte."""
+        value: dict[str, Any] = {}
+        for name in RUNTIME_PROOF_FLAGS:
+            proven = bool(getattr(self, name))
+            proof = self.proofs.get(name)
+            value[name] = {
+                "proven": proven,
+                "referenced": bool(proven and proof is not None and proof.referenced),
+                "artifact": proof.artifact if proof else None,
+                "artifact_sha256": proof.artifact_sha256 if proof else None,
+                "proven_at": proof.proven_at if proof else None,
+                "version": proof.version if proof else None,
+            }
+        for name in RUNTIME_GATE_FLAGS:
+            value[name] = bool(getattr(self, name))
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,9 +297,44 @@ class GraduationPolicy:
     #: Fehlende Qualitaetsbelege duerfen nicht automatisch zu READY fuehren.
     #: Wer Qualitaet bewusst als beratend behandeln will, muss das HIER
     #: hinschreiben -- dann steht es im Policy-Hash und ist nachweisbar eine
-    #: Entscheidung gewesen, kein Versehen.
+    #: Entscheidung gewesen, kein Versehen. Beratend betrifft FEHLENDE oder zu
+    #: duenne Belege; eine gemessene Regression blockiert immer.
     require_quality_evidence: bool = True
-    route_overrides: dict[str, dict[str, int | float | bool]] = field(default_factory=dict)
+    #: Mindestzahl qualitaetsbewerteter Paare. `None` = dieselbe Zusage wie
+    #: `minimum_sample_count` (auch nach einer Routenausnahme). Ein einziges
+    #: bewertetes Paar ist keine Qualitaetsmessung, sondern eine Anekdote.
+    minimum_quality_sample_count: int | None = None
+    #: Mindestanteil der vollstaendigen Paare, der bewertet sein muss. 1.0
+    #: heisst: jedes Paar, auch das gescheiterte (ein Ausfall ist mit 0.0 zu
+    #: bewerten, nicht wegzulassen). Eine Teilstichprobe ist eine Auswahl, und
+    #: eine Auswahl kann man sich aussuchen -- deshalb nur ausdruecklich.
+    minimum_quality_coverage: float = 1.0
+    #: Wie weit das SHADOW-Mittel hoechstens unter dem DIRECT-Mittel liegen darf.
+    maximum_quality_regression: float = 0.02
+    #: Jede SHADOW-Seite braucht bekannte `retry_count` UND `attempt_count`.
+    #: Sonst verschwindet "UNKNOWN" still aus der Retry-Grenze.
+    require_complete_attempt_accounting: bool = True
+    #: Jede SHADOW-Seite braucht bekannte Kosten (`cost_known_rate == 1.0`).
+    require_cost_known: bool = True
+    #: Hoechstanteil unvollstaendiger Paare ohne zugelassenen Ausschlussgrund,
+    #: gemessen an allen Paaren. 0.0: jedes halbe Paar muss erklaert sein.
+    maximum_unexplained_incomplete_rate: float = 0.0
+    #: Vorab zugelassene Ausschlussgruende (Codes). Leer: keiner. Ein Grund
+    #: wie ``circuit_open`` ist ein Schattenausfall, kein harmloser Ausschluss
+    #: -- deshalb erklaert nicht jeder geschriebene Grund, sondern nur ein
+    #: hier vorregistrierter.
+    allowed_exclusion_reasons: tuple[str, ...] = ()
+    require_timeout_retry_proven: bool = True
+    require_rate_limit_retry_proven: bool = True
+    require_server_error_retry_proven: bool = True
+    require_circuit_proven: bool = True
+    #: Verlangte Betriebsnachweise muessen als Objekt mit Artefakt, sha256,
+    #: Zeitpunkt und Stand vorliegen. Ein nacktes `true` gilt nicht.
+    require_referenced_runtime_evidence: bool = True
+    #: Hoechstalter eines referenzierten Nachweises gegen `generated_at`.
+    #: `None` schaltet die Altersgrenze ab.
+    maximum_runtime_proof_age_days: int | None = 30
+    route_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,10 +384,13 @@ class EvaluationReport:
     validation_issues: tuple[ValidationIssue, ...]
     metrics: dict[str, RouteMetrics]
     decisions: dict[str, GraduationDecision]
+    runtime_evidence: RuntimeEvidenceFlags
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": "litellm-shadow-eval-report/v1",
+            # v2: Laufzeitnachweise mit Artefaktbezug, Stichprobenhash,
+            # unerklaerte halbe Paare und Versuchszaehlung sind Pflichtfelder.
+            "schema_version": "litellm-shadow-eval-report/v2",
             "tool_version": self.tool_version,
             "policy_hash": self.policy_hash,
             "input_sha256": self.input_sha256,
@@ -267,6 +402,9 @@ class EvaluationReport:
             "validation_issues": [item.to_dict() for item in self.validation_issues],
             "metrics": {key: value.to_dict() for key, value in sorted(self.metrics.items())},
             "decisions": {key: value.to_dict() for key, value in sorted(self.decisions.items())},
+            # Worauf sich die Betriebsnachweise stuetzen: eine Freigabe soll auf
+            # datierte Artefakte zeigen, nicht auf ein `true` in einer Datei.
+            "runtime_evidence": self.runtime_evidence.to_dict(),
             # Die maschinenlesbare Wahrheit ueber Reife. Der Exit-Code des CLI
             # sagt, ob der Auswerter durchgelaufen ist -- nicht, ob PRIMARY
             # erlaubt waere. Diese Liste sagt es.
@@ -285,8 +423,12 @@ __all__ = [
     "GraduationStatus",
     "PairStatus",
     "QualityComparison",
+    "RUNTIME_GATE_FLAGS",
+    "RUNTIME_PROOF_FLAGS",
     "RouteMetrics",
     "RuntimeEvidenceFlags",
+    "RuntimeProof",
     "Side",
     "ValidationIssue",
+    "is_exclusion_code",
 ]

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-from scripts.litellm_shadow_eval.models import RuntimeEvidenceFlags
+from scripts.litellm_shadow_eval.models import RUNTIME_PROOF_FLAGS, RuntimeEvidenceFlags
+from scripts.litellm_shadow_eval.policy import runtime_flags_from_dict
+
+#: Ein Tag vor dem festen Testzeitpunkt 2026-09-04: frisch genug fuer jede
+#: Altersgrenze, die eine Politik vernuenftigerweise setzt.
+PROVEN_AT = "2026-09-03T00:00:00+00:00"
 
 
 def row(side: str, number: int = 0, **overrides: Any) -> dict[str, Any]:
@@ -48,19 +54,42 @@ def write_jsonl(path: Path, rows: list[object]) -> Path:
     return path
 
 
-def proven_flags(**overrides: bool) -> RuntimeEvidenceFlags:
-    values = {
-        "off_mode_proven": True,
-        "rollback_proven": True,
-        "gateway_down_proven": True,
-        "timeout_retry_proven": True,
-        "rate_limit_retry_proven": True,
-        "auth_no_retry_proven": True,
-        "server_error_retry_proven": True,
-        "circuit_proven": True,
-        "direct_fallback_proven": True,
-        "trading_gate_changed": False,
-        "execution_gate_changed": False,
+def proof(flag: str, *, proven_at: str = PROVEN_AT) -> dict[str, Any]:
+    """Ein referenzierter Betriebsnachweis in der Form, die das CLI liest."""
+    return {
+        "proven": True,
+        "artifact": f"artifacts/litellm/runtime_proofs/{flag}.json",
+        "artifact_sha256": hashlib.sha256(flag.encode("utf-8")).hexdigest(),
+        "proven_at": proven_at,
+        "version": "04046c68",
     }
+
+
+def runtime_evidence(
+    *, proven_at: str = PROVEN_AT, referenced: bool = True, **overrides: bool
+) -> dict[str, Any]:
+    """JSON-Form der Laufzeitbelege: jedes erbrachte ``*_proven`` als Objekt.
+
+    ``referenced=False`` liefert die alte Form mit nackten Booleans -- genau
+    die Form, die eine strenge Politik NICHT als Beleg gelten laesst.
+    """
+    values: dict[str, bool] = dict.fromkeys(RUNTIME_PROOF_FLAGS, True)
+    values.update({"trading_gate_changed": False, "execution_gate_changed": False})
     values.update(overrides)
-    return RuntimeEvidenceFlags(**values)
+    return {
+        name: (
+            proof(name, proven_at=proven_at)
+            if referenced and value is True and name in RUNTIME_PROOF_FLAGS
+            else value
+        )
+        for name, value in values.items()
+    }
+
+
+def proven_flags(
+    *, proven_at: str = PROVEN_AT, referenced: bool = True, **overrides: bool
+) -> RuntimeEvidenceFlags:
+    """Vollstaendig belegte Laufzeitnachweise -- ueber den echten Parser."""
+    return runtime_flags_from_dict(
+        runtime_evidence(proven_at=proven_at, referenced=referenced, **overrides)
+    )
