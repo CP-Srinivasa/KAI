@@ -12,6 +12,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -242,7 +243,7 @@ def test_prerequisites_are_reported_apart_from_a_proven_answer(
     # The hourly Health task runs offline mode; status must not present its
     # result as a proven answer, also not for a file written by 0.3.2.
     health = hub.STATE_ROOT / "health" / "last.json"
-    health.parent.mkdir(parents=True)
+    health.parent.mkdir(parents=True, exist_ok=True)  # the probe already saved its proof
     for checks in (offline, {"offline_ready": True}):
         health.write_text(
             json.dumps({"checked_at": "2026-09-27T12:00:00+00:00", "checks": checks}),
@@ -371,7 +372,7 @@ def test_opencode_start_injects_context_and_pins_model(
         if args[0] == "opencode.cmd":
             calls.append(args)
             envs.append(kwargs["env"])  # type: ignore[arg-type]
-            return object()
+            return SimpleNamespace(pid=0)  # no real process behind the lease
         return real_popen(args, **kwargs)
 
     monkeypatch.setattr(hub.subprocess, "Popen", capture_client)
@@ -421,14 +422,14 @@ def test_hermes_start_pins_tool_cwd_to_task_worktree(
     monkeypatch.setattr(hub, "ensure_ollama", lambda: None)
     monkeypatch.setattr(hub, "_ollama_models", lambda: {hub.HERMES_LOCAL_MODEL})
     monkeypatch.setattr(hub, "_command", lambda name: "hermes.exe" if name == "hermes" else None)
-    monkeypatch.setattr(hub.sys, "platform", "linux")  # no clipboard in tests
+    monkeypatch.setattr(hub, "_copy_to_clipboard", lambda _text: None)  # no clipboard in tests
     envs: list[dict[str, str]] = []
     real_popen = hub.subprocess.Popen
 
     def capture_client(args: list[str], **kwargs: object) -> object:
         if args[0] == "hermes.exe":
             envs.append(kwargs["env"])  # type: ignore[arg-type]
-            return object()
+            return SimpleNamespace(pid=0)  # no real process behind the lease
         return real_popen(args, **kwargs)
 
     monkeypatch.setattr(hub.subprocess, "Popen", capture_client)
@@ -728,7 +729,7 @@ def test_doctor_separates_inference_from_task_startability(
 
 def test_hub_version_and_offline_basis_are_operator_visible() -> None:
     text = HUB_PATH.read_text(encoding="utf-8")
-    assert 'HUB_VERSION = "0.3.3"' in text
+    assert 'HUB_VERSION = "0.3.4"' in text
     assert "Offline-Start von" in text
     assert "OFFLINE-BASIS" in text
 
@@ -1020,7 +1021,7 @@ def test_ledger_write_waits_for_a_peer_and_fails_closed_on_timeout(
     target = _handoff(kai_repo)
     # raising=False: against a hub without the lock this test must fail on
     # behaviour (the write goes through), not on a missing attribute.
-    monkeypatch.setattr(hub, "LEDGER_LOCK_TIMEOUT_S", 0.5, raising=False)
+    monkeypatch.setattr(hub, "LOCK_TIMEOUT_S", 0.5, raising=False)
 
     def write() -> object:
         if operation == "create":

@@ -33,7 +33,7 @@ from typing import Any, BinaryIO
 
 import kai_dev_workflow as workflow
 
-HUB_VERSION = "0.3.3"
+HUB_VERSION = "0.3.4"
 
 DEV_HOST = "127.0.0.1"
 DEV_PORT = 4001
@@ -48,7 +48,7 @@ LOCAL_MODEL = "kai-qwen3-coder:30b-64k"
 HERMES_LOCAL_MODEL = LOCAL_MODEL
 OPENCODE_LOCAL_MODEL = LOCAL_MODEL
 DEV_MODELS = {"kai-dev-economy", "kai-dev-code", "kai-dev-frontier"}
-LEDGER_LOCK_TIMEOUT_S = 10.0
+LOCK_TIMEOUT_S = 10.0
 REMOTE_ENV = "/home/kai/ai_analyst_trading_bot/.env"
 REMOTE_PROXY = "/home/kai/current/scripts/dev_reserve.sh"
 REMOTE_PID_FILE = "/tmp/kai-dev-hub-proxy.pid"
@@ -408,6 +408,7 @@ def doctor(repo: Path, mode: str = "offline") -> dict[str, Any]:
     checks["local_automations"] = automation_inventory()
     if mode == "local-inference":
         checks["local_inference"] = _local_inference_probe()
+        _save_local_response_proof(checks["local_inference"])
     elif mode == "cloud":
         key = start_cloud()
         checks["cloud_tunnel_open"] = _port_open(DEV_PORT)
@@ -561,15 +562,33 @@ def start_cloud() -> str:
     return key
 
 
+def _process_image(pid: int) -> str | None:
+    """Lower-case image name of the process running as ``pid``; None if none runs."""
+    if pid <= 0:
+        return None
+    if sys.platform == "win32":
+        result = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout=10)
+        for row in csv.reader(result.stdout.splitlines()):
+            if len(row) > 1 and row[1].strip() == str(pid):
+                return row[0].strip().casefold()
+        return None
+    if os.name == "nt":  # os.kill(pid, 0) would terminate the process on Windows
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # exists, owned by another user
+    try:
+        return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip().casefold()
+    except OSError:
+        return ""
+
+
 def _pid_is_ssh(pid: int) -> bool:
     """True only if ``pid`` still is an ssh process (PIDs are reused)."""
-    if sys.platform != "win32":
-        return False
-    result = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout=10)
-    for row in csv.reader(result.stdout.splitlines()):
-        if len(row) > 1 and row[1].strip() == str(pid):
-            return row[0].strip().casefold() == "ssh.exe"
-    return False
+    return sys.platform == "win32" and _process_image(pid) == "ssh.exe"
 
 
 def stop_cloud() -> bool:
@@ -656,8 +675,11 @@ def _opencode_local_config() -> Path:
     return target
 
 
-def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = None) -> None:
+def launch_opencode(
+    repo: Path, route: str, handoff: dict[str, Any] | None = None, *, take_over: bool = False
+) -> None:
     session = workflow.require_session(repo, STATE_ROOT)
+    _refuse_busy_workspace(repo, take_over)  # early: before tunnel and probe
     executable = _opencode_executable()
     if not executable:
         raise HubError("OpenCode ist nicht installiert oder nicht im PATH.")
@@ -696,16 +718,37 @@ def launch_opencode(repo: Path, route: str, handoff: dict[str, Any] | None = Non
     )
     if len(prompt) > 28_000:
         raise HubError("Kontextpaket ist für den Windows-Startprompt zu groß.")
-    subprocess.Popen(  # noqa: S603
+    _start_writer(
+        repo,
+        f"opencode-{route}",
         [executable, str(repo), "-m", model, "--prompt", prompt],
+        handoff=handoff,
+        session_id=session["session_id"],
+        take_over=take_over,
         cwd=repo,
         env=env,
         creationflags=_creation_flag("CREATE_NEW_CONSOLE"),
     )
 
 
-def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
+def _copy_to_clipboard(text: str) -> None:
+    if sys.platform != "win32":
+        return
+    import tkinter as tk
+
+    clipboard = tk.Tk()
+    clipboard.withdraw()
+    clipboard.clipboard_clear()
+    clipboard.clipboard_append(text)
+    clipboard.update()
+    clipboard.destroy()
+
+
+def launch_hermes(
+    repo: Path, handoff: dict[str, Any] | None = None, *, take_over: bool = False
+) -> None:
     session = workflow.require_session(repo, STATE_ROOT)
+    _refuse_busy_workspace(repo, take_over)
     executable = _command("hermes")
     if not executable:
         raise HubError("Hermes ist nicht installiert.")
@@ -727,17 +770,10 @@ def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
     )
     # Hermes TUI has no initial-prompt flag. Place the complete first prompt on
     # the clipboard, with a visible file fallback; the operator pastes it once.
-    first_prompt = pack.read_text(encoding="utf-8")
-    if sys.platform == "win32":
-        import tkinter as tk
-
-        clipboard = tk.Tk()
-        clipboard.withdraw()
-        clipboard.clipboard_clear()
-        clipboard.clipboard_append(first_prompt)
-        clipboard.update()
-        clipboard.destroy()
-    subprocess.Popen(  # noqa: S603
+    _copy_to_clipboard(pack.read_text(encoding="utf-8"))
+    _start_writer(
+        repo,
+        "hermes-local",
         [
             executable,
             "--tui",
@@ -750,6 +786,9 @@ def launch_hermes(repo: Path, handoff: dict[str, Any] | None = None) -> None:
             "--in",
             str(repo),
         ],
+        handoff=handoff,
+        session_id=session["session_id"],
+        take_over=take_over,
         cwd=repo,
         env=env,
         creationflags=_creation_flag("CREATE_NEW_CONSOLE"),
@@ -762,6 +801,8 @@ def context_pack(repo: Path, sources: Sequence[str] = ()) -> Path:
 
 
 def launch_kimi(repo: Path, handoff: dict[str, Any] | None = None) -> Path:
+    # No writer lease: Kimi only receives the context pack and has no local
+    # write access to the worktree (runbook), so it cannot be a second writer.
     workflow.require_session(repo, STATE_ROOT)
     executable = _command("kimi")
     if not executable:
@@ -814,18 +855,18 @@ def _lock_first_byte(handle: BinaryIO, *, release: bool = False) -> None:
 
 
 @contextlib.contextmanager
-def _ledger_lock(ledger: Path) -> Iterator[None]:
-    """Exclusive cross-process lock for one read-check-append of the ledger.
+def _file_lock(target: Path, label: str) -> Iterator[None]:
+    """Exclusive cross-process lock for one read-check-write of ``target``.
 
-    Without it two hub processes (UI and CLI, or two UIs) read the same tip
-    and both append onto it: the hash chain forks, and append-only means it
-    cannot be repaired (audit 27.09.). Same sidecar convention as
+    Without it two hub processes (UI and CLI, or two UIs) read the same state
+    and both write onto it: the ledger's hash chain forks (audit 27.09.), or
+    two clients get the same workspace. Same sidecar convention as
     ``app/core/file_lock.py`` in strict mode, but stdlib-only and with a
     bounded wait: the installed hub ships without ``app/``, and a hung peer
     must not block the operator indefinitely.
     """
-    lock_path = ledger.with_name(ledger.name + ".lock")
-    deadline = time.monotonic() + LEDGER_LOCK_TIMEOUT_S
+    lock_path = target.with_name(target.name + ".lock")
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
     with lock_path.open("a+b") as handle:
         while True:
             try:
@@ -834,7 +875,7 @@ def _ledger_lock(ledger: Path) -> Iterator[None]:
             except (BlockingIOError, PermissionError):
                 if time.monotonic() >= deadline:
                     raise HubError(
-                        f"Übergabe-Ledger seit {LEDGER_LOCK_TIMEOUT_S:g} s von einem anderen "
+                        f"{label} seit {LOCK_TIMEOUT_S:g} s von einem anderen "
                         f"Hub-Prozess gesperrt ({lock_path}); nichts geschrieben, bitte "
                         "erneut versuchen."
                     ) from None
@@ -850,7 +891,7 @@ def _ledger_serialized[**P, R](operation: Callable[P, R]) -> Callable[P, R]:
 
     @functools.wraps(operation)
     def locked(*args: P.args, **kwargs: P.kwargs) -> R:
-        with _ledger_lock(_handoff_paths()[0]):
+        with _file_lock(_handoff_paths()[0], "Übergabe-Ledger"):
             return operation(*args, **kwargs)
 
     return locked
@@ -1163,6 +1204,14 @@ def verify_handoffs() -> tuple[bool, str]:
             ):
                 return False, f"Zeile {line_number}: ungültige Ablösung"
             superseded.add(row["handoff_id"])
+        elif row.get("event") == "writer_takeover":
+            if not (
+                str(row.get("worktree", "")).strip()
+                and str(row.get("new_client", "")).strip()
+                and isinstance(row.get("previous_writer"), dict)
+                and row["previous_writer"].get("pid")
+            ):
+                return False, f"Zeile {line_number}: ungültige Schreiberübernahme"
         else:
             return False, f"Zeile {line_number}: unbekannter Ereignistyp"
         previous = claimed
@@ -1171,6 +1220,332 @@ def verify_handoffs() -> tuple[bool, str]:
         f"{count} Übergabe(n), {len(acknowledged)} bestätigt, "
         f"{len(superseded)} abgelöst; Hash-Kette unverändert.",
     )
+
+
+# --- Writer lease: one writing client per workspace (audit 27.09., point 4) ----
+
+
+def _describe_writer(lease: dict[str, Any] | None) -> str:
+    if not lease:
+        return "keiner"
+    text = (
+        f"{lease['client']} (PID {lease['pid']}, Host {lease.get('host')}, "
+        f"seit {lease.get('started_at')}"
+    )
+    return text + (f", Übergabe {lease['handoff_id']})" if lease.get("handoff_id") else ")")
+
+
+class WriterBusyError(HubError):
+    """A live client already writes this workspace."""
+
+    def __init__(self, lease: dict[str, Any], hint: str | None = None) -> None:
+        self.lease = lease
+        super().__init__(
+            f"Arbeitsbereich wird bereits bearbeitet: {_describe_writer(lease)}. "
+            + (
+                hint
+                or "Diesen Client zuerst beenden oder ausdrücklich übernehmen (--take-over "
+                "bzw. Bestätigung im Hub; die Übernahme wird im Übergabe-Ledger protokolliert)."
+            )
+        )
+
+
+def _lease_path(worktree: Path) -> Path:
+    key = hashlib.sha256(os.path.normcase(str(worktree.resolve())).encode()).hexdigest()[:16]
+    root = _state_dir() / "writers"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{key}.json"
+
+
+def _read_lease(path: Path) -> tuple[dict[str, Any] | None, bool]:
+    """(lease, alive): alive while its process runs; another host cannot be checked."""
+    try:
+        lease = json.loads(path.read_text(encoding="utf-8"))
+        pid = int(lease["pid"])
+    except FileNotFoundError:
+        return None, False
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"client": "unlesbarer Lease", "pid": 0, "file": str(path)}, False
+    if lease.get("host") != socket.gethostname():
+        return lease, True  # fail closed: only an explicit take-over ends it
+    image = _process_image(pid)
+    # Same PID under another image name means the PID was reused: dead lease.
+    return lease, image is not None and (not lease.get("image") or image == lease["image"])
+
+
+def active_writer(worktree: Path) -> dict[str, Any] | None:
+    """The live writer lease of ``worktree``; a lease ends when its client ends."""
+    lease, alive = _read_lease(_lease_path(worktree))
+    return lease if alive else None
+
+
+def _refuse_busy_workspace(worktree: Path, take_over: bool) -> None:
+    lease = active_writer(worktree)
+    if lease and not take_over:
+        raise WriterBusyError(lease)
+
+
+def _log_writer_event(event: dict[str, Any]) -> None:
+    line = {"ts": datetime.now(UTC).isoformat(), **event}
+    with (_state_dir() / "writers" / "events.jsonl").open("a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+@_ledger_serialized
+def _record_writer_takeover(
+    worktree: Path, previous: dict[str, Any], client: str
+) -> dict[str, Any]:
+    """An explicit take-over is an operator decision: it goes into the hash chain."""
+    valid, reason = verify_handoffs()
+    if not valid:
+        raise HubError(f"Übergabekette ungültig: {reason}; Übernahme ohne Beleg verweigert.")
+    ledger, _ = _handoff_paths()
+    rows = (
+        [line for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if ledger.is_file()
+        else []
+    )
+    event: dict[str, Any] = {
+        "schema_version": 2,
+        "event": "writer_takeover",
+        "created_at": datetime.now(UTC).isoformat(),
+        "worktree": str(worktree.resolve()),
+        "previous_writer": previous,
+        "new_client": client,
+        "host": socket.gethostname(),
+        "previous_sha256": json.loads(rows[-1])["payload_sha256"] if rows else "GENESIS",
+    }
+    event["payload_sha256"] = hashlib.sha256(_canonical_json(event).encode()).hexdigest()
+    with ledger.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(_canonical_json(event) + "\n")
+    return event
+
+
+def _start_writer(
+    worktree: Path,
+    client: str,
+    args: list[str],
+    *,
+    handoff: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    take_over: bool = False,
+    **popen: Any,
+) -> subprocess.Popen[Any]:
+    """Start a writing client and record it as the workspace's only writer.
+
+    Check, start and lease write run under one cross-process lock, so two hub
+    processes cannot both find the workspace free. A dead lease (client ended
+    or crashed) is taken over and logged; a live one only with ``take_over``,
+    recorded in the ledger. A take-over does not end the previous client.
+    """
+    path = _lease_path(worktree)
+    with _file_lock(path, "Schreibersperre"):
+        previous, alive = _read_lease(path)
+        if previous is not None and alive:
+            if not take_over:
+                raise WriterBusyError(previous)
+            _record_writer_takeover(worktree, previous, client)
+        elif previous is not None:
+            _log_writer_event(
+                {
+                    "event": "dead_lease_taken_over",
+                    "worktree": str(worktree.resolve()),
+                    "previous": previous,
+                    "client": client,
+                }
+            )
+        process = subprocess.Popen(args, **popen)  # noqa: S603
+        lease = {
+            "schema_version": 1,
+            "worktree": str(worktree.resolve()),
+            "client": client,
+            "pid": process.pid,
+            "image": _process_image(process.pid),
+            "host": socket.gethostname(),
+            "started_at": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
+            "handoff_id": handoff.get("handoff_id") if handoff else None,
+        }
+        staging = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        staging.write_text(json.dumps(lease, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(staging, path)
+    return process
+
+
+# --- Restore: a snapshot back into a NEW worktree (audit 27.09., point 4) -------
+
+
+def _ledger_handoffs() -> list[dict[str, Any]]:
+    ledger, _ = _handoff_paths()
+    if not ledger.is_file():
+        return []
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line]
+    return [row for row in rows if row.get("event", "handoff") == "handoff"]
+
+
+def list_snapshots() -> list[dict[str, Any]]:
+    return [
+        {
+            "handoff_id": row["handoff_id"],
+            "created_at": row["created_at"],
+            "from_to": f"{row['from_agent']} → {row['to_agent']}",
+            "task": row["task"],
+            "available": (STATE_ROOT / "snapshots" / row["handoff_id"] / "manifest.json").is_file(),
+        }
+        for row in reversed(_ledger_handoffs())
+        if row.get("snapshot_manifest_sha256")
+    ]
+
+
+def restore(repo: Path, handoff_id: str, *, apply: bool = False) -> dict[str, Any]:
+    """Dry run unless ``apply``; restores only into a new worktree and branch."""
+    valid, reason = verify_handoffs()
+    if not valid:
+        raise HubError(f"Übergabekette ungültig: {reason}")
+    source = next((row for row in _ledger_handoffs() if row["handoff_id"] == handoff_id), None)
+    if source is None or not source.get("snapshot_manifest_sha256"):
+        raise HubError("Keine Übergabe mit Snapshot unter dieser ID; 'restore' ohne ID listet sie.")
+    manifest = workflow.verify_snapshot(STATE_ROOT, handoff_id, source["snapshot_manifest_sha256"])
+    writer = active_writer(Path(source["repository"]))
+    if apply and writer:
+        raise WriterBusyError(writer, "Wiederherstellung erst, wenn dieser Client beendet ist.")
+    plan = workflow.restore_snapshot(
+        repo,
+        STATE_ROOT,
+        handoff_id,
+        manifest,
+        task=f"Wiederherstellung: {source['task']}",
+        apply=apply,
+    )
+    plan.update(
+        handoff_id=handoff_id,
+        task=source["task"],
+        from_to=f"{source['from_agent']} → {source['to_agent']}",
+        created_at=source["created_at"],
+        source_worktree=source["repository"],
+        source_writer=writer,
+    )
+    return plan
+
+
+def render_restore(plan: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"Snapshot der Übergabe {plan['handoff_id']} ({plan['from_to']}, {plan['created_at']})",
+            f"Aufgabe: {plan['task']}",
+            f"Hash-Prüfung: OK (Manifest = Übergabebeleg; Patch und {plan['files_checked']} "
+            "Datei(en) geprüft)",
+            f"Basis-Commit: {plan['base_head']}",
+            "Änderungen an versionierten Dateien:",
+            "\n".join(f"  {line.strip()}" for line in plan["tracked_stat"].splitlines())
+            or "  keine",
+            f"Unversionierte Dateien: {', '.join(plan['untracked']) or 'keine'}",
+            "Byte-genau: "
+            + (
+                "ja" if plan["byte_exact"] else "nein (Snapshot vor 0.3.4, Zeilenenden je Checkout)"
+            ),
+            f"Schreiber im Quell-Arbeitsbereich: {_describe_writer(plan['source_writer'])}",
+            f"Ziel (neu, der Quell-Arbeitsbereich bleibt unberührt): {plan['target_worktree']}",
+            f"Ziel-Branch: {plan['target_branch']}",
+            "WIEDERHERGESTELLT: im neuen Worktree weiterarbeiten."
+            if plan["applied"]
+            else f"TROCKENLAUF: nichts geändert. Ausführen: restore --handoff-id "
+            f"{plan['handoff_id']} --apply",
+        ]
+    )
+
+
+# --- Continue work: one plain-language status (audit 27.09., point 4) -----------
+
+
+def _save_local_response_proof(result: dict[str, Any]) -> None:
+    target = _state_dir() / "health" / "local-response.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    proof = {"checked_at": datetime.now(UTC).isoformat(), **result}
+    target.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
+
+
+def _local_response_proof() -> dict[str, Any] | None:
+    try:
+        proof_file = STATE_ROOT / "health" / "local-response.json"
+        proof = json.loads(proof_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    valid = proof.get("model") == LOCAL_MODEL and proof.get("response_proven") is True
+    return proof if valid else None
+
+
+def resume_report(repo: Path) -> dict[str, Any]:
+    """What is needed to continue, from local evidence only (no Pi, no provider)."""
+    sessions = [row for row in workflow.list_sessions(STATE_ROOT) if not row.get("orphaned")]
+    target = repo.resolve()
+    session = next(
+        (row for row in sessions if Path(row["worktree"]).resolve() == target),
+        sessions[0] if sessions else None,
+    )
+    if session is None:
+        return {"session": None}
+    worktree = Path(session["worktree"])
+    ollama_online = _port_open(OLLAMA_PORT)
+    proof = _local_response_proof()
+    handoffs = [
+        row for row in _ledger_handoffs() if Path(row["repository"]).resolve() == worktree.resolve()
+    ]
+    return {
+        "session": {
+            "session_id": session["session_id"],
+            "task": session["task"],
+            "worktree": str(worktree),
+        },
+        "branch": _git(worktree, "branch", "--show-current") or "DETACHED",
+        "head": _git(worktree, "rev-parse", "--short", "HEAD"),
+        "changed_files": len(_git(worktree, "status", "--porcelain=v1").splitlines()),
+        "writer": active_writer(worktree),
+        "local": {
+            "model": LOCAL_MODEL,
+            "ollama_online": ollama_online,
+            "model_installed": LOCAL_MODEL in _ollama_models() if ollama_online else None,
+            "response_proven": proof is not None,
+            "response_proven_at": proof["checked_at"] if proof else None,
+        },
+        "cloud": {"tunnel_open": _port_open(DEV_PORT)},
+        "pending_handoffs": handoff_state(worktree)["pending"],
+        "next_action": handoffs[-1]["next_action"] if handoffs else None,
+    }
+
+
+def render_resume(report: dict[str, Any]) -> str:
+    if report.get("session") is None:
+        return "Keine offene Aufgabe: im Hub 'Neue Aufgabe' wählen oder 'restore' nutzen."
+    local = report["local"]
+    installed = {True: "installiert", False: "FEHLT"}.get(
+        local["model_installed"], "unbekannt (Ollama offline)"
+    )
+    proven = (
+        f"ja ({local['response_proven_at']})"
+        if local["response_proven"]
+        else "nein ('Lokal prüfen' bzw. doctor --mode local-inference ausführen)"
+    )
+    changed = report["changed_files"]
+    lines = [
+        f"Aufgabe: {report['session']['task']}",
+        f"Arbeitsbereich: {report['session']['worktree']}",
+        f"Arbeitsstand: Branch {report['branch']} @ {report['head']}, "
+        + (f"{changed} geänderte Datei{'en' if changed > 1 else ''}" if changed else "sauber"),
+        f"Aktiver Schreiber: {_describe_writer(report['writer'])}",
+        f"Ersatz lokal: Modell {local['model']}: {installed}; Antwort bewiesen: {proven}",
+        "Ersatz Cloud: Cloud-Tunnel: "
+        + ("offen" if report["cloud"]["tunnel_open"] else "geschlossen")
+        + " (Start und echte Antwortprüfung über 'Cloud prüfen')",
+    ]
+    lines += [
+        f"Nächster Übergabeschritt: Übergabe {row['handoff_id']} an {row['to_agent']} wartet "
+        "auf Bestätigung (Challenge im Kontextpaket)."
+        for row in report["pending_handoffs"]
+    ] or ["Nächster Übergabeschritt: keine offene Übergabe."]
+    if report["next_action"]:
+        lines.append(f"Zuletzt vereinbarter nächster Schritt: {report['next_action']}")
+    return "\n".join(lines)
 
 
 def status(repo: Path) -> dict[str, Any]:
@@ -1199,6 +1574,7 @@ def status(repo: Path) -> dict[str, Any]:
         "local_model_installed": LOCAL_MODEL in models if ollama_online else None,
         "hermes_64k_model_installed": HERMES_LOCAL_MODEL in models if ollama_online else None,
         "litellm_tunnel_online": _port_open(DEV_PORT),
+        "active_writer": _describe_writer(active_writer(repo)),
         "handoff_chain_valid": verify_handoffs()[0],
         "handoff_state": handoff_state(repo),
         "handoff_state_global": handoff_state(),
@@ -1326,7 +1702,7 @@ def run_ui(repo: Path) -> None:
 
     root = tk.Tk()
     root.title(f"KAI Developer Hub {HUB_VERSION} — unabhängige Reserve")
-    root.geometry("840x650")
+    root.geometry("840x700")
     active: dict[str, Path] = {"repo": repo}
     ttk.Label(root, text=f"KAI Developer Hub {HUB_VERSION}", font=("Segoe UI", 20, "bold")).pack(
         pady=(18, 4)
@@ -1413,6 +1789,15 @@ def run_ui(repo: Path) -> None:
                 kind, value, report = ui_events.get_nowait()
                 if kind == "error":
                     show_error(value)
+                elif kind == "busy":
+                    busy, start = value
+                    if messagebox.askyesno(
+                        "Arbeitsbereich belegt",
+                        f"{busy}\n\nTrotzdem übernehmen? Die Übernahme wird im Übergabe-Ledger "
+                        "protokolliert; der bisherige Client wird NICHT beendet.",
+                        parent=root,
+                    ):
+                        action(lambda start=start: start(True))
                 elif kind == "result" and report and value is not None:
                     show_report(value)
                 refresh()
@@ -1428,6 +1813,52 @@ def run_ui(repo: Path) -> None:
                 ui_events.put(("error", exc, False))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def start_writer(start: Any) -> None:
+        """Start a writing client; a busy workspace asks before taking it over."""
+
+        def worker() -> None:
+            try:
+                start(False)
+                ui_events.put(("result", None, False))
+            except WriterBusyError as exc:
+                ui_events.put(("busy", (exc, start), False))
+            except Exception as exc:  # UI boundary
+                ui_events.put(("error", exc, False))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def restore_dialog() -> None:
+        snapshots = [row for row in list_snapshots() if row["available"]]
+        handoff_id = simpledialog.askstring(
+            "Wiederherstellen",
+            "Übergabe-ID des Snapshots (Liste: CLI 'restore'):",
+            initialvalue=snapshots[0]["handoff_id"] if snapshots else "",
+            parent=root,
+        )
+        if not handoff_id:
+            return
+        try:
+            plan = restore(repo, handoff_id.strip())
+        except Exception as exc:  # UI boundary
+            show_error(exc)
+            return
+        if messagebox.askyesno(
+            "In NEUEN Worktree wiederherstellen?", render_restore(plan), parent=root
+        ):
+            action(
+                lambda: active.update(
+                    repo=Path(restore(repo, handoff_id.strip(), apply=True)["target_worktree"])
+                )
+            )
+
+    def show_resume() -> None:
+        try:
+            text = render_resume(resume_report(active["repo"]))
+        except Exception as exc:  # UI boundary
+            show_error(exc)
+            return
+        messagebox.showinfo("Arbeit fortsetzen", text, parent=root)
 
     def active_workspace() -> Path:
         workflow.require_session(active["repo"], STATE_ROOT)
@@ -1481,17 +1912,23 @@ def run_ui(repo: Path) -> None:
     ttk.Button(
         buttons,
         text="OpenCode lokal (offline)",
-        command=lambda: action(lambda: launch_opencode(active_workspace(), "local")),
+        command=lambda: start_writer(
+            lambda take_over: launch_opencode(active_workspace(), "local", take_over=take_over)
+        ),
     ).grid(row=0, column=1, padx=6, pady=6)
     ttk.Button(
         buttons,
         text="OpenCode Cloud-Reserve",
-        command=lambda: action(lambda: launch_opencode(active_workspace(), "cloud")),
+        command=lambda: start_writer(
+            lambda take_over: launch_opencode(active_workspace(), "cloud", take_over=take_over)
+        ),
     ).grid(row=0, column=2, padx=6, pady=6)
     ttk.Button(
         buttons,
         text="Hermes lokal (offline, 64K)",
-        command=lambda: action(lambda: launch_hermes(active_workspace())),
+        command=lambda: start_writer(
+            lambda take_over: launch_hermes(active_workspace(), take_over=take_over)
+        ),
     ).grid(row=0, column=3, padx=6, pady=6)
     ttk.Button(
         buttons,
@@ -1528,6 +1965,12 @@ def run_ui(repo: Path) -> None:
     ).grid(row=2, column=2, padx=6, pady=6)
     ttk.Button(buttons, text="Status aktualisieren", command=refresh).grid(
         row=2, column=3, padx=6, pady=6
+    )
+    ttk.Button(buttons, text="Arbeit fortsetzen", command=show_resume).grid(
+        row=3, column=0, padx=6, pady=6
+    )
+    ttk.Button(buttons, text="Snapshot wiederherstellen", command=restore_dialog).grid(
+        row=3, column=1, padx=6, pady=6
     )
     ttk.Label(
         root,
@@ -1567,6 +2010,17 @@ def _parser() -> argparse.ArgumentParser:
         "surface",
         choices=("opencode-local", "opencode-cloud", "hermes-local", "kimi"),
     )
+    open_parser.add_argument(
+        "--take-over",
+        action="store_true",
+        help="Lebenden Schreiber ausdrücklich ablösen (Ledger-Eintrag, alter Client läuft weiter)",
+    )
+    restore_parser = sub.add_parser("restore", help="Snapshot in NEUEN Worktree (Trockenlauf)")
+    restore_parser.add_argument("--handoff-id", help="Ohne ID: Snapshots auflisten")
+    restore_parser.add_argument("--apply", action="store_true", help="Wirklich wiederherstellen")
+    restore_parser.add_argument("--json", action="store_true")
+    continue_parser = sub.add_parser("continue", aliases=["resume"], help="Arbeit fortsetzen")
+    continue_parser.add_argument("--json", action="store_true")
     sub.add_parser("start-cloud")
     sub.add_parser("stop-cloud")
     handoff = sub.add_parser("handoff")
@@ -1631,11 +2085,39 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if report["checks"]["offline_ready"] or args.mode == "cloud" else 1
         elif args.command == "open":
             if args.surface.startswith("opencode-"):
-                launch_opencode(repo, args.surface.removeprefix("opencode-"))
+                route = args.surface.removeprefix("opencode-")
+                launch_opencode(repo, route, take_over=args.take_over)
             elif args.surface == "hermes-local":
-                launch_hermes(repo)
+                launch_hermes(repo, take_over=args.take_over)
             else:
                 print(launch_kimi(repo))
+        elif args.command == "restore":
+            if not args.handoff_id:
+                rows = list_snapshots()
+                print(
+                    json.dumps(rows, indent=2, ensure_ascii=False)
+                    if args.json
+                    else "\n".join(
+                        f"{row['handoff_id']}  {row['created_at']}  {row['from_to']}  "
+                        f"{row['task']}" + ("" if row["available"] else "  [SNAPSHOT FEHLT]")
+                        for row in rows
+                    )
+                    or "Keine Snapshots vorhanden."
+                )
+            else:
+                plan = restore(repo, args.handoff_id, apply=args.apply)
+                print(
+                    json.dumps(plan, indent=2, ensure_ascii=False)
+                    if args.json
+                    else render_restore(plan)
+                )
+        elif args.command in {"continue", "resume"}:
+            report = resume_report(repo)
+            print(
+                json.dumps(report, indent=2, ensure_ascii=False)
+                if args.json
+                else render_resume(report)
+            )
         elif args.command == "start-cloud":
             start_cloud()
             print("KAI_DEV_CLOUD_READY endpoint=http://127.0.0.1:4001/v1 catalog=VERIFIED")

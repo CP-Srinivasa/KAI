@@ -325,8 +325,10 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
     # Byte-exact: a text-mode write turned LF into CRLF on Windows and _git's
     # strip() dropped the final newline -> "git apply: corrupt patch" (23.09.).
     tracked = _git_bytes(repo, "diff", "--binary", "HEAD")
-    changed_tracked = _git(repo, "diff", "--name-only", "HEAD", "-z")
-    if any(SECRET_NAME.search(name) for name in changed_tracked.split("\0") if name):
+    changed_tracked = [
+        name for name in _git(repo, "diff", "--name-only", "HEAD", "-z").split("\0") if name
+    ]
+    if any(SECRET_NAME.search(name) for name in changed_tracked):
         raise WorkflowError("Geänderte Secret-Datei darf nicht im Snapshot gespeichert werden.")
     untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z")
     names = [name for name in untracked.split("\0") if name]
@@ -350,17 +352,27 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
         if size > MAX_UNTRACKED_FILE_BYTES or total > MAX_SNAPSHOT_BYTES:
             raise WorkflowError("Snapshot überschreitet das lokale Größenlimit (20 MB).")
         planned.append((source, relative, size))
+    # Exact bytes of every changed tracked file: under core.autocrlf the patch
+    # alone brings line endings back per checkout, not as they were (restore).
+    exact: list[tuple[Path, Path]] = []
+    for name in changed_tracked:
+        raw_source = repo / name
+        if raw_source.is_symlink() or not raw_source.is_file():
+            continue  # deleted or a link: the patch carries it
+        total += raw_source.stat().st_size
+        exact.append((raw_source, Path(name)))
     if total > MAX_SNAPSHOT_BYTES:
         raise WorkflowError("Snapshot überschreitet das lokale Größenlimit (20 MB).")
     root.mkdir(parents=True)
     patch = root / "tracked.patch"
     patch.write_bytes(tracked)
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": _now(),
         "repository": str(repo.resolve()),
         "head": _git(repo, "rev-parse", "HEAD"),
         "tracked_patch_sha256": _sha256(patch.read_bytes()),
+        "tracked_files": [],
         "untracked": [],
     }
     for source, relative, size in planned:
@@ -370,12 +382,137 @@ def snapshot(repo: Path, state_root: Path, handoff_id: str) -> dict[str, Any]:
         manifest["untracked"].append(
             {"path": relative.as_posix(), "bytes": size, "sha256": _sha256(target.read_bytes())}
         )
+    for source, relative in exact:
+        target = root / "tracked" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        data = target.read_bytes()
+        manifest["tracked_files"].append(
+            {"path": relative.as_posix(), "bytes": len(data), "sha256": _sha256(data)}
+        )
     manifest_path = root / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
     return {"path": str(root), "manifest_sha256": _sha256(manifest_path.read_bytes())}
+
+
+def _snapshot_member(root: Path, folder: str, relative: str) -> Path:
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or ".." in parts:
+        raise WorkflowError(f"Snapshot enthält einen unzulässigen Pfad: {relative}")
+    return root / folder / relative
+
+
+def verify_snapshot(state_root: Path, handoff_id: str, manifest_sha256: str) -> dict[str, Any]:
+    """Check the manifest against the ledger receipt and every file against the manifest."""
+    root = state_root / "snapshots" / handoff_id
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise WorkflowError(f"Snapshot fehlt: {root}")
+    raw = manifest_path.read_bytes()
+    if _sha256(raw) != manifest_sha256:
+        raise WorkflowError("Snapshot-Hash-Prüfung fehlgeschlagen: Manifest ≠ Übergabebeleg.")
+    manifest: dict[str, Any] = json.loads(raw)
+    failed: list[str] = []
+    patch = root / "tracked.patch"
+    if not patch.is_file() or _sha256(patch.read_bytes()) != manifest.get("tracked_patch_sha256"):
+        failed.append("tracked.patch")
+    for key, folder in (("tracked_files", "tracked"), ("untracked", "untracked")):
+        for entry in manifest.get(key, []):
+            member = _snapshot_member(root, folder, str(entry["path"]))
+            if not member.is_file() or _sha256(member.read_bytes()) != entry["sha256"]:
+                failed.append(f"{folder}/{entry['path']}")
+    if failed:
+        raise WorkflowError("Snapshot-Hash-Prüfung fehlgeschlagen: " + ", ".join(failed[:10]))
+    return manifest
+
+
+def restore_snapshot(
+    repo: Path,
+    state_root: Path,
+    handoff_id: str,
+    manifest: dict[str, Any],
+    *,
+    task: str,
+    apply: bool,
+) -> dict[str, Any]:
+    """Plan, and with ``apply`` perform, a restore into a NEW worktree and branch.
+
+    ``manifest`` must come from :func:`verify_snapshot`. The source workspace is
+    never written; a failed restore removes the half-created worktree again.
+    """
+    primary = _primary_checkout(repo)
+    root = state_root / "snapshots" / handoff_id
+    head = str(manifest["head"])
+    try:
+        _git(primary, "cat-file", "-e", f"{head}^{{commit}}")
+    except WorkflowError as exc:
+        raise WorkflowError(f"Basis-Commit {head[:12]} fehlt im Repository (fetch?).") from exc
+    patch = root / "tracked.patch"
+    has_patch = patch.stat().st_size > 0
+    files = [("tracked", entry) for entry in manifest.get("tracked_files", [])]
+    files += [("untracked", entry) for entry in manifest.get("untracked", [])]
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    suffix = f"{handoff_id[:8]}-{stamp}-{uuid.uuid4().hex[:6]}"
+    branch = f"codex/dev-restore-{suffix}"
+    target = primary.parent / f"{primary.name}-dev-restore-{suffix}"
+    plan: dict[str, Any] = {
+        "verified": True,
+        "byte_exact": "tracked_files" in manifest,
+        "files_checked": len(files),
+        "base_head": head,
+        "tracked_stat": (
+            _git(primary, "apply", "--stat", "--summary", str(patch)) if has_patch else ""
+        ),
+        "untracked": [str(entry["path"]) for entry in manifest.get("untracked", [])],
+        "target_branch": branch,
+        "target_worktree": str(target),
+        "applied": False,
+    }
+    if not apply:
+        return plan
+    if target.exists():
+        raise WorkflowError(f"Ziel existiert bereits: {target}")
+    _git(primary, "worktree", "add", str(target), "-b", branch, head, timeout=90)
+    try:
+        if has_patch:
+            _git(target, "apply", "--binary", str(patch), timeout=90)
+        for folder, entry in files:
+            relative = str(entry["path"])
+            destination = target / relative
+            if folder == "untracked" and destination.exists():
+                raise WorkflowError(f"Wiederherstellung würde {relative} überschreiben.")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_snapshot_member(root, folder, relative), destination)
+            if _sha256(destination.read_bytes()) != entry["sha256"]:
+                raise WorkflowError(f"Wiederhergestellte Datei weicht ab: {relative}")
+    except (WorkflowError, OSError, subprocess.TimeoutExpired):
+        for cleanup in (("worktree", "remove", "--force", str(target)), ("branch", "-D", branch)):
+            try:
+                _git(primary, *cleanup)
+            except (WorkflowError, subprocess.TimeoutExpired):
+                pass
+        raise
+    row: dict[str, Any] = {
+        "schema_version": 1,
+        "session_id": uuid.uuid4().hex,
+        "created_at": _now(),
+        "task": task[:300],
+        "worktree": str(target),
+        "branch": branch,
+        "base_ref": BASE_REF,
+        "base_sha": head,
+        "base_mode": "restore",
+        "base_age_s": 0,
+        "base_fetched_at": manifest.get("created_at"),
+        "restored_from": handoff_id,
+    }
+    session_file = _session_dir(state_root) / f"{row['session_id']}.json"
+    session_file.write_text(json.dumps(row, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    plan.update(applied=True, session_id=row["session_id"])
+    return plan
 
 
 def _secret_scanner(repo: Path) -> Callable[[str, str], list[Any]]:
