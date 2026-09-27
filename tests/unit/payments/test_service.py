@@ -15,8 +15,9 @@ hier geprueft wird, sind die Stellen, an denen sie reissen kann:
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -435,6 +436,106 @@ async def test_recover_leaves_settled_intents_alone(tmp_path: Path) -> None:
     restarted = a_service(tmp_path)
     assert restarted.recover() == []
     assert restarted.get(view.intent_id).status is PaymentStatus.SETTLED
+
+
+# --------------------------------------------------------------------------- #
+# Ablauf (Audit A1): eine Freigabe gilt nur bis zum Ablauf des Intents
+# --------------------------------------------------------------------------- #
+
+
+class MovableClock:
+    def __init__(self, start: datetime = NOW) -> None:
+        self.now = start
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class CountingRail(SimulationRail):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.pay_calls = 0
+
+    async def pay(self, intent: Any, attempt: Any) -> Any:
+        self.pay_calls += 1
+        return await super().pay(intent, attempt)
+
+
+def a_clocked_service(
+    tmp_path: Path, clock: MovableClock, *, rail: object | None = None, **overrides: object
+) -> PaymentService:
+    journal = PaymentJournal(tmp_path / "payment_journal.jsonl")
+    journal.open()
+    hotp = overrides.pop("hotp", None)
+    return PaymentService(
+        journal=journal,
+        rails={"simulation": rail or SimulationRail(now=NOW)},
+        settings=settings(**overrides),
+        clock=clock,
+        app_env="development",
+        hotp_verifier=hotp,
+        vault=a_vault(tmp_path),
+    )
+
+
+async def test_an_expired_authorized_intent_is_never_sent(tmp_path: Path) -> None:
+    """Der Audit-Fall: AUTHORIZED, seit 120 s abgelaufen — execute darf nicht senden."""
+    clock = MovableClock()
+    rail = CountingRail(now=NOW)
+    service = a_clocked_service(tmp_path, clock, rail=rail)
+    view = await service.create_intent(a_request(ttl_seconds=60), "idem-0123456789abcdef")
+    assert view.status is PaymentStatus.AUTHORIZED
+
+    clock.now = NOW + timedelta(seconds=180)
+    with pytest.raises(PaymentServiceError, match="expired"):
+        await service.execute(view.intent_id)
+
+    assert rail.pay_calls == 0
+    assert service.get(view.intent_id).status is PaymentStatus.EXPIRED
+    types = event_types(service, view.intent_id)
+    assert "submitted" not in types
+    assert types[-1] == "expired"
+
+
+async def test_an_intent_just_before_expiry_is_still_sent(tmp_path: Path) -> None:
+    clock = MovableClock()
+    service = a_clocked_service(tmp_path, clock)
+    view = await service.create_intent(a_request(ttl_seconds=60), "idem-0123456789abcdef")
+    clock.now = NOW + timedelta(seconds=59)
+    executed = await service.execute(view.intent_id)
+    assert executed.status is PaymentStatus.SETTLED
+
+
+async def test_an_expired_intent_cannot_be_approved_and_burns_no_hotp(tmp_path: Path) -> None:
+    clock = MovableClock()
+    hotp = FakeHotp()
+    service = a_clocked_service(tmp_path, clock, hotp=hotp, approval_threshold_sat=500)
+    view = await service.create_intent(a_request(ttl_seconds=60), "idem-0123456789abcdef")
+    assert view.status is PaymentStatus.AWAITING_APPROVAL
+
+    clock.now = NOW + timedelta(seconds=61)
+    with pytest.raises(PaymentServiceError, match="expired"):
+        service.authorize(view.intent_id, "123456")
+
+    assert hotp.calls == [], "ein abgelaufener Vorgang verbraucht keinen HOTP-Zaehler"
+    assert service.get(view.intent_id).status is PaymentStatus.EXPIRED
+
+
+async def test_a_rehydrated_intent_expires_before_it_is_sent(tmp_path: Path) -> None:
+    """Nach einem Neustart zurueckgeholt (Vault) — auch dann gilt der Ablauf."""
+    clock = MovableClock()
+    service = a_clocked_service(tmp_path, clock)
+    view = await service.create_intent(a_request(ttl_seconds=60), "idem-0123456789abcdef")
+
+    later = MovableClock(NOW + timedelta(seconds=180))
+    rail = CountingRail(now=NOW)
+    restarted = a_clocked_service(tmp_path, later, rail=rail)
+    restarted.recover()
+    assert restarted.get(view.intent_id).status is PaymentStatus.AUTHORIZED
+    with pytest.raises(PaymentServiceError, match="expired"):
+        await restarted.execute(view.intent_id)
+    assert rail.pay_calls == 0
+    assert restarted.get(view.intent_id).status is PaymentStatus.EXPIRED
 
 
 # --------------------------------------------------------------------------- #
