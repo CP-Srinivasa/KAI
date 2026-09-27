@@ -16,6 +16,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write  # CI fuer den eigenen PR per Dispatch anstossen (s. letzter Schritt)
 
 jobs:
   update-lock:
@@ -110,6 +111,7 @@ jobs:
           } > pr_body.md
 
       - uses: peter-evans/create-pull-request@v6
+        id: cpr
         with:
           commit-message: "chore(deps): weekly lock-file refresh"
           title: "chore(deps): weekly lock-file refresh"
@@ -132,3 +134,15 @@ jobs:
             dependencies
             automated
             lock-file
+
+      # Ein mit dem GITHUB_TOKEN angelegter PR loest KEINE pull_request-Laeufe aus
+      # (GitHub-Regel gegen Workflow-Rekursion). Ohne diesen Schritt bekam der
+      # Lock-PR nie einen Pflicht-Check und blieb haengen (#1025, 21.–27.09.2026).
+      # workflow_dispatch ist von der Regel ausgenommen; die Check-Runs haengen am
+      # Head-SHA des Branches und zaehlen fuer den PR.
+      - name: CI fuer den Lock-PR anstossen
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.cpr.outputs.pull-request-branch }}
+        run: gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$BRANCH"
