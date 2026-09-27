@@ -8,6 +8,12 @@ on:
     branches: ["claude/p7/reentry-ia-codex-cycle"]
   pull_request:
     branches: ["**"]
+  # Der woechentliche Lock-Refresh legt seinen PR mit dem GITHUB_TOKEN an — dafuer
+  # startet GitHub grundsaetzlich KEINE pull_request-Laeufe. Ohne diesen Trigger
+  # hatte der PR nie einen Pflicht-Check und blieb haengen (#1025, 21.–27.09.2026).
+  # lock-update.yml stoesst die CI deshalb danach selbst per Dispatch an; die
+  # Check-Runs haengen am Head-SHA und zaehlen damit fuer den PR.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -346,16 +352,26 @@ jobs:
       #
       # Das trifft strukturell JEDEN Bot-PR: Dependabot schreibt die Abschnitte
       # naturgemaess nicht, sie werden nachgetragen -- also immer NACH dem Event.
+      #
+      # 27.09.2026: Dependabot-PRs standen dadurch sechs Tage rot (#1021–#1024), ohne
+      # dass der Check Pflicht ist — Rot ohne Konsequenz lehrt nur, Rot zu uebersehen.
+      # Bot-PRs (Dependabot, der Lock-Refresh) werden ueber Diff + Pflicht-Checks
+      # geprueft; die fuenf Abschnitte sind fuer von Menschen/Agenten geschriebene PRs.
       - name: Check PR template fields filled
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPO: ${{ github.repository }}
         run: |
           PR_BODY="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.body // ""')"
           export PR_BODY
           python3 - <<'EOF'
           import os, sys
+          author = os.environ.get("PR_AUTHOR", "")
+          if author in {"dependabot[bot]", "github-actions[bot]"}:
+              print(f"Bot-PR von {author}: Abschnitte entfallen, Review ueber Diff + Pflicht-Checks.")
+              sys.exit(0)
           body = os.environ.get("PR_BODY", "")
           required = [
               "Änderungsbericht",
