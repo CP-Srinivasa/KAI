@@ -24,6 +24,21 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-294 (2026-09-29)
+**Befund und Entscheidung (Operator-Freigabe unter der Bedingung „kein Satoshi darf verloren gehen oder sich bewegen“):** Alle lnd-Macaroons sind neu aufgebaut. Der alte `kai-payment.macaroon` (Wurzel `0`, Senderecht bis zum Kanalguthaben, am HOTP vorbei) und alle seine Kopien, auch die verschlüsselten im D:-Vault, sind am Node **ungültig**.
+- **Methode:**
+  - `deletemacaroonid 0` verbietet lnd (`ErrDeletionForbidden`, v0.19.3 im Quelltext geprüft).
+  - `changepassword --new_mac_root_key` würde die `wallet.db` neu verschlüsseln und ist deshalb verworfen.
+  - Stattdessen wurden `macaroons.db` und alle `*.macaroon` bei gestopptem lnd **beiseitegelegt**. lnd hat sie beim Entsperren neu erzeugt. Ein Rollback war bis zum Aufräumen möglich.
+- **Folge:** Der litd-Account `kai` ist mit gleichem Budget (4 878 sat) neu angelegt, ID jetzt `3c64c5625e2821bc`. KAI hat eigene Wurzeln (101 lesen, 102 Rechnungen) und ist damit künftig gezielt widerrufbar. LNbits ist in der DB (`system_settings`) umgestellt.
+- **Beweis:**
+  - Die Bilanz vorher und nachher ist identisch: On-Chain 1 548 197, Kanal lokal 370 327, Force-Close-Anzeige 25 815, Budget 4 878 sat.
+  - Die alten Standard-Macaroons und der alte Account-Macaroon werden abgelehnt, die neuen funktionieren.
+  - Preflight ohne Blocker, `/health/payment` ok, Reconcile `ok`/`complete`.
+- **Vorbedingungen, die geprüft wurden:** keine offenen HTLCs, keine pending Kanäle, keine Zahlungen `IN_FLIGHT`, keine Boltz-, Loop- oder Pool-Vorgänge, Autoloop aus, Pi-Drain `DRAIN_OK`, frische SCB-Kopie.
+**Limit:** Reconcile (15:31Z) und Einnahmen-Buchung (15:29Z) sind im Fenster fail-closed gescheitert, der nächste Lauf holt sie nach. `api.boltz.exchange` war am 29.09. ab 11:11 NXDOMAIN. Das ist extern und nicht vom Umbau verursacht, Boltz-Swaps sind bis dahin nicht möglich.
+**Beleg:** Node `/home/admin/kai-macrot/{snap-before,snap-after}.json` + `macrot.log`, Runbook `ln_kai_account_budget.md` §11, Matrix `docs/lightning_macaroon_matrix.md`.
+
 ### D-293 (2026-09-26)
 **Befund und Entscheidung (Umsetzung Runbook `ln_kai_account_budget.md`, Operator-Freigabe „gib gas“):** KAIs Sendeschlüssel ist jetzt ein **litd-Account mit 5 000 sat Budget, das der Node durchsetzt**. Alle Abnahmen A1–A6 sind live bestanden.
 - **Installation:** LiT 0.14.1-alpha über `bonus.lit.sh`, SHA256 und GPG geprüft.

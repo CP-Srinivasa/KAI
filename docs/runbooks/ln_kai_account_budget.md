@@ -1,6 +1,6 @@
 # Node-seitiges Budget für KAIs Sendeschlüssel (litd-Account)
 
-> **Status: LIVE (26.09.2026, D-293).** Die Schritte 0–7 sind erledigt, A1–A6 bestanden (§10). Offen ist nur der Neuaufbau aller Macaroons (§4.4, eigenes Vorhaben). Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
+> **Status: LIVE (26.09.2026, D-293).** Die Schritte 0–7 sind erledigt, A1–A6 bestanden (§10). Der Neuaufbau aller Macaroons ist am 29.09.2026 erledigt (§11, D-294). Seitdem ist der alte `kai-payment.macaroon` am Node ungültig, und der Account `kai` hat die ID `3c64c5625e2821bc`. Jeder Send braucht eine eigene Freigabe. Referenzen: D-288 (Lückenregister), D-289 (fremde Ausgaben werden gemeldet).
 
 ## 1. Warum
 
@@ -45,6 +45,7 @@ Quelle: Lightning Labs, *LND Accounts* (docs.lightning.engineering, gelesen am 2
    - Mit welchem `root_key_id` wurde er gebacken (`lncli printmacaroon`)?
    - Ist es `0` (Standard), trifft `lncli deletemacaroonid 0` **auch** `admin.macaroon`, `readonly.macaroon` und `invoice.macaroon`. Dann ist eine gezielte Entwertung nicht möglich, und es braucht einen geplanten Neuaufbau aller Macaroons.
    - **Befund 26.09.: Es ist `0`.** Eine gezielte Entwertung geht nicht. Bis zu einem Neuaufbau aller Macaroons gilt: Die Datei wird nach der Umstellung **von der Pi gelöscht**. Weitere Kopien (Laptop, D:-Vault, Escrow) sind vorher zu suchen und zu löschen. Das senkt das Risiko, beweist aber keine Entwertung. Der Neuaufbau (neue Macaroons mit eigener `root_key_id` je Zweck, danach `deletemacaroonid 0`) wird ein eigenes Vorhaben, weil er RTL, LNbits, LiT und die Pi zugleich berührt.
+   - **Korrektur 29.09.:** `deletemacaroonid 0` verbietet lnd (siehe §11). Der Neuaufbau lief deshalb anders und ist erledigt.
 5. **Receive-Pfad.** KAI empfängt mit `kai-invoice.macaroon`, das bleibt getrennt. Ein Account-Macaroon verbucht eingehende Zahlungen als Guthaben des Accounts. Ob der Self-Use-Receive künftig über den Account laufen soll, ist offen.
 6. **Reconcile.** Das Lesen mit `readonly.macaroon` bleibt unverändert. Prüfen, dass `ListPayments` mit dem Readonly-Macaroon weiter **alle** Node-Zahlungen sieht, damit D-289 nichts verliert.
 
@@ -189,3 +190,49 @@ sudo systemctl restart kai-server
   - Nebenbefund: KAI hing den Intent in `RECONCILIATION_REQUIRED` auf, und ohne Fix wäre er dort für immer geblieben. Der Fix mit `TrackPaymentV2` „isn't initiated“ nach Ablauf steht in D-293.
 - **A6 bestanden:** Nach `kai-ln-budget 5000` ist der Send über 120 sat um 19:27Z SETTLED. Der Account zeigt 4 878 sat Rest, `ln_budget.log` enthält beide Änderungen.
 - **Schritt 7 erledigt (26.09. ~20:05Z, Operator-Freigabe):** Vorab geprüft, dass weder `.env` noch eine Unit noch ein laufender Prozess `kai-payment.macaroon` nutzt. Danach auf der Pi `shred -u ~/kai-secrets/lnd/kai-payment.macaroon`. Laptop und D: haben keine Klartext-Kopien (Dateisuche, nur pytest-Attrappen). **Restrisiko:** Die D:-Vault-Generationen enthalten `~/kai-secrets` verschlüsselt mit `LN_SECRET_BACKUP_KEY` (Original in KeePass). Weil `root_key_id 0` nicht gezielt entwertbar ist, bleibt der alte Schlüssel am Node gültig, bis alle Macaroons neu aufgebaut sind.
+  - **Erledigt am 29.09.2026 durch §11:** Das Restrisiko ist weg, der alte Schlüssel wird am Node abgelehnt.
+
+## 11. Neuaufbau aller Macaroons (29.09.2026, D-294)
+
+**Ziel:** Den alten `kai-payment.macaroon` und jede andere Kopie eines Schlüssels mit Wurzel `0` am Node wertlos machen. Dazu gehören auch die verschlüsselten Kopien in den D:-Vault-Generationen. **Operator-Bedingung:** Kein Satoshi darf verloren gehen oder sich bewegen.
+
+**Warum nicht der naheliegende Weg** (lnd v0.19.3 im Quelltext geprüft):
+- `lncli deletemacaroonid 0` lehnt lnd ab. `macaroons/store.go` verbietet das Löschen von `DefaultRootKeyID` mit `ErrDeletionForbidden`.
+- `lncli changepassword --new_mac_root_key` erneuert zwar alle Wurzeln, verschlüsselt dabei aber die `wallet.db` neu. Wegen der Operator-Bedingung ist das tabu.
+- RaspiBlitz' `lnd.credentials.sh reset … macaroons` **löscht** `macaroons.db` und hat damit keinen Rückweg.
+
+**Gewählter Weg:** Bei gestopptem lnd werden `macaroons.db` und alle `*.macaroon` **beiseitegelegt**, nicht gelöscht. Beim Entsperren legt lnd eine neue Datenbank an und erzeugt alle Standard-Macaroons neu (`config_builder.go`, `genDefaultMacaroons`). Bis zum Aufräumen legt ein Rollback den alten Stand exakt zurück.
+
+**Folgen, die vorher klar waren:**
+- **Alle Wurzeln entstehen neu, also auch die des litd-Accounts.** Der Account `kai` wird mit gleichem Budget neu angelegt, nur die ID ändert sich.
+- **LNbits** (`LNBITS_ADMIN_UI=true`) liest die lnd-Macaroons aus der Datenbanktabelle `system_settings`, als Hex in Großbuchstaben. Die `.env` schreibt RaspiBlitz' Prestart (`bonus.lnbits.sh`) bei jedem Start selbst aus den lnd-Dateien.
+- **litd** und **boltzd** lesen `admin.macaroon` über ihren Pfad, ein Neustart genügt. Loop und Pool haben eigene Macaroon-Datenbanken.
+- **KAI** liest die Macaroon-Dateien bei jedem lnd-Aufruf neu (`_build_client`). Deshalb gleiche Dateinamen mit neuem Inhalt, ohne `.env`-Änderung und ohne Dienst-Neustart.
+
+**Werkzeug:** `KAI-mirror/scripts/ln-macrot/` (lokal, nicht im Repo), Aufruf mit `macrot.ps1 pruefen | rotieren | pi | aufraeumen`, bei Problemen `weiter | zurueck`.
+- **Vor jedem Eingriff** hart abbrechen bei: offenen HTLCs, pending Kanälen, Zahlungen `IN_FLIGHT`, offenen Boltz-, Loop- oder Pool-Vorgängen, Autoloop an, Zahlungs-Drain auf der Pi nicht frei, keiner frischen SCB-Kopie.
+- Vorher und nachher wird die Bilanz festgehalten und verglichen.
+- Die Skripte enthalten keinen Sende-, Kanal- oder On-Chain-Befehl (Suchlauf-Beleg).
+
+**Ergebnis (Fenster etwa 15:14–15:46Z):**
+- **Bilanz identisch:** On-Chain 1 548 197 sat, Kanal lokal 370 327 sat, Force-Close-Anzeige 25 815 sat (Altanzeige, längst geborgen, D-287), Budget 4 878 sat.
+- **Beweis am Node:** Der alte `readonly.macaroon` und der alte `admin.macaroon` werden abgelehnt mit „verification failed: signature mismatch after caveat verification“.
+- **Beweis auf der Pi:** Die neuen Schlüssel liefern HTTP 200, die alten HTTP 500. Der alte Account-Macaroon scheitert, weil seine Wurzel nicht mehr existiert.
+- **Wurzeln jetzt:**
+  - `0`: Standard, neu
+  - `101`: KAI lesen, gleiche Rechte wie der lnd-`readonly`
+  - `102`: KAI Rechnungen, `info:read invoices:read,write offchain:read onchain:read`
+  - `18441921393385063778`: litd-Account `kai` = `3c64c5625e2821bc`, 4 878 sat. Er zeigt per `channelbalance` das virtuelle Budget, nicht das Kanalguthaben.
+- **Danach:**
+  - Preflight ohne Blocker, `/health/payment` ok, Reconcile 15:46Z `ok` und `complete`.
+  - LNbits meldet „connected and with a balance of 370327000 msat“.
+  - boltzd meldet „Connected to lightning node“.
+- **Aufgeräumt 15:48–15:49Z:** Der alte Stand ist auf Node und Pi mit `shred` vernichtet. Übrig sind nur Bestand und Protokoll (`/home/admin/kai-macrot/snap-*.json`, `macrot.log`).
+
+**Während des Fensters (erwartet, fail-closed):**
+- **Reconcile:** Der Lauf um 15:31Z ist fehlgeschlagen.
+- **Einnahmen-Buchung:** Der Lauf um 15:29Z ist fehlgeschlagen („treasury not updated“). `list_invoices` mit dem neuen Rechnungsschlüssel ist danach geprüft.
+
+**Lehren:**
+- `journalctl … | grep -q` meldet unter `pipefail` bei einem **Treffer** unter Umständen einen Fehler (SIGPIPE). Besser erst einlesen, dann suchen.
+- `boltzcli getinfo` braucht zusätzlich den Boltz-Server im Internet. `api.boltz.exchange` war am 29.09. ab 11:11 NXDOMAIN, extern und unabhängig vom Umbau.
