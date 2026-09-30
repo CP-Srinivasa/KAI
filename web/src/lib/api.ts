@@ -2745,7 +2745,7 @@ export type PayRequestCreate = {
   expiry_seconds?: number;
 };
 
-/** Antwort auf `POST /pay/requests` (201) — die EINZIGE Stelle, die bolt11 liefert. */
+/** Antwort auf `POST /pay/requests` (201). bolt11 steht auch im GET, solange die Anfrage WAITING ist (#913). */
 export type PayRequestCreated = {
   payment_id: string;
   status: PayRequestStatus;
@@ -2770,6 +2770,9 @@ export type PayRequest = {
   created_at: string;
   expires_at: string;
   last_error: string | null;
+  /** Nur bei WAITING gesetzt (app/pay/service.py `view`), sonst null. */
+  bolt11?: string | null;
+  lightning_uri?: string | null;
 };
 
 export type PayReceipt = {
@@ -2791,6 +2794,9 @@ export type PayHealth = {
   settled_total: number;
   last_settled_at: string | null;
   poller_alive: boolean;
+  /** Webhook-Outbox (#1093/#1113): noch zuzustellen / nach allen Runden aufgegeben. */
+  webhooks_pending?: number;
+  webhooks_given_up?: number;
 };
 
 export function createPayRequest(

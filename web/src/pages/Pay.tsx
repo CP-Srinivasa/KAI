@@ -1,6 +1,6 @@
 // @data-source: /dashboard/api/lightning + POST /dashboard/api/ln/value-action + /pay/health + POST /pay/requests + /pay/requests/{id} (+ /receipt) + /pay/requests?limit=10
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { AlertTriangle, Check, Copy, QrCode, Receipt, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, Copy, ExternalLink, QrCode, Receipt, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/layout/PageHeader";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { Field, Input } from "@/components/ui/Form";
@@ -55,9 +55,9 @@ import { cn } from "@/lib/utils";
 // Wahrheitsregeln: Status kommt NUR aus `GET /pay/requests/{id}` (Polling alle
 // 3 s bis Endzustand), Fehler der API stehen immer lesbar auf der Seite, und
 // ein deaktiviertes Feature (`/pay/health` → 404) zeigt einen Hinweis statt
-// eines toten Formulars. bolt11/QR gibt es nur aus der POST-Antwort — der
-// Vertrag liefert sie im GET nicht, also merkt sich die Seite Invoices der
-// laufenden Sitzung und behauptet für ältere Requests keinen QR.
+// eines toten Formulars. bolt11/QR kommt aus der POST-Antwort und - solange
+// die Anfrage WAITING ist - auch aus `GET /pay/requests/{id}` (#913); nach dem
+// Endzustand gibt es keinen QR mehr (nichts mehr zu bezahlen).
 
 type Invoice = { bolt11: string; lightning_uri: string };
 type Selection = { paymentId: string; seed: PayRequest | null };
@@ -121,6 +121,8 @@ export function PayPage({ pollMs = PAY_POLL_MS }: { pollMs?: number } = {}) {
         icon={<QrCode size={18} />}
         right={<HealthBadge health={health} />}
       />
+
+      <ProductNote />
 
       <LnControlPanel status={lightning} sendOnly />
 
@@ -199,11 +201,55 @@ function PayDisabled({ detail, lightning }: { detail: string; lightning: AsyncSt
 function HealthBadge({ health }: { health: AsyncState<PayHealth> }) {
   if (health.state !== "ready") return null;
   const h = health.data;
+  // Webhook-Outbox (#1093/#1113): aufgegebene Zustellungen sind ein Warnsignal.
+  const givenUp = h.webhooks_given_up ?? 0;
+  const pending = h.webhooks_pending ?? 0;
+  const title = `GET /pay/health${h.last_settled_at ? ` · zuletzt settled ${h.last_settled_at}` : ""}`;
   return (
-    <Badge tone={h.poller_alive ? "pos" : "warn"} dot title="GET /pay/health">
+    <Badge tone={h.poller_alive && givenUp === 0 ? "pos" : "warn"} dot title={title}>
       offen {h.open_requests} · settled {h.settled_total} · poller{" "}
       {h.poller_alive ? "alive" : "DOWN"}
+      {pending > 0 && ` · Webhooks offen ${pending}`}
+      {givenUp > 0 && ` · Webhooks aufgegeben ${givenUp}`}
     </Badge>
+  );
+}
+
+/* ---------- Einordnung: KAI PAY (Self-Use) vs. Produkt KAI-Pay ---------- */
+
+// Reiner Info-Hinweis mit Links - keine Wallet-UX im Dashboard (D-277 (4), D-285/ADR 0021: Strang A und B
+// beruehren sich nur ueber die Lightning-Zahlung). Wer ueber admin.kai-pay.net hier landet, sieht die Abgrenzung.
+const PRODUCT_LINKS = [
+  { href: "https://kai-pay.net/", label: "kai-pay.net" },
+  { href: "https://app.kai-pay.net/", label: "Wallet" },
+  { href: "https://kasse.kai-pay.net/", label: "Kasse" },
+];
+
+function ProductNote() {
+  return (
+    <div
+      data-testid="pay-product-note"
+      className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed"
+    >
+      Diese Seite ist <span className="font-semibold text-fg">KAI PAY Self-Use</span>: Senden und Empfangen über
+      KAIs eigenen Node (Strang A). Das Produkt <span className="font-semibold text-fg">KAI-Pay</span> – eine
+      selbstverwahrte Wallet für Nutzer mit Kasse und Zahlungsseiten – läuft getrennt davon (Strang B, D-285 / ADR
+      0021) und hält hier weder Schlüssel noch Guthaben:{" "}
+      {PRODUCT_LINKS.map((l, i) => (
+        <span key={l.href}>
+          {i > 0 && " · "}
+          <a
+            className="inline-flex items-center gap-0.5 text-info hover:underline"
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {l.label}
+            <ExternalLink size={10} aria-hidden="true" />
+          </a>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -323,6 +369,11 @@ function PayRequestView({
   const poll = usePayRequestPolling(paymentId, seed, pollMs, onTerminal);
   const req = poll.request ?? seed;
   const status = req?.status ?? null;
+  // QR aus der laufenden Sitzung ODER aus dem GET (nur bei WAITING geliefert).
+  const payable: Invoice | null =
+    status === "WAITING"
+      ? invoice ?? (req?.bolt11 && req.lightning_uri ? { bolt11: req.bolt11, lightning_uri: req.lightning_uri } : null)
+      : null;
   const remaining = useCountdown(req?.expires_at, status === "WAITING");
   const [receipt, setReceipt] = useState<ReceiptState>({ state: "idle" });
 
@@ -354,17 +405,16 @@ function PayRequestView({
 
       <StatusLine req={req} remaining={remaining} />
 
-      {invoice ? (
+      {payable ? (
         <div className="flex flex-col items-center gap-3">
-          <PayQr lightningUri={invoice.lightning_uri} />
-          <CopyField label="bolt11" value={invoice.bolt11} />
+          <PayQr lightningUri={payable.lightning_uri} />
+          <CopyField label="bolt11" value={payable.bolt11} />
         </div>
-      ) : (
+      ) : status && status !== "WAITING" ? (
         <div className="rounded-sm border border-line-subtle bg-bg-2 px-3 py-2 text-2xs text-fg-muted leading-relaxed">
-          Invoice (bolt11/QR) ist nur direkt nach dem Erstellen verfügbar —{" "}
-          <span className="font-mono">GET /pay/requests/{"{id}"}</span> liefert sie nicht.
+          Kein QR: Die Anfrage ist nicht mehr offen.
         </div>
-      )}
+      ) : null}
 
       {req && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
