@@ -18,6 +18,7 @@ pwsh -File scripts/workstation/install_workstation.ps1 -Apply   # installieren (
 | `mirror_backups_offsite.ps1` | `.local\bin\` | Lokale Zweitkopie der Chiffrate auf C: — **nicht** offsite (OneDrive synchronisiert nicht) |
 | `tasks\KAI-Vault-OnAttach.xml` | `KAI-mirror\scripts\tasks\` | Task: Vault-Lauf beim Anstecken der Platte + tägliche Erinnerung |
 | `kai_session_lagebild.py` | `KAI-mirror\scripts\` | SessionStart-Hook des Haupt-Checkouts: Mainline, Checkout-Abstand, offene PRs, aktive Claims (~1,5 s statt 120 s pytest) |
+| `ln-macrot\*` | `KAI-mirror\scripts\ln-macrot\` | Neuaufbau aller lnd-Macaroons (D-294): `macrot.ps1 pruefen\|rotieren\|pi\|aufraeumen` (bei Problemen `weiter\|zurueck`). Harte Abbruchbedingungen, Bilanz vorher/nachher, kein Geldbefehl (Test). Runbook `ln_kai_account_budget.md` §11 |
 | `kai_claim.py` | `KAI-mirror\scripts\` | Claims im Register `ACTIVE_CLAIMS.md` anlegen/schließen/ablaufen lassen und vor Worktree/PR prüfen (`check <pfade> --owner <ich>`); die Markdown-Tabelle bleibt die einzige Quelle |
 | `kai-ln-budget.ps1` + `.cmd` | `KAI-mirror\scripts\` + `AppData\Local\Microsoft\WindowsApps\` (im PATH) | Budget von KAIs litd-Sende-Account zeigen/setzen: `kai-ln-budget show`, `kai-ln-budget 5000`. Nur vom Laptop per `ssh admin@Node`, Gegenlesen, Log `%USERPROFILE%\.kai\logs\ln_budget.log` (Runbook `ln_kai_account_budget.md` §7a) |
 

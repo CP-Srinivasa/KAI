@@ -209,10 +209,29 @@ sudo systemctl restart kai-server
 - **litd** und **boltzd** lesen `admin.macaroon` über ihren Pfad, ein Neustart genügt. Loop und Pool haben eigene Macaroon-Datenbanken.
 - **KAI** liest die Macaroon-Dateien bei jedem lnd-Aufruf neu (`_build_client`). Deshalb gleiche Dateinamen mit neuem Inhalt, ohne `.env`-Änderung und ohne Dienst-Neustart.
 
-**Werkzeug:** `KAI-mirror/scripts/ln-macrot/` (lokal, nicht im Repo), Aufruf mit `macrot.ps1 pruefen | rotieren | pi | aufraeumen`, bei Problemen `weiter | zurueck`.
-- **Vor jedem Eingriff** hart abbrechen bei: offenen HTLCs, pending Kanälen, Zahlungen `IN_FLIGHT`, offenen Boltz-, Loop- oder Pool-Vorgängen, Autoloop an, Zahlungs-Drain auf der Pi nicht frei, keiner frischen SCB-Kopie.
-- Vorher und nachher wird die Bilanz festgehalten und verglichen.
-- Die Skripte enthalten keinen Sende-, Kanal- oder On-Chain-Befehl (Suchlauf-Beleg).
+**Werkzeug:** `scripts/workstation/ln-macrot/` im Repo, seit 30.09. versioniert. Die Betriebskopie liegt unter `%USERPROFILE%\KAI-mirror\scripts\ln-macrot\` und wird per `install_workstation.ps1 -Apply` abgeglichen. Aufruf mit `macrot.ps1 pruefen | rotieren | pi | aufraeumen`, bei Problemen `weiter | zurueck`.
+- **Vor jedem Eingriff** hart abbrechen bei: offenen HTLCs (auch in Force-Closes), pending Kanälen, Zahlungen `IN_FLIGHT`, offenen Boltz-, Loop- oder Pool-Vorgängen, Autoloop an, Zahlungs-Drain auf der Pi nicht frei, keiner frischen SCB-Kopie.
+- Vorher und nachher wird die Bilanz festgehalten und verglichen. Jede Abnahme ist ein `BEFUND`, ein Zuwachs nur ein `HINWEIS`.
+- Die Skripte enthalten keinen Sende-, Kanal- oder On-Chain-Befehl. Das prüft der Test `tests/unit/test_ln_macrot_tools.py` bei jedem PR.
+
+**Voraussetzungen und Rechte:**
+- **Laptop:** PowerShell, OpenSSH (`ssh`, `scp`), Schlüssel für `admin@192.168.178.51` und `ubuntu@192.168.178.23`, `KAI-mirror\sync-scb-from-node.ps1` für die frische SCB.
+- **Node** (RaspiBlitz, Benutzer `admin` mit passwortlosem sudo): `lncli`, `litcli` als Benutzer `lit`, `boltzcli` als Benutzer `bitcoin`, `python3`, PostgreSQL für LNbits (`lnbits_db`), `lnd.credentials.sh sync`.
+- **Pi:** Checkout `~/ai_analyst_trading_bot` mit `.venv` für Drain-Check und Preflight.
+- **Passwort C** muss griffbereit sein, weil lnd keinen Auto-Unlock hat.
+
+**Versionsbindung** (geprüft mit lnd 0.19.3, LiT 0.14.1-alpha, LNbits 1.2.1, boltz-client 2.12.1, RaspiBlitz 1.12.1). Vor dem nächsten Lauf neu zu prüfen:
+- dass lnd das Löschen der Wurzel `0` weiterhin verbietet und fehlende Standard-Macaroons neu erzeugt,
+- dass LNbits die Macaroons in `system_settings` hält,
+- dass litd Account-Wurzeln mit dem Präfix `ffeeddcc` anlegt.
+
+**Wiederholung:**
+- Ein zweiter Lauf startet nicht, solange ein alter Stand (`~/kai-macrot/old`) nicht aufgeräumt oder zurückgelegt ist.
+- Die Pi setzt nichts ein, solange `*.pre-rot` existiert.
+- Neue Schlüssel werden vor dem Einsetzen gegen die erwarteten Rechte geprüft (`mac_ops.py --expect`). Eine Ausweitung bricht ab.
+- Jeder Lauf verlangt die getippte Bestätigung `ROTIEREN` bzw. `AUFRAEUMEN`.
+
+**Boltz:** Boltz hat den Dienst am 03.08.2026 eingestellt, die Domain steht seit 18.09. auf `client hold`. Ohne Backend beantwortet `boltzcli` nichts mehr. Die Abbruchbedingung liest die offenen Swaps dann nur lesend aus `boltz.db`. Als offen gilt jeder Zustand außer SUCCESSFUL, REFUNDED und ABANDONED, auch ERROR, weil ein Refund noch nötig sein kann.
 
 **Ergebnis (Fenster etwa 15:14–15:46Z):**
 - **Bilanz identisch:** On-Chain 1 548 197 sat, Kanal lokal 370 327 sat, Force-Close-Anzeige 25 815 sat (Altanzeige, längst geborgen, D-287), Budget 4 878 sat.
