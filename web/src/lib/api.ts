@@ -311,6 +311,102 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
   return apiGet<TimerHealthResponse>("/health/timers", { signal });
 }
 
+// KI-Transport (LiteLLM) — GET /health/ai/transport, nur lesend (Vertrag
+// "ai-transport/v1"). Das Backend bewertet nichts selbst: BELEGT/LUECKENHAFT/
+// KEINE_EVIDENZ stammt ausschliesslich aus dem stuendlichen Routenbericht.
+// Jedes `null` heisst "nicht belegt" und traegt seinen Grund in `null_reasons`
+// unter "transport.<feld>", "runtime.<feld>", "report.<feld>",
+// "routes.<route>.report" bzw. "routes.<route>.<transport>.<feld>".
+// Ein `null` wird NIE als 0 gerendert.
+export type AiTransportMode = "off" | "shadow" | "advisory" | "primary";
+export type AiTransportEvidenceStatus = "BELEGT" | "LUECKENHAFT" | "KEINE_EVIDENZ";
+
+export type AiTransportCircuit = {
+  /** null = Circuit ueber den ganzen Alias, kein einzelner Upstream. */
+  upstream: string | null;
+  state: "closed" | "open" | "half_open";
+  consecutive_failures: number;
+  probe_in_flight: boolean;
+};
+
+export type AiTransportEvidence = {
+  status: AiTransportEvidenceStatus;
+  calls: number;
+  last_success_at: string | null;
+  /** 0..1 */
+  identity_share: number | null;
+  cost_sum_known_usd: number | null;
+  cost_unknown: number;
+  failures: number;
+  /** 0..1 */
+  fallback_rate: number | null;
+  max_retry_count: number | null;
+  newest_age_hours: number | null;
+  stale: boolean;
+  release_sha: string | null;
+};
+
+export type AiTransportRouteReport = {
+  status: AiTransportEvidenceStatus;
+  missing: string[];
+  /** Schluessel "litellm" | "direct" | "unknown"; kann fehlen. */
+  transports?: Record<string, AiTransportEvidence>;
+};
+
+export type AiTransportRoute = {
+  route: "bulk" | "standard" | "reasoning" | "critical" | "stt" | "research";
+  /** wirksamer Modus, Decke beruecksichtigt */
+  mode: AiTransportMode;
+  alias: string;
+  timeout_seconds: number;
+  /** Gesamtfrist ausserhalb OFF (bei OFF trotzdem angegeben) */
+  deadline_seconds: number;
+  /** leer = kein Zustand, alles zu */
+  circuit: AiTransportCircuit[];
+  /** null, wenn kein Bericht vorliegt (Grund in null_reasons) */
+  report: AiTransportRouteReport | null;
+};
+
+export type AiTransportResponse = {
+  schema_version: string;
+  generated_at: string;
+  transport: {
+    /** GET 127.0.0.1:4000/health/liveliness == 200; null = nicht geprueft */
+    proxy_alive: boolean | null;
+    proxy_status_code: number | null;
+    version: string | null;
+    tree: string | null;
+    manifest: string | null;
+    verified_at: string | null;
+    /** Baum (transport.json spec_sha256) == requirements-transport.lock; null = nicht pruefbar */
+    lock_matches: boolean | null;
+    tree_spec_sha256: string | null;
+    lock_sha256: string | null;
+  };
+  runtime: {
+    runtime_commit: string | null;
+    runtime_source: "release" | "checkout" | null;
+    enabled: boolean;
+    mode_ceiling: AiTransportMode;
+    shadow_grace_seconds: number;
+    detached_shadows: number;
+    max_detached_shadows: number;
+  };
+  /** immer alle 6 Katalogrouten: bulk, standard, reasoning, critical, stt, research */
+  routes: AiTransportRoute[];
+  report: {
+    available: boolean;
+    generated_at: string | null;
+    age_hours: number | null;
+    status_counts: Record<AiTransportEvidenceStatus, number>;
+  };
+  null_reasons: Record<string, string>;
+};
+
+export function fetchAiTransport(signal?: AbortSignal): Promise<AiTransportResponse> {
+  return apiGet<AiTransportResponse>("/health/ai/transport", { signal });
+}
+
 // Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster. Werte sind null, wenn
 // das Fenster unter min_resolved liegt (kein Chart-Punkt auf dünner Stichprobe).
 export type EdgeWindow = {
