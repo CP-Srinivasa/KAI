@@ -209,6 +209,24 @@ def test_diff_routing_gain_is_only_a_note() -> None:
     assert lines and all(x.startswith("HINWEIS") for x in lines)
 
 
+def _opener(local: int, fee: int) -> dict:
+    snap = _snap()
+    snap["channels"][0].update(local=local, commit_fee=fee, initiator=True)
+    return snap
+
+
+def test_diff_fee_reserve_adjustment_is_not_an_outflow() -> None:
+    # Gemessen am 30.09.: Netzgebuehr stieg, Reserve 367 -> 545, lokal 370 265 -> 370 087.
+    lines = _load("macrot_snap").diff(_opener(370_265, 367), _opener(370_087, 545))
+    assert lines and all(x.startswith("HINWEIS") for x in lines)
+    assert any("Gebuehrenreserve" in x and "367 -> 545" in x for x in lines)
+
+
+def test_diff_real_outflow_hidden_behind_a_fee_change_is_still_a_finding() -> None:
+    lines = _load("macrot_snap").diff(_opener(370_265, 367), _opener(370_000, 545))
+    assert any(x.startswith("BEFUND") and "Abnahme" in x for x in lines)
+
+
 def test_diff_flags_budget_and_channel_changes() -> None:
     ms = _load("macrot_snap")
     after = _snap(accounts=[{"id": "cd", "label": "kai", "balance": 100}], channels=[])

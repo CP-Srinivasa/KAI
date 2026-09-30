@@ -139,6 +139,10 @@ def take() -> dict:
                 "capacity": sat(c["capacity"]),
                 "local": sat(c["local_balance"]),
                 "remote": sat(c["remote_balance"]),
+                # Als Eroeffner traegt der Node die Gebuehrenreserve der Schliessungs-
+                # transaktion; lnd passt sie an die Netzgebuehr an (lokal sinkt, Summe gleich).
+                "commit_fee": sat(c.get("commit_fee")),
+                "initiator": bool(c.get("initiator")),
                 "unsettled": sat(c.get("unsettled_balance")),
                 "pending_htlcs": len(c.get("pending_htlcs") or []),
                 "active": bool(c.get("active")),
@@ -274,13 +278,24 @@ def diff(a: dict, b: dict) -> list[str]:
         x, y = ca[cp], cb[cp]
         if x["capacity"] != y["capacity"]:
             out.append(f"BEFUND: Kapazitaet {cp[:12]}… {x['capacity']} -> {y['capacity']}")
-        if y["local"] < x["local"]:
+        # Eigenes Guthaben = lokal + (als Eroeffner) Gebuehrenreserve. Eine Anpassung der
+        # Reserve an die Netzgebuehr verschiebt nur zwischen beiden -- kein Abfluss.
+        fee_x = x.get("commit_fee", 0) if x.get("initiator") else 0
+        fee_y = y.get("commit_fee", 0) if y.get("initiator") else 0
+        own_x, own_y = x["local"] + fee_x, y["local"] + fee_y
+        if own_y < own_x:
             out.append(
-                f"BEFUND: lokales Guthaben {cp[:12]}… {x['local']} -> {y['local']} (Abnahme)"
+                f"BEFUND: eigenes Guthaben {cp[:12]}… {own_x} -> {own_y} "
+                "(lokal + Gebuehrenreserve, Abnahme)"
             )
-        elif y["local"] > x["local"]:
+        elif own_y > own_x:
             out.append(
-                f"HINWEIS: lokales Guthaben {cp[:12]}… +{y['local'] - x['local']} sat (Routing-Gebuehr/Eingang)"
+                f"HINWEIS: eigenes Guthaben {cp[:12]}… +{own_y - own_x} sat (Routing-Gebuehr/Eingang)"
+            )
+        if fee_y != fee_x:
+            out.append(
+                f"HINWEIS: Gebuehrenreserve {cp[:12]}… {fee_x} -> {fee_y} sat "
+                "(Anpassung an die Netzgebuehr, kein Abfluss)"
             )
     fa = {f["chan_point"]: f["limbo"] for f in a["pending"]["force_closing"]}
     fb = {f["chan_point"]: f["limbo"] for f in b["pending"]["force_closing"]}
