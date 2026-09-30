@@ -68,6 +68,15 @@
       "monitoring": "alternative_watcher",
       "watcher": "_check_host"
     },
+    "oracle_cases.jsonl": {
+      "reader": "app/alerts/health_check_payments.py",
+      "failure_consequence": "Der Strom traegt die Meldungen und Widerrufe von Oracle-Kaeufern (bezahlt, nichts erhalten; Daten fehlerhaft; doppelt bezahlt; Widerruf nach § 356a BGB). Stirbt er, bekommt der Kaeufer keine Eingangsbestaetigung (die Seite zeigt 503 und verweist auf die Postanschrift). Liest ihn niemand, veraltet ein Vorgang still: ein berechtigter Erstattungs- oder Widerrufsanspruch bliebe unbearbeitet, obwohl die Hilfe-Seite zwei bzw. sieben Werktage zusagt.",
+      "failure_would_be_noticed_by": "_check_payment_reconciliation in app/alerts/health_check.py (Implementierung: app/alerts/health_check_payments.check_oracle_cases) meldet bei jedem Health-Check-Lauf warning 'oracle_cases', sobald ein Vorgang ohne Antwort aelter als 2 Werktage oder unerledigt aelter als 7 Werktage ist oder die Datei nicht lesbar ist; zusaetzlich geht beim Eingang jedes Vorgangs eine Telegram-Nachricht an den Betreiber.",
+      "time_to_notice": "Eingang sofort (Telegram); Serviceziel-Ueberschreitung beim naechsten Health-Check-Lauf (15-Minuten-Timer) nach Ablauf von 2 bzw. 7 Werktagen.",
+      "decision_that_would_change": "Der Operator beantwortet bzw. erledigt den Vorgang (Zugang wiederherstellen, Daten korrigieren, berechtigte Erstattung oder Widerruf abwickeln) und dokumentiert das mit scripts/oracle_case.py, bevor aus einer Kaeuferbeschwerde ein ignorierter Anspruch wird.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_payment_reconciliation"
+    },
     "payment_journal.jsonl": {
       "reader": "app/alerts/health_check_payments.py",
       "failure_consequence": "Das Geld-Journal ist die einzige Wahrheit ueber jede Wertbewegung (ADR 0018 §5). Faellt es aus oder bricht seine Hash-Kette, kann kein Prozess mehr entscheiden, ob ein Intent bereits gesendet wurde — Idempotenz, Tages-Cap und Reconciliation verlieren gleichzeitig ihre Grundlage, und ein gebrochenes Journal sieht weiterhin aus wie ein Beweis.",

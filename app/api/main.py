@@ -49,6 +49,7 @@ from app.api.routers import (
     metrics,
     node_blitz,
     operator,
+    oracle_legal,
     pay,
     payments,
     premium_signals,
@@ -482,6 +483,7 @@ def create_app() -> FastAPI:
     app.include_router(premium_signals.router)
     app.include_router(diversification.router)
     app.include_router(truth_oracle.router)
+    app.include_router(oracle_legal.router)  # Bedingungen/Hilfe: oeffentlich erst nach Freigabe
     app.include_router(ln_control.router)
     app.include_router(payments.router)
     # Hinter derselben Bearer-/CF-Access-Grenze wie /payments — die oeffentliche

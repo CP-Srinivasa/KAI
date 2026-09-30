@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="{{ROBOTS}}">
+<title>KAI Oracle – Hilfe &amp; Beschwerde</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1b1d21; --muted:#5b6270; --bg:#fbfbfa; --line:#d9dce1; --accent:#8a5a00; --mark:#fff1b8; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e8e9ec; --muted:#a3a9b5; --bg:#15171b; --line:#2c3038; --accent:#f0b34a; --mark:#4a3b00; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:44rem; margin:0 auto; padding:1.5rem 1rem 4rem; }
+  h1 { font-size:1.6rem; margin:.2rem 0 .3rem; } h2 { font-size:1.15rem; margin:2rem 0 .5rem; border-top:1px solid var(--line); padding-top:1.2rem; }
+  .meta { color:var(--muted); font-size:.9rem; }
+  .draft { background:var(--mark); border-radius:6px; padding:.8rem 1rem; font-weight:600; }
+  mark.offen { background:var(--mark); color:inherit; padding:0 .2rem; border-radius:3px; }
+  ol.flow { padding-left:1.2rem; } ol.flow li { margin:.3rem 0; }
+  form { display:grid; gap:.8rem; margin-top:.8rem; }
+  label { display:grid; gap:.25rem; font-weight:600; font-size:.95rem; }
+  label span.hint { font-weight:400; color:var(--muted); font-size:.85rem; }
+  input, select, textarea { font:inherit; padding:.5rem; border:1px solid var(--line); border-radius:4px; background:transparent; color:inherit; }
+  fieldset { border:1px solid var(--line); border-radius:6px; padding:.6rem .8rem; }
+  fieldset label { display:flex; gap:.5rem; font-weight:400; align-items:center; }
+  button { font:inherit; font-weight:600; padding:.6rem 1rem; border:0; border-radius:4px; background:var(--accent); color:#fff; cursor:pointer; justify-self:start; }
+  .warn { border-left:4px solid var(--accent); padding:.4rem .8rem; }
+  .hp { position:absolute; left:-9999px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+{{ENTWURF_BANNER}}
+<h1>KAI Oracle – Hilfe &amp; Beschwerde</h1>
+<p class="meta">Version {{VERSION}} · Stand {{STAND}} · <a href="/oracle/bedingungen">Leistungen &amp; Bedingungen</a></p>
+
+<p>Bezahlt und nichts bekommen, Daten fehlerhaft oder doppelt bezahlt? Wiederholen Sie einen fehlgeschlagenen Abruf zuerst innerhalb der Zugangszeit mit demselben Zugangsschlüssel – das kostet nichts. Hilft das nicht, melden Sie das Problem hier. Ein Kundenkonto brauchen Sie nicht.</p>
+
+<h2>So bearbeiten wir Ihre Meldung</h2>
+<ol class="flow">
+  <li><strong>Sofort:</strong> Eingangsbestätigung mit Vorgangsnummer und Zusammenfassung Ihrer Angaben.</li>
+  <li><strong>Prüfung durch einen Menschen:</strong> Zahlung, Zugangsberechtigung und tatsächliche Lieferung werden getrennt untersucht.</li>
+  <li><strong>Lösung:</strong> Zugang wiederherstellen, Daten korrigieren oder eine berechtigte Erstattung durchführen. Eine Ablehnung begründen wir nachvollziehbar.</li>
+  <li><strong>Eskalation:</strong> Sind Sie mit dem Ergebnis nicht einverstanden, verlangen Sie mit Ihrer Vorgangsnummer eine erneute menschliche Prüfung (Problemart „Erneute Prüfung“).</li>
+</ol>
+<p><strong>Unsere Serviceziele:</strong> erste persönliche Antwort binnen zwei Werktagen, Lösung oder begründeter Zwischenstand binnen sieben Werktagen. Das sind freiwillige Serviceziele, keine gesetzlichen Fristen; Ihre gesetzlichen Rechte und Fristen bleiben unberührt.</p>
+
+<h2 id="melden">Problem melden</h2>
+<p class="warn">Bitte senden Sie <strong>niemals</strong> Seeds, private Schlüssel, Wallet-Passwörter oder einen vollständigen Zugangsschlüssel. Wir fragen danach nie. Eine Zahlungsreferenz allein berechtigt noch nicht zur Auszahlung einer Erstattung – wir prüfen jeden Fall.</p>
+<form method="post" action="/oracle/hilfe/meldung">
+  <fieldset>
+    <legend>Problem</legend>
+    <label><input type="radio" name="problem" value="nicht_erhalten" required> Bezahlt, nichts erhalten</label>
+    <label><input type="radio" name="problem" value="fehlerhaft"> Daten fehlerhaft</label>
+    <label><input type="radio" name="problem" value="doppelt"> Doppelt bezahlt</label>
+    <label><input type="radio" name="problem" value="erneute_pruefung"> Erneute Prüfung (Vorgangsnummer unten angeben)</label>
+    <label><input type="radio" name="problem" value="anderes"> Anderes</label>
+  </fieldset>
+  <label>Auftragsreferenz, Payment-Hash oder Vorgangsnummer <span class="hint">falls vorhanden – der Payment-Hash steht in Ihrer Wallet bei der Zahlung (64 Zeichen)</span>
+    <input name="referenz" maxlength="80" autocomplete="off"></label>
+  <label>Betroffener Bereich <span class="hint">falls bekannt</span>
+    <select name="bereich">
+      <option value="">– bitte wählen –</option>
+      <option value="onchain-facts">On-Chain-Fakten (/oracle/onchain-facts)</option>
+      <option value="fee-series">Gebührenreihe (/oracle/fee-series)</option>
+      <option value="verdicts">Verdicts und Beweispakete (/oracle/verdicts)</option>
+      <option value="timestamp">Zeitstempel (/oracle/timestamp)</option>
+    </select></label>
+  <label>Zeitpunkt <span class="hint">ungefähr, mit Zeitzone, falls bekannt</span>
+    <input name="zeitpunkt" maxlength="40" placeholder="z. B. 30.09.2026 14:05 MESZ"></label>
+  <label>Beschreibung
+    <textarea name="beschreibung" rows="5" minlength="10" maxlength="2000" required placeholder="Was ist passiert? Welche Antwort oder Fehlermeldung haben Sie erhalten?"></textarea></label>
+  <label>E-Mail für die Antwort
+    <input type="email" name="email" maxlength="254" required autocomplete="email"></label>
+  <label class="hp" aria-hidden="true">Bitte leer lassen <input name="website" tabindex="-1" autocomplete="off"></label>
+  <button type="submit">Meldung absenden</button>
+</form>
+
+<h2 id="widerruf">Vertrag widerrufen</h2>
+<p>Als Verbraucher können Sie hier während der Widerrufsfrist Ihren Vertrag widerrufen. [[OFFEN: Ob und wie lange für den jeweiligen Kauf ein Widerrufsrecht besteht, legt die Widerrufsbelehrung fest – Formulierung Anwalt]] Sie können den Widerruf auch formlos per Post an die Formsys GmbH, Grafenberger Allee 277–287, 40237 Düsseldorf, erklären.</p>
+<form method="post" action="/oracle/hilfe/widerruf">
+  <label>Welchen Vertrag widerrufen Sie? <span class="hint">Payment-Hash oder Auftragsreferenz</span>
+    <input name="referenz" maxlength="80" required autocomplete="off"></label>
+  <label>Name <span class="hint">optional</span>
+    <input name="name" maxlength="120" autocomplete="name"></label>
+  <label>E-Mail für die Eingangsbestätigung
+    <input type="email" name="email" maxlength="254" required autocomplete="email"></label>
+  <label class="hp" aria-hidden="true">Bitte leer lassen <input name="website" tabindex="-1" autocomplete="off"></label>
+  <button type="submit">Jetzt widerrufen</button>
+</form>
+<p class="meta">Nach dem Absenden erhalten Sie sofort eine Eingangsbestätigung mit Datum, Uhrzeit und Inhalt Ihrer Erklärung zum Speichern. [[OFFEN: Bestätigung zusätzlich per E-Mail auf einem dauerhaften Datenträger – E-Mail-Versand ist technisch noch nicht eingerichtet]]</p>
+
+<h2>Streitbeilegung</h2>
+<p>[[OFFEN: Angabe zur Verbraucherschlichtung nach § 36 VSBG – Bereitschaft oder Verpflichtung zur Teilnahme und gegebenenfalls zuständige Schlichtungsstelle; Entscheid Operator]]</p>
+</main>
+</body>
+</html>

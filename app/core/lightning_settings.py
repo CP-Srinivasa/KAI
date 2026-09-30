@@ -97,6 +97,10 @@ class LightningSettings(BaseSettings):
     # global budget per 60s window; <=0 disables that dimension.
     l402_mint_per_min: int = Field(default=5, ge=0)
     l402_mint_budget_per_min: int = Field(default=60, ge=0)
+    # Oracle-Rechtsseiten (Operator-Entscheid 2026-09-30): öffentlich erst nach
+    # Freigabe durch den Anwalt. Wirkt nur, wenn app/oracle_legal keine offenen
+    # Punkte mehr enthält. Env ``APP_LN_ORACLE_LEGAL_PUBLISHED``.
+    oracle_legal_published: bool = Field(default=False)
     # B-005 capital-confirm 2nd factor (HOTP) for irreversible value-layer POSTs.
     # ``hotp_seed_path`` empty (default) → no confirm is possible → no capital
     # execute can ever pass needs_confirm (safe-by-default). Operator provisions the

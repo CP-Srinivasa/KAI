@@ -258,6 +258,28 @@ def _reconcile_staleness(
     )
 
 
+def check_oracle_cases(adir: Path, *, now: datetime | None = None) -> list[HealthIssue]:
+    """Waechter der Oracle-Vorgaenge ``oracle/oracle_cases.jsonl`` (Stream-Vertrag G4).
+
+    Meldungen und Widerrufe von Kaeufern (``app/oracle_legal``) sind offene Fragen
+    ueber Geld und Rechte: bezahlt, nichts erhalten; doppelt bezahlt; Widerruf. Ohne
+    diesen Waechter laege ein Vorgang in einer Datei, die niemand liest. Warnung,
+    sobald ein Vorgang das freiwillige Serviceziel ueberschreitet (erste Antwort
+    2 Werktage, Loesung 7 Werktage) oder die Datei nicht lesbar ist. Kein Eintrag
+    ist der Normalfall, keine Frische-Schwelle.
+    """
+    from app.oracle_legal import overdue_cases
+
+    try:
+        late = overdue_cases(now or datetime.now(UTC), adir / "oracle" / "oracle_cases.jsonl")
+    except ValueError as exc:
+        return [_issue("warning", "oracle_cases", f"oracle_cases.jsonl: {exc}")]
+    if not late:
+        return []
+    shown = "; ".join(late[:3]) + (f" (+{len(late) - 3})" if len(late) > 3 else "")
+    return [_issue("warning", "oracle_cases", f"Serviceziel ueberschritten: {shown}")]
+
+
 def check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
     """Validate existing G5 reject streams without inventing a write cadence."""
     from app.audit.input_contract_rejections import inspect_input_rejection_streams
