@@ -148,52 +148,70 @@ def _write(out, **kw) -> dict:
 def test_ohne_zyklus_bleibt_die_messzeile_genau_wie_bisher(tmp_path) -> None:
     out = tmp_path / "l2_shadow.jsonl"
     line = _write(out)
-    for feld in ("candidate_id", "decision_ts", "reference_price_ts", "causality_ok"):
+    for feld in (
+        "candidate_id",
+        "cycle_started_at",
+        "input_cutoff_ts",
+        "decision_ts",
+        "reference_price_ts",
+        "causality_ok",
+        "l1_observed_ts",
+    ):
         assert feld not in line
 
 
-def test_im_zyklus_traegt_die_messzeile_die_kandidaten_id(tmp_path) -> None:
-    out = tmp_path / "l2_shadow.jsonl"
-    with bind_candidate(
+def _bind(**kw):  # noqa: ANN202
+    return bind_candidate(
         candidate_id="cycle-42",
-        decision_ts="2026-09-23T10:00:05+00:00",
-        reference_price_ts="2026-09-23T10:00:00+00:00",
-    ):
-        line = _write(out)
+        cycle_started_at=kw.get("start", "2026-09-23T10:00:00+00:00"),
+        input_cutoff_ts=kw.get("cut", "2026-09-23T10:00:00.400000+00:00"),
+        reference_price_ts=kw.get("price"),
+    )
+
+
+def test_im_zyklus_traegt_die_messzeile_id_zeiten_und_l1(tmp_path) -> None:
+    out = tmp_path / "l2_shadow.jsonl"
+    with _bind(price="2026-09-23T10:00:00.170000+00:00"):
+        line = _write(out, l1_observed_ts="2026-09-23T09:45:00+00:00")
     assert line["candidate_id"] == "cycle-42"
-    assert line["decision_ts"] == "2026-09-23T10:00:05+00:00"
-    assert line["reference_price_ts"] == "2026-09-23T10:00:00+00:00"
+    assert line["cycle_started_at"] == "2026-09-23T10:00:00+00:00"
+    assert line["input_cutoff_ts"] == "2026-09-23T10:00:00.400000+00:00"
+    assert line["reference_price_ts"] == "2026-09-23T10:00:00.170000+00:00"
+    assert line["l1_observed_ts"] == "2026-09-23T09:45:00+00:00"
     assert line["causality_ok"] is True
+    assert "decision_ts" not in line
 
 
 def test_der_beobachtungszeitpunkt_wird_nicht_zurueckdatiert(tmp_path) -> None:
-    """``ts`` bleibt die Uhr der Messung — NICHT die Entscheidungszeit."""
+    """``ts`` bleibt die Uhr der Messung — NICHT der Zyklusbeginn oder der Schnitt."""
     out = tmp_path / "l2_shadow.jsonl"
     vergangen = "2020-01-01T00:00:00+00:00"
-    with bind_candidate(candidate_id="cycle-42", decision_ts=vergangen):
+    with _bind(start=vergangen, cut=vergangen):
         line = _write(out)
     assert line["ts"] != vergangen
     assert line["ts"] > "2026-"
-    assert line["decision_ts"] == vergangen
+    assert line["cycle_started_at"] == vergangen
 
 
 def test_look_ahead_wird_markiert_statt_verschwiegen(tmp_path) -> None:
     out = tmp_path / "l2_shadow.jsonl"
-    with bind_candidate(
-        candidate_id="cycle-42",
-        decision_ts="2026-09-23T10:00:00+00:00",
-        reference_price_ts="2026-09-23T10:00:05+00:00",  # Preis JUENGER als Entscheidung
-    ):
-        line = _write(out)
+    with _bind(price="2026-09-23T10:00:05+00:00"):  # Preis JUENGER als der Schnitt
+        line = _write(out, l1_observed_ts="2026-09-23T09:45:00+00:00")
     assert line["causality_ok"] is False
     # Die Zeile wird trotzdem geschrieben — das Urteil gehoert dem Evaluator.
     assert line["candidate_id"] == "cycle-42"
 
 
+def test_l1_zeit_steht_auch_ausserhalb_eines_zyklus(tmp_path) -> None:
+    line = _write(tmp_path / "l2_shadow.jsonl", l1_observed_ts="2026-09-23T09:45:00+00:00")
+    assert line["l1_observed_ts"] == "2026-09-23T09:45:00+00:00"
+    assert "candidate_id" not in line
+
+
 def test_die_rohmerkmale_bleiben_unangetastet(tmp_path) -> None:
     out = tmp_path / "l2_shadow.jsonl"
     ohne = _write(out)
-    with bind_candidate(candidate_id="cycle-42", decision_ts="2026-09-23T10:00:00+00:00"):
+    with _bind():
         mit = _write(out)
     roh = (
         "symbol",

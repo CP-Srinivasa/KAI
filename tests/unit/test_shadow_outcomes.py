@@ -150,9 +150,15 @@ def test_canonical_adapter_preserves_strict_join_provenance(feature_key):
 
 
 def test_1056_producer_fields_reach_canonical_reader_and_pit_join(tmp_path):
-    """Exercise the real #1056 producer rather than a hand-written measurement."""
-    decision = datetime.now(UTC)
-    reference = decision - timedelta(seconds=1)
+    """Exercise the real producer rather than a hand-written measurement.
+
+    Zeitmodell seit 2026-09-30 (Befund 3): Kurs nach dem Zyklusbeginn, aber vor dem
+    Eingabeschnitt; der Outcome haengt am Zyklusbeginn.
+    """
+    started = datetime.now(UTC) - timedelta(seconds=1)
+    reference = started + timedelta(seconds=0.17)
+    cutoff = started + timedelta(seconds=0.4)
+    l1_seen = started - timedelta(minutes=15)
     shadow_log = tmp_path / "l2.jsonl"
     features = OnchainFlowFeatures(
         fee_sat_vb=2.0,
@@ -164,7 +170,8 @@ def test_1056_producer_fields_reach_canonical_reader_and_pit_join(tmp_path):
 
     with bind_candidate(
         candidate_id="cycle-e2e",
-        decision_ts=decision.isoformat(),
+        cycle_started_at=started.isoformat(),
+        input_cutoff_ts=cutoff.isoformat(),
         reference_price_ts=reference.isoformat(),
     ):
         append_l2_shadow_log(
@@ -173,20 +180,23 @@ def test_1056_producer_fields_reach_canonical_reader_and_pit_join(tmp_path):
             direction="long",
             features=features,
             source_trust=0.5,
+            l1_observed_ts=l1_seen.isoformat(),
         )
 
     measurements = read_jsonl(shadow_log)
     outcomes = build_outcomes(
         [_resolved("cycle-e2e", "BTC/USDT", "long", h3600=12.5)],
-        {"cycle-e2e": decision},
+        {"cycle-e2e": started},
     )
     pairs = pit_join(measurements, to_feature_outcomes(outcomes))
 
     assert len(pairs) == 1
     measurement, outcome = pairs[0]
     assert measurement["candidate_id"] == "cycle-e2e"
-    assert measurement["decision_ts"] == decision.isoformat()
+    assert measurement["cycle_started_at"] == started.isoformat()
+    assert measurement["input_cutoff_ts"] == cutoff.isoformat()
     assert measurement["reference_price_ts"] == reference.isoformat()
+    assert measurement["l1_observed_ts"] == l1_seen.isoformat()
     assert measurement["causality_ok"] is True
     assert outcome["candidate_id"] == "cycle-e2e"
     assert outcome["net_bps"] == 12.5

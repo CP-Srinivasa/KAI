@@ -282,57 +282,111 @@ def test_pit_join_enforces_maximum_age() -> None:
     assert len(pit_join(measurements, outcomes, max_age_seconds=301.0)) == 1
 
 
-def test_pit_join_accepts_merged_producer_context_without_backdating() -> None:
-    measurement = {
-        "candidate_id": "cycle-42",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "ts": "2026-09-23T10:00:02+00:00",
-        "decision_ts": "2026-09-23T10:00:00+00:00",
-        "reference_price_ts": "2026-09-23T09:59:59+00:00",
-        "causality_ok": True,
-    }
-    outcome = {
-        "candidate_id": "cycle-42",
-        "symbol": "BTC/USDT",
-        "side": "long",
-        "entry_ts": "2026-09-23T10:00:00+00:00",
-        "net_bps": 4.0,
-    }
+_OUTCOME_AT_START = {
+    "candidate_id": "cycle-42",
+    "symbol": "BTC/USDT",
+    "side": "long",
+    "entry_ts": "2026-09-23T10:00:00+00:00",
+    "net_bps": 4.0,
+}
 
-    assert pit_join([measurement], [outcome]) == [(measurement, outcome)]
+# Uebergangsform 25.–30.09.2026: decision_ts = Zyklusbeginn, causality_ok gegen ihn.
+_INTERIM = {
+    "candidate_id": "cycle-42",
+    "symbol": "BTC/USDT",
+    "direction": "long",
+    "ts": "2026-09-23T10:00:00.630000+00:00",
+    "decision_ts": "2026-09-23T10:00:00+00:00",
+    "reference_price_ts": "2026-09-23T10:00:00.170000+00:00",
+    "causality_ok": False,
+}
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {},  # der gemessene Normalfall: Kurs 0,17 s, Messung 0,63 s nach Zyklusbeginn
+        {"causality_ok": True},
+        {"causality_ok": None},  # das alte Flag zaehlt nicht (falscher Anker)
+        {"reference_price_ts": "2026-09-23T09:59:59+00:00"},
+    ],
+)
+def test_pit_join_reads_interim_rows_with_the_measurement_as_cutoff(override) -> None:
+    measurement = {**_INTERIM, **override}
+    assert pit_join([measurement], [_OUTCOME_AT_START]) == [(measurement, _OUTCOME_AT_START)]
 
 
 @pytest.mark.parametrize(
     ("override", "outcome_ts"),
     [
-        ({"causality_ok": False}, "2026-09-23T10:00:00+00:00"),
-        ({"causality_ok": None}, "2026-09-23T10:00:00+00:00"),
-        ({"reference_price_ts": "2026-09-23T10:00:01+00:00"}, "2026-09-23T10:00:00+00:00"),
-        ({}, "2026-09-23T10:00:01+00:00"),
-        ({"ts": "2026-09-23T09:59:59+00:00"}, "2026-09-23T10:00:00+00:00"),
+        ({"reference_price_ts": "2026-09-23T10:00:01+00:00"}, None),  # Kurs NACH der Messung
+        ({}, "2026-09-23T10:00:01+00:00"),  # anderer Anker als der Zyklus
+        ({"ts": "2026-09-23T09:59:59+00:00"}, None),  # Messung vor dem Zyklus
+        ({"ts": "2026-09-23T10:00:06+00:00"}, None),  # > 5 s Luecke = echter Vorlauf
+        ({"decision_ts": None}, None),
     ],
 )
-def test_pit_join_rejects_invalid_merged_producer_context(override, outcome_ts) -> None:
-    measurement = {
-        "candidate_id": "cycle-42",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "ts": "2026-09-23T10:00:02+00:00",
-        "decision_ts": "2026-09-23T10:00:00+00:00",
-        "reference_price_ts": "2026-09-23T09:59:59+00:00",
-        "causality_ok": True,
-        **override,
-    }
-    outcome = {
-        "candidate_id": "cycle-42",
-        "symbol": "BTC/USDT",
-        "side": "long",
-        "entry_ts": outcome_ts,
-        "net_bps": 4.0,
-    }
-
+def test_pit_join_rejects_invalid_interim_rows(override, outcome_ts) -> None:
+    measurement = {**_INTERIM, **override}
+    outcome = {**_OUTCOME_AT_START, **({"entry_ts": outcome_ts} if outcome_ts else {})}
     assert pit_join([measurement], [outcome]) == []
+
+
+# Zeitmodell ab 2026-09-30: Eingabeschnitt nach dem Kursabruf.
+_CUTOFF_ROW = {
+    "candidate_id": "cycle-42",
+    "symbol": "BTC/USDT",
+    "direction": "long",
+    "ts": "2026-09-23T10:00:00.630000+00:00",
+    "cycle_started_at": "2026-09-23T10:00:00+00:00",
+    "input_cutoff_ts": "2026-09-23T10:00:00.400000+00:00",
+    "reference_price_ts": "2026-09-23T10:00:00.170000+00:00",
+    "l1_observed_ts": "2026-09-23T09:45:00+00:00",
+    "causality_ok": True,
+}
+
+
+def test_pit_join_accepts_cutoff_rows_without_backdating() -> None:
+    assert pit_join([_CUTOFF_ROW], [_OUTCOME_AT_START]) == [(_CUTOFF_ROW, _OUTCOME_AT_START)]
+
+
+@pytest.mark.parametrize(
+    ("override", "outcome_ts"),
+    [
+        ({"causality_ok": False}, None),
+        ({"causality_ok": None}, None),
+        # spaet eingetroffener L1-Satz: juenger als der Schnitt
+        ({"l1_observed_ts": "2026-09-23T10:00:00.500000+00:00"}, None),
+        ({"l1_observed_ts": None}, None),
+        # zukunftsdatierter Kurs (Uhrenversatz)
+        ({"reference_price_ts": "2026-09-23T10:01:00+00:00"}, None),
+        # Schnitt mehr als 5 s nach dem Zyklusbeginn
+        (
+            {
+                "input_cutoff_ts": "2026-09-23T10:00:06+00:00",
+                "ts": "2026-09-23T10:00:07+00:00",
+            },
+            None,
+        ),
+        # Schnitt vor dem Zyklusbeginn ist unmoeglich
+        ({"input_cutoff_ts": "2026-09-23T09:59:59+00:00"}, None),
+        # Messung vor dem Schnitt
+        ({"ts": "2026-09-23T10:00:00.300000+00:00"}, None),
+        # Outcome gehoert zu einem anderen Zyklusbeginn
+        ({}, "2026-09-23T10:00:00.400000+00:00"),
+    ],
+)
+def test_pit_join_rejects_invalid_cutoff_rows(override, outcome_ts) -> None:
+    measurement = {**_CUTOFF_ROW, **override}
+    outcome = {**_OUTCOME_AT_START, **({"entry_ts": outcome_ts} if outcome_ts else {})}
+    assert pit_join([measurement], [outcome]) == []
+
+
+def test_the_input_lag_bound_is_the_measured_one() -> None:
+    from app.observability.l2_evidence_eval import MAX_INPUT_LAG_SECONDS
+
+    # Gemessen 30.09.: max. 2,4 s; 5 s lassen Luft und sind 0,14 % des 1-h-Horizonts.
+    assert MAX_INPUT_LAG_SECONDS == 5.0
 
 
 def test_pit_join_missing_provenance_and_invalid_timestamps_are_unmatched() -> None:

@@ -105,6 +105,50 @@ def outcome_contract_gaps(outcomes: Sequence[dict[str, Any]]) -> dict[str, int]:
     return {"missing_candidate_id": missing_id, "missing_side": missing_side}
 
 
+# Befund 3, gemessen am 2026-09-30 auf 366 Zeilen mit Kandidatenkontext: der Kurs lag
+# im Median 0,17 s (p99 0,44 s, max 2,0 s), die Messung 0,63 s (p99 1,21 s, max 2,4 s)
+# nach dem Zyklusbeginn. Die Outcome-Rendite laeuft ab dem Zyklusbeginn; mehr als diese
+# Spanne zwischen Zyklusbeginn und Eingabeschnitt wird nicht akzeptiert (5 s sind
+# 0,14 % des 1-h-Horizonts) -- eine laengere Luecke waere echter Vorlauf.
+MAX_INPUT_LAG_SECONDS = 5.0
+_CONTEXT_KEYS = ("input_cutoff_ts", "decision_ts", "reference_price_ts", "causality_ok")
+
+
+def _context_age(
+    measurement: dict[str, Any], measured_at: datetime, outcome_at: datetime
+) -> float | None:
+    """Alter der Messung gegenueber ihrem Eingabeschnitt, oder ``None`` bei Regelverletzung."""
+    if "input_cutoff_ts" in measurement:
+        # Zeitmodell ab 2026-09-30: Schnitt NACH dem Kursabruf, direkt vor dem Signal.
+        start = _parse_ts(measurement.get("cycle_started_at"))
+        cutoff = _parse_ts(measurement.get("input_cutoff_ts"))
+        price = _parse_ts(measurement.get("reference_price_ts"))
+        l1 = _parse_ts(measurement.get("l1_observed_ts"))
+        if measurement.get("causality_ok") is not True:
+            return None
+        if start is None or cutoff is None or price is None or l1 is None:
+            return None
+        if price > cutoff or l1 > cutoff or outcome_at != start or measured_at < cutoff:
+            return None
+        lag = (cutoff - start).total_seconds()
+        if lag < 0.0 or lag > MAX_INPUT_LAG_SECONDS:
+            return None
+        return (measured_at - cutoff).total_seconds()
+    # Uebergangsform 25.–30.09.2026: ``decision_ts`` = Zyklusbeginn, ``causality_ok``
+    # gegen diesen (zu fruehen) Anker berechnet -- deshalb hier nicht verwendet. Der
+    # Schnitt ist nicht notiert; alle Eingaben lagen spaetestens zur Messzeit vor (Kurs
+    # davor abgerufen, L1-Satz vom eigenen Scheduler davor geschrieben). Die Messzeit ist
+    # also die obere Schranke des Schnitts und muss in derselben Spanne liegen.
+    start = _parse_ts(measurement.get("decision_ts"))
+    price = _parse_ts(measurement.get("reference_price_ts"))
+    if start is None or price is None or outcome_at != start or price > measured_at:
+        return None
+    lag = (measured_at - start).total_seconds()
+    if lag < 0.0 or lag > MAX_INPUT_LAG_SECONDS:
+        return None
+    return lag
+
+
 def pit_join(
     measurements: Sequence[dict[str, Any]],
     outcomes: Sequence[dict[str, Any]],
@@ -116,13 +160,11 @@ def pit_join(
     Both records must carry the same non-empty ``candidate_id``, the same ``symbol``,
     and compatible ``direction`` (measurement) / ``side`` (outcome). Candidate IDs
     that occur more than once on either side are ambiguous and therefore unmatched.
-    New producer rows also carry ``decision_ts``, ``reference_price_ts`` and
-    ``causality_ok``.  Their outcome must use the same decision anchor; the
-    measurement must be written after that anchor and within ``max_age_seconds``.
-    A reference price after the anchor, a false/missing causality verdict or a
-    mismatched anchor is rejected.  Legacy rows that predate the context fields
-    retain the stricter old rule: outcome at/after measurement within the bound.
-    Missing provenance, direction, symbol, or valid timestamps is fail-closed.
+    Rows with a candidate context follow :func:`_context_age` (input-cutoff rule
+    since 2026-09-30, a conservative reading for the 25.–30.09. ``decision_ts``
+    rows). Legacy rows that predate the context fields retain the old rule:
+    outcome at/after measurement within the bound. Missing provenance, direction,
+    symbol, or valid timestamps is fail-closed.
 
     The 300-second default is the repository's existing aligned-evidence tolerance;
     callers may make it stricter, but cannot disable the age bound. Returned pairs
@@ -165,21 +207,12 @@ def pit_join(
         if measured_at is None or outcome_at is None:
             continue
 
-        has_context = any(
-            key in measurement for key in ("decision_ts", "reference_price_ts", "causality_ok")
-        )
+        has_context = any(key in measurement for key in _CONTEXT_KEYS)
         if has_context:
-            decision_at = _parse_ts(measurement.get("decision_ts"))
-            reference_at = _parse_ts(measurement.get("reference_price_ts"))
-            if (
-                measurement.get("causality_ok") is not True
-                or decision_at is None
-                or reference_at is None
-                or reference_at > decision_at
-                or outcome_at != decision_at
-            ):
+            context_age = _context_age(measurement, measured_at, outcome_at)
+            if context_age is None:
                 continue
-            age_seconds = (measured_at - decision_at).total_seconds()
+            age_seconds = context_age
         else:
             age_seconds = (outcome_at - measured_at).total_seconds()
         if age_seconds < 0.0 or age_seconds > max_age:
