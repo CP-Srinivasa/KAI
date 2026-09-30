@@ -7,10 +7,12 @@ outcomes (no look-ahead), and reports — per feature (fee/mempool percentile) �
 whether there is a LEARNABLE direction, using an autocorrelation-robust
 moving-block bootstrap (NOT a naive hit-rate). Read-only; learns nothing into sizing.
 
-Outcomes are FILL-INDEPENDENT by default (since 2026-07-01): the canonical resolved
-shadow-candidate pool (:mod:`app.research.shadow_outcomes`) is projected onto the
-chosen ``--horizon`` — so the join no longer needs a hand-produced outcomes file.
-``--outcomes <file>`` still overrides with bespoke JSONL. Every outcome requires
+Outcomes default to the L2 OWN results (``artifacts/l2_outcomes.jsonl``, since
+2026-09-30, "Weg 2"): the loop signals L2 measures are mostly gate-rejected in paper
+mode and never reach the shared shadow ledger, so the canonical pool has no outcome
+for them. :mod:`app.observability.l2_outcomes` resolves every L2 measurement
+gate-independently into its own file. ``--canonical`` still evaluates against the
+fill-independent shadow pool; ``--outcomes <file>`` overrides with bespoke JSONL. Every outcome requires
 ``candidate_id``, ``symbol``, ``side``, ``entry_ts`` and ``net_bps``; missing PIT
 identity fields are reported before the fail-closed join drops those rows.
 
@@ -25,6 +27,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.observability import l2_outcomes
 from app.observability.l2_evidence_eval import (
     evaluate_feature_direction,
     outcome_contract_gaps,
@@ -44,7 +47,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--outcomes",
         default="",
-        help="Override outcomes JSONL; default = canonical fill-independent pool.",
+        help="Override outcomes JSONL; default = L2 own results (l2_outcomes.jsonl).",
+    )
+    ap.add_argument(
+        "--canonical",
+        action="store_true",
+        help="Use the canonical shadow-candidate pool instead of the L2 own results.",
     )
     ap.add_argument("--horizon", type=int, default=3600, choices=HORIZONS)
     ap.add_argument("--min-sample", type=int, default=8)
@@ -59,9 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.outcomes:
         outcomes = read_jsonl(Path(args.outcomes))
         src = args.outcomes
-    else:
+    elif args.canonical:
         outcomes = to_feature_outcomes(load_canonical_outcomes(), horizon=args.horizon)
         src = f"canonical shadow pool @ {args.horizon}s"
+    else:
+        outcomes = l2_outcomes.load_feature_outcomes(horizon=args.horizon)
+        src = f"L2 own results {l2_outcomes.OUTCOMES_PATH} @ {args.horizon}s"
     print(f"l2-eval: {len(outcomes)} outcomes from {src} (fill-independent)")
     gaps = outcome_contract_gaps(outcomes)
     if any(gaps.values()):

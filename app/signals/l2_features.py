@@ -111,6 +111,7 @@ def append_l2_shadow_log(
     features: OnchainFlowFeatures,
     source_trust: float,
     l1_observed_ts: str | None = None,
+    reference_price: float | None = None,
 ) -> None:
     """Append one RAW-feature measurement line (append-only JSONL).
 
@@ -140,6 +141,8 @@ def append_l2_shadow_log(
         "window_n": features.window_n,
         "source_trust": source_trust,
     }
+    if reference_price is not None and reference_price > 0:
+        record["reference_price"] = reference_price  # Einstieg fuer l2_outcomes
     candidate = current_candidate()
     if candidate is not None:
         record.update(candidate.as_log_fields(l1_observed_ts))

@@ -50,6 +50,15 @@
       "monitoring": "alternative_watcher",
       "watcher": "_check_payment_journal_chain"
     },
+    "l2_outcomes.jsonl": {
+      "reader": "app/alerts/health_check_streams.py",
+      "failure_consequence": "Der Strom traegt das Ergebnis jeder L2-Messung (Rendite in Signalrichtung nach 1 h). Ohne ihn hat die L2-Auswertung (scripts/evaluate_l2_evidence.py) keine Paare und lernt nichts -- genau der Zustand vom 22.06. bis 30.09.2026, als keine einzige L2-Messung ein Ergebnis bekam, weil die gemessenen Loop-Signale im Paper-Modus nicht ins Shadow-Ledger gelangen. Er traegt kein Geld und wirkt nicht auf Handel oder Sizing.",
+      "failure_would_be_noticed_by": "_check_l2_outcomes in app/alerts/health_check.py (Implementierung: app/alerts/health_check_streams.check_l2_outcomes) meldet bei jedem Health-Check-Lauf warning l2_outcomes, sobald faellige L2-Messungen aelter als 3 h kein Ergebnis haben.",
+      "time_to_notice": "Beim naechsten Health-Check-Lauf (15-Minuten-Timer), sobald eine faellige Messung 3 h ohne Ergebnis ist (1 h Horizont + Puffer + mehrere 30-min-Resolverlaeufe).",
+      "decision_that_would_change": "Der Operator bzw. Claude repariert Shadow-Resolver-Timer oder Kursquelle, bevor L2-Messungen aus dem 14-Tage-Fenster fallen und fuer die Richtungsauswertung (Trust-Promotion nur mit Beweis) verloren sind.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_l2_outcomes"
+    },
     "ln_input_contract_rejections.jsonl": {
       "reader": "app/audit/input_contract_rejections.py",
       "failure_consequence": "Ein abgelehnter Money-Journal-Intent haette keinen dauerhaft lesbaren Grund. Seit ADR 0018 §12 (PR 1) schreibt KEIN Produktionsmodul mehr in diesen Strom — der Writer war ``ops_ledger.prepare_ln_intent``, der mit dem alten Sendeweg gefallen ist. Die vorhandenen Records bleiben lesbar und beweiskraeftig. ENTSCHIEDEN mit PR 2 (2026-09-07): Strom, Vertrag und Sonde BLEIBEN. Der Strom traegt die Ablehnungsgruende des alten Geldpfads bis 2026-08-05; sie zu entfernen hiesse, eine vorhandene Beweislage unlesbar zu machen, um eine Zeile Konfiguration zu sparen. Bewacht wird ab jetzt ausschliesslich Lesbarkeit und Schema, nie eine Kadenz.",

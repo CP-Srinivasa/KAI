@@ -92,6 +92,7 @@ def build_l2_onchain_evidence_provider(
             features=features,
             source_trust=source_trust,
             l1_observed_ts=str(current.get("ts")),
+            reference_price=_price(market_data),
         )
         evidence = build_l2_onchain_evidence(
             fee_percentile=features.fee_percentile,
@@ -125,6 +126,13 @@ def _parse_ts(timestamp_utc: object) -> datetime | None:
     except (ValueError, TypeError):
         return None
     return observed if observed.tzinfo is not None else observed.replace(tzinfo=UTC)
+
+
+def _price(market_data: object) -> float | None:
+    value = getattr(market_data, "price", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
 
 
 def _input_cutoff() -> datetime:
