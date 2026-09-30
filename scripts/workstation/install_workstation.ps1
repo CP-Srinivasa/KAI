@@ -39,6 +39,11 @@ $Map = [ordered]@{
     'kai_claim.py'                 = 'KAI-mirror\scripts\kai_claim.py'
     'kai-ln-budget.ps1'            = 'KAI-mirror\scripts\kai-ln-budget.ps1'
     'kai-ln-budget.cmd'            = 'AppData\Local\Microsoft\WindowsApps\kai-ln-budget.cmd'
+    'ln-macrot\macrot.ps1'         = 'KAI-mirror\scripts\ln-macrot\macrot.ps1'
+    'ln-macrot\macrot_node.sh'     = 'KAI-mirror\scripts\ln-macrot\macrot_node.sh'
+    'ln-macrot\macrot_pi.sh'       = 'KAI-mirror\scripts\ln-macrot\macrot_pi.sh'
+    'ln-macrot\macrot_snap.py'     = 'KAI-mirror\scripts\ln-macrot\macrot_snap.py'
+    'ln-macrot\mac_ops.py'         = 'KAI-mirror\scripts\ln-macrot\mac_ops.py'
 }
 
 function Get-Sha([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() }
