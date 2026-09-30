@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 
 from app.core.domain.document import AnalysisResult
 from app.core.evidence_settings import L2OnChainEvidenceSettings
+from app.core.l2_candidate_context import current_candidate
 from app.market_data.models import MarketDataPoint
 from app.signals.bayesian_confidence import Evidence, build_l2_onchain_evidence
 from app.signals.generator import ExtraEvidencesProvider
@@ -57,14 +58,20 @@ def build_l2_onchain_evidence_provider(
         market_data: MarketDataPoint,
         direction: SignalDirection,
     ) -> Sequence[Evidence]:
-        records = read_onchain_fee_shadow(stream_path, limit=window + 1)
-        if not records:
+        # L1 „Stand Schnitt“ (Befund 3): nur Datensaetze, die zum Eingabeschnitt des
+        # Zyklus vorlagen. Ein spaeter eingetroffener oder zukunftsdatierter Satz
+        # faellt heraus; etwas mehr lesen haelt das Fenster trotzdem voll.
+        cutoff = _input_cutoff()
+        records = read_onchain_fee_shadow(stream_path, limit=window + 1 + _LATE_SLACK)
+        usable = [r for r in records if (t := _parse_ts(r.get("ts"))) is not None and t <= cutoff]
+        if not usable:
             return ()
-        current = records[-1]
-        history = records[:-1]
+        usable = usable[-(window + 1) :]
+        current = usable[-1]
+        history = usable[:-1]
         # Fail-safe staleness gate: a stale stream (L1 scheduler down) yields no
-        # features — never measure on dead on-chain data.
-        if _is_stale(current.get("ts"), ttl_seconds):
+        # features — never measure on dead on-chain data. Gemessen am Schnitt.
+        if _is_stale(current.get("ts"), ttl_seconds, now=cutoff):
             return ()
         # Need enough history for a meaningful percentile.
         if len(history) < min_window:
@@ -84,6 +91,7 @@ def build_l2_onchain_evidence_provider(
             direction=direction_str,
             features=features,
             source_trust=source_trust,
+            l1_observed_ts=str(current.get("ts")),
         )
         evidence = build_l2_onchain_evidence(
             fee_percentile=features.fee_percentile,
@@ -104,18 +112,36 @@ def build_l2_onchain_evidence_provider(
     return _provider
 
 
-def _is_stale(timestamp_utc: object, ttl_seconds: float) -> bool:
-    """True if the latest stream record is older than ttl. Unparseable/absent ts ⇒
-    conservatively STALE (no measurement on an untrustworthy timestamp)."""
+# Zusaetzlich gelesene Saetze fuer den Fall, dass nach dem Schnitt noch welche
+# eintrafen (der L1-Scheduler schreibt etwa alle 15 Minuten, ein Zyklus dauert Sekunden).
+_LATE_SLACK = 5
+
+
+def _parse_ts(timestamp_utc: object) -> datetime | None:
     if not isinstance(timestamp_utc, str) or not timestamp_utc:
-        return True
+        return None
     try:
         observed = datetime.fromisoformat(timestamp_utc)
     except (ValueError, TypeError):
+        return None
+    return observed if observed.tzinfo is not None else observed.replace(tzinfo=UTC)
+
+
+def _input_cutoff() -> datetime:
+    """Eingabeschnitt des laufenden Zyklus; ausserhalb eines Zyklus: jetzt."""
+    candidate = current_candidate()
+    cutoff = _parse_ts(candidate.input_cutoff_ts) if candidate is not None else None
+    return cutoff if cutoff is not None else datetime.now(UTC)
+
+
+def _is_stale(timestamp_utc: object, ttl_seconds: float, *, now: datetime | None = None) -> bool:
+    """True if the stream record is older than ttl at ``now`` (default: the clock).
+    Unparseable/absent ts ⇒ conservatively STALE (no measurement on an
+    untrustworthy timestamp)."""
+    observed = _parse_ts(timestamp_utc)
+    if observed is None:
         return True
-    if observed.tzinfo is None:
-        observed = observed.replace(tzinfo=UTC)
-    return (datetime.now(UTC) - observed).total_seconds() > ttl_seconds
+    return ((now or datetime.now(UTC)) - observed).total_seconds() > ttl_seconds
 
 
 __all__ = ["build_l2_onchain_evidence_provider"]

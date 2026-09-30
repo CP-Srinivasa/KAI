@@ -435,13 +435,13 @@ class TradingLoop:
 
         signal = None
         try:
-            # Der L2-Provider misst INNERHALB von generate(). Ohne diesen Kontext
-            # traegt seine Zeile nur symbol/direction/now() und muss spaeter ueber
-            # ein Zeitfenster mit dem Kandidaten gepaart werden. Die drei Werte
-            # stehen hier bereits fest — die ID seit dem Zyklusbeginn.
+            # Der L2-Provider misst INNERHALB von generate(). Eingabeschnitt = jetzt:
+            # NACH dem Kursabruf, direkt vor der Signalerzeugung (Befund 3,
+            # 30.09.). Nur Daten bis zu diesem Moment gehen in L2 ein.
             with bind_candidate(
                 candidate_id=cycle_id,
-                decision_ts=started_at,
+                cycle_started_at=started_at,
+                input_cutoff_ts=_now_utc(),
                 reference_price_ts=market_data.timestamp_utc,
             ):
                 signal = self._signals.generate(analysis, market_data, symbol)

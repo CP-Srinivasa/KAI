@@ -101,7 +101,10 @@ async def test_kontext_steht_waehrend_der_signalgenerierung(tmp_path: Path) -> N
     # Die ID ist DIESELBE, die der Zyklus spaeter im Ledger traegt — sie stand
     # also schon vor der Messung fest.
     assert ctx.candidate_id == cycle.cycle_id
-    assert ctx.decision_ts == cycle.started_at
+    # Zeitmodell (Befund 3): Zyklusbeginn = Anker des Kandidaten, Eingabeschnitt
+    # NACH dem Kursabruf und nicht vor dem Zyklusbeginn.
+    assert ctx.cycle_started_at == cycle.started_at
+    assert ctx.input_cutoff_ts >= cycle.started_at
     # Der Referenzpreis stammt aus dem Marktdatenpunkt desselben Zyklus.
     assert ctx.reference_price_ts
 
@@ -206,7 +209,8 @@ async def test_der_evidence_provider_misst_mit_der_richtung_des_kandidaten(
     ctx, gemessene_richtung = spy.calls[0]
     assert ctx is not None, "kein Kandidatenkontext im Provider"
     assert ctx.candidate_id == cycle.cycle_id
-    assert ctx.decision_ts == cycle.started_at
+    assert ctx.cycle_started_at == cycle.started_at
+    assert ctx.input_cutoff_ts >= cycle.started_at
 
     signal = signale[0]
     assert signal is not None, "kein Kandidat erzeugt — Richtung nicht vergleichbar"

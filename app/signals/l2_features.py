@@ -110,6 +110,7 @@ def append_l2_shadow_log(
     direction: str,
     features: OnchainFlowFeatures,
     source_trust: float,
+    l1_observed_ts: str | None = None,
 ) -> None:
     """Append one RAW-feature measurement line (append-only JSONL).
 
@@ -119,13 +120,14 @@ def append_l2_shadow_log(
     logged and swallowed (the measurement must never kill the signal path).
 
     ``ts`` stays the observation time — the clock at the moment of measurement,
-    never backdated. When the cycle bound a candidate context
+    never backdated. ``l1_observed_ts`` is the timestamp of the L1 record the
+    features were computed from. When the cycle bound a candidate context
     (``app/core/l2_candidate_context.py``), its fields are added ON TOP:
-    ``candidate_id`` / ``decision_ts`` / ``reference_price_ts`` /
-    ``causality_ok``. They are additive, so older lines without them stay valid
-    and a reader must keep accepting both shapes; the joiner
-    (``l2_evidence_eval.pit_join``) can then pair on the id instead of a
-    symbol + time window. Outside a cycle nothing is added.
+    ``candidate_id`` / ``cycle_started_at`` / ``input_cutoff_ts`` /
+    ``reference_price_ts`` / ``l1_observed_ts`` / ``causality_ok``. They are
+    additive; older lines (no context, or the 25.–30.09.2026 ``decision_ts`` form)
+    stay valid and the joiner (``l2_evidence_eval.pit_join``) reads each form with
+    its own rule.
     """
     record: dict[str, Any] = {
         "ts": datetime.now(UTC).isoformat(),
@@ -140,7 +142,9 @@ def append_l2_shadow_log(
     }
     candidate = current_candidate()
     if candidate is not None:
-        record.update(candidate.as_log_fields())
+        record.update(candidate.as_log_fields(l1_observed_ts))
+    elif l1_observed_ts:
+        record["l1_observed_ts"] = l1_observed_ts
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

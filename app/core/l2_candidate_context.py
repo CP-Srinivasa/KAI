@@ -1,49 +1,43 @@
-"""Kandidatenkontext für die L2-Messung — wer misst, für welche Entscheidung, auf welchem Preis.
+"""Kandidatenkontext für die L2-Messung — wer misst, für welchen Zyklus, mit welchen Eingaben.
 
 **Das Problem.** Der L2-Provider (``app/signals/l2_wiring.py``) läuft INNERHALB
 von ``SignalGenerator.generate`` und schreibt seine Messung in den Shadow-Log.
-Dort stand bisher nur ``symbol``, ``direction``, die Rohmerkmale — und ein
-``ts`` aus ``datetime.now()``. Der Kandidat dagegen wird erst nach dem Zyklus
-geschrieben, mit ``candidate_id=cycle.cycle_id`` und ``ts_utc=cycle.started_at``
-(``trading_loop.py``). Zwei Zeitpunkte, keine Verbindung: Der Evaluator kann
-Messung und Kandidat nur über ``symbol`` + Zeitfenster paaren
-(``l2_evidence_eval.pit_join``), und wie weit Messzeit und Entscheidungszeit
-auseinanderliegen, ist aus den Daten nicht rekonstruierbar.
+Der Kandidat wird erst nach dem Zyklus geschrieben, mit
+``candidate_id=cycle.cycle_id`` und ``ts_utc=cycle.started_at``
+(``trading_loop.py``). Dieser Kontext verbindet beide über die Zyklus-ID.
 
-**Was dieser Kontext liefert — und was nicht.** Er reicht drei Werte durch, die
-zum Messzeitpunkt bereits feststehen:
+**Zeitmodell (Befund 3, Operator-Entscheid 2026-09-30: L2-interne Korrektur).**
+Bis dahin galt ``decision_ts`` = Zyklusbeginn als Entscheidungszeitpunkt. Der Kurs
+wird aber erst NACH dem Zyklusbeginn abgerufen (gemessen: Median 0,17 s, max. 2 s),
+also fiel fast jede Messung durch die Kausalitätsprüfung (364 von 366). Jetzt:
 
-``candidate_id``
-    Die Zyklus-ID. Sie entsteht in ``run_cycle`` als Allererstes
-    (``cycle_id = _new_cycle_id()``), also lange VOR der Messung — die
-    Forderung „ID vor der Messung verfügbar" ist damit erfüllt, ohne dass
-    irgendetwas vorgezogen oder erfunden wird.
-``decision_ts``
-    ``started_at`` desselben Zyklus: der Zeitpunkt, auf den sich die
-    Entscheidung bezieht.
+``cycle_started_at``
+    Reine Betriebszeit: der Zyklusbeginn. Er ist zugleich der Anker der
+    Kandidatenzeile (``ts_utc``) und damit des Outcomes.
+``input_cutoff_ts``
+    Der Eingabeschnitt: gesetzt NACH dem Kursabruf, direkt vor der
+    Signalerzeugung. Nur Preis- und L1-Daten, die bis dahin vorlagen, gehen
+    in die Messung ein. Er ist der Entscheidungszeitpunkt der Messung.
 ``reference_price_ts``
-    ``MarketDataPoint.timestamp_utc``: der Preis, auf dem die Entscheidung
-    beruht.
+    ``MarketDataPoint.timestamp_utc``: der Preis, auf dem das Signal beruht.
 
-**Keine Rückdatierung.** Alle drei Werte existieren unabhängig von diesem Modul;
-es schreibt sie nur an eine Stelle, an der sie bisher fehlten. Der
-Beobachtungszeitpunkt bleibt, was er war — die Uhr zum Zeitpunkt der Messung.
-Historische Zeilen ohne diese Felder bleiben unverändert und gültig; ein Leser
-muss sie weiterhin akzeptieren.
+Der L2-Provider ergänzt ``l1_observed_ts`` (den L1-Datensatz „Stand Schnitt“).
+Kausal ist eine Messung, wenn Preis UND L1-Datensatz nicht jünger als der Schnitt
+sind. Ein Zeitstempel aus der Zukunft (Uhrenversatz) fällt damit ebenfalls durch.
+
+**Keine Rückdatierung.** Alle Werte existieren unabhängig von diesem Modul. Alte
+Zeilen (ohne Kontext oder mit ``decision_ts``) bleiben unverändert; der Leser
+(``l2_evidence_eval.pit_join``) behandelt jede Form mit ihrer eigenen Regel.
 
 **Warum ``app/core`` und nicht ``app/orchestrator``.** Gesetzt wird der Kontext
 im Loop (``app/orchestrator``), gelesen im Messpfad (``app/signals``). Ein Modul
 in ``app/orchestrator`` zwänge ``app/signals`` zu einem Import nach oben —
 ``app/orchestrator`` importiert ``app/signals`` bereits, es entstünde ein
-Paketzyklus. ``app/core`` importieren beide Seiten schon heute (wie
-``app/core/file_lock.py``), also trägt der Kontext hier keine neue Kante ein.
-``tests/unit/test_core_path_boundaries.py`` hält die Richtung fest.
+Paketzyklus. ``tests/unit/test_core_path_boundaries.py`` hält die Richtung fest.
 
-**Kausalität wird geprüft, nicht unterstellt.** Ein Preis, der jünger ist als
-die Entscheidung, die auf ihm beruhen soll, ist Look-ahead — genau der Fehler,
-gegen den der Point-in-Time-Join gebaut wurde. Solche Fälle werden über
-``causality_ok=False`` sichtbar gemacht, statt still mitzulaufen; verworfen
-wird nichts, das Urteil gehört dem Evaluator.
+**Kausalität wird geprüft, nicht unterstellt.** Verletzungen werden über
+``causality_ok=False`` sichtbar gemacht, statt still mitzulaufen; verworfen wird
+hier nichts, das Urteil gehört dem Evaluator.
 """
 
 from __future__ import annotations
@@ -66,44 +60,52 @@ def _parse(ts: str | None) -> datetime | None:
         return None
 
 
+def _not_after(earlier: str | None, later: str | None) -> bool | None:
+    """``earlier <= later``; ``None``, wenn eine Zeit fehlt, unlesbar oder unvergleichbar ist."""
+    a, b = _parse(earlier), _parse(later)
+    if a is None or b is None or (a.tzinfo is None) != (b.tzinfo is None):
+        return None
+    return a <= b
+
+
 @dataclass(frozen=True)
 class L2CandidateContext:
-    """Unveränderlicher Bezug einer L2-Messung auf ihren Kandidaten."""
+    """Unveränderlicher Bezug einer L2-Messung auf ihren Zyklus und ihren Eingabeschnitt."""
 
     candidate_id: str
-    decision_ts: str
+    cycle_started_at: str
+    input_cutoff_ts: str
     reference_price_ts: str | None = None
 
-    @property
-    def causality_ok(self) -> bool | None:
-        """Lag der Referenzpreis vor der Entscheidung?
+    def causality_ok(self, l1_observed_ts: str | None = None) -> bool | None:
+        """Lagen Preis (und, falls angegeben, der L1-Datensatz) nicht nach dem Schnitt?
 
-        ``None``, wenn eine der beiden Zeiten fehlt oder unlesbar ist — dann ist
-        die Frage nicht beantwortbar, und ``False`` wäre eine Behauptung.
-        Gleichstand gilt als in Ordnung: derselbe Tick kann Preis und
-        Entscheidung tragen.
+        ``None``, wenn der Preis fehlt oder eine Zeit unlesbar ist — dann ist die
+        Frage nicht beantwortbar, und ``False`` wäre eine Behauptung. Gleichstand
+        gilt als in Ordnung. Ein L1-Datensatz nach dem Schnitt ist immer ``False``.
         """
-        price = _parse(self.reference_price_ts)
-        decision = _parse(self.decision_ts)
-        if price is None or decision is None:
+        price = _not_after(self.reference_price_ts, self.input_cutoff_ts)
+        if l1_observed_ts is None:
+            return price
+        l1 = _not_after(l1_observed_ts, self.input_cutoff_ts)
+        if price is False or l1 is False:
+            return False
+        if price is None or l1 is None:
             return None
-        if (price.tzinfo is None) != (decision.tzinfo is None):
-            return None  # naiv gegen aware ist nicht vergleichbar
-        return price <= decision
+        return True
 
-    def as_log_fields(self) -> dict[str, str | bool]:
-        """Die Felder, die eine Messzeile zusätzlich trägt.
-
-        Bewusst flach und additiv: ein Leser, der sie nicht kennt, ignoriert sie;
-        ein Leser, der sie kennt, braucht keinen Zeitfenster-Join mehr.
-        """
+    def as_log_fields(self, l1_observed_ts: str | None = None) -> dict[str, str | bool]:
+        """Die Felder, die eine Messzeile zusätzlich trägt (flach und additiv)."""
         fields: dict[str, str | bool] = {
             "candidate_id": self.candidate_id,
-            "decision_ts": self.decision_ts,
+            "cycle_started_at": self.cycle_started_at,
+            "input_cutoff_ts": self.input_cutoff_ts,
         }
         if self.reference_price_ts:
             fields["reference_price_ts"] = self.reference_price_ts
-        causality = self.causality_ok
+        if l1_observed_ts:
+            fields["l1_observed_ts"] = l1_observed_ts
+        causality = self.causality_ok(l1_observed_ts)
         if causality is not None:
             fields["causality_ok"] = causality
         return fields
@@ -119,7 +121,11 @@ def current_candidate() -> L2CandidateContext | None:
 
 @contextmanager
 def bind_candidate(
-    *, candidate_id: str, decision_ts: str, reference_price_ts: str | None = None
+    *,
+    candidate_id: str,
+    cycle_started_at: str,
+    input_cutoff_ts: str,
+    reference_price_ts: str | None = None,
 ) -> Iterator[L2CandidateContext]:
     """Den Kontext für die Dauer eines Blocks setzen und danach exakt zurücksetzen.
 
@@ -129,7 +135,8 @@ def bind_candidate(
     """
     context = L2CandidateContext(
         candidate_id=candidate_id,
-        decision_ts=decision_ts,
+        cycle_started_at=cycle_started_at,
+        input_cutoff_ts=input_cutoff_ts,
         reference_price_ts=reference_price_ts,
     )
     token = _CURRENT.set(context)

@@ -116,3 +116,66 @@ def test_composite_includes_l2_when_armed(tmp_path) -> None:
     assert provider is not None
     out = provider(None, _md(), SignalDirection.LONG)
     assert any(e.kind == EvidenceKind.L2_ONCHAIN for e in out)
+
+
+# ── Zeitmodell (Befund 3): L1 „Stand Schnitt“ ────────────────────────────────
+
+
+def _bound(cutoff: datetime):  # noqa: ANN202
+    from app.core.l2_candidate_context import bind_candidate
+
+    return bind_candidate(
+        candidate_id="cyc-t",
+        cycle_started_at=(cutoff - timedelta(seconds=0.4)).isoformat(),
+        input_cutoff_ts=cutoff.isoformat(),
+        reference_price_ts=(cutoff - timedelta(seconds=0.2)).isoformat(),
+    )
+
+
+def _armed(tmp_path):  # noqa: ANN202
+    stream = tmp_path / "s.jsonl"
+    shadow = tmp_path / "l2_shadow.jsonl"
+    cfg = L2OnChainEvidenceSettings(
+        enabled=True, stream_path=stream, shadow_log_path=shadow, min_window=5, ttl_seconds=3600
+    )
+    return stream, shadow, build_l2_onchain_evidence_provider(cfg)
+
+
+def _append(stream, ts: datetime, fee: float) -> None:
+    with stream.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": ts.isoformat(), "fee_sat_vb": fee, "mempool_tx": 1}) + "\n")
+
+
+def test_l1_record_that_arrived_after_the_cutoff_is_ignored(tmp_path) -> None:
+    cutoff = datetime.now(UTC) - timedelta(minutes=1)
+    stream, shadow, provider = _armed(tmp_path)
+    as_of = cutoff - timedelta(minutes=10)
+    _write_stream(stream, n=30, current_ts=as_of.isoformat(), fee=100.0)
+    _append(stream, cutoff + timedelta(seconds=30), fee=0.5)  # spaet eingetroffen
+    with _bound(cutoff):
+        assert len(provider(None, _md(), SignalDirection.LONG)) == 1
+    line = json.loads(shadow.read_text(encoding="utf-8").strip())
+    assert line["fee_sat_vb"] == 100.0  # der Satz „Stand Schnitt“, nicht der spaete
+    assert line["l1_observed_ts"] == as_of.isoformat()
+    assert line["causality_ok"] is True
+    assert line["candidate_id"] == "cyc-t"
+
+
+def test_future_dated_l1_record_is_ignored(tmp_path) -> None:
+    stream, shadow, provider = _armed(tmp_path)
+    now = datetime.now(UTC)
+    _write_stream(stream, n=30, current_ts=now.isoformat(), fee=100.0)
+    _append(stream, now + timedelta(hours=1), fee=0.5)  # Uhrenversatz
+    assert len(provider(None, _md(), SignalDirection.LONG)) == 1
+    line = json.loads(shadow.read_text(encoding="utf-8").strip())
+    assert line["fee_sat_vb"] == 100.0
+    assert line["l1_observed_ts"] == now.isoformat()
+
+
+def test_staleness_is_measured_at_the_cutoff(tmp_path) -> None:
+    cutoff = datetime.now(UTC) - timedelta(hours=2)
+    stream, shadow, provider = _armed(tmp_path)
+    _write_stream(stream, n=30, current_ts=(cutoff - timedelta(minutes=10)).isoformat())
+    with _bound(cutoff):
+        # 10 min vor dem Schnitt ist frisch (ttl 1 h), obwohl es jetzt 2 h alt ist.
+        assert len(provider(None, _md(), SignalDirection.LONG)) == 1
