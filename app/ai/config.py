@@ -125,6 +125,10 @@ class InferenceSettings(BaseSettings):
     #: abgekoppelt zu Ende und schreibt seine Zeile trotzdem -- die Evidenz
     #: bleibt, nur die Wartezeit des Benutzers nicht.
     shadow_grace_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
+    #: Wurzel der Transportbaeume (``<wurzel>/litellm/current``), nur fuer die
+    #: Anzeige im Kontrollcenter. LEER heisst: ``~/transport`` -- derselbe
+    #: Standard wie in ``scripts/pi_transport_exec.sh``.
+    transports_root: str = Field(default="")
 
     _strip_api_key = field_validator("litellm_api_key", mode="before")(_strip_secret)
 

@@ -197,6 +197,49 @@ def test_cli_schreibt_json_und_markdown(tmp_path: Path) -> None:
     assert "- BELEGT · standard" in md_out.read_text(encoding="utf-8")
 
 
+def test_cli_ersetzt_die_ausgabe_atomar(tmp_path: Path, monkeypatch) -> None:
+    """Das Kontrollcenter liest das JSON, waehrend der Timer es schreibt.
+
+    Ohne atomaren Tausch saehe der Endpunkt in diesem Moment eine halbe Datei.
+    Geschrieben wird deshalb daneben und dann per ``os.replace`` getauscht.
+    """
+    import os
+
+    from scripts.litellm_route_report import cli
+
+    getauscht: list[tuple[str, str]] = []
+    echt = os.replace
+
+    def merken(quelle: str | os.PathLike[str], ziel: str | os.PathLike[str]) -> None:
+        getauscht.append((Path(quelle).name, Path(ziel).name))
+        echt(quelle, ziel)
+
+    monkeypatch.setattr(cli.os, "replace", merken)
+    telemetry = write_jsonl(tmp_path / "t.jsonl", [zeile()])
+    json_out = tmp_path / "route_report.json"
+    md_out = tmp_path / "route_report.md"
+    json_out.write_text("ALT", encoding="utf-8")
+
+    code = main(
+        [
+            "--telemetry",
+            str(telemetry),
+            "--now",
+            NOW.isoformat(),
+            "--json-out",
+            str(json_out),
+            "--md-out",
+            str(md_out),
+        ]
+    )
+
+    assert code == 0
+    assert {ziel for _, ziel in getauscht} == {"route_report.json", "route_report.md"}
+    assert all(quelle != ziel for quelle, ziel in getauscht)
+    assert json.loads(json_out.read_text(encoding="utf-8"))["generated_at"] == NOW.isoformat()
+    assert not list(tmp_path.glob("*.tmp")), "keine Reste"
+
+
 def test_cli_verlangt_zeitzone_im_zeitpunkt(tmp_path: Path) -> None:
     telemetry = write_jsonl(tmp_path / "t.jsonl", [zeile()])
     code = main(

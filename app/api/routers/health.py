@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
 from app.ai.health import ai_health_snapshot
+from app.ai.runtime import inference_settings
+from app.ai.transport_status import ai_transport_snapshot, default_transport_paths
 from app.core.config_redaction import redacted_config_snapshot
 from app.core.payment_settings import get_payment_settings
 from app.core.runtime_identity import drift_report, get_runtime_identity
@@ -324,6 +326,42 @@ async def ai_health(
 
     snapshot = ai_health_snapshot(window_hours=window_hours, settings=settings)
     return AIHealthResponse(**snapshot["ai"])
+
+
+class AITransportResponse(BaseModel):
+    """Vertrag ``ai-transport/v1`` (Kontrollcenter, Bereich KI-Transport).
+
+    Bewusst locker typisiert: die Zusammenstellung lebt in
+    ``app.ai.transport_status`` und hat dort ihre Tests; hier wird sie nur
+    ausgeliefert, nicht ein zweites Mal beschrieben.
+    """
+
+    schema_version: str
+    generated_at: str
+    transport: dict[str, Any]
+    runtime: dict[str, Any]
+    routes: list[dict[str, Any]]
+    report: dict[str, Any]
+    null_reasons: dict[str, str]
+
+
+@router.get("/health/ai/transport", response_model=AITransportResponse)
+async def ai_transport(response: Response) -> AITransportResponse:
+    """KI-Transport fuer das Kontrollcenter -- nur lesend.
+
+    Auth wie ``/health/ai``: nicht in der oeffentlichen Pfadliste. Kein
+    Modellaufruf; der einzige Netzzugriff ist das lokale Lebenszeichen
+    ``/health/liveliness`` des Proxys. Die Bewertung der Routen kommt aus dem
+    Routenbericht-Artefakt, nicht von hier.
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    configured = inference_settings(None)
+    snapshot = await ai_transport_snapshot(
+        settings=configured, paths=default_transport_paths(configured)
+    )
+    return AITransportResponse(**snapshot)
 
 
 @router.get("/health/payment")

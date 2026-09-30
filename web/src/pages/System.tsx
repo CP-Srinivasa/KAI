@@ -1,19 +1,20 @@
-// @data-source: /health · /health/timers · /operator/status
+// @data-source: /health · /health/timers · /operator/status · /health/ai/transport
 //
 // System & Health (UI-Update 2026.06, WP-2.4 / Konzept §20). Eigene IA-Seite für
 // den Betriebszustand: Backend-Health, Timer-Gesundheit, Execution-/Write-Back-
-// Readiness — read-only, nur echte Daten. Operator-WRITE-Aktionen (run-once,
-// Agent-Commands) bleiben bewusst in ihren bestehenden Surfaces; diese Seite ist
-// die Lese-/Status-Ebene.
+// Readiness, KI-Transport (LiteLLM) — read-only, nur echte Daten. Operator-WRITE-
+// Aktionen (run-once, Agent-Commands) bleiben bewusst in ihren bestehenden
+// Surfaces; diese Seite ist die Lese-/Status-Ebene.
 import type { ReactNode } from "react";
 import { PageHeader } from "@/layout/PageHeader";
 import { Card, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { TimerHealthCard } from "@/components/panels/TimerHealthCard";
+import { AITransportPanel } from "@/components/panels/AITransportPanel";
 import { useApi } from "@/lib/useApi";
 import { useBackendHealth } from "@/lib/useBackendHealth";
-import { fetchTimerHealth, fetchOperatorStatus } from "@/lib/api";
+import { fetchTimerHealth, fetchOperatorStatus, fetchAiTransport } from "@/lib/api";
 import { backendHealthToStatus } from "@/lib/commandStatus";
 import { timerStateToStatus } from "@/lib/systemHealth";
 import { LiveDot } from "@/components/ui/LiveDot";
@@ -38,6 +39,7 @@ export function SystemPage() {
   const health = useBackendHealth();
   const timers = useApi(fetchTimerHealth, 60_000);
   const op = useApi(fetchOperatorStatus, 30_000);
+  const transport = useApi(fetchAiTransport, 60_000);
   const t = timers.state === "ready" ? timers.data : null;
   const o = op.state === "ready" ? op.data : null;
 
@@ -45,7 +47,7 @@ export function SystemPage() {
     <div className="p-4 xl:p-5 space-y-4 max-w-[1680px] mx-auto">
       <PageHeader
         title="System & Health"
-        sub="Betriebszustand auf einen Blick — Backend, Timer, Ausführungs-Readiness."
+        sub="Betriebszustand auf einen Blick — Backend, Timer, Ausführungs-Readiness, KI-Transport."
         right={<LiveDot {...liveDotProps(op)} staleAfterMs={75_000} />}
       />
 
@@ -94,6 +96,10 @@ export function SystemPage() {
 
       <PanelErrorBoundary name="Timer-Health">
         <TimerHealthCard />
+      </PanelErrorBoundary>
+
+      <PanelErrorBoundary name="KI-Transport">
+        <AITransportPanel state={transport} />
       </PanelErrorBoundary>
     </div>
   );
