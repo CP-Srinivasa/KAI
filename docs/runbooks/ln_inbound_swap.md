@@ -1,5 +1,14 @@
 # Runbook: Wertneutraler Inbound-Swap (Boltz Reverse, G3-S2)
 
+> **AUSSER BETRIEB seit 2026-09-30 — nicht ausführen.** Boltz hat laut Presse am 03.08.2026 alle Swap-Dienste auf unbestimmte Zeit eingestellt. Die Domain `boltz.exchange` steht seit 18.09. auf `client hold` (NXDOMAIN, am 30.09. vom Node und vom Laptop geprüft). `boltzd` findet kein Backend mehr.
+> - **Stand der Swaps (30.09., `boltz.db` nur lesend):** Es gibt keinen offenen Swap. Der Submarine-Swap `bf6HsENaQ3gA` (25 327 sat) und der Reverse-Swap `VCDY8hHxku7w` (25 000 sat) sind abgeschlossen (SUCCESSFUL), ihre Fristen sind lange abgelaufen. Kein Guthaben liegt bei Boltz.
+> - **Veraltet gegenüber dem heutigen Geldpfad** (vor einer Wiederbelebung mit einem anderen Anbieter neu schreiben):
+>   - **Gate 2:** `daily_cap_sat` gibt es nicht mehr, heute heißt es `daily_hard_cap_sat` (live 1 000 sat, D-281). Außerdem zählt `spent_today_sat()` nur KAI-Journal-Intents, ein Swap über `boltzd` taucht dort nie auf.
+>   - **Governance:** `boltzd` zahlt mit `admin.macaroon`, also an HOTP, PaymentService und dem litd-Account-Budget vorbei. Seit D-289 meldet der Reconcile so eine Zahlung als „fremde Ausgabe“.
+>   - **Fee-Limit:** Für die Hold-Invoice fehlt eines. KAI selbst begrenzt auf 3 000 ppm, höchstens 200 sat.
+>   - **Befehle und Pfade:** `./.venv/bin/trading-bot` ist ein Alt-Alias, kanonisch ist `kai` (D-236). Der Checkout ist nicht der Release-Baum.
+> - Über das Stoppen von `boltzd` entscheidet der Operator. Die Abbruchbedingungen des Macaroon-Werkzeugs lesen offene Swaps ohne Backend direkt aus `boltz.db` (Runbook `ln_kai_account_budget.md` §11).
+
 **Stand:** 2026-07-02 · **Bezug:** Goal-Plan G3 / ADR 0013 · **Voraussetzungen (ERFÜLLT 07-02):** `boltzd` v2.12.1 auf .51 (checksum-verifiziert, `boltzd.service` aktiv, mit lnd + Boltz-wss verbunden).
 
 ## Zweck
