@@ -15,17 +15,20 @@ separate from the trade/PnL ledger (no co-mingling). Pure, read-only.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.core.settings import LightningSettings, get_settings
+from app.lightning import reconciled_closes
 from app.lightning.client import LightningUnavailableError, LndRestClient
 
 _CAVEAT = (
     "sats only — USD value and BTC-beta are a separate dimension (not computed here); "
     "'self-funding' is a KI-labelled hypothesis, never a sold forecast (B-004). "
     "tradable is a SHADOW projection — actual allocation is gated at G2. "
-    "total_limbo_sat is reported separately and is NEVER available/tradable capital."
+    "total_limbo_sat is reported separately and is NEVER available/tradable capital. "
+    "reconciled_legacy_limbo_sat is a closed legacy case (D-287): already inside the "
+    "wallet balance — never added again, never subtracted."
 )
 
 
@@ -41,6 +44,9 @@ class PendingForceClose:
     recovered_balance_sat: int
     maturity_height: int
     blocks_til_maturity: int
+    # True nur fuer einen exakt belegten Altfall (app/lightning/reconciled_closes.py).
+    # Die lnd-Rohdaten oben bleiben unveraendert erhalten.
+    reconciled: bool = False
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,40 @@ class PendingChannelsSnapshot:
     waiting_close_count: int = 0
     force_closes: list[PendingForceClose] = field(default_factory=list)
     reason: str = ""
+
+    @property
+    def reconciled_force_closes(self) -> list[PendingForceClose]:
+        return [fc for fc in self.force_closes if fc.reconciled]
+
+    @property
+    def active_force_closing_count(self) -> int:
+        """Force-Closes, die eine Warnung verdienen: alle ausser belegten Altfaellen."""
+        return max(0, self.pending_force_closing_count - len(self.reconciled_force_closes))
+
+    @property
+    def active_limbo_sat(self) -> int:
+        """Limbo, das noch in Klaerung ist (ohne belegte Altfaelle)."""
+        legacy = sum(fc.limbo_balance_sat for fc in self.reconciled_force_closes)
+        return max(0, self.total_limbo_sat - legacy)
+
+    def payload(self) -> dict[str, Any]:
+        """Gemeinsame API-Felder fuer Channels- und Treasury-Endpunkt.
+
+        ``total_limbo_sat`` bleibt der lnd-Rohwert. Warnungen richten sich nach
+        ``active_*``. ``reconciled_legacy`` traegt Anzeige und Nachweis der Altfaelle.
+        """
+        legacy = []
+        for fc in self.reconciled_force_closes:
+            rec = reconciled_closes.match(fc.channel_point, fc.closing_txid, fc.limbo_balance_sat)
+            if rec is not None:
+                legacy.append(reconciled_closes.display(rec))
+        return {
+            "pending_force_closing_count": self.pending_force_closing_count,
+            "active_force_closing_count": self.active_force_closing_count,
+            "active_limbo_sat": self.active_limbo_sat,
+            "force_closes": [asdict(item) for item in self.force_closes],
+            "reconciled_legacy": legacy,
+        }
 
 
 def _as_int(value: Any) -> int:
@@ -84,16 +124,20 @@ def parse_pending_channels(raw: dict[str, Any]) -> PendingChannelsSnapshot:
             continue
         channel = entry.get("channel")
         channel = channel if isinstance(channel, dict) else {}
+        channel_point = str(channel.get("channel_point", ""))
+        closing_txid = str(entry.get("closing_txid", ""))
+        limbo = max(0, _as_int(entry.get("limbo_balance")))
         force_closes.append(
             PendingForceClose(
-                channel_point=str(channel.get("channel_point", "")),
+                channel_point=channel_point,
                 remote_pubkey=str(channel.get("remote_node_pub", "")),
-                closing_txid=str(entry.get("closing_txid", "")),
+                closing_txid=closing_txid,
                 capacity_sat=max(0, _as_int(channel.get("capacity"))),
-                limbo_balance_sat=max(0, _as_int(entry.get("limbo_balance"))),
+                limbo_balance_sat=limbo,
                 recovered_balance_sat=max(0, _as_int(entry.get("recovered_balance"))),
                 maturity_height=_as_int(entry.get("maturity_height")),
                 blocks_til_maturity=_as_int(entry.get("blocks_til_maturity")),
+                reconciled=reconciled_closes.match(channel_point, closing_txid, limbo) is not None,
             )
         )
 
@@ -146,6 +190,7 @@ def compute_treasury_snapshot(
     channel_local_sat: int,
     operating_reserve_sat: int,
     total_limbo_sat: int = 0,
+    reconciled_legacy_sat: int = 0,
 ) -> dict[str, Any]:
     """Aggregate earnings + balances into earnings/operating/tradable (sats).
 
@@ -177,6 +222,9 @@ def compute_treasury_snapshot(
         # Limbo is a claim under recovery, not a wallet/channel balance available
         # to spend. Surface it, but never add it to node_total or tradable.
         "total_limbo_sat": max(0, int(total_limbo_sat)),
+        # Belegter Altfall (D-287): steckt bereits im Walletbestand. Nur zur Einordnung
+        # ausgewiesen, weder zu node_total addiert noch davon abgezogen.
+        "reconciled_legacy_limbo_sat": max(0, int(reconciled_legacy_sat)),
         "usd_value": None,  # B-004: USD is a separate, un-co-mingled dimension
         "caveat": _CAVEAT,
     }

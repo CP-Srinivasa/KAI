@@ -1,8 +1,26 @@
 // @data-source: /dashboard/api/ln/channels
-import { Waypoints, ShieldCheck, ShieldAlert, Power, Zap, ArrowDownLeft, ArrowUpRight, Hourglass } from "lucide-react";
+import {
+  Waypoints,
+  ShieldCheck,
+  ShieldAlert,
+  Power,
+  Zap,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Hourglass,
+  History,
+  TriangleAlert,
+} from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
-import { fetchLnChannels, type LnChannels, type LnChannel, type LnPendingChannel } from "@/lib/api";
+import {
+  fetchLnChannels,
+  type LnChannels,
+  type LnChannel,
+  type LnForceClose,
+  type LnPendingChannel,
+  type LnReconciledClose,
+} from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 
 // Per-Channel-Aufschlüsselung (Phase 1, read-only, default-off). Zeigt EHRLICH
@@ -78,18 +96,84 @@ function PendingRow({ ch }: { ch: LnPendingChannel }) {
   );
 }
 
+// Aktive Force-Closes (alles außer belegten Altfällen) sind ein Befund und warnen.
+function ForceCloseRow({ fc }: { fc: LnForceClose }) {
+  return (
+    <div className="rounded-sm border border-warn/30 bg-warn/5 px-2.5 py-2 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 min-w-0">
+          <TriangleAlert size={10} className="text-warn shrink-0" />
+          <span className="truncate font-mono text-2xs text-fg-subtle" title={fc.channel_point}>
+            Force-Close · {fc.channel_point ? `${fc.channel_point.slice(0, 10)}…` : "—"}
+          </span>
+        </span>
+        <span className="font-mono tabular-nums text-2xs text-warn">{fmtSats(fc.limbo_balance_sat)}</span>
+      </div>
+      <div className="text-2xs text-fg-subtle">
+        in Klärung · noch nicht in der Wallet
+        {fc.blocks_til_maturity > 0 ? ` · frei in ${fc.blocks_til_maturity} Blöcken` : ""}
+      </div>
+    </div>
+  );
+}
+
+// Operator-Entscheid 2026-09-30: belegte Altfälle eingeklappt und neutral unter
+// „Historie“, mit Nachweis. Der Betrag steckt bereits im Walletbestand.
+function ReconciledHistory({ items }: { items: LnReconciledClose[] }) {
+  return (
+    <details className="rounded-sm border border-line-subtle bg-bg-2/30 px-2.5 py-1.5 text-2xs text-fg-subtle">
+      <summary className="flex cursor-pointer items-center gap-1.5 select-none">
+        <History size={10} className="shrink-0" /> Historie · geklärte Vorgänge ({items.length})
+      </summary>
+      <div className="mt-1.5 space-y-2">
+        {items.map((it) => (
+          <div key={it.channel_point} className="space-y-1">
+            <div className="text-fg-muted">
+              {it.title} · {fmtSats(it.limbo_sat)}
+            </div>
+            <div>{it.text}</div>
+            <details>
+              <summary className="cursor-pointer select-none">Details &amp; Nachweis</summary>
+              <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 font-mono">
+                <dt>Kanal</dt>
+                <dd className="break-all">{it.channel_point}</dd>
+                <dt>Schließung</dt>
+                <dd className="break-all">{it.closing_txid}</dd>
+                <dt>Rückführung</dt>
+                <dd className="break-all">
+                  {it.recovery_txid} (Block {it.recovery_height.toLocaleString("de-DE")})
+                </dd>
+                <dt>Geprüft</dt>
+                <dd>{it.verified_at}</dd>
+                <dt>Beleg</dt>
+                <dd className="break-all">
+                  {it.decision} · {it.evidence}
+                </dd>
+              </dl>
+            </details>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function ChannelsPanel() {
   const polling = usePolling<LnChannels>(
     (signal) => fetchLnChannels(signal),
     { intervalMs: POLL_MS, pauseWhenHidden: true, retry: { maxAttempts: 3, baseMs: 2_000 } },
   );
   const data = polling.state === "ready" ? polling.data : null;
+  const activeForceCloses = (data?.force_closes ?? []).filter((fc) => !fc.reconciled);
+  const reconciled = data?.reconciled_legacy ?? [];
+  const warn = (data?.num_pending ?? 0) > 0 || activeForceCloses.length > 0;
 
   const stateBadge =
     data == null ? null : data.state === "ok" ? (
-      <Badge tone={data.num_pending > 0 ? "warn" : "pos"} dot>
+      <Badge tone={warn ? "warn" : "pos"} dot>
         <ShieldCheck size={10} /> {data.num_channels} Channels
         {data.num_pending > 0 ? ` · ${data.num_pending} pending` : ""}
+        {activeForceCloses.length > 0 ? ` · ${activeForceCloses.length} Force-Close` : ""}
       </Badge>
     ) : data.state === "disabled" ? (
       <Badge tone="muted" dot>
@@ -165,6 +249,14 @@ export function ChannelsPanel() {
         </div>
       )}
 
+      {data?.state === "ok" && activeForceCloses.length > 0 && (
+        <div className="space-y-1.5 pb-2">
+          {activeForceCloses.map((fc) => (
+            <ForceCloseRow key={fc.channel_point || fc.closing_txid} fc={fc} />
+          ))}
+        </div>
+      )}
+
       {data?.state === "ok" && data.num_channels > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3 rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-1.5">
@@ -183,6 +275,12 @@ export function ChannelsPanel() {
           <div className="flex items-center gap-1.5 pt-0.5 text-2xs text-fg-subtle">
             <Zap size={10} className="text-ai/70" /> Outbound = senden · Inbound = empfangen
           </div>
+        </div>
+      )}
+
+      {data?.state === "ok" && reconciled.length > 0 && (
+        <div className="pt-2">
+          <ReconciledHistory items={reconciled} />
         </div>
       )}
     </Card>

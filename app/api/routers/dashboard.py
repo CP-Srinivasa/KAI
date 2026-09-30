@@ -2177,10 +2177,9 @@ async def dashboard_ln_channels_api() -> JSONResponse:
     payload["total_remote_sat"] = sum(c.remote_sat for c in status.channels)
     payload["pending_channels_state"] = pending.state
     payload["total_limbo_sat"] = pending.total_limbo_sat
-    payload["pending_force_closing_count"] = pending.pending_force_closing_count
     payload["pending_closing_count"] = pending.pending_closing_count
     payload["waiting_close_count"] = pending.waiting_close_count
-    payload["force_closes"] = [asdict(item) for item in pending.force_closes]
+    payload.update(pending.payload())  # inkl. aktiver Warnzahl + geklaerter Altfaelle (D-287)
     payload["pending_channels_reason"] = pending.reason
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
@@ -2259,8 +2258,6 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
     ``reserve_floor`` durchsetzt. Zwei Quellen für einen Kapital-Boden wären eine
     Anzeige, die etwas anderes behauptet als das Gate.
     """
-    from dataclasses import asdict
-
     from app.core.payment_settings import get_payment_settings
     from app.lightning.cache import get_cached_node_status
     from app.lightning.earnings_ledger import read_recent_ln_earnings
@@ -2277,11 +2274,11 @@ async def dashboard_ln_treasury_api() -> JSONResponse:
         onchain_sat=onchain,
         channel_local_sat=channel,
         operating_reserve_sat=reserve,
-        total_limbo_sat=pending.total_limbo_sat,
+        total_limbo_sat=pending.active_limbo_sat,
+        reconciled_legacy_sat=pending.total_limbo_sat - pending.active_limbo_sat,
     )
     snap["limbo_state"] = pending.state
-    snap["pending_force_closing_count"] = pending.pending_force_closing_count
-    snap["force_closes"] = [asdict(item) for item in pending.force_closes]
+    snap.update(pending.payload())
     snap["limbo_reason"] = pending.reason
     snap["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=snap, headers={"Cache-Control": "no-store, max-age=0"})

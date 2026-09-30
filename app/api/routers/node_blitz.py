@@ -76,6 +76,23 @@ async def _fetch_blitz_info() -> dict[str, Any]:
         return _unavailable(f"unexpected: {exc}")
 
 
+async def _annotate_reconciled(payload: dict[str, Any]) -> None:
+    """Belegte Force-Close-Altfaelle (D-287) mitzaehlen, damit sie keine Warnung ausloesen.
+
+    Die Rohzahl ``pending_channels`` vom Node bleibt unveraendert. Scheitert die
+    Abfrage, bleibt die Zahl 0 und die Warnung sichtbar (fail-safe).
+    """
+    from app.lightning.treasury import get_pending_channels_snapshot
+
+    lnd = (payload.get("data") or {}).get("lnd")
+    if not isinstance(lnd, dict):
+        return
+    snap = await get_pending_channels_snapshot()
+    lnd["pending_channels_reconciled"] = (
+        len(snap.reconciled_force_closes) if snap.state == "ok" else 0
+    )
+
+
 @router.get("/dashboard/api/node/blitz", tags=["dashboard"])
 async def dashboard_node_blitz_api() -> JSONResponse:
     """Read-only RaspiBlitz mirror (default-off, fail-soft, 60s in-process cache)."""
@@ -90,6 +107,7 @@ async def dashboard_node_blitz_api() -> JSONResponse:
     # Only successful snapshots are cached: an outage should retry next poll,
     # not pin "unavailable" for a minute after the node comes back.
     if payload["available"]:
+        await _annotate_reconciled(payload)
         _cache["ts"] = now
         _cache["payload"] = payload
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
