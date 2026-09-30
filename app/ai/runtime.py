@@ -141,6 +141,24 @@ def inference_settings(source: Any | None = None) -> InferenceSettings:
 _FRIST_PUFFER_S: Final = 5.0
 
 
+def _retry_policy(configured: InferenceSettings) -> RetryPolicy:
+    return RetryPolicy(
+        max_attempts=configured.max_attempts,
+        base_backoff_s=configured.backoff_base_seconds,
+        max_backoff_s=configured.backoff_max_seconds,
+        max_jitter_s=configured.jitter_max_seconds,
+    )
+
+
+def route_deadline_seconds(configured: InferenceSettings, route: str) -> float:
+    """Die Gesamtfrist, die :func:`invoke` ausserhalb von OFF fuer diese Route setzt.
+
+    Dieselbe Rechnung wie im Aufruf -- das Kontrollcenter zeigt sie an und soll
+    keine zweite Formel pflegen.
+    """
+    return _gesamtfrist(configured, route, _retry_policy(configured))
+
+
 def _gesamtfrist(configured: InferenceSettings, route: str, retry: RetryPolicy) -> float:
     """Die Frist ueber ALLES, was ein Aufruf ausserhalb von OFF tun darf.
 
@@ -845,12 +863,7 @@ async def invoke[T](
             kwargs: dict[str, Any] = {}
             if sleeper is not None:
                 kwargs["sleeper"] = sleeper
-            retry = RetryPolicy(
-                max_attempts=configured.max_attempts,
-                base_backoff_s=configured.backoff_base_seconds,
-                max_backoff_s=configured.backoff_max_seconds,
-                max_jitter_s=configured.jitter_max_seconds,
-            )
+            retry = _retry_policy(configured)
 
             def uebergeben(task: asyncio.Task[None]) -> None:
                 # Der Schatten ueberdauert die Antwort: Client UND Reservierung
@@ -924,5 +937,6 @@ __all__ = [
     "reset_environment_settings",
     "reset_circuit_state",
     "reset_inflight_reservations",
+    "route_deadline_seconds",
     "unconfigured_direct",
 ]

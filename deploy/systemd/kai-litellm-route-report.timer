@@ -1,0 +1,13 @@
+[Unit]
+Description=Trigger KAI LiteLLM-Routenbericht stuendlich
+
+[Timer]
+# Stuendlich zur Minute 7 — das Kontrollcenter (Bereich KI-Transport) liest das Artefakt,
+# Evidenz aelter als eine Stunde waere dort eine stille Luecke. Nur lesend.
+OnCalendar=*-*-* *:07:00
+Persistent=true
+AccuracySec=60s
+Unit=kai-litellm-route-report.service
+
+[Install]
+WantedBy=timers.target

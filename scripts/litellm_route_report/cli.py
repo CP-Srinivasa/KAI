@@ -22,6 +22,7 @@ Anbieter an und aendert keinen Modus.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -100,7 +101,11 @@ def main(argv: list[str] | None = None) -> int:
         for target, text in ((args.json_out, json_text), (args.md_out, md_text)):
             target.parent.mkdir(parents=True, exist_ok=True)
             # Bytes, nicht Text: LF auf jeder Plattform, derselbe Hash ueberall.
-            target.write_bytes(text.encode("utf-8"))
+            # Daneben schreiben und tauschen: das Kontrollcenter liest das JSON,
+            # waehrend der stuendliche Timer es neu schreibt.
+            zwischen = target.with_name(target.name + ".tmp")
+            zwischen.write_bytes(text.encode("utf-8"))
+            os.replace(zwischen, target)
     except InputError as exc:
         print(f"Eingabefehler: {exc}", file=sys.stderr)
         return EXIT_CONFIG

@@ -35,6 +35,7 @@ kai-integrity-anchor.timer
 kai-integrity-ots-upgrade.timer
 kai-liquidation-stream.service
 kai-litellm.service
+kai-litellm-route-report.timer
 kai-ln-reconcile.timer
 kai-ln-scb-monitor.timer
 kai-min-turnover-calibration.timer
