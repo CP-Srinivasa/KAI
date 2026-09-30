@@ -172,24 +172,42 @@ async def _issue_challenge(
         scope=scope,
         ttl_s=_ACCESS_TTL_S,
     )
+    from app import oracle_legal
+
+    published = oracle_legal.is_published(
+        getattr(settings.lightning, "oracle_legal_published", False)
+    )
     append_demand_event(
         CHALLENGE_MINTED,
         scope=public_scope,
         requester_fp=requester_fp,
         price_sat=int(price),
         payment_hash=payment_hash_hex,
+        # D-291 E1: die beim Kauf angezeigte Bedingungsversion gehört zum Auftrag.
+        terms_version=oracle_legal.VERSION if published else "",
     )
-    raise HTTPException(
-        status_code=402,
-        detail="payment required",
-        headers={
-            "WWW-Authenticate": build_challenge_header(token, payment_request),
-            # D-291: the access expiry as an unambiguous UTC instant.
-            "X-L402-Access-Expires": datetime.fromtimestamp(token_expiry(token), UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
-        },
-    )
+    expires = datetime.fromtimestamp(token_expiry(token), UTC).isoformat().replace("+00:00", "Z")
+    headers = {
+        "WWW-Authenticate": build_challenge_header(token, payment_request),
+        # D-291: the access expiry as an unambiguous UTC instant.
+        "X-L402-Access-Expires": expires,
+    }
+    detail: str | dict[str, Any] = "payment required"
+    if published:
+        # Bedingungen und Hilfe VOR der Zahlung: Link-Header für Clients, Kurzhinweis,
+        # Preis und Ablauf im Body für Menschen (Operator-Entscheid 2026-09-30).
+        headers["Link"] = oracle_legal.LINK_HEADER
+        detail = {
+            "message": "payment required",
+            "scope": public_scope,
+            "price_sat": int(price),
+            "access_expires": expires,
+            "terms": "/oracle/bedingungen",
+            "terms_version": oracle_legal.VERSION,
+            "help": "/oracle/hilfe",
+            "notice": oracle_legal.pre_payment_notice(_ACCESS_WINDOW_S // 60),
+        }
+    raise HTTPException(status_code=402, detail=detail, headers=headers)
 
 
 async def _require_paid(

@@ -490,7 +490,7 @@ def _check_payment_journal_chain(adir: Path) -> list[HealthIssue]:
 
 
 def _check_payment_reconciliation(adir: Path, *, now: datetime | None = None) -> list[HealthIssue]:
-    return _hcp.check_payment_reconciliation(adir, now=now)
+    return _hcp.check_payment_reconciliation(adir, now=now) + _hcp.check_oracle_cases(adir, now=now)
 
 
 def _check_pay_requests(adir: Path) -> list[HealthIssue]:

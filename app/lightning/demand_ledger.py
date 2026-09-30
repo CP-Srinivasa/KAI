@@ -52,10 +52,14 @@ def append_demand_event(
     requester_fp: str = "",
     price_sat: int = 0,
     payment_hash: str = "",
+    terms_version: str = "",
     path: Path | None = None,
 ) -> bool:
     """Append one demand event. Fail-soft: a write error is logged and returns False;
-    it must never propagate to the request that triggered the telemetry."""
+    it must never propagate to the request that triggered the telemetry.
+
+    ``terms_version`` (nur bei veröffentlichten Oracle-Bedingungen gesetzt) ordnet dem
+    Auftrag die beim Kauf angezeigte Bedingungsversion zu (D-291 E1)."""
     out = path or _DEMAND_PATH
     record = {
         "ts": datetime.now(UTC).isoformat(),
@@ -65,6 +69,8 @@ def append_demand_event(
         "price_sat": int(price_sat),
         "payment_hash": payment_hash,
     }
+    if terms_version:
+        record["terms_version"] = terms_version
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("a", encoding="utf-8") as fh:
