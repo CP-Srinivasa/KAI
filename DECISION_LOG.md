@@ -24,6 +24,29 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-295 (2026-09-30)
+**Entscheidung und Umsetzung (Operator-Freigabe „sofern sauber“):** Der Node läuft mit **lnd 0.20.4-beta** und **LiT 0.16.1-alpha**, boltzd ist stillgelegt. Die Bilanz ist vor und nach jedem Schritt identisch.
+- **boltzd:** Boltz hat die Swap-Dienste am 03.08.2026 eingestellt, `boltz.exchange` steht seit 18.09. auf `client hold`. boltzd ist per `systemctl disable --now` stillgelegt, das geht nur bei 0 offenen Swaps (`boltz.db` nur lesend geprüft). Die Datenbank bleibt liegen. Das Runbook `ln_inbound_swap.md` ist außer Betrieb (#1136).
+- **Warum 0.20.4 und nicht 0.21:** 0.21 entfernt `POST /v1/channels/transactions`, das LNbits 1.2.1 zum Zahlen nutzt. Die 0.20-Linie wird gepflegt und bringt geldrelevante Resolver-Fixes (0.20.3/0.20.4).
+- **Was geprüft war:**
+  - Alle 44 Schlüssel der `lnd.conf` sind in 0.20.4 gültig.
+  - Es gibt keine bbolt-Migration.
+  - Alle REST-Routen, die KAI nutzt, sind vorhanden.
+- **Warum LiT 0.16.1:** 0.16.1 verlangt mindestens lnd 0.19.0 und läuft damit vor und nach dem lnd-Wechsel. 0.17 hätte eine SQL-Migration ohne Rückweg gebracht. Die Befehle von `litcli accounts` sind unverändert.
+- **Installation von Hand, nicht mit den RaspiBlitz-Skripten** (`KAI-mirror/scripts/ln-ops/lnupd.ps1` + `lnupd_node.sh`):
+  - `lnd.install.sh` prüft nur roasbeef, der v0.20.4 nicht signiert hat. Deshalb gilt lnds eigene Regel `verify-install.sh` (mindestens 5 Maintainer-Signaturen, Fingerprints gepinnt). Ergebnis: 7 von 7 gültig, dazu sha256 von Paket und Binaries.
+  - `bonus.lit.sh` hat keinen Update-Modus. `on` startet lnd neu und öffnet Ports, `off` löscht den Benutzer `lit`. LiT ist gegen den gepinnten ellemouton-Schlüssel geprüft.
+  - Es sind nur `litd/litcli/loop/pool/frcli` eingebaut. Das LiT-Paket bringt ein eigenes `lncli` mit, das nicht eingebaut wurde.
+- **Ablauf:**
+  - **Phase A (14:42Z):** LiT 0.16.1, ohne lnd-Neustart. Programme und Daten (64 KB) sind gesichert, die Bilanz blieb identisch. KAI-Schlüssel 101/102/Account liefern 200, der Preflight hat keine Blocker. Der Account-Schutz ist neu bewiesen (A3, 14:55Z): Ohne litd lehnt lnd den Account-Macaroon ab.
+  - **Phase B (14:57–14:59Z):** frische SCB, Sicherung von 0.19.3, sauberer Stopp, Einbau, Entsperren mit Passwort C. Danach sind Chain und Graph synchron, der Kanal zu ACINQ ist aktiv, 4 Peers. LNbits ist verbunden, litd-Accounts sind lesbar, die Bilanz ist identisch. KAI-Prüfung und Preflight sind grün, `/health/payment` ok, der Reconcile um 15:01Z war `complete` ohne Waisen.
+- **Bilanzvergleich (#1137):** Er rechnet jetzt die Gebührenreserve des Eröffners mit. Am 30.09. hat lnd die Reserve an die Netzgebühr angepasst (367 → 545 sat). Ohne diese Änderung hätte der Vergleich das im Fenster als Abfluss gemeldet.
+**Limit:**
+- **Rückweg lnd:** Der Wechsel zurück auf 0.19.3 ist nur eingeschränkt möglich. 0.20 kann Graph-Einträge in einem Format schreiben, das 0.19.3 nicht sauber liest. Das betrifft Routing-Daten, keine Kanalzustände. Der Notweg bleiben Seed und SCB.
+- **Rückweg LiT:** vollständig, solange die Sicherung unter `~/kai-lnupd/backup` liegt.
+- **Datenträger:** Die Knotendaten liegen auf der SD-Karte, nicht auf einer SSD.
+**Beleg:** Node `/home/admin/kai-lnupd/lnupd.log` und `snap-*.json`, Recherche der Release Notes und Konfigurationsabgleich vom 30.09., `docs/runbooks/ln_kai_account_budget.md` §11 (Werkzeug für den Bilanzvergleich).
+
 ### D-294 (2026-09-29)
 **Befund und Entscheidung (Operator-Freigabe unter der Bedingung „kein Satoshi darf verloren gehen oder sich bewegen“):** Alle lnd-Macaroons sind neu aufgebaut. Der alte `kai-payment.macaroon` (Wurzel `0`, Senderecht bis zum Kanalguthaben, am HOTP vorbei) und alle seine Kopien, auch die verschlüsselten im D:-Vault, sind am Node **ungültig**.
 - **Methode:**
