@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -173,6 +174,26 @@ def test_die_provenienz_steht_im_log(tmp_path: Path) -> None:
     assert "name=litellm" in fertig.stderr
     assert "version=1.99.0" in fertig.stderr
     assert "manifest=" in fertig.stderr
+
+
+def test_die_beleg_zeile_ist_datiert(tmp_path: Path) -> None:
+    """Ohne Zeitstempel belegte die Zeile einen Baum, aber keinen Zeitpunkt.
+
+    Die Unit schreibt per ``StandardError=append:`` in eine Datei; systemd
+    stempelt dort nichts. Der Routen-Abnahmebericht liest den Zeitstempel vor
+    dem Marker (LiteLLM-Audit, Nachtrag 30.09.).
+    """
+    wurzel = tmp_path / "transport"
+    _baum(wurzel)
+    skript = _skript_mit_wurzel(tmp_path, wurzel)
+
+    fertig = _lauf(skript, "litellm")
+
+    assert re.search(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z TRANSPORT_VERIFIED name=litellm ",
+        fertig.stderr,
+        re.MULTILINE,
+    ), fertig.stderr
 
 
 # ---------------------------------------------------------------------------

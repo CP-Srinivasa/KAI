@@ -57,12 +57,32 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: Getrennte Reserven ohne dieses Feld waeren nicht pruefbar: der Verbrauch
 #: eines Topfes laesst sich aus einer Zeile, die ihn nicht nennt, nicht
 #: rekonstruieren -- und eine Reserve, deren Stand man raet, ist keine.
-SCHEMA_VERSION = "v8"
+#: v9 (2026-09-30): `runtime_commit` + `runtime_source` -- welcher Code die
+#: Zeile geschrieben hat. Ohne sie belegte die Telemetrie einen Aufruf, aber
+#: nicht das Release, aus dem er kam; der Routen-Abnahmebericht musste die
+#: Release-SHA jeder Route als unbelegt fuehren (LiteLLM-Audit, Nachtrag).
+SCHEMA_VERSION = "v9"
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
 #: Der Anbieter hat den Betrag selbst genannt (heute nur der LiteLLM-Header).
 COST_SOURCE_UPSTREAM = "upstream"
+
+
+def _runtime_provenance() -> tuple[str | None, str | None]:
+    """(Commit, Quelle) des laufenden Prozesses -- oder (None, None), nie geraten.
+
+    Prozessweit einmal eingefroren (``get_runtime_identity``): im Release aus
+    ``release.json``, sonst aus dem Checkout. Ein Fehler hier darf die Zeile
+    nicht kosten; dann ist das Release eben unbekannt.
+    """
+    try:
+        from app.core import runtime_identity
+
+        identitaet = runtime_identity.get_runtime_identity()
+    except Exception:  # noqa: BLE001 - Telemetrie reisst den Aufruf nie mit
+        return None, None
+    return identitaet.runtime_commit, identitaet.runtime_source
 
 
 def _cost_fields(
@@ -288,6 +308,8 @@ def record_llm_call(
         # --- v8: aus welchem Topf bezahlt wurde ---------------------------
         "budget_pot": budget_pot,
     }
+    # --- v9: aus welchem Release die Zeile stammt --------------------------
+    row["runtime_commit"], row["runtime_source"] = _runtime_provenance()
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]
     # Auch die Summe erbt UNKNOWN != 0: nur wenn BEIDE Seiten bekannt sind,

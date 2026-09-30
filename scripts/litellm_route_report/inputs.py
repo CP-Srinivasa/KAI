@@ -30,7 +30,7 @@ from scripts.litellm_shadow_eval.loader import input_label
 #: Praefixvergleich. Bumpt der Schreiber (``app.observability.llm_telemetry.
 #: SCHEMA_VERSION``), schlaegt der Vertragstest an, und jemand entscheidet
 #: bewusst, statt dass eine v9-Zeile still mitgelesen wird.
-KNOWN_TELEMETRY_SCHEMAS: Final = frozenset({"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"})
+KNOWN_TELEMETRY_SCHEMAS: Final = frozenset({"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"})
 
 #: Die Berichtsformate von ``scripts/litellm_shadow_eval``. v2 bringt die
 #: Laufzeitnachweise als Objekte mit; v1 hat keine.
@@ -56,6 +56,15 @@ def _text(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _commit(value: object) -> str | None:
+    """Ein voller Commit (40 hex) -- alles andere ist kein Beleg ueber ein Release."""
+    text = _text(value)
+    if text is None:
+        return None
+    text = text.lower()
+    return text if len(text) == 40 and all(c in "0123456789abcdef" for c in text) else None
 
 
 def _integer(value: object) -> int | None:
@@ -175,6 +184,7 @@ def normalize_row(raw: dict[str, Any]) -> tuple[CallRecord | None, str | None]:
             cost_usd=cost,
             cost_source=_text(raw.get("cost_source")) if cost is not None else None,
             usage_reported=_usage_reported(raw),
+            runtime_commit=_commit(raw.get("runtime_commit")),
         ),
         None,
     )
@@ -345,15 +355,15 @@ def _verification(line: str, position: int) -> TransportVerification:
         key, separator, value = token.partition("=")
         if separator and key in _TRANSPORT_KEYS and value:
             fields[key] = value
-    # `pi_transport_exec.sh` schreibt ohne Zeitstempel, und systemd haengt per
-    # `StandardError=append:` keinen an. Nur ein Export mit Zeitspalte (etwa
-    # `journalctl -o short-iso`) liefert einen -- dann steht er vorne.
+    # Seit dem Nachtrag zum LiteLLM-Audit (30.09.) stellt `pi_transport_exec.sh`
+    # einen UTC-Zeitstempel voran. Aeltere Zeilen tragen keinen; systemd haengt
+    # per `StandardError=append:` auch keinen an.
     prefix = line[:position].split()
     moment = aware_timestamp(prefix[0]) if prefix else None
     reasons: dict[str, str] = {}
     if moment is None:
         reasons["verified_at"] = (
-            "Zeile traegt keinen Zeitstempel (pi_transport_exec.sh schreibt keinen)"
+            "Zeile traegt keinen Zeitstempel (vor dem Nachtrag vom 30.09. geschrieben)"
         )
     for key in ("version", "tree", "manifest"):
         if key not in fields:

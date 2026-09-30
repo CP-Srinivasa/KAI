@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
@@ -68,7 +69,7 @@ VERSIONED_TRANSPORTS: Final = {"litellm": "litellm"}
 
 _NO_ROWS: Final = "keine Telemetriezeile fuer diese Route auf diesem Transport"
 _NO_RELEASE: Final = (
-    "keine Eingabe traegt ihn je Route (Telemetriezeilen fuehren kein Release-Feld)"
+    "keine Telemetriezeile traegt runtime_commit (Zeilen vor Schema v9 oder Release unbekannt)"
 )
 
 
@@ -109,7 +110,7 @@ def drop_outer_chain_records(
 
 
 def _version(transport: str, log: TransportLogSummary | None) -> tuple[VersionInfo, dict[str, str]]:
-    reasons = {"version.release_sha": _NO_RELEASE}
+    reasons = {"version.release_sha": _NO_RELEASE, "version.release_source": _NO_RELEASE}
     name = VERSIONED_TRANSPORTS.get(transport)
     if name is None:
         grund = (
@@ -154,6 +155,29 @@ def _version(transport: str, log: TransportLogSummary | None) -> tuple[VersionIn
         ),
         reasons,
     )
+
+
+def _mit_release(
+    version: VersionInfo, records: list[CallRecord], reasons: dict[str, str]
+) -> VersionInfo:
+    """Die Release-SHA aus ``runtime_commit`` (v9): die juengste Zeile gilt.
+
+    Wechsel und Luecken im Fenster werden benannt statt geglaettet -- ein Bericht,
+    der drei Releases als eines ausweist, belegt keines.
+    """
+    belegt = [(record.ts, record.runtime_commit) for record in records if record.runtime_commit]
+    if not belegt:
+        return version
+    reasons.pop("version.release_sha", None)
+    reasons.pop("version.release_source", None)
+    juengste = max(belegt)[1]
+    verschiedene = len({commit for _, commit in belegt})
+    herkunft = "runtime_commit der juengsten Telemetriezeile"
+    if len(belegt) < len(records):
+        herkunft += f"; belegt in {len(belegt)} von {len(records)} Zeilen (aeltere vor v9)"
+    if verschiedene > 1:
+        herkunft += f"; {verschiedene} Releases im Fenster"
+    return replace(version, release_sha=juengste, release_source=herkunft)
 
 
 def _empty_section(
@@ -206,6 +230,7 @@ def _section(
     if not records:
         return _empty_section(transport, version, version_reasons)
     reasons = dict(version_reasons)
+    version = _mit_release(version, records, reasons)
     calls = len(records)
 
     successes = [record for record in records if record.success]

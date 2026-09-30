@@ -103,6 +103,9 @@ fi
 
 # Die Provenienz gehoert ins Log, nicht nur in die Pruefung: wer spaeter fragt,
 # welcher Baum lief, soll es lesen koennen und nicht rekonstruieren muessen.
-echo "TRANSPORT_VERIFIED name=$NAME version=$VERSION tree=$TREE manifest=${SOLL:0:16}" >&2
+# Mit UTC-Zeitstempel vorne: die Unit schreibt per StandardError=append: in eine
+# Datei, und dort stempelt systemd nichts. Ohne ihn belegte die Zeile einen Baum,
+# aber keinen Zeitpunkt (LiteLLM-Audit, Nachtrag 30.09.).
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) TRANSPORT_VERIFIED name=$NAME version=$VERSION tree=$TREE manifest=${SOLL:0:16}" >&2
 
 exec "$BINARY" "$@"

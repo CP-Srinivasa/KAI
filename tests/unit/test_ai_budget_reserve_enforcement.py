@@ -26,6 +26,7 @@ from app.ai.models import AttemptTrace
 from app.ai.runtime import invoke
 from app.ai.spend import reset_spend_cache
 from app.core.ai_cost_settings import reset_ai_cost_settings
+from app.observability.llm_telemetry import SCHEMA_VERSION
 
 #: 1,25 − 0,15 − 0,05 = 1,05. Ein Verbrauch von 1,10 USD liegt darüber, aber
 #: unter dem Tagesbudget: genau die Lage, in der die Reserve etwas bewirken
@@ -332,7 +333,8 @@ def test_der_entschiedene_topf_landet_in_der_telemetriezeile(tmp_path: Path) -> 
     zeile = json.loads(sink.read_text(encoding="utf-8").strip())
 
     assert zeile["budget_pot"] == "alert_reserve"
-    assert zeile["schema_version"] == "v8"
+    # budget_pot kam mit v8; das Literal bewacht test_telemetry_schema_version.
+    assert zeile["schema_version"] == SCHEMA_VERSION
 
 
 def test_ohne_entscheidung_bleibt_der_topf_none_und_wird_nicht_normal(
