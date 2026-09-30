@@ -1,4 +1,5 @@
 // @data-source: /dashboard/api/lightning + /dashboard/api/chain (L1) + /dashboard/api/integrity (L3)
+//   + /dashboard/api/node/blitz + /dashboard/api/ln/channels + /dashboard/api/ln/reputation (Panels)
 import type { ReactNode } from "react";
 import {
   Bitcoin,
@@ -14,7 +15,6 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/layout/PageHeader";
 import { Card, Badge, SectionLabel, InfoHint } from "@/components/ui/Primitives";
-import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
 import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
 import { NodeReputationPanel } from "@/components/panels/NodeReputationPanel";
@@ -236,7 +236,7 @@ export function NodePage() {
                 unten (live aus der API) — diese Karte behauptet keinen Gate-Zustand.
               </>
             }
-            hint="Historie: Wert-Schicht 2026-07-01 erstmals operator-armiert (Cockpit-Macaroon + HOTP-Seed, enge Policy: allowed_actions, per-action-/daily-Cap, reserve_floor, confirm_threshold=1 ⇒ HOTP auf jedem Spend); erster Channel (400k, ACINQ) lief über genau diesen Pfad. Arming/Disarming ist ein Operator-Gate (APP_LN_PAY_ENABLED)."
+            hint="Historie: Wert-Schicht 2026-07-01 erstmals operator-armiert (damals Cockpit-Macaroon + HOTP-Seed, enge Policy: allowed_actions, per-action-/daily-Cap, reserve_floor, confirm_threshold=1 ⇒ HOTP auf jedem Spend); der erste Channel (400k, ACINQ) lief über diesen Pfad. Seit D-293/D-294 (26./29.09.) sendet KAI nur über einen litd-Account, dessen Budget der Node selbst durchsetzt (fail-closed ohne litd); eigene Macaroon-Wurzeln 101 (lesen) und 102 (Rechnungen), der Cockpit-Macaroon ist entfernt. Channel-Verben sind seit ADR 0018 §12 zurückgebaut. Arming/Disarming bleibt ein Operator-Gate (APP_LN_PAY_ENABLED)."
           />
         </div>
       </section>
@@ -250,19 +250,21 @@ export function NodePage() {
             <LightningPanel status={lightning} />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">
-                <Network size={11} /> Wiring-Stand (verifiziert · 2026-07-02)
+                <Network size={11} /> Wiring-Stand (verifiziert · 2026-09-30, D-295)
                 <InfoHint
-                  label="Read- UND Value-Wiring live"
-                  hint="Read-Pfad LIVE (Macaroon + base_url + TLS in der Prod-.env auf .23). Wert-Schicht seit 2026-07-01 operator-armiert: Cockpit-Macaroon (invoices+channel-write, NIE admin), HOTP-Seed, Policy-Envelope. Der wahre Kill-Switch-Zustand (pay_enabled) kommt live aus der API und steht im LN-Steuerung-Panel — dieser Text behauptet keinen Gate-Zustand."
+                  label="Read- und Sende-Wiring"
+                  hint="Read-Pfad LIVE (Macaroon + base_url + TLS in der Prod-.env auf .23). Macaroons seit D-294 (29.09.) neu aufgebaut: Wurzel 101 zum Lesen, 102 für Rechnungen; gesendet wird nur über den litd-Account (Budget im Node durchgesetzt, ohne litd lehnt lnd ab). Dazu HOTP-Seed und Policy-Envelope. Der wahre Kill-Switch-Zustand (pay_enabled) kommt live aus der API und steht im LN-Steuerung-Panel — dieser Text behauptet keinen Gate-Zustand."
                 />
               </span>
               <p className="mt-1">
-                Node-seitig laufen <span className="font-mono text-fg">bitcoind</span> +{" "}
-                <span className="font-mono text-fg">lnd</span> (Hybrid: Clearnet + Tor). Read-Adapter{" "}
-                <span className="font-mono text-pos">live</span>; Wert-Schicht{" "}
-                <span className="font-mono text-pos">armiert</span> hinter Policy-Envelope + HOTP —
-                erster Channel-Open (400k, ACINQ) lief 07-01 über genau diesen Pfad. Live-Zustand von{" "}
-                <span className="font-mono text-fg">pay_enabled</span> zeigt die LN-Steuerung rechts.
+                Node-seitig laufen <span className="font-mono text-fg">bitcoind</span>,{" "}
+                <span className="font-mono text-fg">lnd 0.20.4</span> (Hybrid: Clearnet + Tor),{" "}
+                <span className="font-mono text-fg">litd 0.16.1</span> (Account-Budget für KAIs Sendeschlüssel) und{" "}
+                <span className="font-mono text-fg">LNbits</span>; <span className="font-mono text-fg">boltzd</span> ist
+                stillgelegt (Boltz hat die Swap-Dienste eingestellt). Read-Adapter{" "}
+                <span className="font-mono text-pos">live</span>; Senden nur über den litd-Account hinter
+                Policy-Envelope + HOTP. Ob der Sendepfad gerade scharf ist (
+                <span className="font-mono text-fg">pay_enabled</span>), zeigt allein die LN-Steuerung rechts.
               </p>
             </div>
             <BlitzInfoPanel />
@@ -271,19 +273,18 @@ export function NodePage() {
 
           <div className="space-y-3">
             <ChannelsPanel />
-            <PreparedPanel
-              title="B2-Funds-Recovery"
-              reason="On-Chain-Balance (confirmed/unconfirmed) und Channel-Inbound/Outbound sind jetzt LIVE (read-only) im Lightning- und Channels-Panel. Offen bleibt der Recovery-Status der letzten Channel-Mittel."
-              detail={
-                <>
-                  B2 (<span className="font-mono">sweeptimelock</span>) der letzten ~306k sats —
-                  erscheint künftig als ehrlicher <span className="font-mono">recovering/syncing</span>-
-                  Zustand, getrennt von bereits bestätigter Balance. Keine Fake-Zahl.
-                </>
-              }
-              status="roadmap"
-              roadmapNote="Phase-2 (Resilienz-Sprint): SCB-Monitoring + B2-Recovery-Status (operator-exekutiert)."
-            />
+            {/* B2-Funds-Recovery: erledigt laut D-287 (Node-Forensik, on-chain bewiesen) - keine Roadmap-Kachel mehr. */}
+            <div className="rounded-sm border border-pos/25 bg-pos/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
+              <span className="flex items-center gap-1.5 font-semibold text-pos">
+                <ShieldCheck size={11} /> B2-Funds-Recovery · erledigt (D-287, 26.09.)
+              </span>
+              <p className="mt-1">
+                Die Force-Close-Altlasten sind vollständig geborgen, belegt auf der Blockchain: Die Sweeps{" "}
+                <span className="font-mono">2fd51c3d…</span> und <span className="font-mono">e7618e85…</span> zahlten an
+                eigene Adressen, es fehlt kein Satoshi. lnd führt die Kanäle noch als Buchungsrest (Limbo, externer Sweep);
+                KAI zählt Limbo nie als verfügbares Kapital. Die geklärten Fälle stehen im Channels-Panel unter „Historie“.
+              </p>
+            </div>
             <NodeReputationPanel />
             <LnControlPanel status={lightning} />
           </div>

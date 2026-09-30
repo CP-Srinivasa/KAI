@@ -290,7 +290,7 @@ describe("PayPage — Status-Polling bis Endzustand", () => {
 });
 
 describe("PayPage — Liste der letzten Requests", () => {
-  it("zeigt Badge/Betrag/Referenz und lädt einen Request per Klick (ohne QR — Vertrag liefert kein bolt11)", async () => {
+  it("zeigt Badge/Betrag/Referenz; SETTLED ohne QR, WAITING mit QR aus dem GET (#913)", async () => {
     const older: PayRequest = {
       ...settled,
       payment_id: "pay_old1",
@@ -299,7 +299,14 @@ describe("PayPage — Liste der letzten Requests", () => {
       description: "Alt",
     };
     fetchPayRequests.mockResolvedValue([older, { ...waiting, payment_id: "pay_w2", reference: "ref-B" }]);
-    fetchPayRequest.mockResolvedValue({ ...waiting, payment_id: "pay_w2", reference: "ref-B" });
+    // GET liefert bolt11/lightning_uri nur bei WAITING (app/pay/service.py `view`).
+    fetchPayRequest.mockResolvedValue({
+      ...waiting,
+      payment_id: "pay_w2",
+      reference: "ref-B",
+      bolt11: "lnbc50u1pw2",
+      lightning_uri: "lightning:lnbc50u1pw2",
+    });
     render(<PayPage pollMs={1_000_000} />);
 
     expect(await screen.findByText("ref-A")).toBeTruthy();
@@ -309,7 +316,7 @@ describe("PayPage — Liste der letzten Requests", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Request pay_old1 laden" }));
     expect(await screen.findByText("✓ PAYMENT SETTLED")).toBeTruthy();
-    expect(screen.getByText(/nur direkt nach dem Erstellen/)).toBeTruthy();
+    expect(screen.getByText(/Kein QR: Die Anfrage ist nicht mehr offen/)).toBeTruthy();
     expect(screen.queryByTestId("pay-qr")).toBeNull();
     // terminaler Listeneintrag → kein Polling
     await sleep(40);
@@ -319,6 +326,19 @@ describe("PayPage — Liste der letzten Requests", () => {
     expect(await screen.findByText("Status: WAITING")).toBeTruthy();
     await waitFor(() => expect(fetchPayRequest).toHaveBeenCalledTimes(1));
     expect(fetchPayRequest.mock.calls[0][0]).toBe("pay_w2");
+    // offene Anfrage aus der Liste: QR und bolt11 aus dem GET, auch ohne Erstellen in dieser Sitzung
+    expect(await screen.findByTestId("pay-qr")).toBeTruthy();
+    expect(screen.getByDisplayValue("lnbc50u1pw2")).toBeTruthy();
+  });
+
+  it("Einordnung: Hinweis auf das getrennte Produkt KAI-Pay mit Links, keine Wallet-Funktion", async () => {
+    fetchPayRequests.mockResolvedValue([]);
+    render(<PayPage pollMs={1_000_000} />);
+    const note = await screen.findByTestId("pay-product-note");
+    expect(note.textContent).toMatch(/Strang B/);
+    const hrefs = Array.from(note.querySelectorAll("a")).map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["https://kai-pay.net/", "https://app.kai-pay.net/", "https://kasse.kai-pay.net/"]);
+    note.querySelectorAll("a").forEach((a) => expect(a.getAttribute("rel")).toBe("noopener noreferrer"));
   });
 
   it("Listen-Fehler steht lesbar da, Formular bleibt nutzbar", async () => {
