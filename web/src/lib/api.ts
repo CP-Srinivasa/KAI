@@ -1057,6 +1057,32 @@ export type LnPendingChannel = {
   local_sat: number;
   channel_point: string;
 };
+// lnd pendingchannels, eine Zeile je Force-Close (Rohdaten). ``reconciled`` ist
+// nur bei einem belegten Altfall true (app/lightning/reconciled_closes.py).
+export type LnForceClose = {
+  channel_point: string;
+  remote_pubkey: string;
+  closing_txid: string;
+  capacity_sat: number;
+  limbo_balance_sat: number;
+  recovered_balance_sat: number;
+  maturity_height: number;
+  blocks_til_maturity: number;
+  reconciled: boolean;
+};
+// Geklärter Altfall samt Nachweis (D-287): Anzeige unter „Historie“, keine Warnung.
+export type LnReconciledClose = {
+  title: string;
+  text: string;
+  channel_point: string;
+  closing_txid: string;
+  limbo_sat: number;
+  recovery_txid: string;
+  recovery_height: number;
+  verified_at: string;
+  decision: string;
+  evidence: string;
+};
 export type LnChannels = {
   state: "disabled" | "unavailable" | "ok";
   reachable: boolean;
@@ -1066,6 +1092,10 @@ export type LnChannels = {
   num_pending: number;
   total_local_sat: number;
   total_remote_sat: number;
+  force_closes?: LnForceClose[];
+  active_force_closing_count?: number;
+  active_limbo_sat?: number;
+  reconciled_legacy?: LnReconciledClose[];
   reason: string;
   generated_at: string;
 };
@@ -1106,6 +1136,8 @@ export type NodeBlitzData = {
     peers: number | null;
     active_channels: number | null;
     pending_channels: number | null;
+    // davon belegte Altfälle (D-287), vom Backend ergänzt; lösen keine Warnung aus
+    pending_channels_reconciled?: number;
     wallet_confirmed_sat: number | null;
     wallet_unconfirmed_sat: number | null;
     channel_local_sat: number | null;

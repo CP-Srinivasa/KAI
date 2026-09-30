@@ -30,6 +30,19 @@ export function fmtDiskGb(gb: number | null | undefined): string | null {
   return `${gb.toLocaleString("de-DE", { maximumFractionDigits: 1 })}GB`;
 }
 
+// Operator-Entscheid 2026-09-30 (D-287): Belegte Force-Close-Altfälle bleiben in der
+// lnd-Rohzahl stehen, lösen aber keine Warnung aus. Neue oder veränderte bleiben warn.
+export function pendingChannelsView(
+  pending: number | null | undefined,
+  reconciled: number | null | undefined,
+): { text: string; warn: boolean } {
+  if (pending == null) return { text: `${nv} pending`, warn: false };
+  const legacy = Math.min(Math.max(0, reconciled ?? 0), pending);
+  const active = pending - legacy;
+  const note = legacy > 0 ? ` (davon ${legacy.toLocaleString("de-DE")} geklärt)` : "";
+  return { text: `${pending.toLocaleString("de-DE")} pending${note}`, warn: active > 0 };
+}
+
 function Row({ label, value, tone }: { label: string; value: string; tone?: "pos" | "warn" }) {
   const toneCls = tone === "pos" ? "text-pos" : tone === "warn" ? "text-warn" : "text-fg";
   return (
@@ -49,6 +62,7 @@ function BlitzBody({ d }: { d: NodeBlitzData }) {
       ? Math.round(((d.mem_total_mb - d.mem_available_mb) / d.mem_total_mb) * 100)
       : null;
   const uri = l.uris.length > 0 ? l.uris[0] : l.pubkey ? `${l.pubkey}@…` : nv;
+  const pendingView = pendingChannelsView(l.pending_channels, l.pending_channels_reconciled);
   return (
     <div className="space-y-2.5">
       <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 space-y-1">
@@ -86,8 +100,8 @@ function BlitzBody({ d }: { d: NodeBlitzData }) {
         />
         <Row
           label="Channels"
-          value={`${fmtNum(l.active_channels)} aktiv · ${fmtNum(l.pending_channels)} pending · ${fmtNum(l.peers)} peers`}
-          tone={(l.pending_channels ?? 0) > 0 ? "warn" : undefined}
+          value={`${fmtNum(l.active_channels)} aktiv · ${pendingView.text} · ${fmtNum(l.peers)} peers`}
+          tone={pendingView.warn ? "warn" : undefined}
         />
         <Row
           label="Liquidität"
