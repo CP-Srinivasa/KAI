@@ -21,8 +21,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+from scripts.litellm_route_report.inputs import KNOWN_TELEMETRY_SCHEMAS
 from scripts.litellm_shadow_eval.loader import SUPPORTED_SCHEMA_VERSIONS
 
+from app.core import runtime_identity
 from app.observability.llm_telemetry import SCHEMA_VERSION, record_llm_call
 
 
@@ -50,13 +53,15 @@ def test_die_zeile_nennt_die_version_die_sie_traegt(tmp_path: Path) -> None:
     # der ein Formatwechsel ankommt. Genau dieser Test hat den v6-Bump gemeldet.
     # Im SCHREIBER dagegen waere ein Literal der Fehler -- dort ist es zur
     # Konstante geworden, weil es sonst wieder stehen bleibt.
-    assert zeile["schema_version"] == "v8"
+    assert zeile["schema_version"] == "v9"
     assert zeile["reasoning_tokens"] == 382, "die v5-Felder sind auch wirklich da"
     assert zeile["transport_retries"] == 0
     assert "truncated" in zeile, "und das v6-Feld"
     assert "analysis_system_prompt_version" in zeile, "und die v7-Felder"
     assert "analysis_system_prompt_hash" in zeile
     assert "budget_pot" in zeile, "und das v8-Feld"
+    assert "runtime_commit" in zeile, "und die v9-Felder"
+    assert "runtime_source" in zeile
 
 
 def test_der_stempel_kommt_aus_einer_konstante(tmp_path: Path) -> None:
@@ -76,6 +81,7 @@ def test_der_leser_nimmt_die_neue_version_an() -> None:
     nur jede Zeile trägt eine Beanstandung.
     """
     assert SCHEMA_VERSION in SUPPORTED_SCHEMA_VERSIONS
+    assert SCHEMA_VERSION in KNOWN_TELEMETRY_SCHEMAS, "auch der Routenbericht"
 
 
 def test_alte_zeilen_bleiben_lesbar() -> None:
@@ -84,8 +90,9 @@ def test_alte_zeilen_bleiben_lesbar() -> None:
     Additiv heißt, dass ein v2-Leser eine v5-Zeile verarbeiten kann — nicht,
     dass sie dasselbe sind. Auf kai-pi5 liegen mehrere Megabyte v2.
     """
-    for alt in ("v1", "v2", "v5", "v6", "v7"):
+    for alt in ("v1", "v2", "v5", "v6", "v7", "v8"):
         assert alt in SUPPORTED_SCHEMA_VERSIONS, alt
+        assert alt in KNOWN_TELEMETRY_SCHEMAS, alt
 
 
 def test_eine_unbekannte_version_bleibt_unbekannt() -> None:
@@ -94,10 +101,11 @@ def test_eine_unbekannte_version_bleibt_unbekannt() -> None:
     Die Menge ist bewusst eine Aufzählung und kein Präfix-Vergleich. Eine
     künftige Version soll hier ANKOMMEN, nicht stillschweigend durchrutschen —
     wer das Format ändert, sieht dann diese Stelle und entscheidet bewusst. Das
-    hat bisher zweimal funktioniert: bei v6 und bei v8.
+    hat bisher dreimal funktioniert: bei v6, v8 und v9.
     """
-    assert "v9" not in SUPPORTED_SCHEMA_VERSIONS
+    assert "v10" not in SUPPORTED_SCHEMA_VERSIONS
     assert "v99" not in SUPPORTED_SCHEMA_VERSIONS
+    assert "v10" not in KNOWN_TELEMETRY_SCHEMAS
 
 
 def test_eine_zeile_ohne_neue_felder_bleibt_gueltig(tmp_path: Path) -> None:
@@ -111,10 +119,52 @@ def test_eine_zeile_ohne_neue_felder_bleibt_gueltig(tmp_path: Path) -> None:
 
     zeile = json.loads(sink.read_text(encoding="utf-8").strip())
 
-    assert zeile["schema_version"] == "v8"
+    assert zeile["schema_version"] == "v9"
     assert zeile["reasoning_tokens"] is None
     assert zeile["transport_retries"] is None
     assert zeile["truncated"] is None, "kein finish_reason gemeldet = unbekannt, nicht False"
     assert zeile["analysis_system_prompt_version"] is None, "kein stilles v1-Defaulting"
     assert zeile["analysis_system_prompt_hash"] is None
     assert zeile["budget_pot"] is None, "keine Budgetentscheidung = nicht zugeordnet"
+
+
+# ---------------------------------------------------------------------------
+# v9: welches Release hat diese Zeile geschrieben? (LiteLLM-Audit, Nachtrag 30.09.)
+# ---------------------------------------------------------------------------
+
+
+def _identitaet(commit: str | None, source: str | None) -> runtime_identity.RuntimeIdentity:
+    return runtime_identity.RuntimeIdentity(
+        schema="test",
+        runtime_commit=commit,
+        started_at_utc="2026-09-30T00:00:00+00:00",
+        lock_sha256_at_start=None,
+        pid=1,
+        runtime_source=source,
+    )
+
+
+def test_die_zeile_traegt_das_laufende_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ohne dieses Feld belegt Telemetrie einen Aufruf, aber nicht, welcher Code ihn machte."""
+    monkeypatch.setattr(
+        runtime_identity, "get_runtime_identity", lambda: _identitaet("c" * 40, "release")
+    )
+    zeile = _zeile(tmp_path)
+    assert zeile["runtime_commit"] == "c" * 40
+    assert zeile["runtime_source"] == "release"
+
+
+def test_unbekanntes_release_bleibt_null_und_die_zeile_wird_trotzdem_geschrieben(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Telemetrie reisst den Aufruf nie mit -- und raet kein Release."""
+
+    def kaputt() -> runtime_identity.RuntimeIdentity:
+        raise OSError("kein Manifest, kein Checkout")
+
+    monkeypatch.setattr(runtime_identity, "get_runtime_identity", kaputt)
+    zeile = _zeile(tmp_path)
+    assert zeile["runtime_commit"] is None
+    assert zeile["runtime_source"] is None

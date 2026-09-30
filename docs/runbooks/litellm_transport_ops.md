@@ -145,11 +145,13 @@ S=/home/ubuntu/ai_analyst_trading_bot
 ```
 
 Exit 0 heißt nur „Bericht geschrieben“, Exit 2 heißt ungültige Eingabe. Die
-LiteLLM-Version stammt aus der letzten `TRANSPORT_VERIFIED`-Zeile. Die Zeile trägt
-keinen Zeitstempel, sie belegt also den Baum und nicht den Zeitpunkt einzelner
-Aufrufe. Einen Release-SHA je Route belegt keine Eingabe, er steht als `null` mit
-Grund im Bericht. Direktzeilen im OFF-Modus tragen keine Route; der Bericht leitet
-sie aus dem Zweck ab und zählt das sichtbar mit.
+LiteLLM-Version stammt aus der letzten `TRANSPORT_VERIFIED`-Zeile. Seit dem
+Nachtrag vom 30.09. steht vor der Zeile ein UTC-Zeitstempel; ältere Zeilen tragen
+keinen und belegen nur den Baum. Den Release-SHA je Route liefert `runtime_commit`
+(Telemetrie v9, ab dem ersten Release mit dem Nachtrag); ältere Zeilen führen ihn
+nicht, der Bericht weist Lücken und Release-Wechsel im Fenster aus. Direktzeilen im
+OFF-Modus tragen keine Route; der Bericht leitet sie aus dem Zweck ab und zählt das
+sichtbar mit.
 
 ## 5. Unerwartete Neustarts
 

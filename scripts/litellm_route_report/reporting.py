@@ -111,6 +111,13 @@ def _grund(section: TransportEvidence, key: str) -> str:
     return "nicht belegt: " + section.null_reasons.get(key, "ohne Angabe")
 
 
+def _release(section: TransportEvidence) -> str:
+    version = section.version
+    if version.release_sha is None:
+        return _grund(section, "version.release_sha")
+    return f"{version.release_sha[:12]} ({version.release_source})"
+
+
 def _version(section: TransportEvidence) -> str:
     version = section.version
     if version.transport_version is None:
@@ -215,7 +222,7 @@ def _zeilen_details(section: TransportEvidence) -> dict[str, str]:
         "Zustand": zustand,
         "Aufrufe": aufrufe,
         "Version": _version(section),
-        "Release-SHA": _grund(section, "version.release_sha"),
+        "Release-SHA": _release(section),
         "Letzter Erfolg": _zeit(section.last_success_at)
         if section.last_success_at
         else "kein erfolgreicher Aufruf",

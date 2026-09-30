@@ -75,6 +75,9 @@ class CallRecord:
     cost_usd: float | None
     cost_source: str | None
     usage_reported: bool
+    #: Das Release, aus dem die Zeile stammt (Telemetrie v9). ``None`` bei
+    #: aelteren Zeilen oder einem Wert, der kein 40-stelliger Commit ist.
+    runtime_commit: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +87,8 @@ class VersionInfo:
     transport_tree: str | None
     release_sha: str | None
     source: str | None
+    #: Woher ``release_sha`` stammt, samt Wechseln und Luecken im Fenster.
+    release_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
