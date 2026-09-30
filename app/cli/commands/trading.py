@@ -3018,7 +3018,7 @@ def trading_shadow_resolve(
     console.print(
         f"resolved={counts['resolved']} skipped_recent={counts['skipped_recent']} "
         f"skipped_kind={counts.get('skipped_kind', 0)} "
-        f"already={counts['already']} no_data={counts['no_data']}"
+        f"already={counts['already']} no_data={counts['no_data']} l2={counts.get('l2_resolved')}"
     )
 
 

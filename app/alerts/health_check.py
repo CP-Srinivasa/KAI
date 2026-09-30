@@ -32,6 +32,7 @@ from typing import Any
 from app.alerts import health_check_host as _hch
 from app.alerts import health_check_pay as _hcpay
 from app.alerts import health_check_payments as _hcp
+from app.alerts import health_check_streams as _hcs
 from app.alerts.alert_delivery import DELIVERY_STREAM, classify_delivery, load_records
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.ingress_audit import last_accepted_ingress_event
@@ -43,7 +44,7 @@ from app.alerts.youtube_transcript_coverage import (
     classify_coverage,
     render_message,
 )
-from app.audit.stream_validation import AuditStreamName, load_audit_stream
+from app.audit.stream_validation import AuditStreamName
 from app.core.runtime_identity import (
     drift_report,
     evaluate_runtime_drift,
@@ -461,23 +462,11 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
 
 
 def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
-    issues: list[HealthIssue] = []
-    for stream, filename in _AUDIT_STREAM_SCHEMA_FILES:
-        result = load_audit_stream(adir / filename, stream, tail=SCHEMA_PROBE_TAIL)
-        if not result.issues:
-            continue
-        first = result.issues[0]
-        issues.append(
-            HealthIssue(
-                severity="warning",
-                component=f"{stream}_schema",
-                message=(
-                    f"{result.issue_count} invalid row(s) in {filename}; "
-                    f"first at line {first.line_number}: {first.message.splitlines()[0]}"
-                ),
-            )
-        )
-    return issues
+    return _hcs.check_audit_stream_schemas(adir, _AUDIT_STREAM_SCHEMA_FILES, tail=SCHEMA_PROBE_TAIL)
+
+
+def _check_l2_outcomes(adir: Path, now: datetime) -> list[HealthIssue]:
+    return _hcs.check_l2_outcomes(adir, now)  # Waechter-Def hier: Stream-Vertrag G4
 
 
 def _check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
@@ -1388,7 +1377,7 @@ def run_health_check_report(
     freshness_issues, stale = _check_data_freshness(adir, now)
     report.issues.extend(freshness_issues)
     report.data_sources_stale = stale
-    report.issues.extend(_check_audit_stream_schemas(adir))
+    report.issues.extend(_check_audit_stream_schemas(adir) + _check_l2_outcomes(adir, now))
     report.issues.extend(_check_input_contract_rejection_streams(adir))
     report.issues.extend(_check_payment_journal_chain(adir) + _check_pay_requests(adir))
     report.issues.extend(_check_payment_reconciliation(adir, now=now))

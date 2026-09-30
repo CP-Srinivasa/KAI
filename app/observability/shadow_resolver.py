@@ -147,6 +147,12 @@ def binance_kline_fetcher(symbol: str, start_ms: int, end_ms: int) -> Sequence[B
     return bars or None
 
 
+def _not_trading_on_binance(symbol: str) -> bool:
+    """Binance handelt das Paar sicher nicht (Liste geladen, Paar nicht TRADING)."""
+    trading = binance_spot_symbols()
+    return trading is not None and to_binance_pair(symbol) not in trading
+
+
 def resolve_with_binance(
     *,
     now: datetime | None = None,
@@ -161,13 +167,26 @@ def resolve_with_binance(
     fetches on the ~372/441 near-identical canary clones. ``include_canary=True``
     is the explicit diagnostic option to resolve them too.
     """
-    return resolve_pending(
-        fetch_klines=known_pairs_only(),
+    fetch = known_pairs_only()
+    counts = resolve_pending(
+        fetch_klines=fetch,
         now=now or datetime.now(UTC),
         ledger_path=ledger_path,
         resolved_path=resolved_path,
         include_canary=include_canary,
     )
+    # L2-Ergebnisse (Weg 2, 30.09.): eigene Datei, eigener Waechter (l2_outcomes). Ein
+    # Fehler dort darf den Shadow-Lauf nicht kippen; der Waechter meldet den Rueckstau.
+    try:
+        from app.observability.l2_outcomes import resolve as resolve_l2
+
+        l2 = resolve_l2(fetch, now=now, not_trading=_not_trading_on_binance)
+        counts["l2_resolved"] = l2["resolved"]
+        counts["l2_pending"] = l2["pending"] + l2["not_due"]
+    except Exception:  # noqa: BLE001
+        logger.warning("[shadow-resolver] L2-Ergebnisse fehlgeschlagen", exc_info=True)
+        counts["l2_resolved"] = -1
+    return counts
 
 
 __all__ = [
