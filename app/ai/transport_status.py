@@ -54,7 +54,7 @@ class TransportPaths:
     route_report: Path
 
 
-def default_transport_paths() -> TransportPaths:
+def default_transport_paths(configured: InferenceSettings) -> TransportPaths:
     """Pfade relativ zum Arbeitsverzeichnis von kai-server.
 
     Im Release sind ``logs/`` und ``artifacts/`` Verweise auf den Status-Checkout; das
@@ -66,7 +66,11 @@ def default_transport_paths() -> TransportPaths:
         checkout = logs.resolve().parent
     except OSError:
         checkout = Path.cwd()
-    root = Path(os.environ.get("KAI_TRANSPORTS_ROOT") or (Path.home() / "transport"))
+    root = (
+        Path(configured.transports_root)
+        if configured.transports_root
+        else (Path.home() / "transport")
+    )
     return TransportPaths(
         transport_log=logs / "litellm.err.log",
         transports_root=root,

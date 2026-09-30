@@ -349,7 +349,9 @@ def test_der_endpunkt_liefert_den_vertrag(tmp_path: Path, monkeypatch: pytest.Mo
     from app.api.routers import health
 
     monkeypatch.setattr(
-        health, "default_transport_paths", lambda: _paths(tmp_path, log=DATIERT, report=_bericht())
+        health,
+        "default_transport_paths",
+        lambda _configured: _paths(tmp_path, log=DATIERT, report=_bericht()),
     )
 
     async def ohne_netz(url: str, timeout: float) -> int:

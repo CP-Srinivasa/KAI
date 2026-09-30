@@ -347,7 +347,7 @@ class AITransportResponse(BaseModel):
 
 @router.get("/health/ai/transport", response_model=AITransportResponse)
 async def ai_transport(response: Response) -> AITransportResponse:
-    """KI-Transport (LiteLLM) fuer das Kontrollcenter -- nur lesend.
+    """KI-Transport fuer das Kontrollcenter -- nur lesend.
 
     Auth wie ``/health/ai``: nicht in der oeffentlichen Pfadliste. Kein
     Modellaufruf; der einzige Netzzugriff ist das lokale Lebenszeichen
@@ -357,8 +357,9 @@ async def ai_transport(response: Response) -> AITransportResponse:
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    configured = inference_settings(None)
     snapshot = await ai_transport_snapshot(
-        settings=inference_settings(None), paths=default_transport_paths()
+        settings=configured, paths=default_transport_paths(configured)
     )
     return AITransportResponse(**snapshot)
 
