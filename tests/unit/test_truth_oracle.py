@@ -59,6 +59,7 @@ def _settings(
             # S-002 mint caps (generous here so single-request tests never hit them).
             l402_mint_per_min=mint_per_min,
             l402_mint_budget_per_min=mint_budget_per_min,
+            l402_invite_required=False,  # Einladung: test_oracle_invite.py
         ),
     )
 

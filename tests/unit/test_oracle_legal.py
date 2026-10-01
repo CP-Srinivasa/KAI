@@ -63,15 +63,12 @@ def released(monkeypatch) -> None:
 # ---------------------------------------------------------------- Freigabe
 
 
-def test_current_drafts_still_have_open_items() -> None:
-    items = legal.open_items()
-    assert items, "Vorlagen ohne offene Punkte: dann braucht es die Anwalts-Freigabe"
-    # v0.2/v0.3 (01.10.): alle Angaben des Operators liegen vor; was bleibt, ist die
-    # Anwaltspruefung. Keine Luecke mehr -- aber auch keine Veroeffentlichung ohne Anwalt.
-    assert not any(i.startswith("OFFEN:") for i in items)
-    assert any(i.startswith("ANWALT PRÜFT: Widerrufsbelehrung") for i in items)
-    assert any(i.startswith("ANWALT PRÜFT: Verbraucherschlichtung") for i in items)
-    assert legal.is_published(True) is False
+def test_beta_v05_has_no_open_items_so_the_switch_decides() -> None:
+    # Operator 01.10.: Beta-Texte v0.5 freigegeben ("erstmal so verwenden").
+    assert legal.open_items() == []
+    assert legal.PAGES == ("bedingungen", "hilfe", "datenschutz")
+    assert legal.is_published(True) is True
+    assert legal.is_published(False) is False
 
 
 def test_a_draft_awaiting_the_lawyer_blocks_publication_like_a_gap(
@@ -88,43 +85,44 @@ def test_a_draft_awaiting_the_lawyer_blocks_publication_like_a_gap(
     assert '<mark class="offen">ANWALT PRÜFT: Entwurf X</mark> Text' in html_out
 
 
-@pytest.mark.parametrize("path", ["/oracle/bedingungen", "/oracle/hilfe"])
-@pytest.mark.parametrize("switch", [False, True])
-def test_public_pages_stay_hidden_before_release(app_client, monkeypatch, path, switch) -> None:
-    monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=switch))
+@pytest.mark.parametrize("path", ["/oracle/bedingungen", "/oracle/hilfe", "/oracle/datenschutz"])
+def test_public_pages_stay_hidden_while_the_switch_is_off(app_client, monkeypatch, path) -> None:
+    monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=False))
     assert app_client.get(path).status_code == 404
 
 
 def test_forms_stay_closed_before_release(app_client, monkeypatch) -> None:
-    monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=True))
+    monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=False))
     r = app_client.post("/oracle/hilfe/meldung", data={"problem": "anderes"})
     assert r.status_code == 404
     assert not legal.CASES_PATH.exists()
 
 
-def test_preview_marks_draft_and_every_open_item(app_client, monkeypatch) -> None:
+@pytest.mark.parametrize("seite", ["bedingungen", "hilfe", "datenschutz"])
+def test_preview_marks_the_draft_and_fills_every_placeholder(
+    app_client, monkeypatch, seite
+) -> None:
     monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=False))
-    page = app_client.get("/dashboard/api/oracle/rechtsseiten/bedingungen").text
+    page = app_client.get(f"/dashboard/api/oracle/rechtsseiten/{seite}").text
     assert "ENTWURF – nicht freigegeben" in page
     assert 'content="noindex, nofollow"' in page
-    in_template = len(legal._OPEN.findall(legal._template("bedingungen")))
-    assert in_template > 0
-    assert page.count('<mark class="offen">') == in_template
-    assert "{{" not in page and "[[OFFEN" not in page
+    assert "{{" not in page and "[[" not in page
+    assert "Version 0.5-Beta" in page
 
 
 def test_status_endpoint_lists_open_items(app_client, monkeypatch) -> None:
     monkeypatch.setattr(router_mod, "get_settings", lambda: _settings(published=True))
     body = app_client.get("/dashboard/api/oracle/rechtsseiten").json()
-    assert body["switch_on"] is True and body["published"] is False
-    assert body["open_items"] == legal.open_items()
+    assert body["switch_on"] is True and body["published"] is True
+    assert body["open_items"] == legal.open_items() == []
 
 
 def test_pages_state_the_real_access_rule() -> None:
     page = legal.render("bedingungen", price_sat=10, access_min=60, invoice_min=5, preview=False)
-    assert "mindestens 60 Minuten nach Ihrer Zahlung" in page
-    assert "10 sat je Bereich-Zugang" in page
-    assert "X-L402-Access-Expires" in page
+    assert "mindestens 60 Minuten nach erfolgreicher Zahlung" in page
+    assert "10 sat einschließlich etwaiger gesetzlich geschuldeter Umsatzsteuer" in page
+    assert "für 5 Minuten gültige Lightning-Zahlungsanforderung" in page
+    assert "X-KAI-Invite" in page
     # Die Zahlen stammen aus dem Oracle selbst, nicht aus dem Text.
     assert truth_oracle._ACCESS_WINDOW_S // 60 == 60
     assert truth_oracle._INVOICE_EXPIRY_MINUTES == 5
@@ -134,7 +132,7 @@ def test_pages_state_the_real_access_rule() -> None:
 
 
 def test_released_pages_are_public_and_indexable(app_client, released) -> None:
-    for path in ("/oracle/bedingungen", "/oracle/hilfe"):
+    for path in ("/oracle/bedingungen", "/oracle/hilfe", "/oracle/datenschutz"):
         r = app_client.get(path)
         assert r.status_code == 200
         assert "ENTWURF" not in r.text and 'content="index, follow"' in r.text
@@ -176,9 +174,25 @@ def test_there_is_no_online_withdrawal_only_email_or_post(app_client, released) 
     assert r.status_code in (404, 405)
     page = app_client.get("/oracle/hilfe").text
     assert 'action="/oracle/hilfe/widerruf"' not in page
-    assert "info@formsys.io" in page and "Muster-Widerrufsformular" in page
+    assert "info@formsys.io" in page and "Widerrufsfunktion im Web gibt es deshalb nicht" in page
     terms = app_client.get("/oracle/bedingungen").text
-    assert "elektronisch ausfüllen und übermitteln" not in terms
+    assert "keine Bestelloberfläche mit elektronischer Widerrufsfunktion" in terms
+    assert "Freiwillige Mustervorlage" in terms
+
+
+def test_privacy_page_promises_only_what_the_retention_job_does() -> None:
+    """Die Datenschutzseite darf keine Löschung zusagen, die der Code nicht leistet."""
+    from app.oracle_legal import invites, retention
+
+    page = legal.render("datenschutz", price_sat=10, access_min=60, invoice_min=5, preview=False)
+    # IP: nach 6 Tagen entfernt, täglicher Lauf -> höchstens 7 Tage
+    assert retention.IP_RETENTION.days == 6
+    assert "Schutzkennwerte: spätestens sieben Tage nach Erhebung" in page
+    assert "Löschung nach 14 Tagen" in page  # logrotate rotate 14 (deploy/logrotate/kai)
+    assert retention.CASE_RETENTION_AFTER_CLOSE.days == 90 and "90 Tage nach Abschluss" in page
+    assert invites.RETAIN_AFTER_END.days == 30 and "30 Tage nach Ende der Einladung" in page
+    assert "bis zu zwölf Monate" in page  # Offsite-Vault-Generationen
+    assert "frei erfundene" not in page and "Betriebsnachweis" not in page
 
 
 @pytest.mark.parametrize(
@@ -233,6 +247,7 @@ def _oracle_settings(*, published: bool) -> SimpleNamespace:
             l402_default_price_sat=10,
             l402_mint_per_min=100,
             l402_mint_budget_per_min=100,
+            l402_invite_required=False,  # Einladung: test_oracle_invite.py
             oracle_legal_published=published,
         ),
     )
@@ -278,7 +293,7 @@ def _challenge(monkeypatch, tmp_path: Path, *, published: bool, clean: bool):
 
 
 def test_challenge_unchanged_before_release(monkeypatch, tmp_path: Path) -> None:
-    r, events = _challenge(monkeypatch, tmp_path, published=True, clean=False)
+    r, events = _challenge(monkeypatch, tmp_path, published=False, clean=False)
     assert r.status_code == 402
     assert r.json()["detail"] == "payment required"
     assert "Link" not in r.headers
@@ -289,8 +304,10 @@ def test_challenge_links_terms_and_help_after_release(monkeypatch, tmp_path: Pat
     r, events = _challenge(monkeypatch, tmp_path, published=True, clean=True)
     assert r.status_code == 402
     assert 'rel="terms-of-service"' in r.headers["Link"] and 'rel="help"' in r.headers["Link"]
+    assert 'rel="privacy-policy"' in r.headers["Link"]
     body = r.json()["detail"]
     assert body["terms"] == "/oracle/bedingungen" and body["help"] == "/oracle/hilfe"
+    assert body["privacy"] == "/oracle/datenschutz"
     assert body["price_sat"] == 10 and body["access_expires"] == r.headers["X-L402-Access-Expires"]
     assert "mindestens 60 Minuten" in body["notice"]
     assert events[0]["terms_version"] == legal.VERSION

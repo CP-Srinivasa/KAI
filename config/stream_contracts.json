@@ -103,6 +103,15 @@
       "decision_that_would_change": "Der Operator repariert den Strom aus dem Geld-Journal heraus (die receivable-Records tragen ref_hash und order_ref), BEVOR weitere Forderungen ausgestellt werden — statt Kunden auf Belege warten zu lassen, deren Zuordnung nicht mehr existiert.",
       "monitoring": "alternative_watcher",
       "watcher": "_check_pay_requests"
+    },
+    "invites.jsonl": {
+      "reader": "app/alerts/health_check_payments.py",
+      "failure_consequence": "Der Strom traegt die Einladungen der begleiteten Oracle-Beta (nur Hash des Codes, Bezeichnung, Gueltigkeit). Stirbt er oder ist er unlesbar, gilt kein Code mehr: kein eingeladener Teilnehmer bekommt eine Rechnung, die Beta ist faktisch geschlossen (sicher geschlossen; bezahlte Zugaenge und Zeitstempel-Abholung bleiben). Liest ihn niemand, waere ein oeffentlicher Verkauf ohne Einladung moeglich -- genau das soll das Gate verhindern.",
+      "failure_would_be_noticed_by": "_check_payment_reconciliation in app/alerts/health_check.py (Implementierung: app/alerts/health_check_payments.check_oracle_cases -> _check_oracle_invites) meldet warning 'oracle_invites', sobald die Datei nicht lesbar ist oder unlesbare Zeilen enthaelt; zusaetzlich melden sich eingeladene Teilnehmer, die 403 statt einer Rechnung bekommen.",
+      "time_to_notice": "Beim naechsten Health-Check-Lauf (15-Minuten-Timer) bzw. beim ersten Kaufversuch eines Teilnehmers.",
+      "decision_that_would_change": "Der Operator prueft die Einladungen mit scripts/oracle_invite.py liste, stellt neue aus oder sperrt missbrauchte, bevor ein Teilnehmer ohne Rechnung bleibt oder ein Unberechtigter kauft.",
+      "monitoring": "alternative_watcher",
+      "watcher": "_check_payment_reconciliation"
     }
   }
 }

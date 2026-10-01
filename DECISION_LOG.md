@@ -24,6 +24,20 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-298 (2026-10-01)
+**Entscheidung (Operator 01.10.: Beta-Paket v0.5 „erstmal so verwenden“, kein BaFin-Antrag):** Das KAI Oracle wird eine begleitete Einladungsbeta für Freunde und Partner. Es bleibt bei echten 10-sat-Zahlungen. Bedingungen, Hilfe und Datenschutz (`/oracle/datenschutz`, neu) übernehmen den v0.5-Text. Korrigiert sind nur Sätze, die sonst eine fehlende Funktion behaupten würden: Bestellung per E-Mail und deshalb keine Web-Widerrufsfunktion; Löschfristen wie tatsächlich umgesetzt; Sicherungen bis 12 Monate.
+- **Ablauf:**
+  - Die Bestellung kommt per E-Mail.
+  - Die Vertragsbestätigung geht mit den Unterlagen und einem Einladungscode zurück.
+  - Nur mit diesem Code stellt `_require_paid` eine Rechnung aus (Header `X-KAI-Invite` oder `?invite=`). Ohne Code gibt es 403, vor Limiter und Rechnung.
+  - Codes verwaltet `scripts/oracle_invite.py`. Gespeichert wird nur der Hash, `APP_LN_L402_INVITE_REQUIRED` steht per Default an.
+- **Löschung** (`app/oracle_legal/retention.py`, täglich im Lauf von `kai-audit-rotate`):
+  - IP und IP-Kennwert nach 6 Tagen, bei täglichem Lauf also höchstens 7. Das API-Protokoll rotiert dafür auch nach Alter, in den Archiven wird die IP entfernt.
+  - Meldungen 90 Tage nach Abschluss, Einladungen 30 Tage nach ihrem Ende.
+  - Serverlogs löscht logrotate nach 14 Tagen.
+**Limit:** Vertragsbestätigung, Versand und die steuerliche EUR-Bewertung je Umsatz laufen zunächst von Hand (Webmail info@formsys.io, Steuerberatung). Der Steuerstatus der GmbH wird nicht aus dem Code abgeleitet. Veröffentlicht wird erst mit `APP_LN_ORACLE_LEGAL_PUBLISHED=true`.
+**Beleg:** `app/oracle_legal/{invites,retention}.py`, `app/api/routers/truth_oracle.py::_require_invite`, Tests `test_oracle_invite.py`, `test_oracle_retention.py`, `test_oracle_legal.py::test_privacy_page_promises_only_what_the_retention_job_does`.
+
 ### D-297 (2026-10-01)
 **Entscheidung (Operator 01.10.: „Ja, geh die KAI-Anbindung an“):** KAI wird die erste Vorschlagsquelle der Wallet KAI-Pay (ADR 0021 E5/I5, Addendum). KAI signiert Vorschläge im Wallet-Format `kaiprop1` (ECDSA P-256), bezahlt aber nie. Prüfen, Budget, erlaubte Empfänger und Bestätigen liegen allein in der Wallet.
 - **Umsetzung:**
