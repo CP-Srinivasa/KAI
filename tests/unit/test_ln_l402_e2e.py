@@ -50,6 +50,7 @@ def _oracle_settings() -> SimpleNamespace:
             l402_default_price_sat=100,
             l402_mint_per_min=100,
             l402_mint_budget_per_min=100,
+            l402_invite_required=False,  # Einladung: test_oracle_invite.py
         )
     )
 

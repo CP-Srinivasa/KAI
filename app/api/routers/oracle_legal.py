@@ -57,6 +57,12 @@ async def help_page() -> HTMLResponse:
     return HTMLResponse(legal.render("hilfe", preview=False, **_page_values()))
 
 
+@router.get("/oracle/datenschutz", response_class=HTMLResponse, include_in_schema=False)
+async def privacy_page() -> HTMLResponse:
+    _require_published()
+    return HTMLResponse(legal.render("datenschutz", preview=False, **_page_values()))
+
+
 async def _form(request: Request) -> dict[str, str]:
     body = await request.body()
     if len(body) > _MAX_BODY:

@@ -309,6 +309,7 @@ def test_public_oracle_mint_returns_402_not_503_with_a_broken_money_journal(
     monkeypatch.setenv("APP_LN_INVOICE_MACAROON_HEX", "invoice")
     monkeypatch.setenv("APP_LN_L402_ENABLED", "true")
     monkeypatch.setenv("APP_LN_L402_SECRET", "oracle-secret")
+    monkeypatch.setenv("APP_LN_L402_INVITE_REQUIRED", "false")  # Zahlungsmechanik, nicht Einladung
     from app.core.settings import get_settings
 
     get_settings.cache_clear()

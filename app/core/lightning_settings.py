@@ -101,6 +101,10 @@ class LightningSettings(BaseSettings):
     # Freigabe durch den Anwalt. Wirkt nur, wenn app/oracle_legal keine offenen
     # Punkte mehr enthält. Env ``APP_LN_ORACLE_LEGAL_PUBLISHED``.
     oracle_legal_published: bool = Field(default=False)
+    # Begleitete Beta (Operator 2026-10-01, Bedingungen v0.5): eine neue Rechnung
+    # nur mit gültigem Einladungscode (Header ``X-KAI-Invite`` oder ``?invite=``).
+    # Codes verwaltet ``scripts/oracle_invite.py``. Env ``APP_LN_L402_INVITE_REQUIRED``.
+    l402_invite_required: bool = Field(default=True)
     # B-005 capital-confirm 2nd factor (HOTP) for irreversible value-layer POSTs.
     # ``hotp_seed_path`` empty (default) → no confirm is possible → no capital
     # execute can ever pass needs_confirm (safe-by-default). Operator provisions the

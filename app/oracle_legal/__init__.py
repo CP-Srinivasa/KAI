@@ -37,9 +37,9 @@ from app.core.file_lock import append_lock
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.3-Entwurf"
+VERSION = "0.5-Beta"
 STAND = "01.10.2026"
-PAGES = ("bedingungen", "hilfe")
+PAGES = ("bedingungen", "hilfe", "datenschutz")
 CASES_PATH = Path("artifacts/oracle/oracle_cases.jsonl")
 # Freiwillige Serviceziele von der Hilfe-Seite, in Werktagen (Mo–Fr).
 FIRST_ANSWER_WORKDAYS = 2
@@ -106,11 +106,15 @@ def pre_payment_notice(access_min: int) -> str:
         "oft abrufen und bei einem technischen Ausfall mit demselben Zugangsschlüssel ohne erneute "
         "Zahlung wiederholen; jeder Abruf liefert den aktuellen Datenstand. Danach endet der "
         "Zugang. Ihre gesetzlichen Rechte bei Nichtlieferung oder mangelhafter Leistung bleiben "
-        "bestehen. Bedingungen: /oracle/bedingungen · Hilfe: /oracle/hilfe"
+        "bestehen. Bedingungen: /oracle/bedingungen · Hilfe: /oracle/hilfe · "
+        "Datenschutz: /oracle/datenschutz"
     )
 
 
-LINK_HEADER = '</oracle/bedingungen>; rel="terms-of-service", </oracle/hilfe>; rel="help"'
+LINK_HEADER = (
+    '</oracle/bedingungen>; rel="terms-of-service", </oracle/hilfe>; rel="help", '
+    '</oracle/datenschutz>; rel="privacy-policy"'
+)
 
 
 # ---------------------------------------------------------------- Formulare

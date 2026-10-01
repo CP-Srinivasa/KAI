@@ -205,9 +205,36 @@ async def _issue_challenge(
             "terms": "/oracle/bedingungen",
             "terms_version": oracle_legal.VERSION,
             "help": "/oracle/hilfe",
+            "privacy": "/oracle/datenschutz",
             "notice": oracle_legal.pre_payment_notice(_ACCESS_WINDOW_S // 60),
         }
     raise HTTPException(status_code=402, detail=detail, headers=headers)
+
+
+def _require_invite(request: Request, required: bool) -> None:
+    """Begleitete Beta (Operator 2026-10-01): eine neue Rechnung nur mit Einladung.
+
+    Sitzt vor dem S-002-Limiter: Anfragen ohne Einladung verbrauchen kein Mint-Budget
+    der Eingeladenen. Bezahlte Zugänge und die Zeitstempel-Abholung kommen hier nie an.
+    """
+    if not required:
+        return
+    from app.oracle_legal import invites
+
+    if invites.is_valid(invites.code_from_request(request.headers, request.query_params)):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "invitation_required",
+            "message": "KAI Oracle ist eine begleitete Beta für eingeladene Teilnehmer. "
+            "Einladung per E-Mail an info@formsys.io.",
+            "invite_header": invites.HEADER,
+            "terms": "/oracle/bedingungen",
+            "help": "/oracle/hilfe",
+            "privacy": "/oracle/datenschutz",
+        },
+    )
 
 
 async def _require_paid(
@@ -226,6 +253,7 @@ async def _require_paid(
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     verdict = _valid_paid_token(request, scope)
     if verdict is None:
+        _require_invite(request, settings.lightning.l402_invite_required)
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         if before_mint is not None:
             await before_mint()

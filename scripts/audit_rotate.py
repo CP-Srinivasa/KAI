@@ -63,6 +63,9 @@ class RotationRule:
     #: Zeilen/h) deckten 20 000 Zeilen nur 27 Minuten.
     keep_hours: float | None = None
     timestamp_key: str | None = None
+    #: Auch unterhalb von ``max_bytes`` rotieren, sobald die aelteste Zeile aelter
+    #: ist (Loeschfrist statt Platzgrenze, Datenschutz Oracle-Beta v0.5, 01.10.2026).
+    max_age_hours: float | None = None
 
 
 # Conservative allowlist. A stream earns its place here ONLY when every known
@@ -101,9 +104,13 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
         filename="api_request_audit.jsonl",
         max_bytes=20 * _MB,
         keep_lines=50_000,
-        keep_hours=168,
+        keep_hours=144,
         timestamp_key="timestamp_utc",
-        rationale="HTTP request audit. Programmatic reader (corrected 2026-09-17): "
+        max_age_hours=144,
+        rationale="Loeschfrist (Oracle-Beta v0.5, 01.10.2026): das Live-File haelt nur 6 Tage "
+        "und rotiert taeglich auch nach Alter; im Archiv entfernt "
+        "app/oracle_legal/retention.py die client_ip -- bei taeglichem Lauf ist keine IP "
+        "aelter als 7 Tage. HTTP request audit. Programmatic reader (corrected 2026-09-17): "
         "app/research/back_edge_evaluator.py reads the LIVE file (not archive/) "
         "for dashboard actions inside REACTION_WINDOW_HOURS=24 — so the live tail "
         "must cover a time window, not a line count: during the /health flood "
@@ -135,6 +142,7 @@ def rotate_stream(
     now: datetime | None = None,
     keep_hours: float | None = None,
     timestamp_key: str | None = None,
+    max_age_hours: float | None = None,
 ) -> RotationResult:
     """Rotate one stream if oversized. Archive-first, tail-preserving, atomic-ish:
 
@@ -149,7 +157,9 @@ def rotate_stream(
     if not path.exists():
         return RotationResult(path.name, False, "missing")
     size = path.stat().st_size
-    if size <= max_bytes:
+    if size <= max_bytes and not _oldest_before(
+        path, timestamp_key, max_age_hours, now or datetime.now(UTC)
+    ):
         return RotationResult(path.name, False, "under_threshold", size_bytes=size)
 
     ts = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
@@ -211,6 +221,15 @@ def rotate_stream(
     )
 
 
+def _oldest_before(path: Path, key: str | None, max_age_hours: float | None, now: datetime) -> bool:
+    """True, wenn die erste (aelteste) Zeile aelter als ``max_age_hours`` ist."""
+    if max_age_hours is None or not key:
+        return False
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        first = fh.readline()
+    return _stamp_before(first, key, (now - timedelta(hours=max_age_hours)).isoformat())
+
+
 def _stamp_before(line: str, key: str, cutoff: str) -> bool:
     """True nur bei lesbarem Zeitstempel VOR ``cutoff`` — Unlesbares bleibt."""
     try:
@@ -232,6 +251,7 @@ def run(artifacts_dir: Path, *, apply: bool) -> list[RotationResult]:
             apply=apply,
             keep_hours=rule.keep_hours,
             timestamp_key=rule.timestamp_key,
+            max_age_hours=rule.max_age_hours,
         )
         results.append(result)
         logger.info(
@@ -258,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("[audit-rotate] unexpected error")
         return 1
+    if args.apply:
+        # Loeschfristen der Oracle-Beta (Datenschutzseite v0.5) im selben Tageslauf.
+        from app.oracle_legal import retention
+
+        logger.info("[retention] %s", retention.apply(Path(args.artifacts_dir)))
     print(json.dumps([r.__dict__ for r in results], ensure_ascii=False))
     return 0
 

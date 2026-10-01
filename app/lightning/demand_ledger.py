@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.file_lock import append_lock
 from app.lightning.jsonl_tail import read_recent_jsonl
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,8 @@ def append_demand_event(
         record["terms_version"] = terms_version
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("a", encoding="utf-8") as fh:
+        # Sperre wie app/oracle_legal/retention.py beim Leeren alter Kennwerte.
+        with append_lock(out), out.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:  # noqa: BLE001 — telemetry must never crash the caller
         logger.warning("[ln-demand] append failed: %s", exc)

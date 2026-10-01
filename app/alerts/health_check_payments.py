@@ -270,14 +270,53 @@ def check_oracle_cases(adir: Path, *, now: datetime | None = None) -> list[Healt
     """
     from app.oracle_legal import overdue_cases
 
+    invite_issues = _check_oracle_invites(adir)
     try:
         late = overdue_cases(now or datetime.now(UTC), adir / "oracle" / "oracle_cases.jsonl")
     except ValueError as exc:
-        return [_issue("warning", "oracle_cases", f"oracle_cases.jsonl: {exc}")]
+        return [_issue("warning", "oracle_cases", f"oracle_cases.jsonl: {exc}"), *invite_issues]
     if not late:
-        return []
+        return invite_issues
     shown = "; ".join(late[:3]) + (f" (+{len(late) - 3})" if len(late) > 3 else "")
-    return [_issue("warning", "oracle_cases", f"Serviceziel ueberschritten: {shown}")]
+    return [
+        _issue("warning", "oracle_cases", f"Serviceziel ueberschritten: {shown}"),
+        *invite_issues,
+    ]
+
+
+def _check_oracle_invites(adir: Path) -> list[HealthIssue]:
+    """Beta-Einladungen ``oracle/invites.jsonl`` (Stream-Vertrag G4, Beta v0.5).
+
+    Ist die Datei unlesbar, gilt kein Code mehr: kein eingeladener Teilnehmer bekommt
+    eine Rechnung (sicher geschlossen, bezahlte Zugaenge bleiben). Keine Datei ist
+    der Normalfall vor der ersten Einladung.
+    """
+    path = adir / "oracle" / "invites.jsonl"
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [_issue("warning", "oracle_invites", f"invites.jsonl nicht lesbar: {exc}")]
+    bad = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            ok = isinstance(json.loads(line), dict)
+        except ValueError:
+            ok = False
+        bad += 0 if ok else 1
+    if not bad:
+        return []
+    return [
+        _issue(
+            "warning",
+            "oracle_invites",
+            f"invites.jsonl: {bad} unlesbare Zeile(n) -- "
+            "Einladungen mit scripts/oracle_invite.py pruefen",
+        )
+    ]
 
 
 def check_input_contract_rejection_streams(adir: Path) -> list[HealthIssue]:
