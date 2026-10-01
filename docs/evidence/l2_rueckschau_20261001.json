@@ -1,0 +1,137 @@
+{
+  "preregistration": {
+    "horizon_s": 3600,
+    "seed": 1337,
+    "window": 200,
+    "min_window": 20,
+    "ttl_s": 3600.0
+  },
+  "l1_rows": 9152,
+  "population_with_outcome": 52063,
+  "pairs": 46125,
+  "clusters": 4651,
+  "base_rate_candidates": {
+    "population": 46125,
+    "mean_bps": 1.5267247696476964,
+    "numerator": 22059,
+    "denominator": 46125,
+    "share_positive": 0.47824390243902437
+  },
+  "base_rate_clusters": {
+    "population": 4651,
+    "mean_bps": 1.224372813117533,
+    "numerator": 2375,
+    "denominator": 4651,
+    "share_positive": 0.5106428725005375
+  },
+  "verdicts": [
+    {
+      "feature": "fee_percentile",
+      "verdict": "nicht bestaetigt (Kandidaten-Ebene inconclusive)",
+      "candidate_assessment": {
+        "feature": "fee_percentile",
+        "n_high": 31448,
+        "n_low": 14657,
+        "n_null_feature": 20,
+        "n_invalid_feature": 0,
+        "n_invalid_outcome": 0,
+        "mean_high": -0.18126621724751968,
+        "mean_low": 5.181651088217234,
+        "p_high_positive": 0.4772,
+        "p_low_positive": 0.9808,
+        "direction": "inconclusive"
+      },
+      "cluster_assessment": {
+        "feature": "fee_percentile",
+        "n_high": 3175,
+        "n_low": 1474,
+        "n_null_feature": 2,
+        "n_invalid_feature": 0,
+        "n_invalid_outcome": 0,
+        "mean_high": 0.12738368065606506,
+        "mean_low": 3.580671060194464,
+        "p_high_positive": 0.5728,
+        "p_low_positive": 0.8502,
+        "direction": "inconclusive"
+      },
+      "by_half_spread_bps": [
+        -2.828764520525364,
+        -3.766782475689199
+      ]
+    },
+    {
+      "feature": "mempool_percentile",
+      "verdict": "nicht bestaetigt (Kandidaten-Ebene inconclusive)",
+      "candidate_assessment": {
+        "feature": "mempool_percentile",
+        "n_high": 22752,
+        "n_low": 23373,
+        "n_null_feature": 0,
+        "n_invalid_feature": 0,
+        "n_invalid_outcome": 0,
+        "mean_high": 0.4234458509142054,
+        "mean_low": 2.60069054036709,
+        "p_high_positive": 0.6062,
+        "p_low_positive": 0.8892,
+        "direction": "inconclusive"
+      },
+      "cluster_assessment": {
+        "feature": "mempool_percentile",
+        "n_high": 2282,
+        "n_low": 2369,
+        "n_null_feature": 0,
+        "n_invalid_feature": 0,
+        "n_invalid_outcome": 0,
+        "mean_high": 1.9958501587566058,
+        "mean_low": 0.48122747637276136,
+        "p_high_positive": 0.8434,
+        "p_low_positive": 0.5528,
+        "direction": "inconclusive"
+      },
+      "by_half_spread_bps": [
+        -6.045196662638204,
+        9.189400427994755
+      ]
+    }
+  ],
+  "descriptive": [
+    {
+      "feature": "fee_percentile",
+      "by_source_spread_bps": {
+        "screener": [
+          46125,
+          -5.362917305464753
+        ]
+      },
+      "by_side_spread_bps": {
+        "short": [
+          20509,
+          -5.990907430041143
+        ],
+        "long": [
+          25616,
+          -4.811572918062457
+        ]
+      }
+    },
+    {
+      "feature": "mempool_percentile",
+      "by_source_spread_bps": {
+        "screener": [
+          46125,
+          -2.1772446894528845
+        ]
+      },
+      "by_side_spread_bps": {
+        "short": [
+          20509,
+          0.5591126489138056
+        ],
+        "long": [
+          25616,
+          -4.275216223610956
+        ]
+      }
+    }
+  ]
+}
