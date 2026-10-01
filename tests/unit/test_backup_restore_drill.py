@@ -242,6 +242,50 @@ def test_drill_passes_when_a_source_grew_after_the_backup(tmp_path: Path) -> Non
     assert result.returncode == 0
 
 
+def test_an_empty_lock_file_restored_empty_passes(tmp_path: Path) -> None:
+    """Regression 2026-10-01: die leere UC3-Sperrdatei galt als „fehlend“.
+
+    ``monitor/integrity`` wird als Ganzes gesichert; seit den bezahlten
+    Zeitstempel-Auftraegen liegt dort ``uc3_timestamp_jobs/.capacity.lock``,
+    planmaessig 0 Byte. Sie wurde bit-genau wiederhergestellt, der Drill meldete
+    trotzdem ``content mismatch`` — und eine rote Unit blockiert jedes Release.
+    """
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    lock = tmp_path / "monitor" / "integrity" / "uc3_timestamp_jobs" / ".capacity.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_bytes(b"")
+    archive = _make_backup(tmp_path)
+
+    result = _run_drill(tmp_path, archive)
+    proof = _latest_proof(tmp_path)
+
+    rel = "monitor/integrity/uc3_timestamp_jobs/.capacity.lock"
+    assert proof["status"] == "PASS", proof.get("files_missing")
+    assert rel in cast(list[str], proof["files_restored"])
+    assert result.returncode == 0
+
+
+def test_an_empty_journal_is_still_a_finding(tmp_path: Path) -> None:
+    """Die Ausnahme gilt nicht fuer Dateien mit Inhaltsvertrag: ein leer
+    gesichertes Journal ist kein Backup, auch wenn es „treu“ leer zurueckkommt."""
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    empty = tmp_path / "monitor" / "integrity" / "empty_journal.jsonl"
+    empty.parent.mkdir(parents=True)
+    empty.write_bytes(b"")
+    archive = _make_backup(tmp_path)
+
+    result = _run_drill(tmp_path, archive)
+    proof = _latest_proof(tmp_path)
+
+    assert proof["status"] == "FAIL"
+    assert "monitor/integrity/empty_journal.jsonl" in cast(list[str], proof["files_missing"])
+    assert result.returncode == 6
+
+
 def test_backup_manifest_describes_the_archive_content(tmp_path: Path) -> None:
     """Das Manifest beschreibt den ARCHIVINHALT und aendert sich danach nie.
 
