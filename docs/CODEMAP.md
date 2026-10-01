@@ -129,6 +129,12 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - Settlement-Latenz misst `submitted → settled`, nicht die Node-Zeit: wie lange die Zahlung UNKLAR war. Bei n=0 ist sie `None`, nie `0.0`
 - Der Uhr-Sprung-Guard setzt Ablauf-Übergänge auch dann aus, wenn es KEINE vergleichbare Basislinie gibt (erster Lauf, Neustart — die monotone Uhr ist boot-relativ). `EXPIRED` ist terminal
 
+### KAI → KAI-Pay-Wallet: Zahlungsvorschläge (`app/kai_pay_bridge/`, D-297, ADR 0021 Addendum E5)
+- `proposal.py` → `sign_proposal`/`verify_proposal`/`encode_source`, byte-kompatibel zu kai-pay `packages/proposal/proposal.ts`: ECDSA P-256, Signatur P1363, Länge in UTF-16-Einheiten wie JavaScript. Was die Wallet ablehnen würde, wird gar nicht erst signiert
+- `keys.py` → Schlüssel nur als Datei `~/kai-secrets/kai-pay/proposal-source.pem` (0600, `O_EXCL`, nie überschrieben). Ladefehler geben keine Dateiinhalte weiter (I4)
+- `telegram.py::handle_vorschlag` → `/vorschlag` (Bot verdrahtet nur `_cmd_vorschlag`); CLI `app/cli/commands/kaipay_proposal.py` (`init`/`show`/`new`). Links tragen den Vorschlag im Fragment `#kaiprop=`/`#kaisrc=`
+- ⚠ **Kein Weg in den Zahlungskern:** kein Import aus `app.payments`/`app.pay`/`app.lightning`, kein JSONL, kein Zahlungszustand. Erzwungen per AST in `tests/unit/test_kai_pay_bridge.py`. Runbook `docs/runbooks/kai_pay_proposals.md`
+
 ### KAI PAY v0.1 — Mini-Oberfläche (`web/`, Vertrag `/pay/*`)
 - `web/src/pages/Pay.tsx` → **die eine Seite** (Route `#pay`, Sidebar-Gruppe Souveränität): Formular (Betrag in sat, Beschreibung, Referenz) → `POST /pay/requests` → QR aus `lightning_uri` + kopierbares BOLT11 + Ablauf-Countdown → Status-Polling alle 3 s bis `SETTLED|EXPIRED|FAILED` → Receipt (`GET /pay/requests/{id}/receipt`) + Liste der letzten 10. `GET /pay/health` 404 (`kai pay disabled`) ⇒ Hinweisseite statt Formular; API-Fehler werden immer angezeigt, nie stiller Fehlzustand
 - `web/src/lib/api.ts::createPayRequest|fetchPayRequest|fetchPayRequests|fetchPayReceipt|fetchPayHealth` → die Fetcher (Same-Origin, kein Bearer — CF-Access-Header wie alle Dashboard-Endpunkte). `web/src/lib/pay.ts` = reine Logik (Status→Ton, Terminalität, Eingabe-Validierung, QR-Payload in GROSSBUCHSTABEN, Countdown), `web/src/lib/usePayRequestPolling.ts` = der Poller, der bei Endzustand aufhört. QR-Rendering: `web/src/components/panels/PayQr.tsx` über npm `qrcode` (einzige neue Abhängigkeit, landet im lazy `Pay`-Chunk)

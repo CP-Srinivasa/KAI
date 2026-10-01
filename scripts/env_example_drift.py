@@ -59,6 +59,7 @@ SETTINGS_MODULES: tuple[str, ...] = (
     "app.ai.config",
     "app.exploration.settings",
     "app.intelligence.settings",
+    "app.kai_pay_bridge.settings",
     "app.governance.third_party_gate",
     "app.market_data.coingecko_overview",
 )

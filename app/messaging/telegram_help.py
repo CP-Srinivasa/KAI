@@ -32,6 +32,8 @@ HELP_TEXT = (
     "*Lightning (D-277, HOTP ab Policy-Schwelle)*\n"
     "/pay <bolt11> — Rechnung pruefen: Betrag, Gebuehr, Policy\n"
     "/pay ok \\[<hotp>\\] — freigeben und senden · /pay cancel · /pay status\n"
+    "/vorschlag <Ziel> <sat> <Zweck> — KI-Zahlungsvorschlag fuer KAI-Pay (zahlt nie)\n"
+    "/vorschlag quelle — Vorschlagsquelle in der Wallet einrichten\n"
     "\n"
     "*Live-Mode (HOTP-gated, Phase 0)*\n"
     "/live status — current state + caps\n"

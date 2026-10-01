@@ -24,6 +24,21 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-297 (2026-10-01)
+**Entscheidung (Operator 01.10.: „Ja, geh die KAI-Anbindung an“):** KAI wird die erste Vorschlagsquelle der Wallet KAI-Pay (ADR 0021 E5/I5, Addendum). KAI signiert Vorschläge im Wallet-Format `kaiprop1` (ECDSA P-256), bezahlt aber nie. Prüfen, Budget, erlaubte Empfänger und Bestätigen liegen allein in der Wallet.
+- **Umsetzung:**
+  - Paket `app/kai_pay_bridge` (Format, Schlüssel, Telegram-Logik)
+  - Telegram `/vorschlag`, CLI `kai kaipay-proposal init|show|new`
+  - Settings `APP_KAIPAY_PROPOSAL_*` als eigene Klasse, keine Zeile in `app/core/settings.py`
+- **Grenzen, per Test gehalten (`tests/unit/test_kai_pay_bridge.py`):**
+  - kein Import aus `app.payments`/`app.pay`/`app.lightning` (I3)
+  - der private Schlüssel erscheint in keiner Ausgabe (I4)
+  - der Schlüssel liegt nur als Datei (0600, `O_EXCL`) unter `~/kai-secrets/kai-pay/`, nie als Env-Wert
+  - kein JSONL, kein Zahlungszustand in KAI (kein zweiter Truth-State)
+- **Kompatibilität:** ein fester Vektor, den der Wallet-Code signiert hat, wird in Python verifiziert. Die Gegenrichtung (Python → Wallet) ist am 01.10. geprüft.
+**Rückrollbar:** Ohne Schlüsseldatei ist die Funktion aus. Wer die Quelle in der Wallet entfernt, entzieht ihr jede Wirkung.
+**Beleg:** `docs/runbooks/kai_pay_proposals.md`, kai-pay `docs/ki_zahlungsvorschlaege.md` (Format und Wallet-Regeln).
+
 ### D-296 (2026-10-01)
 **Entscheidung (Operator 01.10.: „Gewichtsfrage schließen, wie empfohlen“):** L2 bekommt **kein Gewicht**. L2 sind die Perzentile von On-Chain-Fee und Mempool aus dem eigenen L1-Strom. L2 bleibt reine Messung (`direction_aligned=0`, measure-first nach B-003), die Gewichtsfrage ist geschlossen. Messung (`l2_evidence_shadow.jsonl`) und Ergebnisse (`l2_outcomes.jsonl`, #1143) laufen kostenlos weiter.
 - **Live (#1143, 30.09.):** 358 Paare, beide Merkmale `inconclusive`.
