@@ -66,9 +66,25 @@ def released(monkeypatch) -> None:
 def test_current_drafts_still_have_open_items() -> None:
     items = legal.open_items()
     assert items, "Vorlagen ohne offene Punkte: dann braucht es die Anwalts-Freigabe"
-    assert any("Geschäftsführung" in i for i in items)
-    assert any("Widerrufsbelehrung" in i for i in items)
+    # v0.2 (01.10.): Anbieterdaten eingetragen, Entwuerfe liegen dem Anwalt vor.
+    assert not any("Geschäftsführung" in i for i in items)
+    assert any(i.startswith("ANWALT PRÜFT: Widerrufsbelehrung") for i in items)
+    assert any(i.startswith("OFFEN: Angabe zur Verbraucherschlichtung") for i in items)
     assert legal.is_published(True) is False
+
+
+def test_a_draft_awaiting_the_lawyer_blocks_publication_like_a_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for page in legal.PAGES:
+        (tmp_path / f"{page}.html").write_text("<p>fertig</p>", encoding="utf-8")
+    monkeypatch.setattr(legal, "_DIR", tmp_path)
+    assert legal.is_published(True) is True
+    (tmp_path / "hilfe.html").write_text("<p>[[PRUEFEN: Entwurf X]] Text</p>", encoding="utf-8")
+    assert legal.open_items() == ["ANWALT PRÜFT: Entwurf X"]
+    assert legal.is_published(True) is False
+    html_out = legal.render("hilfe", price_sat=10, access_min=60, invoice_min=5, preview=True)
+    assert '<mark class="offen">ANWALT PRÜFT: Entwurf X</mark> Text' in html_out
 
 
 @pytest.mark.parametrize("path", ["/oracle/bedingungen", "/oracle/hilfe"])

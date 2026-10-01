@@ -75,7 +75,7 @@
 **Limit:**
 - **Rückweg lnd:** Der Wechsel zurück auf 0.19.3 ist nur eingeschränkt möglich. 0.20 kann Graph-Einträge in einem Format schreiben, das 0.19.3 nicht sauber liest. Das betrifft Routing-Daten, keine Kanalzustände. Der Notweg bleiben Seed und SCB.
 - **Rückweg LiT:** vollständig, solange die Sicherung unter `~/kai-lnupd/backup` liegt.
-- **Datenträger:** Die Knotendaten liegen auf der SD-Karte, nicht auf einer SSD.
+- **Datenträger — KORREKTUR 2026-10-01:** Die Aussage „Knotendaten auf der SD-Karte“ war falsch. Sie beruhte auf `df /mnt/hdd`, doch `/mnt/hdd` ist auf der SD-Karte nur ein Verzeichnis mit Symlinks. `channel.db`, die Bitcoin-Daten (831 GB) und alle App-Daten liegen auf einer Samsung T7 USB-SSD (1,8 TB, ext4, `/mnt/disk_storage`, geprüft per `readlink -f` und `df`). Auf der SD-Karte läuft nur das Betriebssystem. Ein Umzug ist nicht nötig, die Offsite-Platte „KAI Backup“ bleibt vom Node getrennt.
 **Beleg:** Node `/home/admin/kai-lnupd/lnupd.log` und `snap-*.json`, Recherche der Release Notes und Konfigurationsabgleich vom 30.09., `docs/runbooks/ln_kai_account_budget.md` §11 (Werkzeug für den Bilanzvergleich).
 
 ### D-294 (2026-09-29)

@@ -32,7 +32,7 @@
   <caption class="meta" style="text-align:left">Kaufübersicht</caption>
   <tr><th>Anbieter</th><td>Formsys GmbH, Grafenberger Allee 277–287, 40237 Düsseldorf, Deutschland · <a href="#anbieter">Impressum</a></td></tr>
   <tr><th>Leistung</th><td>Befristeter Zugang zu genau einem Oracle-Bereich (siehe <a href="#leistung">Leistung</a>). Jeder Abruf liefert den aktuellen Datenstand als JSON.</td></tr>
-  <tr><th>Preis</th><td>{{PREIS_SAT}} sat je Bereich-Zugang. [[OFFEN: Steuerliche Angabe (Umsatzsteuer enthalten oder nicht, Ausweis) durch Operator und Steuerberatung]]</td></tr>
+  <tr><th>Preis</th><td>{{PREIS_SAT}} sat je Bereich-Zugang. Der Preis ist ein Endpreis und enthält die gesetzliche Umsatzsteuer. [[PRUEFEN: Steuerberatung bestätigt Endpreis inkl. USt für Verbraucher (PAngV) sowie Umrechnung sat → EUR zum Zahlungszeitpunkt für Ausweis und USt-Erklärung]]</td></tr>
   <tr><th>Zahlungsgebühren</th><td>Wir erheben keine zusätzlichen Gebühren. Lightning-Weiterleitungsgebühren entstehen in Ihrer Wallet und werden dort angezeigt.</td></tr>
   <tr><th>Zugangszeit</th><td>Bis zum Ablaufzeitpunkt, der Ihnen mit der Rechnung als Datum und Uhrzeit in UTC angezeigt wird, mindestens {{ZUGANG_MIN}} Minuten nach Ihrer Zahlung. Die Rechnung ist {{RECHNUNG_MIN}} Minuten zahlbar.</td></tr>
   <tr><th>Abrufumfang</th><td>Innerhalb der Zugangszeit beliebig viele Abrufe desselben Bereichs mit demselben Zugangsschlüssel. Derzeit gilt keine Abrufgrenze. Ausnahme: Ein Zeitstempel gilt nur für den beim Kauf angegebenen Hashwert.</td></tr>
@@ -45,9 +45,9 @@
 <h2 id="anbieter">1. Anbieter</h2>
 <p>Formsys GmbH<br>Grafenberger Allee 277–287<br>40237 Düsseldorf, Deutschland<br>
 Registergericht: Amtsgericht Düsseldorf, HRB 96678<br>USt-IdNr.: DE352776110<br>
-Vertreten durch: [[OFFEN: vertretungsberechtigte Geschäftsführung]]<br>
-E-Mail: [[OFFEN: E-Mail-Adresse für Kundenanfragen]]<br>
-Telefon oder anderer unmittelbarer Kontakt: [[OFFEN: Telefonnummer oder gleichwertiger Kontaktweg]]</p>
+Vertreten durch den Geschäftsführer Alberto Jose Monteiro Papas<br>
+E-Mail: <a href="mailto:info@formsys.io">info@formsys.io</a><br>
+Telefon: <a href="tel:+4921187979573">+49 211 87979573</a></p>
 
 <h2 id="leistung">2. Leistung</h2>
 <p>Mit der Zahlung erwerben Sie einen <strong>zeitlich befristeten Zugang zu dem vor der Zahlung beschriebenen Oracle-Bereich</strong>. Andere Bereiche sind nicht umfasst und erfordern einen gesonderten Kauf. Alle Antworten sind JSON über HTTPS.</p>
@@ -68,7 +68,10 @@ Telefon oder anderer unmittelbarer Kontakt: [[OFFEN: Telefonnummer oder gleichwe
 <p>Nach dem Ablaufzeitpunkt endet der Zugang und damit die automatische Wiederholungsmöglichkeit mit diesem Zugangsschlüssel. <strong>Damit erlöschen keine gesetzlichen Ansprüche wegen unterbliebener oder mangelhafter Leistung</strong> (siehe Abschnitt 6 und 7). Eine neue entgeltliche Anfrage entsteht nur durch einen gesonderten, von Ihnen bestätigten Kauf.</p>
 
 <h2 id="nutzung">5. Nutzungsrechte</h2>
-<p>[[OFFEN: Umfang der Nutzungsrechte festlegen – private und/oder gewerbliche Nutzung, Speicherung, Weiterverarbeitung, Weiterverkauf/Weitergabe an Dritte; Entscheid Operator, Formulierung Anwalt]]</p>
+<p>[[PRUEFEN: Nutzungsrechte – Entwurf v0.2 mit Vorschlag zum Umfang (eigene private und gewerbliche Nutzung ja, Weiterverkauf/Bereitstellung als eigener Dienst nein, Nachweise frei weitergebbar); Entscheid Operator, Formulierung Anwalt]]</p>
+<p>Sie erhalten an den abgerufenen Daten ein einfaches, nicht übertragbares und zeitlich unbegrenztes Recht, sie für eigene private oder gewerbliche Zwecke zu nutzen, zu speichern und weiterzuverarbeiten, auch nach dem Ende des Zugangszeitraums.</p>
+<p>Nicht gestattet ist, die abgerufenen Daten ganz oder in wesentlichen Teilen an Dritte weiterzuverkaufen, sie Dritten als eigenen Daten- oder Abrufdienst bereitzustellen oder Zugangsschlüssel an Dritte weiterzugeben.</p>
+<p>Ausgenommen sind Nachweise: Beweispakete zu Verdicts und Zeitstempel-Nachweise zu Ihren eigenen Hashwerten dürfen Sie unverändert an Dritte weitergeben, damit diese sie prüfen können. Gesetzlich erlaubte Nutzungen, etwa das Zitatrecht, bleiben unberührt.</p>
 
 <h2 id="probleme">6. Lieferprobleme: Zahlung ohne Lieferung, fehlerhafte Daten, Doppelzahlung</h2>
 <p><strong>Zahlung ohne Lieferung.</strong> Wiederholen Sie den Abruf innerhalb des Zugangszeitraums mit demselben Zugangsschlüssel. Gelingt die Lieferung nicht, melden Sie das über <a href="/oracle/hilfe">Hilfe &amp; Beschwerde</a>. Wir prüfen Zahlung, Zugangsberechtigung und tatsächliche Lieferung getrennt und stellen den Zugang wieder her oder liefern nach. Besteht ein gesetzlicher oder vertraglicher Anspruch auf Erstattung, erstatten wir; eine Erstattung ist nicht allein deshalb ausgeschlossen, weil die Zahlung über Bitcoin oder Lightning erfolgte.</p>
@@ -79,9 +82,25 @@ Telefon oder anderer unmittelbarer Kontakt: [[OFFEN: Telefonnummer oder gleichwe
 
 <h2 id="rechte">7. Gesetzliche Rechte und Widerruf</h2>
 <p>Es gelten die gesetzlichen Rechte bei Mängeln und bei unterbliebener Bereitstellung, für Verbraucher insbesondere §§ 327 ff. BGB (unter anderem Bereitstellung, Nacherfüllung, Vertragsbeendigung, Erstattung, Minderung und gegebenenfalls Schadensersatz nach ihren jeweiligen Voraussetzungen). Sie müssen nicht erneut zahlen, um diese Rechte geltend zu machen. Das Wiederholungsfenster ist weder eine Ausschlussfrist für Beschwerden noch eine Verkürzung gesetzlicher Fristen.</p>
-<details open><summary>Widerrufsbelehrung</summary>
-<p>[[OFFEN: Widerrufsbelehrung für Verbraucher – Einordnung (digitale Inhalte / digitale Dienstleistung), Frist, Folgen und ob und wann das Widerrufsrecht nach § 356 BGB vorzeitig erlischt; Muster-Widerrufsformular; Formulierung durch den Anwalt]]</p>
-<p>Während der Widerrufsfrist steht Ihnen die Funktion <a href="/oracle/hilfe#widerruf">„Vertrag widerrufen“</a> zur Verfügung. Ein Widerruf ist auch formlos an die oben genannte Anschrift möglich.</p>
+<details open id="widerruf"><summary>Widerrufsbelehrung</summary>
+<p>[[PRUEFEN: Widerrufsbelehrung – Entwurf nach dem gesetzlichen Muster (Anlage 1 zu Art. 246a § 1 Abs. 2 EGBGB). Zu entscheiden: (1) Einordnung – der befristete Zugang zu einem Datenbereich mit beliebig vielen Abrufen und der Zeitstempel sind im Entwurf als digitale Dienstleistung behandelt (§ 327 Abs. 2 BGB), nicht als digitaler Inhalt. (2) Vorzeitiges Erlöschen nach § 356 Abs. 4 bzw. Abs. 5 BGB setzt ausdrückliches Verlangen bzw. Zustimmung vor Fristablauf, die Kenntnisbestätigung und eine Bestätigung auf dauerhaftem Datenträger voraus. Im reinen L402-API-Ablauf gibt es diese Schritte derzeit NICHT (kein Zustimmungsschritt, keine E-Mail) – ohne sie bleibt das Widerrufsrecht 14 Tage bestehen und es wird erstattet. Optionen: Zustimmungsschritt technisch bauen, Erstattungsrisiko tragen oder Verkauf nur an Unternehmer. (3) Rückzahlung über Lightning als „dasselbe Zahlungsmittel“.]]</p>
+<p><strong>Widerrufsrecht</strong></p>
+<p>Sie haben das Recht, binnen vierzehn Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen. Die Widerrufsfrist beträgt vierzehn Tage ab dem Tag des Vertragsabschlusses.</p>
+<p>Um Ihr Widerrufsrecht auszuüben, müssen Sie uns (Formsys GmbH, Grafenberger Allee 277–287, 40237 Düsseldorf, Deutschland, Telefon +49 211 87979573, E-Mail info@formsys.io) mittels einer eindeutigen Erklärung (zum Beispiel ein mit der Post versandter Brief oder eine E-Mail) über Ihren Entschluss, diesen Vertrag zu widerrufen, informieren. Sie können dafür das unten stehende Muster-Widerrufsformular verwenden, das jedoch nicht vorgeschrieben ist. Sie können das Muster-Widerrufsformular oder eine andere eindeutige Erklärung auch über die Funktion <a href="/oracle/hilfe#widerruf">„Vertrag widerrufen“</a> elektronisch ausfüllen und übermitteln. Machen Sie von dieser Möglichkeit Gebrauch, so übermitteln wir Ihnen unverzüglich eine Bestätigung über den Eingang eines solchen Widerrufs.</p>
+<p>Zur Wahrung der Widerrufsfrist reicht es aus, dass Sie die Mitteilung über die Ausübung des Widerrufsrechts vor Ablauf der Widerrufsfrist absenden.</p>
+<p><strong>Folgen des Widerrufs</strong></p>
+<p>Wenn Sie diesen Vertrag widerrufen, haben wir Ihnen alle Zahlungen, die wir von Ihnen erhalten haben, unverzüglich und spätestens binnen vierzehn Tagen ab dem Tag zurückzuzahlen, an dem die Mitteilung über Ihren Widerruf dieses Vertrags bei uns eingegangen ist. Für diese Rückzahlung verwenden wir dasselbe Zahlungsmittel, das Sie bei der ursprünglichen Transaktion eingesetzt haben (eine Lightning-Zahlung an einen von Ihnen bestätigten Rückzahlungsweg), es sei denn, mit Ihnen wurde ausdrücklich etwas anderes vereinbart; in keinem Fall werden Ihnen wegen dieser Rückzahlung Entgelte berechnet.</p>
+<p>Haben Sie verlangt, dass die Dienstleistung während der Widerrufsfrist beginnen soll, so haben Sie uns einen angemessenen Betrag zu zahlen, der dem Anteil der bis zu dem Zeitpunkt, zu dem Sie uns von der Ausübung des Widerrufsrechts hinsichtlich dieses Vertrags unterrichten, bereits erbrachten Dienstleistungen im Vergleich zum Gesamtumfang der im Vertrag vorgesehenen Dienstleistungen entspricht.</p>
+<p><strong>Muster-Widerrufsformular</strong></p>
+<p>(Wenn Sie den Vertrag widerrufen wollen, dann füllen Sie bitte dieses Formular aus und senden Sie es zurück.)</p>
+<p>An Formsys GmbH, Grafenberger Allee 277–287, 40237 Düsseldorf, Deutschland, E-Mail info@formsys.io:<br>
+Hiermit widerrufe(n) ich/wir (*) den von mir/uns (*) abgeschlossenen Vertrag über die Erbringung der folgenden Dienstleistung (*): …<br>
+Bestellt am (*): … · Auftragsreferenz (Zahlungs-Hash): …<br>
+Name des/der Verbraucher(s): …<br>
+Anschrift des/der Verbraucher(s): …<br>
+Unterschrift des/der Verbraucher(s) (nur bei Mitteilung auf Papier): …<br>
+Datum: …<br>
+(*) Unzutreffendes streichen.</p>
 </details>
 
 <h2 id="datenschutz">8. Datenschutz</h2>
@@ -90,12 +109,16 @@ Telefon oder anderer unmittelbarer Kontakt: [[OFFEN: Telefonnummer oder gleichwe
   <li><strong>Beim Abruf:</strong> Zahlungs-Hash, Bereich, Zeitpunkt, Preis und ein pseudonymisierter Kennwert, der aus Ihrer IP-Adresse mit einem geheimen Schlüssel gebildet und gekürzt wird. Die IP-Adresse selbst speichern wir nicht. Zweck: Freischaltung, Missbrauchsschutz, Nachweis der Lieferung und Messung der Nachfrage.</li>
   <li><strong>Bei einer Meldung oder einem Widerruf:</strong> die Angaben aus dem Formular (Art des Problems, Auftragsreferenz, Bereich, Zeitpunkt, Beschreibung, E-Mail-Adresse und gegebenenfalls Name) mit Vorgangsnummer und Eingangszeit. Zweck: Bearbeitung und Nachweis. Der Betreiber erhält eine Benachrichtigung ohne diese Angaben.</li>
 </ul>
-<p>Rechtsgrundlagen, Speicherdauer und Empfänger: [[OFFEN: Rechtsgrundlagen (Art. 6 DSGVO), Speicherdauer je Datenart, Hosting und Empfänger, Datenschutzkontakt – Formulierung Datenschutz/Anwalt]]</p>
+<p>[[PRUEFEN: Datenschutz – Entwurf v0.2. Zu entscheiden: Speicherdauer je Datenart (Vorschlag unten). Technischer Stand 01.10.2026: Abrufdaten und Kennwert liegen append-only in artifacts/ln_demand_ledger.jsonl, Meldungen in artifacts/oracle/oracle_cases.jsonl – eine automatische Löschung ist noch NICHT gebaut und wird nach Festlegung der Fristen umgesetzt. Hosting-Angabe bestätigen: Betrieb auf eigener Hardware (Raspberry Pi) – gehört sie der Formsys GmbH? Auftragsverarbeitung prüfen: Cloudflare (Tunnel, sieht IP-Adressen, Drittlandbezug USA), Michael Gahn DESIGN (E-Mail-Versand, sobald eingerichtet).]]</p>
+<p><strong>Rechtsgrundlagen.</strong> Freischaltung, Lieferung und Nachweis der Leistung sowie die Bearbeitung von Meldungen und Widerrufen beruhen auf Art. 6 Abs. 1 lit. b DSGVO (Vertrag und vorvertragliche Maßnahmen). Die Aufbewahrung von Zahlungs- und Buchungsnachweisen beruht auf Art. 6 Abs. 1 lit. c DSGVO in Verbindung mit den handels- und steuerrechtlichen Aufbewahrungspflichten. Missbrauchsschutz und Nachfragemessung mit dem pseudonymisierten Kennwert beruhen auf Art. 6 Abs. 1 lit. f DSGVO; unser berechtigtes Interesse ist ein sicherer, nicht überlasteter Dienst und die Planung des Angebots.</p>
+<p><strong>Speicherdauer.</strong> Zahlungs- und Buchungsnachweise (Zahlungs-Hash, Bereich, Zeitpunkt, Preis) bewahren wir für die gesetzlichen Aufbewahrungsfristen auf. Den pseudonymisierten Kennwert löschen wir nach 90 Tagen. Meldungen und Widerrufe bewahren wir bis zum Ablauf von drei Jahren nach Abschluss des Vorgangs auf, damit Ansprüche geprüft und nachgewiesen werden können.</p>
+<p><strong>Hosting und Empfänger.</strong> Der Dienst läuft auf eigener Hardware des Anbieters. Der Datenverkehr wird über Cloudflare (Cloudflare, Inc.) zugestellt; dabei verarbeitet Cloudflare IP-Adressen. Für den Versand von E-Mails setzen wir Michael Gahn DESIGN, Dr.-Theodor-Brugsch-Str. 12, 08529 Plauen, ein. Lightning-Zahlungen werden über das Lightning-Netzwerk geleitet; dabei werden keine Namen oder Kontaktdaten übertragen. Eine Weitergabe zu anderen Zwecken findet nicht statt.</p>
+<p><strong>Kontakt in Datenschutzfragen.</strong> Formsys GmbH, Anschrift oben, E-Mail <a href="mailto:info@formsys.io">info@formsys.io</a>.</p>
 <p>Sie haben die Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch sowie das Recht auf Beschwerde bei einer Datenschutz-Aufsichtsbehörde, zum Beispiel bei der Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen.</p>
 
 <h2 id="streit">9. Beschwerden und Streitbeilegung</h2>
 <p>Beschwerden nehmen wir kostenlos über <a href="/oracle/hilfe">Hilfe &amp; Beschwerde</a> oder per Post an die oben genannte Anschrift entgegen. Ein bestimmtes Formular ist keine Voraussetzung für die Ausübung gesetzlicher Rechte.</p>
-<p>[[OFFEN: Angabe zur Verbraucherschlichtung nach § 36 VSBG – Bereitschaft oder Verpflichtung zur Teilnahme und gegebenenfalls zuständige Schlichtungsstelle; Entscheid Operator]]</p>
+<p>[[OFFEN: Angabe zur Verbraucherschlichtung nach § 36 VSBG – Bereitschaft oder Verpflichtung zur Teilnahme und gegebenenfalls zuständige Schlichtungsstelle; Entscheid Operator. Die frühere EU-Plattform zur Online-Streitbeilegung (OS-Plattform) ist eingestellt, ein Link darauf entfällt.]]</p>
 
 <h2 id="betrieb">10. Interne Betriebswarnungen</h2>
 <p>Erkennt unser System eine nicht erbrachte oder noch zu klärende Lieferung, entsteht ein interner Prüfhinweis. Er ist weder eine automatische Erstattungsanweisung noch für sich allein ein Anerkenntnis eines Zahlungsanspruchs. Umgekehrt beweist das Fehlen eines solchen Hinweises nicht, dass ordnungsgemäß geliefert wurde. Ihre Rechte hängen von dieser internen Kennzeichnung nicht ab.</p>
