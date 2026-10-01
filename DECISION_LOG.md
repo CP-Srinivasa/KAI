@@ -24,6 +24,22 @@
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
 
+### D-296 (2026-10-01)
+**Entscheidung (Operator 01.10.: „Gewichtsfrage schließen, wie empfohlen“):** L2 bekommt **kein Gewicht**. L2 sind die Perzentile von On-Chain-Fee und Mempool aus dem eigenen L1-Strom. L2 bleibt reine Messung (`direction_aligned=0`, measure-first nach B-003), die Gewichtsfrage ist geschlossen. Messung (`l2_evidence_shadow.jsonl`) und Ergebnisse (`l2_outcomes.jsonl`, #1143) laufen kostenlos weiter.
+- **Live (#1143, 30.09.):** 358 Paare, beide Merkmale `inconclusive`.
+- **Rückschau (#1144, vorregistriert und gemergt *vor* dem Datenlauf, 01.10.):** 46 125 Screener-Kandidaten, das sind 4 651 unabhängige Einheiten (L1-Beobachtung × Seite, weil das Merkmal marktweit ist). Basisrate +1,5 bps, 47,8 % positiv.
+  - `mempool_percentile`: nicht bestätigt. Die Zeithälften widersprechen sich (−6 / +9 bps), das ist Rauschen. Die Live-Tendenz (+8 bps) bestätigt sich nicht.
+  - `fee_percentile`: nicht bestätigt. Es gibt eine schwache Kontra-Spur: Bei hoher Fee schneiden Signale etwa 3–5 bps je Stunde schlechter ab, mit gleichem Vorzeichen in beiden Zeithälften und für beide Seiten. Die Hochgebühr-Hälfte liegt aber bei etwa 0 statt sicher negativ, damit ist die Regel verfehlt.
+- **Kein Folgetest, begründet mit der Power-Planung auf den Rückschau-Daten:**
+  - Effekt 3,45 bps, Block-Standardfehler 3,96 bps bei 4 649 Clustern, Zufluss etwa 48 Cluster am Tag.
+  - Die Chance, einen echten Effekt zu bestätigen, läge bei etwa 21 % nach 3, 33 % nach 6, 52 % nach 12 und 77 % nach 24 Monaten.
+  - Selbst bestätigt wären 3–5 bps je Trade klein gegenüber den Handelskosten.
+**Limit:** Die Rückschau deckt nur Screener-Kandidaten ab, die Loop-Kandidaten liegen vor dem L1-Start am 22.06. Wiedereröffnen lässt sich die Frage nur mit einem neuen Test, der vor dem Datenlauf festgeschrieben wird und auf dann frischen Daten läuft. Die Regeln von #1144 werden nicht nachträglich geändert.
+**Beleg:**
+- `app/research/l2_backfill.py` (Vorregistrierung im Docstring) und `scripts/l2_backfill_eval.py`
+- Bericht `docs/evidence/l2_rueckschau_20261001.json` (Pi-Daten, Stand 30.09. 23:48)
+- `app/observability/l2_outcomes.py`
+
 ### D-295 (2026-09-30)
 **Entscheidung und Umsetzung (Operator-Freigabe „sofern sauber“):** Der Node läuft mit **lnd 0.20.4-beta** und **LiT 0.16.1-alpha**, boltzd ist stillgelegt. Die Bilanz ist vor und nach jedem Schritt identisch.
 - **boltzd:** Boltz hat die Swap-Dienste am 03.08.2026 eingestellt, `boltz.exchange` steht seit 18.09. auf `client hold`. boltzd ist per `systemctl disable --now` stillgelegt, das geht nur bei 0 offenen Swaps (`boltz.db` nur lesend geprüft). Die Datenbank bleibt liegen. Das Runbook `ln_inbound_swap.md` ist außer Betrieb (#1136).
