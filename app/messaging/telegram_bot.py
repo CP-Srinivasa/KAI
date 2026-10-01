@@ -22,6 +22,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -1648,9 +1649,9 @@ class TelegramOperatorBot:
             "menue_reload": self._cmd_menu_reload,
             "menu_validate": self._cmd_menu_validate,
             "menue_validate": self._cmd_menu_validate,
-            "sentr": self._cmd_agent_sentr,
-            "watchdog": self._cmd_agent_watchdog,
-            "architect": self._cmd_agent_architect,
+            "sentr": partial(self._cmd_agent, slug="sentr"),
+            "watchdog": partial(self._cmd_agent, slug="watchdog"),
+            "architect": partial(self._cmd_agent, slug="architect"),
             "ok": self._cmd_ok,
             "bestaetigen": self._cmd_ok,
             "confirm": self._cmd_ok,
@@ -1662,6 +1663,7 @@ class TelegramOperatorBot:
             "trail": self._cmd_trail,
             "pay": self._cmd_pay,
             "zahlen": self._cmd_pay,
+            "vorschlag": self._cmd_vorschlag,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -1872,15 +1874,6 @@ class TelegramOperatorBot:
             chat_id,
             f"*{defn.name}* — Nachricht gespeichert (`{str(event['id'])[:8]}`).",
         )
-
-    async def _cmd_agent_sentr(self, chat_id: int, *, args: str = "") -> None:
-        await self._cmd_agent(chat_id, "sentr", args=args)
-
-    async def _cmd_agent_watchdog(self, chat_id: int, *, args: str = "") -> None:
-        await self._cmd_agent(chat_id, "watchdog", args=args)
-
-    async def _cmd_agent_architect(self, chat_id: int, *, args: str = "") -> None:
-        await self._cmd_agent(chat_id, "architect", args=args)
 
     async def _cmd_status(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(
@@ -2652,6 +2645,12 @@ class TelegramOperatorBot:
         from app.messaging.pay_telegram_commands import handle_pay
 
         await self._send(chat_id, await handle_pay(args, service, chat_id, flow=self._pay_flow))
+
+    async def _cmd_vorschlag(self, chat_id: int, *, args: str = "") -> None:
+        """D-297: KI-Zahlungsvorschlag fuer KAI-Pay (``app.kai_pay_bridge``) - signiert nur, zahlt nie."""
+        from app.kai_pay_bridge.telegram import handle_vorschlag
+
+        await self._send(chat_id, handle_vorschlag(args))
 
     async def _cmd_menu(self, chat_id: int, *, args: str = "") -> None:
         """Show the main inline menu. Also re-docks the persistent keyboard.

@@ -158,3 +158,22 @@ Jede Etappe hat eigene Abnahmekriterien. Nur eine Etappe laeuft zur Zeit.
   spaetere Aufgabe.
 - Umsatz fuer KAI entsteht nur ueber Stufe B nach D-CORE-006: KAI-Leistungen werden per Zahlungslink
   bezahlt. Fuer Eingaenge von Dritten am eigenen Node braucht es eine eigene Operator-Freigabe.
+
+## Addendum 2026-10-01: E5-Schnittstelle KAI → Wallet (D-297)
+
+I5 wird konkret als signierter Vorschlag `kaiprop1`. Das Format ist in kai-pay
+`docs/ki_zahlungsvorschlaege.md` beschrieben, gebaut ist es in `packages/proposal/proposal.ts`
+und byte-gleich in `app/kai_pay_bridge/proposal.py`.
+
+- **Vertrauensanker** ist der oeffentliche Schluessel der Quelle. Der Nutzer richtet ihn einmal
+  in der Wallet ein (`kaisrc1`) und vergleicht dabei den Fingerabdruck. KAI kennt keine
+  Wallet-Daten und bekommt keine Rueckmeldung, ob ein Vorschlag bezahlt wurde.
+- **Nur Vorschlag:** In der Wallet entscheiden Signatur, Laufzeit (hoechstens 7 Tage),
+  Wiederholung, erlaubte Empfaenger, das Tages- und Monatsbudget (inklusive Gebuehr) und am Ende
+  die Bestaetigung durch den Nutzer. Ein gestohlener Quellschluessel kann damit keine Zahlung
+  ausloesen.
+- **I3 bleibt:** Der Weg zur Wallet ist nur ein Link mit Fragment (`#kaiprop=`), das nie an
+  einen Server geht. In KAI gibt es keinen Code-Pfad in den Zahlungskern.
+- **I4:** Der Quellschluessel liegt als Datei auf der Pi (`~/kai-secrets/kai-pay/`, 0600) und
+  erscheint in keiner Ausgabe. Ein Test belegt das.
+- **Betrieb:** `docs/runbooks/kai_pay_proposals.md` (Anlegen, Einrichten, Rotation).
