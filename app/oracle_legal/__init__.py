@@ -4,8 +4,10 @@ Operator-Entscheid 2026-09-30: zwei öffentlich erreichbare Seiten, vor der Zahl
 verlinkt, ohne Kundenkonto. Online gehen sie erst nach Freigabe durch den Anwalt:
 
 - ``APP_LN_ORACLE_LEGAL_PUBLISHED`` ist der Schalter (Default aus).
-- Solange eine Vorlage noch ``[[OFFEN: …]]`` enthält, bleibt alles unveröffentlicht,
-  egal wie der Schalter steht. Kein Rechtstext mit Lücke geht an Kunden.
+- Solange eine Vorlage noch ``[[OFFEN: …]]`` (Angabe fehlt) oder ``[[PRUEFEN: …]]``
+  (Entwurf liegt vor, Anwalt prüft) enthält, bleibt alles unveröffentlicht, egal wie
+  der Schalter steht. Kein Rechtstext mit Lücke oder ungeprüftem Entwurf geht an Kunden.
+  Der Anwalt gibt einen Entwurf frei, indem die ``PRUEFEN``-Marke entfernt wird.
 - Die Vorschau für Operator und Anwalt liegt hinter dem Dashboard-Schutz.
 
 Meldungen und Widerrufe landen append-only in ``artifacts/oracle/oracle_cases.jsonl``.
@@ -33,8 +35,8 @@ from app.core.file_lock import append_lock
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.1-Entwurf"
-STAND = "30.09.2026"
+VERSION = "0.2-Entwurf"
+STAND = "01.10.2026"
 PAGES = ("bedingungen", "hilfe")
 CASES_PATH = Path("artifacts/oracle/oracle_cases.jsonl")
 # Freiwillige Serviceziele von der Hilfe-Seite, in Werktagen (Mo–Fr).
@@ -43,7 +45,8 @@ RESOLUTION_WORKDAYS = 7
 CASE_STATES = ("beantwortet", "erledigt")
 
 _DIR = Path(__file__).resolve().parent
-_OPEN = re.compile(r"\[\[OFFEN:\s*(.*?)\]\]", re.S)
+_OPEN = re.compile(r"\[\[(OFFEN|PRUEFEN):\s*(.*?)\]\]", re.S)
+_LABEL = {"OFFEN": "OFFEN", "PRUEFEN": "ANWALT PRÜFT"}
 _BANNER = (
     '<p class="draft">ENTWURF – nicht freigegeben und nicht verbindlich. '
     "Diese Vorschau ist nur für Betreiber und Anwalt bestimmt.</p>"
@@ -63,8 +66,8 @@ def open_items() -> list[str]:
     """Alle noch offenen Punkte aus allen Vorlagen, ohne Doppelte (leer = freigabefähig)."""
     items: list[str] = []
     for page in PAGES:
-        for match in _OPEN.findall(_template(page)):
-            item = " ".join(match.split())
+        for kind, text in _OPEN.findall(_template(page)):
+            item = f"{_LABEL[kind]}: {' '.join(text.split())}"
             if item not in items:
                 items.append(item)
     return items
@@ -88,7 +91,9 @@ def render(page: str, *, price_sat: int, access_min: int, invoice_min: int, prev
         out = out.replace("{{" + key + "}}", html.escape(value))
     out = out.replace("{{ROBOTS}}", "noindex, nofollow" if preview else "index, follow")
     out = out.replace("{{ENTWURF_BANNER}}", _BANNER if preview else "")
-    return _OPEN.sub(lambda m: f'<mark class="offen">OFFEN: {m.group(1)}</mark>', out)
+    return _OPEN.sub(
+        lambda m: f'<mark class="offen">{_LABEL[m.group(1)]}: {m.group(2)}</mark>', out
+    )
 
 
 def pre_payment_notice(access_min: int) -> str:
