@@ -222,6 +222,10 @@ backup_script = Path(sys.argv[3])
 audit_file = Path(sys.argv[4])
 archive = Path(sys.argv[5])
 out = Path(sys.argv[6])
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+# Dateien mit Inhaltsvertrag: leer ist bei ihnen immer ein Befund, auch wenn sie
+# schon leer eingepackt wurden (ein leeres Zahlungsjournal ist kein Backup).
+CONTENT_SUFFIXES = {".json", ".jsonl"}
 
 
 def sha256(path: Path) -> str:
@@ -402,7 +406,17 @@ for name in expected:
         missing.append(name)
         continue
     if restored_path.stat().st_size == 0:
-        missing.append(name)
+        # Leer eingepackt und leer zurueck ist eine treue Wiederherstellung, aber nur
+        # ohne Inhaltsvertrag. Live 2026-10-01: die Sperrdatei
+        # monitor/integrity/uc3_timestamp_jobs/.capacity.lock (bezahlte UC3-Auftraege)
+        # ist planmaessig leer, wurde bit-genau zurueckgeholt und galt trotzdem als
+        # fehlend; der Drill wurde rot und blockierte jedes Release.
+        faithful_empty = (
+            expected_hashes.get(name) == EMPTY_SHA256
+            and restored_path.suffix not in CONTENT_SUFFIXES
+        )
+        if not faithful_empty:
+            missing.append(name)
         continue
     if restored_path.suffix == ".json" and not validate_json_file(restored_path):
         missing.append(name)
