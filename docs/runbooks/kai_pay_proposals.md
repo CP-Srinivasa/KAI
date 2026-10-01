@@ -20,6 +20,11 @@ cd /home/kai/current
 .venv/bin/python -m app.cli.main kaipay-proposal init
 ```
 
+- Immer aus `/home/kai/current` aufrufen: Die Settings lesen die `.env` des Arbeitsverzeichnisses.
+  Aus einem anderen Verzeichnis entstuende der Schluessel am Standardpfad, waehrend der Dienst
+  einen per `.env` gesetzten Pfad liest.
+- Nur Linux/Pi: Unter Windows setzt `0600` keine echten Rechte (dort schuetzt allein die ACL des
+  Profils).
 - Der Befehl legt den Schluessel an und gibt den **Fingerabdruck** aus (8 Vierergruppen).
 - Eine vorhandene Datei wird nie ueberschrieben, der Befehl endet dann mit Exit 1.
 - Der private Schluessel wird nie ausgegeben, auch nicht in Logs.
@@ -43,6 +48,11 @@ nicht eingerichtet“ und bereitet nichts vor.
 /vorschlag name@breez.tips 2100 Server Oktober
 ```
 
+`/vorschlag` funktioniert nur im privaten Chat eines Admin-Chats (`OPERATOR_ADMIN_CHAT_IDS`),
+Gruppen lehnt der Bot ab. **Gueltig sind nur Links auf app.kai-pay.net**: Wer das Bot-Token
+haette, koennte keine gueltigen Vorschlaege faelschen (Anker ist der Schluessel), aber Links auf
+fremde Seiten schicken. Ziel, Betrag und Zweck stehen im Telegram-Verlauf und im Audit des Bots.
+
 Die Antwort enthaelt den Link „In KAI-Pay pruefen“ (`#kaiprop=`) und den Code zum Einfuegen
 unter „Senden“. Der Vorschlag ist 24 h gueltig (`APP_KAIPAY_PROPOSAL_TTL_HOURS`, hoechstens
 168).
@@ -57,7 +67,9 @@ Erst danach zeigt sie „Bestaetigen“.
 
 Abgelehnt wird schon in KAI, also bevor ueberhaupt signiert wird:
 
-- `sat` ausserhalb von 1 bis 1.000.000
+- `sat` ausserhalb von 1 bis 1.000.000 (nur Ziffern 0-9)
+- ein Vorschlag ueber 4000 Zeichen (Grenze der Wallet); in Telegram schon ab etwa 3700, dann
+  `kai kaipay-proposal new` nehmen
 - ein Zweck ueber 140 Zeichen oder mit Steuer- oder Richtungszeichen
 - ein Ziel mit Leerraum
 
@@ -83,7 +95,7 @@ kann nur Vorschlaege erzeugen, keine Zahlungen. Begrenzt wird der Schaden durch:
 | Meldung | Ursache |
 |---|---|
 | „Keine Vorschlagsquelle angelegt“ | Schluesseldatei fehlt: Abschnitt 1 |
-| „Vorschlagsquelle unbrauchbar“ | Datei ist kein lesbarer P-256-Schluessel: Abschnitt 4 |
+| „Vorschlagsquelle unbrauchbar“ | Datei fehlt Leserecht, ist zu offen (nicht 0600) oder kein P-256-Schluessel: `chmod 600`, sonst Abschnitt 4 |
 | Wallet: „… nicht eingerichtet“ / „passt nicht zur eingerichteten Quelle“ | Quelle nicht eingerichtet oder rotiert: Abschnitt 2 |
 | Wallet: „Der Vorschlag ist abgelaufen.“ | Vorschlag aelter als die TTL: neu erzeugen |
 | Wallet: „noch nicht gueltig“ | Uhr des Handys oder der Pi geht falsch |

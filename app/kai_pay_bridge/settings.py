@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_KEY_PATH = str(Path.home() / "kai-secrets" / "kai-pay" / "proposal-source.pem")
@@ -30,3 +30,10 @@ class KaiPayProposalSettings(BaseSettings):
     app_url: str = "https://app.kai-pay.net"
     #: Laufzeit eines Vorschlags in Stunden (die Wallet akzeptiert hoechstens 7 Tage).
     ttl_hours: int = Field(default=24, ge=1, le=168)
+
+    @field_validator("app_url")
+    @classmethod
+    def _https_only(cls, value: str) -> str:
+        if not value.startswith("https://"):
+            raise ValueError("APP_KAIPAY_PROPOSAL_APP_URL muss mit https:// beginnen")
+        return value

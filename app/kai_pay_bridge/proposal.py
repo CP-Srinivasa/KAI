@@ -38,7 +38,9 @@ SRC_PREFIX = "kaisrc1."
 MAX_TTL_S = 7 * 24 * 3600
 MAX_SAT = 1_000_000
 _UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cs"})
-_UNSAFE_CHARS = frozenset("ᅟᅠㅤﾠ")  # unsichtbare Hangul-Fueller
+_UNSAFE_CHARS = frozenset("\u115f\u1160\u3164\uffa0")  # unsichtbare Hangul-Fueller
+#: ``decodeProposal`` der Wallet lehnt laengere Tokens ab (proposal.ts).
+MAX_TOKEN = 4000
 _WS = re.compile(r"\s")
 
 
@@ -63,11 +65,11 @@ def _js_length(text: str) -> int:
 
 def safe_text(text: object, max_len: int) -> bool:
     """Wie ``safeText`` der Wallet: nicht leer, Laengengrenze, keine Steuer-/Richtungszeichen."""
-    if not isinstance(text, str) or not text or _js_length(text) > max_len:
+    if not isinstance(text, str) or not text:
         return False
-    return not any(
-        unicodedata.category(c) in _UNSAFE_CATEGORIES or c in _UNSAFE_CHARS for c in text
-    )
+    if any(unicodedata.category(c) in _UNSAFE_CATEGORIES or c in _UNSAFE_CHARS for c in text):
+        return False  # vor der Laenge: ein einzelnes Surrogat ist nicht UTF-16-kodierbar
+    return _js_length(text) <= max_len
 
 
 def key_id(spki: bytes) -> str:
@@ -157,19 +159,32 @@ def sign_proposal(
     )
     signed = PROP_PREFIX + b64url(payload.encode("utf-8"))
     r, s = decode_dss_signature(key.sign(signed.encode("ascii"), ec.ECDSA(hashes.SHA256())))
-    return f"{signed}.{b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
+    token = f"{signed}.{b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
+    if len(token) > MAX_TOKEN:
+        raise ProposalError("size")
+    return token
 
 
 def verify_proposal(token: str, spki: bytes) -> Proposal:
     """Gegenprobe (Tests, Diagnose): Form und Signatur; die Laufzeit prueft die Wallet."""
-    if not token.startswith(PROP_PREFIX):
+    if not token.startswith(PROP_PREFIX) or len(token) > MAX_TOKEN:
         raise ProposalError("prefix")
     parts = token[len(PROP_PREFIX) :].split(".")
     if len(parts) != 2:
         raise ProposalError("parts")
-    raw = json.loads(unb64url(parts[0]).decode("utf-8"))
-    if set(raw) != {"v", "id", "src", "iat", "exp", "to", "sat", "purpose"} or raw["v"] != 1:
+    try:
+        raw = json.loads(unb64url(parts[0]).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ProposalError("json") from exc
+    fields = {"v", "id", "src", "iat", "exp", "to", "sat", "purpose"}
+    if not isinstance(raw, dict) or set(raw) != fields or raw["v"] != 1:
         raise ProposalError("fields")
+    for k in ("iat", "exp", "sat"):
+        if isinstance(raw[k], bool) or not isinstance(raw[k], int):
+            raise ProposalError(k)
+    for k in ("id", "src", "to", "purpose"):
+        if not isinstance(raw[k], str):
+            raise ProposalError(k)
     p = Proposal(**{k: raw[k] for k in ("id", "src", "iat", "exp", "to", "sat", "purpose")})
     _check(p)
     if p.src != key_id(spki):
@@ -178,7 +193,10 @@ def verify_proposal(token: str, spki: bytes) -> Proposal:
     if len(sig) != 64:
         raise ProposalError("sig")
     der = encode_dss_signature(int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big"))
-    pub = serialization.load_der_public_key(spki)
+    try:
+        pub = serialization.load_der_public_key(spki)
+    except ValueError as exc:
+        raise ProposalError("key") from exc
     if not isinstance(pub, ec.EllipticCurvePublicKey):
         raise ProposalError("key")
     try:

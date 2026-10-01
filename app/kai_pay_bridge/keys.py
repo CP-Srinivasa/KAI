@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -27,6 +28,10 @@ def create_key(path: str | Path) -> ec.EllipticCurvePrivateKey:
     """Legt einen neuen P-256-Schluessel an. ``FileExistsError``, wenn die Datei existiert."""
     p = Path(path).expanduser()
     p.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if sys.platform != "win32":  # mkdir aendert ein vorhandenes Verzeichnis nicht
+        if p.parent.stat().st_uid != os.getuid():
+            raise PermissionError("Schluesselverzeichnis gehoert einem anderen Nutzer")
+        os.chmod(p.parent, 0o700)
     key = ec.generate_private_key(ec.SECP256R1())
     pem = key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
@@ -34,6 +39,14 @@ def create_key(path: str | Path) -> ec.EllipticCurvePrivateKey:
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as fh:
         fh.write(pem)
+        fh.flush()
+        os.fsync(fh.fileno())
+    if sys.platform != "win32":  # Verzeichniseintrag ebenfalls dauerhaft (Stromausfall nach init)
+        dfd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     return key
 
 
@@ -41,6 +54,8 @@ def load_key(path: str | Path) -> ec.EllipticCurvePrivateKey:
     p = Path(path).expanduser()
     if not p.is_file():
         raise KeyMissingError(str(p))
+    if sys.platform != "win32" and p.stat().st_mode & 0o077:
+        raise ValueError("Schluesseldatei zu offen (0600 erwartet)")
     try:
         key = serialization.load_pem_private_key(p.read_bytes(), password=None)
     except (ValueError, TypeError):

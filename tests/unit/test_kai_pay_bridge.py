@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ from typer.testing import CliRunner
 from app.kai_pay_bridge.keys import KeyMissingError, create_key, load_key
 from app.kai_pay_bridge.proposal import (
     MAX_SAT,
+    MAX_TOKEN,
     ProposalError,
     encode_source,
     fingerprint,
@@ -26,7 +30,7 @@ from app.kai_pay_bridge.proposal import (
     verify_proposal,
 )
 from app.kai_pay_bridge.settings import KaiPayProposalSettings
-from app.kai_pay_bridge.telegram import NO_KEY, USAGE, handle_vorschlag
+from app.kai_pay_bridge.telegram import GROUP_REFUSED, NO_KEY, USAGE, handle_vorschlag
 
 # Vom Wallet-Code (kai-pay packages/proposal/proposal.ts) signiert - nur oeffentliche Daten.
 # Belegt, dass KAI und Wallet dasselbe Format sprechen (Gegenrichtung: Vektor im kai-pay-Repo).
@@ -40,6 +44,7 @@ JS_TOKEN = (
     "IjoiR2VnZW5wcm9iZSBad2VjayDDpMO2w7wifQ.hmRv4mVu8gHz2_6b_zc5HTlV4FOXyP_lUqtSkmbS-fjVIvfAu1-WS-VSBQ6rH3Ykfaqee3ROCq525ZR3mtT-oQ"
 )
 NOW = 1_790_800_000
+_TOKEN_RE = re.compile(r"kaiprop1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
 
 @pytest.fixture()
@@ -154,7 +159,8 @@ def test_telegram_source_and_proposal_links(settings: KaiPayProposalSettings) ->
     assert fingerprint(key_id(spki_of(k))) in src
     out = handle_vorschlag("kaipaytestmui61mop@breez.tips 2100 Server Oktober", settings, now=NOW)
     assert "https://app.kai-pay.net/#kaiprop=kaiprop1." in out and "2.100 sat" in out
-    token = out.split("`")[1]
+    token = _TOKEN_RE.findall(out)[-1]  # Link und Code tragen dasselbe Token
+    assert _TOKEN_RE.findall(out)[0] == token
     assert verify_proposal(token, spki_of(k)).purpose == "Server Oktober"
     assert handle_vorschlag("x 0 y", settings).startswith("Betrag ungueltig")
     assert handle_vorschlag("x zwei y", settings) == USAGE
@@ -215,6 +221,8 @@ def test_bridge_never_imports_the_payment_core() -> None:
                 if isinstance(node, ast.ImportFrom)
                 else []
             )
+            if isinstance(node, ast.ImportFrom) and node.level > 0:
+                pytest.fail(f"{f.name}: relativer Import - Grenze waere nicht pruefbar")
             for n in names:
                 assert not any(n == m or n.startswith(m + ".") for m in forbidden), (
                     f"{f.name} importiert {n}"
@@ -227,3 +235,127 @@ def test_bot_registers_vorschlag_and_help_lists_it() -> None:
     src = Path(telegram_bot.__file__).read_text(encoding="utf-8")
     assert '"vorschlag": self._cmd_vorschlag' in src
     assert "/vorschlag" in telegram_help.HELP_TEXT
+
+
+def test_token_never_longer_than_the_wallet_accepts(key: ec.EllipticCurvePrivateKey) -> None:
+    """satoshi M1: decodeProposal der Wallet lehnt > 4000 Zeichen ab - dann gar nicht signieren."""
+    with pytest.raises(ProposalError, match="size"):
+        sign_proposal(key, to="\u00e4" * 2000, sat=1, purpose="p", now=NOW)
+    with pytest.raises(ProposalError, match="size"):
+        sign_proposal(key, to='"' * 2000, sat=1, purpose="p", now=NOW)
+    ok = sign_proposal(key, to="a" * 2000, sat=1, purpose="p", now=NOW)
+    assert len(ok) <= MAX_TOKEN
+
+
+def test_lone_surrogate_is_rejected_not_crashing(key: ec.EllipticCurvePrivateKey) -> None:
+    """satoshi N1: CLI-argv kann per surrogateescape einzelne Surrogate liefern."""
+    assert not safe_text("a\ud800b", 140)
+    with pytest.raises(ProposalError, match="purpose"):
+        sign_proposal(key, to="a@b.tld", sat=1, purpose="a\udcffb", now=NOW)
+
+
+def test_verify_rejects_malformed_payload_as_proposal_error(
+    key: ec.EllipticCurvePrivateKey,
+) -> None:
+    spki = spki_of(key)
+    for bad in ("kaiprop1.e30.AA", "kaiprop1.!!.AA", "kaiprop1." + "A" * 4000 + ".AA"):
+        with pytest.raises(ProposalError):
+            verify_proposal(bad, spki)
+
+
+def test_telegram_escapes_markdown_in_target_and_purpose(settings: KaiPayProposalSettings) -> None:
+    """satoshi M2: `_ * [` aus Ziel/Zweck duerfen das Telegram-Markdown nicht brechen."""
+    k = create_key(settings.key_path)
+    out = handle_vorschlag(
+        "max_muster@x.tld 21 *Miete* [klick](https://evil) `x`", settings, now=NOW
+    )
+    assert "`max_muster@x.tld`" in out
+    assert "`*Miete* [klick](https://evil) 'x'`" in out  # nur als Inline-Code, kein Link
+    token = _TOKEN_RE.findall(out)[-1]
+    p = verify_proposal(token, spki_of(k))
+    assert (p.to, p.purpose) == ("max_muster@x.tld", "*Miete* [klick](https://evil) `x`")
+    assert out.count("](https://evil)") == 1  # nur im Inline-Code, kein eigener Link
+
+
+def test_telegram_long_token_only_as_link(settings: KaiPayProposalSettings) -> None:
+    """Link + Code muessen in eine Telegram-Nachricht (4096) passen."""
+    create_key(settings.key_path)
+    out = handle_vorschlag("a" * 1900 + " 21 lang", settings, now=NOW)
+    assert len(_TOKEN_RE.findall(out)) == 1 and len(out) < 4096
+    assert "einfuegen" not in out and "…" in out  # Ziel gekuerzt angezeigt
+    longest = handle_vorschlag("a" * 2000 + " 21 " + "z" * 140, settings, now=NOW)
+    assert len(_TOKEN_RE.findall(longest)) == 1 and len(longest) < 4096
+    # signierbar (< 4000), aber der Link allein sprengte die Nachricht -> Verweis auf die CLI
+    out = handle_vorschlag("ä" * 1350 + " 21 x", settings, now=NOW)
+    assert out.startswith("Vorschlag zu lang") and "kaiprop1." not in out
+
+
+def test_telegram_refuses_groups_and_odd_digits(settings: KaiPayProposalSettings) -> None:
+    """satoshi N9/N10: nur privater Chat; nur ASCII-Ziffern als Betrag."""
+    create_key(settings.key_path)
+    assert handle_vorschlag("quelle", settings, chat_id=-100123) == GROUP_REFUSED
+    assert "kaisrc1." in handle_vorschlag("quelle", settings, chat_id=4711)
+    assert handle_vorschlag("a@b.tld \u00b2 x", settings) == USAGE
+    assert handle_vorschlag("a@b.tld \u0661\u0662 x", settings) == USAGE
+    assert handle_vorschlag("a@b.tld 12345678 x", settings) == USAGE
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Dateirechte nur unter POSIX")
+def test_key_dir_forced_0700_and_open_file_refused(tmp_path: Path) -> None:
+    """satoshi N4/N5: vorhandenes Verzeichnis wird 0700; eine 0644-Datei wird nicht geladen."""
+    d = tmp_path / "kai-pay"
+    d.mkdir(mode=0o755)
+    os.chmod(d, 0o755)
+    create_key(d / "k.pem")
+    assert stat.S_IMODE(d.stat().st_mode) == 0o700
+    os.chmod(d / "k.pem", 0o644)
+    with pytest.raises(ValueError, match="zu offen"):
+        load_key(d / "k.pem")
+
+
+def test_unreadable_key_gives_a_reply_not_an_exception(
+    settings: KaiPayProposalSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(_: object) -> None:
+        raise PermissionError("/home/x/kai-secrets/kai-pay/proposal-source.pem")
+
+    monkeypatch.setattr("app.kai_pay_bridge.telegram.load_key", boom)
+    out = handle_vorschlag("quelle", settings)
+    assert out.startswith("Vorschlagsquelle unbrauchbar: nicht lesbar") and "/home" not in out
+
+
+def test_settings_require_https_app_url(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="https"):
+        KaiPayProposalSettings(key_path=str(tmp_path / "k.pem"), app_url="http://app.kai-pay.net")
+
+
+def test_cli_new_prints_link_and_token_only(tmp_path: Path) -> None:
+    """satoshi N11: ``new`` signiert direkt - kein Telegram-Markdown, ``quelle`` ist ein Ziel."""
+    from app.cli.commands.kaipay_proposal import kaipay_proposal_app
+
+    runner = CliRunner()
+    env = {"APP_KAIPAY_PROPOSAL_KEY_PATH": str(tmp_path / "s" / "k.pem")}
+    assert runner.invoke(kaipay_proposal_app, ["new", "a@b.tld", "5", "x"], env=env).exit_code == 1
+    runner.invoke(kaipay_proposal_app, ["init"], env=env)
+    r = runner.invoke(kaipay_proposal_app, ["new", "quelle", "5", "Zweck mit _"], env=env)
+    lines = r.output.strip().splitlines()
+    assert r.exit_code == 0 and len(lines) == 2
+    assert lines[0].startswith("https://app.kai-pay.net/#kaiprop=kaiprop1.")
+    assert _TOKEN_RE.fullmatch(lines[1])
+    bad = runner.invoke(kaipay_proposal_app, ["new", "a@b.tld", "0", "x"], env=env)
+    assert bad.exit_code == 1 and "nichts signiert" in bad.output
+
+
+def test_bridge_import_closure_excludes_the_payment_core() -> None:
+    """satoshi N12: auch transitiv (frischer Prozess) kein Modul aus dem Zahlungskern."""
+    code = (
+        "import sys, app.kai_pay_bridge.telegram, app.cli.commands.kaipay_proposal\n"
+        "bad = [m for m in sys.modules if m in ('app.pay', 'app.payments', 'app.lightning')\n"
+        "       or m.startswith(('app.pay.', 'app.payments.', 'app.lightning.'))]\n"
+        "print(','.join(bad))"
+    )
+    root = Path(__file__).resolve().parents[2]
+    res = subprocess.run(
+        [sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True
+    )
+    assert res.stdout.strip() == ""

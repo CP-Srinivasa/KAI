@@ -2650,7 +2650,7 @@ class TelegramOperatorBot:
         """D-297: KI-Zahlungsvorschlag fuer KAI-Pay (``app.kai_pay_bridge``) - signiert nur, zahlt nie."""
         from app.kai_pay_bridge.telegram import handle_vorschlag
 
-        await self._send(chat_id, handle_vorschlag(args))
+        await self._send(chat_id, handle_vorschlag(args, chat_id=chat_id))
 
     async def _cmd_menu(self, chat_id: int, *, args: str = "") -> None:
         """Show the main inline menu. Also re-docks the persistent keyboard.
