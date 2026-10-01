@@ -66,10 +66,11 @@ def released(monkeypatch) -> None:
 def test_current_drafts_still_have_open_items() -> None:
     items = legal.open_items()
     assert items, "Vorlagen ohne offene Punkte: dann braucht es die Anwalts-Freigabe"
-    # v0.2 (01.10.): Anbieterdaten eingetragen, Entwuerfe liegen dem Anwalt vor.
-    assert not any("Geschäftsführung" in i for i in items)
+    # v0.2/v0.3 (01.10.): alle Angaben des Operators liegen vor; was bleibt, ist die
+    # Anwaltspruefung. Keine Luecke mehr -- aber auch keine Veroeffentlichung ohne Anwalt.
+    assert not any(i.startswith("OFFEN:") for i in items)
     assert any(i.startswith("ANWALT PRÜFT: Widerrufsbelehrung") for i in items)
-    assert any(i.startswith("OFFEN: Angabe zur Verbraucherschlichtung") for i in items)
+    assert any(i.startswith("ANWALT PRÜFT: Verbraucherschlichtung") for i in items)
     assert legal.is_published(True) is False
 
 
@@ -163,15 +164,21 @@ def test_report_creates_a_case_and_notifies_without_personal_data(app_client, re
     assert "kunde@example.org" not in sent and "503" not in sent
 
 
-def test_withdrawal_needs_a_reference_and_confirms_its_content(app_client, released) -> None:
-    with patch("app.alerts.notify.send_operator_notification", AsyncMock(return_value=True)):
-        missing = app_client.post("/oracle/hilfe/widerruf", data={"email": "a@b.de"})
-        ok = app_client.post(
-            "/oracle/hilfe/widerruf", data={"referenz": "cd" * 32, "email": "a@b.de"}
-        )
-    assert missing.status_code == 422
-    assert ok.status_code == 201
-    assert "Widerruf eingegangen" in ok.text and "cd" * 32 in ok.text
+def test_there_is_no_online_withdrawal_only_email_or_post(app_client, released) -> None:
+    """Operator 01.10.: ohne SMTP keine Online-Widerrufsfunktion.
+
+    Wer einen Online-Widerruf anbietet, muss den Eingang unverzueglich auf einem
+    dauerhaften Datentraeger bestaetigen (§ 356 Abs. 1 BGB) -- ohne E-Mail-Versand
+    nicht erfuellbar. Widerrufe gehen deshalb per E-Mail oder Post; die Route ist weg,
+    damit kein unverlinkter Endpunkt Widerrufe ohne Bestaetigung annimmt.
+    """
+    r = app_client.post("/oracle/hilfe/widerruf", data={"referenz": "cd" * 32, "email": "a@b.de"})
+    assert r.status_code in (404, 405)
+    page = app_client.get("/oracle/hilfe").text
+    assert 'action="/oracle/hilfe/widerruf"' not in page
+    assert "info@formsys.io" in page and "Muster-Widerrufsformular" in page
+    terms = app_client.get("/oracle/bedingungen").text
+    assert "elektronisch ausfüllen und übermitteln" not in terms
 
 
 @pytest.mark.parametrize(

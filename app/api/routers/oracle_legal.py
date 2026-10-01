@@ -107,9 +107,9 @@ async def submit_report(request: Request) -> HTMLResponse:
     return await _submit(request, "meldung")
 
 
-@router.post("/oracle/hilfe/widerruf", response_class=HTMLResponse, include_in_schema=False)
-async def submit_withdrawal(request: Request) -> HTMLResponse:
-    return await _submit(request, "widerruf")
+# Kein Online-Widerruf (Operator 01.10.2026): Ohne E-Mail-Versand liesse sich der Eingang
+# nicht auf einem dauerhaften Datentraeger bestaetigen (§ 356 Abs. 1 BGB). Widerrufe gehen
+# per E-Mail oder Post an die Formsys GmbH und werden dort von Hand bearbeitet.
 
 
 @router.get("/dashboard/api/oracle/rechtsseiten", tags=["dashboard"])

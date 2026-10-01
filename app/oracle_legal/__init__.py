@@ -10,7 +10,9 @@ verlinkt, ohne Kundenkonto. Online gehen sie erst nach Freigabe durch den Anwalt
   Der Anwalt gibt einen Entwurf frei, indem die ``PRUEFEN``-Marke entfernt wird.
 - Die Vorschau für Operator und Anwalt liegt hinter dem Dashboard-Schutz.
 
-Meldungen und Widerrufe landen append-only in ``artifacts/oracle/oracle_cases.jsonl``.
+Meldungen landen append-only in ``artifacts/oracle/oracle_cases.jsonl``. Einen Online-Widerruf
+gibt es seit 01.10.2026 nicht mehr (ohne E-Mail-Versand keine Bestätigung auf dauerhaftem
+Datenträger); Widerrufe kommen per E-Mail oder Post. Ältere ``widerruf``-Vorgänge bleiben lesbar.
 Der Betreiber bekommt eine Benachrichtigung mit Vorgangsnummer, aber ohne
 personenbezogene Angaben. Bearbeitung und Abschluss dokumentiert er mit
 ``scripts/oracle_case.py`` (``beantwortet`` / ``erledigt``). Der Health-Check warnt,
@@ -35,7 +37,7 @@ from app.core.file_lock import append_lock
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.2-Entwurf"
+VERSION = "0.3-Entwurf"
 STAND = "01.10.2026"
 PAGES = ("bedingungen", "hilfe")
 CASES_PATH = Path("artifacts/oracle/oracle_cases.jsonl")
