@@ -74,3 +74,22 @@ def test_fehlgeschlagener_versand_wird_wiederholt(
     asyncio.run(run_tick(now=NOW, paths=paths, send=kaputt, fetch_client=_client()))
     asyncio.run(run_tick(now=NOW, paths=paths, send=kaputt, fetch_client=_client()))
     assert len(versuche) == 2, "nicht zugestellt = beim naechsten Lauf noch einmal"
+
+
+def test_probelauf_verschluckt_keine_meldung(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ein --dry-run auf der Pi darf den Hinweis-Zustand nicht speichern -- sonst gilt die
+    Meldung als zugestellt und der echte Timer schickt sie nie."""
+    from app.observability.ai_control import tick
+
+    async def ohne_transport() -> None:
+        return None
+
+    monkeypatch.chdir(tmp_path)
+    for name in ("DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", "OPENAI_ADMIN_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(tick, "current_transport", ohne_transport)
+    assert tick.main(["--dry-run"]) == 0
+    assert "KI-Telemetrie fehlt" in capsys.readouterr().out
+    assert not ControlPaths().alert_state.exists()

@@ -4,7 +4,8 @@ Je Lauf: Guthaben (hoechstens alle ``accounts_every_minutes``), Protokoll der KI
 Telegram-Hinweise. Gegenueber KAI nur lesend -- kein Modellaufruf, keine Konfiguration.
 
     python -m app.observability.ai_control.tick            # wie die Unit
-    python -m app.observability.ai_control.tick --dry-run  # druckt die Nachricht, sendet nichts
+    python -m app.observability.ai_control.tick --dry-run  # druckt die Nachricht, sendet nichts,
+                                                            # speichert keinen Hinweis-Zustand
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ async def run_tick(
     send: Callable[[str], Awaitable[bool]],
     fetch_client: httpx.Client | None = None,
     transport: dict[str, Any] | None = None,
+    persist_alerts: bool = True,
 ) -> dict[str, Any]:
     from app.ai.runtime import inference_settings
 
@@ -85,7 +87,9 @@ async def run_tick(
         if not bericht["sent"]:
             # Zustand NICHT speichern: sonst gaelte die Meldung als zugestellt.
             return bericht
-    alerts.save_state(paths.alert_state, zustand)
+    if persist_alerts:
+        # Ein Probelauf speichert nichts: sonst gaelte seine Meldung als zugestellt.
+        alerts.save_state(paths.alert_state, zustand)
     return bericht
 
 
@@ -108,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             paths=ControlPaths(),
             send=senden,
             transport=await current_transport(),
+            persist_alerts=not args.dry_run,
         )
 
     print(asyncio.run(ablauf()))
