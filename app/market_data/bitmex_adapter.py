@@ -8,6 +8,13 @@ so 'BTC/USDT' must be remapped to 'XBTUSDT'. All other tickers keep the
 common Base+Quote concatenation. BitMEX has narrower altcoin coverage
 than Bybit/Binance Futures so it serves primarily as a redundancy layer
 for BTC + the largest tokens.
+
+Abgewickelte Kontrakte (``state`` != ``"Open"``) liefern KEINEN Kurs. BitMEX
+fuehrt sie mit ihrem letzten Kurs weiter: ``MATICUSDT`` stand am 02.10.2026 auf
+``Settled`` mit 0.40875 vom 2024-09-04 und ``volume24h`` 0. Der Datenpunkt trug
+kein Alter, galt damit als frisch, und der Paper-Pfad eroeffnete am 23.09. eine
+Short zu diesem Kurs, waehrend der Markt bei ~0.10 stand. Seitdem wies
+``close_guard`` jeden Take-Profit als Phantom ab.
 """
 
 from __future__ import annotations
@@ -92,7 +99,7 @@ class BitMEXAdapter(BaseMarketDataAdapter):
                     f"{self._base}/api/v1/instrument",
                     params={
                         "symbol": sym,
-                        "columns": "lastPrice,timestamp,bidPrice,askPrice,volume24h",
+                        "columns": "lastPrice,timestamp,bidPrice,askPrice,volume24h,state",
                         "count": "1",
                     },
                 )
@@ -114,6 +121,11 @@ class BitMEXAdapter(BaseMarketDataAdapter):
             self.last_error = "symbol_not_found"
             return None
         row = data[0]
+        # Fehlt das Feld (geaenderte API), bleibt es beim bisherigen Verhalten.
+        state = row.get("state")
+        if state is not None and state != "Open":
+            self.last_error = f"instrument_not_open:{state}"
+            return None
         last_raw = row.get("lastPrice")
         if last_raw is None:
             self.last_error = "no_last_price"
