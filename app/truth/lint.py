@@ -47,6 +47,15 @@ DEFAULT_QUARANTINE_PATH = Path("artifacts/truth_quarantine.jsonl")
 # TL-001/TL-002 prüfen ab hier; die drei Alt-Vorfälle (SUMR/MIM/USDT-USDT)
 # sind aufgearbeitet und dokumentiert (manual_void…, kai_mock_priced_fills_gate).
 BASELINE_MOCK_GATE_UTC = "2026-07-11T00:00:00+00:00"
+# TL-002: dokumentierter Vorfall NACH diesem Stichtag. Monitor-Closes vom
+# 11./12.08.2026 liefen gegen die Mock-Kurve — der Monitor-Pfad hing bis #728/#729
+# (18.08.) noch am Mock-Adapter; der Scheingewinn (+2255 USD) ist seit #723 auf
+# der Lese-Seite herausgerechnet. Quittiert per Operator-Entscheid 02.10.2026 als
+# EXPLIZITE Order-IDs statt verschobenem Stichtag: jeder andere Treffer im selben
+# Fenster bleibt eine Verletzung.
+_TL002_DOCUMENTED_INCIDENT: frozenset[str] = frozenset(
+    {"ord_3bde9b249140", "ord_9cea46bd3cac", "ord_a09f2540ea27", "ord_a9931db11647"}
+)
 # Provenance-Felder flächig erst seit Anfang Juli — ältere Rows ohne
 # signal_path_id sind Schema-Historie, keine Verletzung.
 BASELINE_PROVENANCE_UTC = "2026-07-01T00:00:00+00:00"
@@ -324,6 +333,7 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
 
     synthetic: list[dict[str, Any]] = []
     requires_verification: list[dict[str, Any]] = []
+    documented: list[str] = []
     real_source = 0
     examined = 0
     coverage_seen: dict[str, float] = {}
@@ -349,6 +359,11 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
             continue
 
         coverage_seen[sym] = mock_curve_coverage(sym)
+
+        order_id = str(rec.get("order_id") or "")
+        if order_id in _TL002_DOCUMENTED_INCIDENT:
+            documented.append(order_id)
+            continue
 
         # FAIL-CLOSED, unchanged in all five directions: an explicit ``mock`` in
         # the loop audit is never overridden by a positive row- or screener-level
@@ -387,8 +402,11 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
     # tell "no synthetic fills" from "this detector cannot see them here".
     detection = {
         "fills_examined": examined,
-        "curve_matches": len(synthetic) + len(requires_verification) + real_source,
+        "curve_matches": (
+            len(synthetic) + len(requires_verification) + real_source + len(documented)
+        ),
         "cleared_by_real_price_source": real_source,
+        "documented_incident": len(documented),
         "per_symbol_curve_coverage": {k: round(v, 4) for k, v in sorted(coverage_seen.items())},
         "coverage_note": (
             "curve_coverage is the share of representable two-decimal prices in the "
@@ -441,6 +459,25 @@ def _check_mock_price_band(ctx: LintContext) -> list[Violation]:
                     "classification": "REQUIRES_VERIFICATION",
                     "count": len(requires_verification),
                     "rows": requires_verification[:_EVIDENCE_CAP],
+                    "detection": detection,
+                },
+            )
+        )
+    if documented:
+        violations.append(
+            Violation(
+                invariant_id="TL-002",
+                severity=Severity.INFO,
+                dataset="paper_execution_audit.jsonl",
+                message=(
+                    f"{len(documented)} Fill(s) aus dem dokumentierten Mock-Vorfall 11./12.08. "
+                    f"(Monitor-Closes vor #728/#729, Scheingewinn seit #723 herausgerechnet) — "
+                    f"quittiert per Operator-Entscheid 02.10., keine neue Verletzung"
+                ),
+                evidence={
+                    "classification": "DOCUMENTED_INCIDENT",
+                    "count": len(documented),
+                    "order_ids": documented[:_EVIDENCE_CAP],
                     "detection": detection,
                 },
             )
