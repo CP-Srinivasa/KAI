@@ -86,4 +86,37 @@ describe("KI-Kontrolle Bereiche", () => {
     expect(screen.getByText("UNBEKANNT")).toBeTruthy();
     expect(screen.getByText("Sparfenster enforce", { exact: false })).toBeTruthy();
   });
+
+  it("zeigt fehlende Telemetrie als keine Daten mit Grund statt 0,00 $ (Review I1)", () => {
+    const grund = "llm_telemetry.jsonl fehlt -- Verbrauch und Aufgaben unbekannt";
+    const ohne: AiControlResponse["summary"] = {
+      ...LEER.summary,
+      today_usd: null,
+      month_usd: null,
+      calls_today: null,
+      tokens_in_today: null,
+      tokens_out_today: null,
+    };
+    render(
+      <>
+        <HeaderStrip s={ohne} />
+        <Workloads items={[]} reason={grund} />
+      </>,
+    );
+    expect(screen.queryByText("0,00 $", { exact: false })).toBeNull();
+    expect(screen.getByText("Verbrauch unbekannt", { exact: false })).toBeTruthy();
+    expect(screen.getByText(`keine Daten (${grund})`)).toBeTruthy();
+  });
+
+  it("zeigt OpenAI-Monatskosten als Monat ohne Reichweite (Review I2)", () => {
+    const openai = { ...LEER.accounts[0], status: "ok" as const, currency: "USD" };
+    render(
+      <Accounts
+        items={[{ ...openai, detail: { kind: "month_cost", month_cost_usd: 4.1 } }]}
+        writtenAt="2026-10-02T12:00:00+00:00"
+      />,
+    );
+    expect(screen.getByText("Monat 4,10 $")).toBeTruthy();
+    expect(screen.queryByText("Reichweite", { exact: false })).toBeNull();
+  });
 });

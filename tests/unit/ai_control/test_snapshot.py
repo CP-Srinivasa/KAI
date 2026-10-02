@@ -53,6 +53,9 @@ def _nulls_ohne_grund(wert: Any, pfad: str, gruende: dict[str, str]) -> list[str
 
 
 def test_snapshot_ohne_telemetrie_hat_gruende(tmp_path: Path) -> None:
+    # Leere, aber vorhandene Datei: „noch kein Aufruf“ ist dann wahr. Fehlt die Datei,
+    # gilt test_fehlende_telemetrie_zeigt_keine_erfundenen_nullen.
+    (tmp_path / "t.jsonl").write_text("")
     snap = _bau(tmp_path)
     assert snap["schema"] == "ai-control/v1"
     assert _nulls_ohne_grund(snap["summary"], "summary", snap["null_reasons"]) == []
@@ -142,3 +145,133 @@ def test_aufrufe_heute_stimmen_mit_dem_budget(tmp_path: Path) -> None:
     assert analyse["state"] == "aktiv"
     openai = next(p for p in snap["connections"]["providers"] if p["name"] == "openai")
     assert openai["state"] == "aktiv"
+
+
+def _schreib(tmp: Path, zeilen: list[dict[str, Any]]) -> None:
+    from app.ai import spend
+
+    (tmp / "t.jsonl").write_text("\n".join(json.dumps(z) for z in zeilen) + "\n")
+    spend.reset_spend_cache()
+
+
+def _analyse(m: float, **kw: Any) -> dict[str, Any]:
+    z: dict[str, Any] = {
+        "ts": (NOW - timedelta(minutes=m)).isoformat(),
+        "purpose": "analysis",
+        "provider": "openai",
+        "actual_provider": "openai",
+        "model": "gpt-4o",
+        "ok": True,
+        "cost_usd": 0.0085,
+        "cost_status": "OK",
+        "chain_position": 0,
+        "correlation_id": f"doc_{m}",
+        "input_tokens": 2000,
+        "output_tokens": 300,
+    }
+    z.update(kw)
+    return z
+
+
+def test_budgetsperre_ist_pausiert_nicht_gestoert(tmp_path: Path) -> None:
+    """Review C1: Tagesbudget leer = PAUSIERT (Spec §3), kein Telegram-Alarm."""
+    sperren = [
+        _analyse(
+            m,
+            ok=False,
+            cost_usd=None,
+            cost_status=None,
+            input_tokens=0,
+            output_tokens=0,
+            provider="",
+            actual_provider="",
+            error_type="BudgetExceeded",
+            error_class="local_refusal",
+            budget_decision="reject:normal_budget_exhausted",
+            correlation_id=f"sperre_{m}",
+        )
+        for m in range(1, 13)
+    ]
+    _schreib(tmp_path, [_analyse(90), *sperren])
+    snap = _bau(tmp_path)
+    analyse = next(w for w in snap["workloads"] if w["purpose"] == "analysis")
+    assert analyse["state"] == "pausiert", analyse["reason"]
+    assert analyse["reason"].startswith("Tagesbudget leer")
+    assert analyse["failure_rate_24h"] == 0.0
+    assert not [h for h in snap["attention"] if h["key"].startswith("gestoert:")]
+
+
+def test_schattenfehler_machen_die_aufgabe_nicht_gestoert(tmp_path: Path) -> None:
+    """Review I3: standard auf shadow, direkte Antworten ok, Schatten nur Schemafehler."""
+    direkt = [_analyse(m) for m in range(1, 11)]
+    schatten = [
+        _analyse(
+            m,
+            transport="litellm",
+            logical_route="standard",
+            mode="shadow",
+            execution_authority=False,
+            provider="deepseek",
+            actual_provider="deepseek",
+            model="kai-standard",
+            actual_model="deepseek-v4-flash",
+            ok=False,
+            error_class="schema",
+            cost_usd=0.0004,
+            chain_position=None,
+            correlation_id=f"schatten_{m}",
+        )
+        for m in range(1, 11)
+    ]
+    _schreib(tmp_path, [*direkt, *schatten])
+    snap = _bau(tmp_path)
+    analyse = next(w for w in snap["workloads"] if w["purpose"] == "analysis")
+    assert analyse["state"] == "aktiv", analyse["reason"]
+    assert analyse["failure_rate_24h"] == 0.0
+    assert "gestoert:aufgabe:analysis" not in {h["key"] for h in snap["attention"]}
+
+
+def test_fehlende_telemetrie_zeigt_keine_erfundenen_nullen(tmp_path: Path) -> None:
+    """Review I1 / Spec §8 No-Fake: ohne Datei keine 0,00 $ und kein „nichts offen“."""
+    snap = _bau(tmp_path)
+    s = snap["summary"]
+    assert s["today_usd"] is None and s["calls_today"] is None
+    assert "fehlt" in snap["null_reasons"]["summary.today_usd"]
+    assert snap["workloads"] == [] and "fehlt" in snap["null_reasons"]["workloads"]
+    assert "telemetrie_fehlt" in {h["key"] for h in snap["attention"]}
+
+
+def test_stille_telemetrie_meldet_sich(tmp_path: Path) -> None:
+    _schreib(tmp_path, [_analyse(60 * 7)])
+    assert "telemetrie_still" in {h["key"] for h in _bau(tmp_path)["attention"]}
+    _schreib(tmp_path, [_analyse(30)])
+    assert "telemetrie_still" not in {h["key"] for h in _bau(tmp_path)["attention"]}
+
+
+def test_openai_monatskosten_sind_kein_guthaben(tmp_path: Path) -> None:
+    """Review I2: am Monatsersten (Kosten 0) ist OpenAI weder leer noch knapp."""
+    (tmp_path / "a.json").write_text(
+        json.dumps(
+            {
+                "schema": "ai-accounts/v1",
+                "written_at": NOW.isoformat(),
+                "accounts": [
+                    {
+                        "provider": "openai",
+                        "status": "ok",
+                        "balance": None,
+                        "currency": "USD",
+                        "detail": {"kind": "month_cost", "month_cost_usd": 0.0},
+                        "error": None,
+                        "fetched_at": NOW.isoformat(),
+                        "topup_url": "https://x",
+                    }
+                ],
+            }
+        )
+    )
+    _schreib(tmp_path, [_analyse(5)])
+    snap = _bau(tmp_path)
+    openai = next(p for p in snap["connections"]["providers"] if p["name"] == "openai")
+    assert openai["state"] == "aktiv"
+    assert not [h for h in snap["attention"] if h["key"].startswith("guthaben:")]

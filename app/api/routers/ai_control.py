@@ -8,6 +8,7 @@ LiteLLM-Proxys ueber ``ai_transport_snapshot``.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -31,24 +32,31 @@ def _no_store(response: Response) -> None:
 @router.get("/dashboard/api/ai/control")
 async def ai_control(response: Response) -> dict[str, Any]:
     from app.ai.runtime import inference_settings
+    from app.observability.ai_control import snapshot
     from app.observability.ai_control.config import (
         ControlPaths,
         ControlThresholds,
         LiteLLMModels,
         providers_configured,
     )
-    from app.observability.ai_control.snapshot import build_snapshot
 
     _no_store(response)
-    return build_snapshot(
-        now=datetime.now(UTC),
-        paths=ControlPaths(),
-        inference=inference_settings(None),
-        transport=await _transport(),
-        thresholds=ControlThresholds(),
-        models=LiteLLMModels(),
-        providers_configured=providers_configured(),
-    )
+    transport = await _transport()
+
+    def bauen() -> dict[str, Any]:
+        # Vollscan der Telemetrie und mehrfaches .env-Lesen -- im Thread, damit der
+        # Event-Loop von kai-server (der auch die Inferenz traegt) frei bleibt.
+        return snapshot.build_snapshot(
+            now=datetime.now(UTC),
+            paths=ControlPaths(),
+            inference=inference_settings(None),
+            transport=transport,
+            thresholds=ControlThresholds(),
+            models=LiteLLMModels(),
+            providers_configured=providers_configured(),
+        )
+
+    return await asyncio.to_thread(bauen)
 
 
 @router.get("/dashboard/api/ai/control/history")
@@ -60,5 +68,9 @@ async def ai_control_history(
     from app.observability.ai_control.config import ControlPaths
 
     _no_store(response)
-    tage = history.daily(load_rows(ControlPaths().telemetry), now=datetime.now(UTC), days=days)
+
+    def bauen() -> list[Any]:
+        return history.daily(load_rows(ControlPaths().telemetry), now=datetime.now(UTC), days=days)
+
+    tage = await asyncio.to_thread(bauen)
     return {"schema": "ai-control-history/v1", "days": [asdict(t) for t in tage]}

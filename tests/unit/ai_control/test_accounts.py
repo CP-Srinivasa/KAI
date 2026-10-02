@@ -70,7 +70,10 @@ def test_openai_mit_admin_schluessel() -> None:
     )
     client = _client({"/organization/costs": httpx.Response(200, json=OPENAI)})
     konten = {a.provider: a for a in ac.fetch_accounts(keys, client=client, now=NOW)}
-    assert konten["openai"].status == "ok" and round(konten["openai"].balance or 0, 2) == 4.10
+    # Review I2: Monatskosten sind kein Guthaben -- sonst ist OpenAI am Monatsersten „leer“.
+    assert konten["openai"].status == "ok" and konten["openai"].balance is None
+    assert konten["openai"].detail["kind"] == "month_cost"
+    assert round(konten["openai"].detail["month_cost_usd"], 2) == 4.10
 
 
 def test_letzter_guter_wert_bleibt(tmp_path: Path) -> None:
@@ -105,3 +108,20 @@ def test_letzter_guter_wert_bleibt(tmp_path: Path) -> None:
     ac.write_accounts(pfad, gemischt, NOW)
     gelesen, geschrieben = ac.read_accounts(pfad)
     assert gelesen[0]["balance"] == 21.61 and geschrieben == NOW
+
+
+def test_openai_monatskosten_bleiben_bei_fehler() -> None:
+    alt = [
+        {
+            "provider": "openai",
+            "status": "ok",
+            "balance": None,
+            "currency": "USD",
+            "detail": {"kind": "month_cost", "month_cost_usd": 4.1},
+            "fetched_at": "2026-10-02T11:00:00+00:00",
+        }
+    ]
+    neu = [ac.Account("openai", "fehler", None, None, {}, "HTTP 500", NOW.isoformat(), "u")]
+    k = ac.merge_with_previous(neu, alt)[0]
+    assert k.detail["month_cost_usd"] == 4.1
+    assert k.detail["balance_from"] == "2026-10-02T11:00:00+00:00" and k.balance is None

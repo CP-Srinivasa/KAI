@@ -62,8 +62,10 @@ def find_conflicts(
         if key.transport != "litellm":
             continue
         summe = je_route.setdefault(key.route, WorkloadStats())
-        summe.calls += st.calls
-        summe.ok += st.ok
+        # Kontakte mit dem Proxy: massgebliche Versuche UND Schatten (deren Fehler
+        # gehoeren genau hierher); eine lokale Budgetsperre hat ihn nie erreicht.
+        summe.calls += st.attempts + st.shadow_ok + st.shadow_failures
+        summe.ok += st.ok + st.shadow_ok
         summe.fallbacks += st.fallbacks
     for route, st in sorted(je_route.items()):
         if st.calls > 0 and st.ok == 0:

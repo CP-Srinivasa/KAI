@@ -72,18 +72,19 @@ export type Account = {
 export type AiControlResponse = {
   schema: "ai-control/v1";
   generated_at: string;
+  /** Verbrauchsfelder sind null, wenn die Telemetrie-Datei fehlt (Grund in null_reasons). */
   summary: {
-    today_usd: number;
+    today_usd: number | null;
     today_limit_usd: number | null;
-    month_usd: number;
+    month_usd: number | null;
     month_limit_usd: number | null;
     projected_month_usd: number | null;
     budget_state: string;
     budget_exhausted_at: string | null;
     budget_end_estimate: string | null;
-    calls_today: number;
-    tokens_in_today: number;
-    tokens_out_today: number;
+    calls_today: number | null;
+    tokens_in_today: number | null;
+    tokens_out_today: number | null;
     state_counts: Partial<Record<AiControlState, number>>;
   };
   attention: Attention[];
@@ -125,8 +126,15 @@ export function formatUsd(n: number | null | undefined): string {
   return n === null || n === undefined ? "–" : `${USD.format(n)} $`;
 }
 
-export function formatTokens(n: number): string {
+export function formatTokens(n: number | null): string {
+  if (n === null) return "–";
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/** OpenAI meldet ueber den Admin-Schluessel Monatskosten, kein Guthaben. */
+export function monthCost(detail: Record<string, unknown>): number | null {
+  const wert = detail.month_cost_usd;
+  return detail.kind === "month_cost" && typeof wert === "number" ? wert : null;
 }
 
 export function runwayLabel(days: number | null): string {

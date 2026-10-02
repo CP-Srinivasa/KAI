@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Final
 
+from app.ai.budget import LOCAL_REFUSAL_ERROR_TYPES
 from app.ai.spend import row_ts, row_usage
 
 UNBEKANNT: Final = "unbekannt"
@@ -33,11 +34,34 @@ class WorkloadKey:
     model: str
 
 
+def is_refusal(row: dict[str, Any]) -> bool:
+    """Lokale Sperre (Budget), bevor ein Anbieter erreicht wurde -- kein Fehler.
+
+    Dieselbe Fehlklasse wie ``app.ai.health._is_local_refusal`` (09.09.): ein
+    Budgetende darf nicht wie ein Ausfall aussehen. Die Spec nennt es PAUSIERT.
+    """
+    return (
+        row.get("error_type") in LOCAL_REFUSAL_ERROR_TYPES
+        or row.get("error_class") == "local_refusal"
+    )
+
+
+def is_shadow(row: dict[str, Any]) -> bool:
+    """Schattenversuch: gemessen, aber sein Ergebnis erreicht keinen Aufrufer."""
+    return row.get("mode") == "shadow"
+
+
 @dataclass
 class WorkloadStats:
+    """``calls`` zaehlt alles, was Geld oder Daten kostet; ``ok``/``failures`` nur die
+    massgeblichen Versuche. Sperren und Schatten stehen getrennt daneben."""
+
     calls: int = 0
     ok: int = 0
     failures: int = 0
+    refused: int = 0
+    shadow_ok: int = 0
+    shadow_failures: int = 0
     fallbacks: int = 0
     known_cost_usd: float = 0.0
     unknown_cost_calls: int = 0
@@ -46,6 +70,11 @@ class WorkloadStats:
     last_call: datetime | None = None
     last_ok: datetime | None = None
     sources: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def attempts(self) -> int:
+        """Massgebliche Anbieterkontakte -- die Basis jeder Fehlerquote."""
+        return self.ok + self.failures
 
     @property
     def approx_kb(self) -> float:
@@ -59,6 +88,7 @@ class ProviderActivity:
     calls_1h: int = 0
     failures_1h: int = 0
     consecutive_failures: int = 0
+    last_was_quota: bool = False
     calls_24h: int = 0
     failures_24h: int = 0
     quota_errors_24h: int = 0
@@ -109,13 +139,18 @@ def aggregate(
         st.calls += 1
         st.input_tokens += ein
         st.output_tokens += aus
-        ok = row.get("ok") is True
-        if ok:
+        ok = row.get("ok") is True and not is_refusal(row)
+        if is_refusal(row):
+            st.refused += 1
+        elif is_shadow(row):
+            st.shadow_ok += 1 if ok else 0
+            st.shadow_failures += 0 if ok else 1
+        elif ok:
             st.ok += 1
-            if st.last_ok is None or ts > st.last_ok:
-                st.last_ok = ts
         else:
             st.failures += 1
+        if ok and (st.last_ok is None or ts > st.last_ok):
+            st.last_ok = ts
         if row.get("fallback_to") == "direct":
             st.fallbacks += 1
         kosten = _kosten(row)
@@ -139,11 +174,12 @@ def provider_activity(
     je: dict[str, ProviderActivity] = {}
     for ts, row in datiert:
         name = _text(row, "actual_provider", "provider")
-        if name == UNBEKANNT:
+        if name == UNBEKANNT or is_refusal(row):
             continue
         a = je.setdefault(name, ProviderActivity())
         ok = row.get("ok") is True
         a.consecutive_failures = 0 if ok else a.consecutive_failures + 1
+        a.last_was_quota = row.get("error_class") == "quota"
         if ok:
             a.last_ok = ts
         if now - ts <= timedelta(hours=1):
@@ -166,6 +202,8 @@ __all__ = [
     "WorkloadKey",
     "WorkloadStats",
     "aggregate",
+    "is_refusal",
+    "is_shadow",
     "key_of",
     "provider_activity",
 ]

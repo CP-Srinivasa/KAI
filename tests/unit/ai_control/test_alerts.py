@@ -57,3 +57,12 @@ def test_ruhezeit_sammelt_und_liefert_morgens() -> None:
 def test_kritisch_bricht_die_ruhezeit() -> None:
     text, _ = plan([h("k", severity="crit")], {}, now=NACHT, thresholds=TH)
     assert text and "T k" in text
+
+
+def test_tageshinweis_verfaellt_ohne_behoben() -> None:
+    """Review M11: ``budget_frueh:<datum>`` endet mit dem Tag -- behoben ist dabei nichts."""
+    tages = {**h("budget_frueh:2026-10-02"), "expires": True}
+    text, st = plan([tages], {}, now=TAG, thresholds=TH)
+    assert text and "T budget_frueh" in text
+    text2, st2 = plan([], st, now=TAG + timedelta(hours=14), thresholds=TH)
+    assert text2 is None and st2["open"] == {} and st2["pending"] == []

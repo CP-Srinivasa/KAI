@@ -42,18 +42,22 @@ def budget_exhausted_at(rows: Iterable[dict[str, Any]], *, day: str) -> datetime
 
 
 def daily(rows: Iterable[dict[str, Any]], *, now: datetime, days: int = 14) -> list[DayRow]:
-    liste = list(rows)
     tage: dict[str, DayRow] = {}
     for i in range(days):
         tag = (now.date() - timedelta(days=i)).isoformat()
         tage[tag] = DayRow(day=tag)
-    for row in liste:
+    for row in rows:
         ts = row_ts(row)
         if ts is None:
             continue
         eintrag = tage.get(ts.date().isoformat())
         if eintrag is None:
             continue
+        if _ist_sperre(row) and (
+            eintrag.budget_exhausted_at is None
+            or ts < datetime.fromisoformat(eintrag.budget_exhausted_at)
+        ):
+            eintrag.budget_exhausted_at = ts.isoformat()
         eintrag.calls += 1
         ein, aus = row_usage(row)
         eintrag.input_tokens += ein
@@ -64,9 +68,6 @@ def daily(rows: Iterable[dict[str, Any]], *, now: datetime, days: int = 14) -> l
             eintrag.cost_by_provider[name] = round(
                 eintrag.cost_by_provider.get(name, 0.0) + float(kosten), 6
             )
-    for eintrag in tage.values():
-        ende = budget_exhausted_at(liste, day=eintrag.day)
-        eintrag.budget_exhausted_at = ende.isoformat() if ende else None
     return sorted(tage.values(), key=lambda t: t.day)
 
 

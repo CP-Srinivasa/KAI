@@ -74,3 +74,53 @@ def test_anbieter_aktivitaet() -> None:
     ]
     a = provider_activity(rows, now=NOW)["deepseek"]
     assert a.consecutive_failures == 5 and a.quota_errors_24h == 5 and a.calls_1h == 5
+
+
+def test_budgetsperre_ist_kein_fehler() -> None:
+    """Review C1: eine lokale Budget-Abweisung hat keinen Anbieter erreicht."""
+    sperre = zeile(
+        3,
+        ok=False,
+        cost_usd=None,
+        input_tokens=0,
+        output_tokens=0,
+        error_type="BudgetExceeded",
+        error_class="local_refusal",
+        budget_decision="reject:normal_budget_exhausted",
+    )
+    agg = aggregate([zeile(5), sperre], since=NOW - timedelta(hours=1), until=NOW)
+    st = agg[WorkloadKey("analysis", "standard", "kai-server", "direct", "gpt-4o")]
+    assert (st.calls, st.ok, st.failures, st.refused) == (2, 1, 0, 1)
+    assert st.attempts == 1
+
+
+def test_schattenversuch_zaehlt_getrennt() -> None:
+    """Review I3: ein Schattenfehler hat die Antwort des Operators nie beruehrt."""
+    schatten = zeile(
+        4,
+        transport="litellm",
+        mode="shadow",
+        execution_authority=False,
+        ok=False,
+        error_class="schema",
+        actual_model="deepseek-v4-flash",
+    )
+    agg = aggregate([schatten], since=NOW - timedelta(hours=1), until=NOW)
+    st = next(iter(agg.values()))
+    assert (st.calls, st.failures, st.shadow_failures, st.attempts) == (1, 0, 1, 0)
+
+
+def test_guthabenfehler_vor_erfolg_zaehlt_nicht_mehr() -> None:
+    """Review I5: nach dem Aufladen ist der letzte Ausgang wieder ein Erfolg."""
+    ds = {"provider": "deepseek", "actual_provider": "deepseek"}
+    rows = [zeile(180, ok=False, error_class="quota", **ds), zeile(60, **ds)]
+    a = provider_activity(rows, now=NOW)["deepseek"]
+    assert a.quota_errors_24h == 1 and a.last_was_quota is False
+    rows.append(zeile(30, ok=False, error_class="quota", **ds))
+    assert provider_activity(rows, now=NOW)["deepseek"].last_was_quota is True
+
+
+def test_budgetsperre_fehlt_in_der_anbieteraktivitaet() -> None:
+    sperre = zeile(3, ok=False, error_type="BudgetExceeded", error_class="local_refusal")
+    a = provider_activity([zeile(5), *([sperre] * 6)], now=NOW)["openai"]
+    assert (a.calls_1h, a.failures_1h, a.consecutive_failures) == (1, 0, 0)

@@ -51,6 +51,7 @@ def plan(
         eintrag = offen.setdefault(
             key, {"first_seen": stempel, "last_sent": None, "title": a["title"]}
         )
+        eintrag["expires"] = bool(a.get("expires"))
         alter = now - datetime.fromisoformat(eintrag["first_seen"])
         if alter < timedelta(minutes=int(a.get("min_age_min") or 0)):
             continue
@@ -66,7 +67,8 @@ def plan(
             eintrag["last_sent"] = stempel
     for key in [k for k in offen if k not in aktuelle]:
         eintrag = offen.pop(key)
-        if eintrag.get("last_sent"):
+        # Ein Tages- oder Monatshinweis endet mit seinem Zeitraum -- behoben ist dabei nichts.
+        if eintrag.get("last_sent") and not eintrag.get("expires"):
             ausgeben(f"✓ behoben: {eintrag['title']}", False)
     if not ruhe and pending:
         zeilen = ["Nachtrag aus der Ruhezeit:", *pending, *zeilen]

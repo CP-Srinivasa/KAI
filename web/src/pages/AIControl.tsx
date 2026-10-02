@@ -58,7 +58,7 @@ export function AIControlPage() {
             <HeaderStrip s={d.summary} />
             <AttentionList items={d.attention} />
             <Connections c={d.connections} reasons={d.null_reasons} />
-            <Workloads items={d.workloads} />
+            <Workloads items={d.workloads} reason={d.null_reasons.workloads ?? null} />
             <Accounts items={d.accounts} writtenAt={d.accounts_written_at} />
             <Protocol items={d.protocol} />
             <History h={hist.state === "ready" ? hist.data : null} />

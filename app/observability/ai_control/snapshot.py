@@ -30,6 +30,19 @@ from app.observability.ai_control.workloads import (
 
 SCHEMA: Final = "ai-control/v1"
 ACCOUNTS_STALE: Final = timedelta(hours=3)
+#: So lange ohne neue KI-Zeile, bis die Seite fragt, ob die Analyse noch laeuft.
+TELEMETRY_QUIET: Final = timedelta(hours=6)
+#: Verbrauchsfelder, die ohne Telemetrie-Datei ``null`` sind statt einer erfundenen 0.
+_VERBRAUCH: Final = (
+    "today_usd",
+    "month_usd",
+    "projected_month_usd",
+    "budget_exhausted_at",
+    "budget_end_estimate",
+    "calls_today",
+    "tokens_in_today",
+    "tokens_out_today",
+)
 #: Aufgabe -> Route -> Anzeigename. Feste Reihenfolge auf der Seite.
 TASKS: Final = (
     ("analysis", "standard", "Analyse"),
@@ -215,7 +228,9 @@ def _providers(
                 consecutive_failures=a.consecutive_failures if a else 0,
                 calls_1h=a.calls_1h if a else 0,
                 failures_1h=a.failures_1h if a else 0,
-                balance_exhausted=leer or bool(a and a.quota_errors_24h),
+                # Nur wenn der LETZTE Kontakt am Guthaben scheiterte -- nach dem
+                # Aufladen ist der Anbieter mit dem ersten Erfolg wieder heil (Review I5).
+                balance_exhausted=leer or bool(a and a.last_was_quota and a.quota_errors_24h),
                 paused_reason="Tagesbudget leer" if budget else "",
                 paused_until=lage.morgen if budget else None,
                 last_ok=a.last_ok if a else None,
@@ -246,7 +261,9 @@ def _workloads(lage: _Lage) -> list[dict[str, Any]]:
         teile = [(k, s) for k, s in lage.heute.items() if k.purpose == zweck]
         teile24 = [s for k, s in lage.tag24.items() if k.purpose == zweck]
         stunde = [s for k, s in lage.stunde.items() if k.purpose == zweck]
-        aufrufe24 = sum(s.calls for s in teile24)
+        # Fehlerquoten nur ueber massgebliche Anbieterkontakte: eine Budgetsperre ist
+        # PAUSIERT, ein Schattenfehler gehoert zum Alias (Review C1/I3).
+        aufrufe24 = sum(s.attempts for s in teile24)
         fehler24 = sum(s.failures for s in teile24)
         spar = fenster.verdict(source=None, at=lage.now) if zweck == "analysis" else None
         budget = lage.budget_leer and route != "critical"
@@ -257,7 +274,7 @@ def _workloads(lage: _Lage) -> list[dict[str, Any]]:
                 configured=True,
                 paused_reason=pausiert,
                 paused_until=lage.morgen if budget else None,
-                calls_1h=sum(s.calls for s in stunde),
+                calls_1h=sum(s.attempts for s in stunde),
                 failures_1h=sum(s.failures for s in stunde),
                 last_ok=max((s.last_ok for _, s in teile if s.last_ok), default=None),
             )
@@ -323,10 +340,22 @@ def build_snapshot(
     providers_configured: dict[str, bool],
     budget: tuple[Any, Any, Any] | None = None,
 ) -> dict[str, Any]:
-    from app.ai.spend import current_budget_status, load_rows
+    from app.ai.spend import current_budget_status, load_rows, row_ts
 
     gruende: dict[str, str] = {}
+    # load_rows liefert fuer eine fehlende Datei [] -- das darf nicht als „0 Aufrufe“
+    # durchgehen (Review I1, Spec §8 No-Fake).
+    telemetrie_da = paths.telemetry.is_file()
     rows = load_rows(paths.telemetry)
+    jung: list[dict[str, Any]] = []
+    neueste: datetime | None = None
+    for row in rows:
+        ts = row_ts(row)
+        if ts is None:
+            continue
+        neueste = ts if neueste is None or ts > neueste else neueste
+        if now - ts <= timedelta(hours=25):
+            jung.append(row)
     mitternacht = now.replace(hour=0, minute=0, second=0, microsecond=0)
     status, today, month = budget or current_budget_status(path=paths.telemetry, now=now)
     ceiling = inference.mode_ceiling if inference.enabled else "off"
@@ -337,9 +366,9 @@ def build_snapshot(
     vorlaeufig = _Lage(
         now=now,
         rows=rows,
-        heute=aggregate(rows, since=mitternacht, until=now),
-        tag24=aggregate(rows, since=now - timedelta(hours=24), until=now),
-        stunde=aggregate(rows, since=now - timedelta(hours=1), until=now),
+        heute=aggregate(jung, since=mitternacht, until=now),
+        tag24=aggregate(jung, since=now - timedelta(hours=24), until=now),
+        stunde=aggregate(jung, since=now - timedelta(hours=1), until=now),
         aktiv=provider_activity(rows, now=now),
         kreise=read_circuits(now=now, directory=paths.runtime_dir),
         modus=modus,
@@ -363,6 +392,13 @@ def build_snapshot(
     konto_je = {str(k.get("provider")): k for k in konten}
     anbieter = _providers(lage, models, providers_configured, konto_je)
     workloads = _workloads(lage)
+    if not telemetrie_da:
+        grund = f"{paths.telemetry.name} fehlt -- Verbrauch und Aufgaben unbekannt"
+        for feld in _VERBRAUCH:
+            summary[feld] = None
+            gruende[f"summary.{feld}"] = grund
+        workloads = []
+        gruende["workloads"] = grund
     veraltet = konten_stand is None or now - konten_stand > ACCOUNTS_STALE
     konten_aus = _accounts(lage, konten, veraltet)
 
@@ -380,6 +416,7 @@ def build_snapshot(
         workloads=workloads,
         konten=konten_aus,
         veraltet=veraltet,
+        telemetrie=(paths.telemetry, telemetrie_da, neueste),
     )
     zaehler: dict[str, int] = {}
     for obj in [proxy, *aliase, *anbieter, *workloads]:
@@ -415,6 +452,7 @@ def _attention(
     workloads: list[dict[str, Any]],
     konten: list[dict[str, Any]],
     veraltet: bool,
+    telemetrie: tuple[Any, bool, datetime | None],
 ) -> list[dict[str, Any]]:
     now = lage.now
     hinweise: list[dict[str, Any]] = []
@@ -427,6 +465,7 @@ def _attention(
         severity: str = "warn",
         min_age_min: int = 0,
         action: dict[str, Any] | None = None,
+        expires: bool = False,
     ) -> None:
         hinweise.append(
             {
@@ -437,9 +476,24 @@ def _attention(
                 "since": _iso(now),
                 "min_age_min": min_age_min,
                 "action": action or {"kind": "details"},
+                # Tages-/Monatshinweis: endet mit dem Zeitraum, ohne „behoben“.
+                "expires": expires,
             }
         )
 
+    pfad, da, neueste = telemetrie
+    if not da:
+        hinweis(
+            "telemetrie_fehlt",
+            "KI-Telemetrie fehlt",
+            f"{pfad} nicht vorhanden -- Verbrauch und Zustaende unbekannt",
+        )
+    elif neueste is not None and now - neueste > TELEMETRY_QUIET:
+        hinweis(
+            "telemetrie_still",
+            "KI-Telemetrie still",
+            f"letzte KI-Zeile {neueste:%d.%m. %H:%M} UTC -- laeuft die Analyse?",
+        )
     if veraltet:
         hinweis(
             "konten_veraltet",
@@ -470,6 +524,7 @@ def _attention(
             f"budget_frueh:{now.date().isoformat()}",
             "Tagesbudget frueh aufgebraucht",
             f"seit {ende:%H:%M} UTC nur noch Regelanalyse",
+            expires=True,
         )
     prognose, monatslimit = summary["projected_month_usd"], summary["month_limit_usd"]
     if prognose is not None and monatslimit is not None and prognose > monatslimit:
@@ -477,6 +532,7 @@ def _attention(
             f"monat:{now:%Y-%m}",
             "Monatsprognose ueber Limit",
             f"{prognose:.2f} $ > {monatslimit:.2f} $",
+            expires=True,
         )
     primary = any(lage.modus(r) == "primary" for r in ROUTES)
     if proxy.get("state") == State.GESTOERT.value:

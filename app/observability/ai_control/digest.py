@@ -63,6 +63,10 @@ def format_lines(block: dict[str, Any]) -> list[str]:
         erste = "🧠 *KI gestern:* keine Daten"
     konten: list[str] = []
     for k in block.get("accounts") or []:
+        detail = k.get("detail") or {}
+        if detail.get("kind") == "month_cost" and detail.get("month_cost_usd") is not None:
+            konten.append(f"{k['provider']} Monat {float(detail['month_cost_usd']):.2f} $")
+            continue
         if k.get("balance") is None:
             continue
         reichweite = f" (~{k['runway_days']:.0f} T)" if k.get("runway_days") is not None else ""

@@ -7,6 +7,7 @@ import { Card, CardHeader } from "@/components/ui/Primitives";
 import {
   formatTokens,
   formatUsd,
+  monthCost,
   runwayLabel,
   type AiControlHistory,
   type AiControlResponse,
@@ -27,7 +28,8 @@ function Kennzahl({ label, children }: { label: string; children: React.ReactNod
 }
 
 export function HeaderStrip({ s }: { s: R["summary"] }) {
-  const quote = s.today_limit_usd ? Math.min(1, s.today_usd / s.today_limit_usd) : null;
+  const quote =
+    s.today_limit_usd && s.today_usd !== null ? Math.min(1, s.today_usd / s.today_limit_usd) : null;
   const ende = s.budget_exhausted_at
     ? `leer seit ${s.budget_exhausted_at.slice(11, 16)} UTC`
     : s.budget_end_estimate === "tagesende"
@@ -60,7 +62,9 @@ export function HeaderStrip({ s }: { s: R["summary"] }) {
         </Kennzahl>
       </div>
       <div className="mt-2 font-mono text-2xs text-fg-subtle">
-        heute {s.calls_today} Aufrufe · Token {formatTokens(s.tokens_in_today)}/{formatTokens(s.tokens_out_today)}
+        {s.calls_today === null
+          ? "Verbrauch unbekannt – Telemetrie fehlt"
+          : `heute ${s.calls_today} Aufrufe · Token ${formatTokens(s.tokens_in_today)}/${formatTokens(s.tokens_out_today)}`}
       </div>
     </Card>
   );
@@ -137,10 +141,13 @@ export function Connections({ c, reasons }: { c: R["connections"]; reasons: Reco
   );
 }
 
-export function Workloads({ items }: { items: R["workloads"] }) {
+export function Workloads({ items, reason }: { items: R["workloads"]; reason?: string | null }) {
   return (
     <Card>
       <CardHeader title="Wer macht was (heute)" />
+      {items.length === 0 && reason ? (
+        <div className="font-mono text-xs text-warn">keine Daten ({reason})</div>
+      ) : null}
       <div className="overflow-x-auto">
         <table className="w-full font-mono text-xs">
           <thead className="text-2xs uppercase tracking-wider text-fg-muted">
@@ -229,7 +236,9 @@ export function Accounts({ items, writtenAt }: { items: R["accounts"]; writtenAt
                   ? "nur KAI-Messung"
                   : k.status === "kein_schluessel"
                     ? "kein Schlüssel"
-                    : formatUsd(k.balance)}
+                    : monthCost(k.detail) !== null
+                      ? `Monat ${formatUsd(monthCost(k.detail))}`
+                      : formatUsd(k.balance)}
               </div>
               <div className="text-2xs text-fg-muted">
                 {k.status === "fehler"

@@ -53,3 +53,20 @@ def test_ruhiger_zustand_ohne_konflikt() -> None:
         )
         == []
     )
+
+
+def test_schatten_und_sperren_sind_kein_nur_fehler() -> None:
+    """Review C1/I3: ein gelungener Schatten ist ein Erfolg, eine Sperre kein Kontakt."""
+    lite = WorkloadKey("analysis", "standard", "kai-server", "litellm", "deepseek-v4-flash")
+    intent = WorkloadKey("intent", "critical", "kai-server", "litellm", "gpt-4o")
+    k = find_conflicts(
+        route_modes={"standard": "shadow"},
+        models=models(standard_model="deepseek/deepseek-v4-flash"),
+        lock_matches=True,
+        workloads_24h={
+            lite: WorkloadStats(calls=4, shadow_ok=3, shadow_failures=1),
+            intent: WorkloadStats(calls=5, refused=5),
+        },
+        activity={},
+    )
+    assert not [c for c in k if c.key.startswith("konflikt:nur_fehler")]

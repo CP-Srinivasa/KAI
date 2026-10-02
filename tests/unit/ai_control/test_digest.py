@@ -35,6 +35,24 @@ def test_zwei_zeilen() -> None:
     )
 
 
+def test_openai_monatskosten_als_monat() -> None:
+    """Review I2: Monatskosten stehen als „Monat“, ohne Reichweite."""
+    block = {
+        "yesterday": None,
+        "accounts": [
+            {
+                "provider": "openai",
+                "balance": None,
+                "runway_days": None,
+                "status": "ok",
+                "detail": {"kind": "month_cost", "month_cost_usd": 4.1},
+            }
+        ],
+        "open_hints": 0,
+    }
+    assert format_lines(block)[1] == "🏦 *KI-Konten:* openai Monat 4.10 $ · offen: 0 Hinweise"
+
+
 def test_fehler_wird_eine_zeile() -> None:
     assert format_lines({"error": "OSError"}) == ["🧠 *KI-Kontrolle:* nicht lesbar (OSError)"]
 

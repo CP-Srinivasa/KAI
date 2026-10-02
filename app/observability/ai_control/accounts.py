@@ -22,7 +22,7 @@ TOPUP_URLS: Final = {
     "openai": "https://platform.openai.com/settings/organization/billing/overview",
 }
 
-Abfrage = Callable[[], tuple[float, str, dict[str, Any]]]
+Abfrage = Callable[[], tuple[float | None, str, dict[str, Any]]]
 
 
 @dataclass
@@ -123,7 +123,7 @@ def fetch_accounts(keys: AccountKeys, *, client: httpx.Client, now: datetime) ->
     if keys.openai_admin_key:
         monat = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        def openai() -> tuple[float, str, dict[str, Any]]:
+        def openai() -> tuple[float | None, str, dict[str, Any]]:
             kosten = parse_openai_costs(
                 _abfrage(
                     client,
@@ -134,7 +134,9 @@ def fetch_accounts(keys: AccountKeys, *, client: httpx.Client, now: datetime) ->
                     limit=31,
                 )
             )
-            return kosten, "USD", {"kind": "month_cost"}
+            # Monatskosten sind KEIN Guthaben: am Monatsersten (0 $) waere OpenAI sonst
+            # „leer“ und eine Woche lang „knapp“ (Review I2).
+            return None, "USD", {"kind": "month_cost", "month_cost_usd": round(kosten, 4)}
 
         versuch("openai", keys.openai_admin_key, openai)
     else:
@@ -158,9 +160,10 @@ def merge_with_previous(new: list[Account], previous: list[dict[str, Any]]) -> l
     alt = {p.get("provider"): p for p in previous}
     for konto in new:
         vorher = alt.get(konto.provider) or {}
-        if konto.status == "fehler" and vorher.get("balance") is not None:
-            frueher = vorher.get("detail") or {}
-            konto.balance = float(vorher["balance"])
+        frueher = vorher.get("detail") or {}
+        monat = frueher.get("kind") == "month_cost" and "month_cost_usd" in frueher
+        if konto.status == "fehler" and (vorher.get("balance") is not None or monat):
+            konto.balance = None if vorher.get("balance") is None else float(vorher["balance"])
             konto.currency = vorher.get("currency")
             konto.detail = {
                 **frueher,
