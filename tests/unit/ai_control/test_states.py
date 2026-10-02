@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.ai.control.states import Signals, State, classify
+from app.observability.ai_control.states import Signals, State, classify
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 

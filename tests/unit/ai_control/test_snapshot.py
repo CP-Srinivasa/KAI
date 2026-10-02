@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.config import InferenceSettings
-from app.ai.control.config import ControlPaths, ControlThresholds, LiteLLMModels
-from app.ai.control.snapshot import build_snapshot
+from app.observability.ai_control.config import ControlPaths, ControlThresholds, LiteLLMModels
+from app.observability.ai_control.snapshot import build_snapshot
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 

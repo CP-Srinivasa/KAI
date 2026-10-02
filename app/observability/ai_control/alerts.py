@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.ai.control.config import ControlThresholds
+from app.observability.ai_control.config import ControlThresholds
 
 
 def is_quiet(now: datetime, thresholds: ControlThresholds) -> bool:

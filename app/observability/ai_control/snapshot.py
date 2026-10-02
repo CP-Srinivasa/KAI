@@ -1,4 +1,4 @@
-"""Vertrag ``ai-control/v1`` -- liest nur Dateien, bewertet mit ``app.ai.control.states``.
+"""Vertrag ``ai-control/v1`` -- liest nur Dateien, bewertet mit ``ai_control.states``.
 
 Spec §4-§6. Jedes ``null`` in ``summary`` und ``connections.proxy.state`` traegt einen
 Grund in ``null_reasons`` (No-Fake, wie ``ai-transport/v1``).
@@ -11,22 +11,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
-from app.ai.circuit_export import ServiceCircuit, read_circuits
 from app.ai.config import InferenceSettings
-from app.ai.control import history, protocol
-from app.ai.control.accounts import read_accounts
-from app.ai.control.config import ControlPaths, ControlThresholds, LiteLLMModels
-from app.ai.control.conflicts import find_conflicts
-from app.ai.control.states import Signals, State, Verdict, classify
-from app.ai.control.workloads import (
+from app.ai.modes import resolve_mode
+from app.ai.routes import ROUTES
+from app.observability.ai_control import history, protocol
+from app.observability.ai_control.accounts import read_accounts
+from app.observability.ai_control.circuit_export import ServiceCircuit, read_circuits
+from app.observability.ai_control.config import ControlPaths, ControlThresholds, LiteLLMModels
+from app.observability.ai_control.conflicts import find_conflicts
+from app.observability.ai_control.states import Signals, State, Verdict, classify
+from app.observability.ai_control.workloads import (
     ProviderActivity,
     WorkloadKey,
     WorkloadStats,
     aggregate,
     provider_activity,
 )
-from app.ai.modes import resolve_mode
-from app.ai.routes import ROUTES
 
 SCHEMA: Final = "ai-control/v1"
 ACCOUNTS_STALE: Final = timedelta(hours=3)
@@ -522,4 +522,18 @@ def _attention(
     return hinweise
 
 
-__all__ = ["SCHEMA", "TASKS", "build_snapshot"]
+async def current_transport() -> dict[str, Any] | None:
+    """Der ``ai-transport/v1``-Stand (Proxy-Lebenszeichen, Lock) -- oder ``None`` mit Grund."""
+    from app.ai.runtime import inference_settings
+    from app.ai.transport_status import ai_transport_snapshot, default_transport_paths
+
+    try:
+        configured = inference_settings(None)
+        return await ai_transport_snapshot(
+            settings=configured, paths=default_transport_paths(configured)
+        )
+    except Exception:  # noqa: BLE001 -- ohne Transport-Status zeigt die Seite einen Grund
+        return None
+
+
+__all__ = ["SCHEMA", "TASKS", "build_snapshot", "current_transport"]

@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from app.ai.control.config import ControlPaths
+from app.observability.ai_control.config import ControlPaths
 
 PREFIXES: Final = (
     "KAI_INFERENCE_",

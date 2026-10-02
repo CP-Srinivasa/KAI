@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from app.ai.control.history import budget_exhausted_at, daily
+from app.observability.ai_control.history import budget_exhausted_at, daily
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 

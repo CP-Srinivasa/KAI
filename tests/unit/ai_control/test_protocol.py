@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.ai.control import protocol
-from app.ai.control.config import ControlPaths
+from app.observability.ai_control import protocol
+from app.observability.ai_control.config import ControlPaths
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 

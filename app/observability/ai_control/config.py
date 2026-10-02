@@ -59,4 +59,23 @@ class ControlPaths:
     env_file: Path = Path(".env")
 
 
-__all__ = ["AccountKeys", "ControlPaths", "ControlThresholds", "LiteLLMModels"]
+def providers_configured() -> dict[str, bool]:
+    """Welche direkten Schluessel gesetzt sind -- nur ja/nein, nie der Wert."""
+    from app.core.settings import get_settings
+
+    p = get_settings().providers
+    return {
+        "openai": bool(p.openai_api_key),
+        "anthropic": bool(p.anthropic_api_key),
+        "gemini": bool(p.gemini_api_key),
+        "xai": bool(p.xai_api_key),
+    }
+
+
+__all__ = [
+    "AccountKeys",
+    "ControlPaths",
+    "ControlThresholds",
+    "LiteLLMModels",
+    "providers_configured",
+]

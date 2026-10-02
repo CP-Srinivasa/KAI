@@ -13,7 +13,7 @@ from typing import Any, Final
 
 import httpx
 
-from app.ai.control.config import AccountKeys
+from app.observability.ai_control.config import AccountKeys
 
 TIMEOUT_S: Final = 10.0
 TOPUP_URLS: Final = {

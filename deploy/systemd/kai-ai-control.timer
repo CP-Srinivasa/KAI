@@ -1,0 +1,13 @@
+[Unit]
+Description=Trigger KAI KI-Kontrollstation alle 10 Minuten
+
+[Timer]
+# Alle 10 min (Minute 2, 12, 22 ...): ein Proxy-Ausfall > 5 min faellt so binnen 15 min auf.
+# Die Guthaben fragt der Tick selbst nur alle 55 min ab (KAI_AI_CONTROL_ACCOUNTS_EVERY_MINUTES).
+OnCalendar=*-*-* *:02/10:00
+Persistent=true
+AccuracySec=30s
+Unit=kai-ai-control.service
+
+[Install]
+WantedBy=timers.target

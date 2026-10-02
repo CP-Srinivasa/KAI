@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.ai.control.workloads import WorkloadKey, aggregate, provider_activity
+from app.observability.ai_control.workloads import WorkloadKey, aggregate, provider_activity
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 

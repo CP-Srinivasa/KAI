@@ -18,16 +18,9 @@ router = APIRouter(tags=["ai-control"])
 
 
 async def _transport(**_kw: Any) -> dict[str, Any] | None:
-    from app.ai.runtime import inference_settings
-    from app.ai.transport_status import ai_transport_snapshot, default_transport_paths
+    from app.observability.ai_control.snapshot import current_transport
 
-    try:
-        configured = inference_settings(None)
-        return await ai_transport_snapshot(
-            settings=configured, paths=default_transport_paths(configured)
-        )
-    except Exception:  # noqa: BLE001 -- ohne Transport-Status zeigt die Seite einen Grund
-        return None
+    return await current_transport()
 
 
 def _no_store(response: Response) -> None:
@@ -35,24 +28,16 @@ def _no_store(response: Response) -> None:
     response.headers["Pragma"] = "no-cache"
 
 
-def providers_configured() -> dict[str, bool]:
-    """Welche direkten Schluessel gesetzt sind -- nur ja/nein, nie der Wert."""
-    from app.core.settings import get_settings
-
-    p = get_settings().providers
-    return {
-        "openai": bool(p.openai_api_key),
-        "anthropic": bool(p.anthropic_api_key),
-        "gemini": bool(p.gemini_api_key),
-        "xai": bool(p.xai_api_key),
-    }
-
-
 @router.get("/dashboard/api/ai/control")
 async def ai_control(response: Response) -> dict[str, Any]:
-    from app.ai.control.config import ControlPaths, ControlThresholds, LiteLLMModels
-    from app.ai.control.snapshot import build_snapshot
     from app.ai.runtime import inference_settings
+    from app.observability.ai_control.config import (
+        ControlPaths,
+        ControlThresholds,
+        LiteLLMModels,
+        providers_configured,
+    )
+    from app.observability.ai_control.snapshot import build_snapshot
 
     _no_store(response)
     return build_snapshot(
@@ -70,9 +55,9 @@ async def ai_control(response: Response) -> dict[str, Any]:
 async def ai_control_history(
     response: Response, days: int = Query(14, ge=1, le=31)
 ) -> dict[str, Any]:
-    from app.ai.control import history
-    from app.ai.control.config import ControlPaths
     from app.ai.spend import load_rows
+    from app.observability.ai_control import history
+    from app.observability.ai_control.config import ControlPaths
 
     _no_store(response)
     tage = history.daily(load_rows(ControlPaths().telemetry), now=datetime.now(UTC), days=days)

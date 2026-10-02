@@ -1,8 +1,8 @@
 from typing import Any
 
-from app.ai.control.config import LiteLLMModels
-from app.ai.control.conflicts import find_conflicts
-from app.ai.control.workloads import ProviderActivity, WorkloadKey, WorkloadStats
+from app.observability.ai_control.config import LiteLLMModels
+from app.observability.ai_control.conflicts import find_conflicts
+from app.observability.ai_control.workloads import ProviderActivity, WorkloadKey, WorkloadStats
 
 
 def models(**kw: Any) -> LiteLLMModels:

@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from app.ai.control.config import LiteLLMModels
-from app.ai.control.workloads import ProviderActivity, WorkloadKey, WorkloadStats
 from app.ai.modes import unknown_route_keys
+from app.observability.ai_control.config import LiteLLMModels
+from app.observability.ai_control.workloads import ProviderActivity, WorkloadKey, WorkloadStats
 
 #: Modi, in denen eine Route ueber LiteLLM laeuft und also ein Modell braucht.
 _AN: Final = frozenset({"shadow", "primary", "advisory"})

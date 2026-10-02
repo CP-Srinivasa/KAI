@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.ai import circuit_export as ce
+from app.observability.ai_control import circuit_export as ce
 
 T0 = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 OFFEN = [

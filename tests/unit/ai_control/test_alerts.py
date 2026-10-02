@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.ai.control.alerts import is_quiet, plan
-from app.ai.control.config import ControlThresholds
+from app.observability.ai_control.alerts import is_quiet, plan
+from app.observability.ai_control.config import ControlThresholds
 
 TH = ControlThresholds(_env_file=None)  # type: ignore[call-arg]
 TAG = datetime(2026, 10, 2, 10, 0, tzinfo=UTC)  # 12:00 MESZ

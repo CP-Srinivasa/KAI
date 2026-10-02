@@ -4,8 +4,8 @@ from pathlib import Path
 
 import httpx
 
-from app.ai.control import accounts as ac
-from app.ai.control.config import AccountKeys
+from app.observability.ai_control import accounts as ac
+from app.observability.ai_control.config import AccountKeys
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
 DEEPSEEK = {

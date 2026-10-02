@@ -450,8 +450,8 @@ def reset_circuit_state() -> None:
 def _circuit_exportieren() -> None:
     """Circuit-Stand fuer die Kontrollstation -- nur bei Aenderung, nie eine Ausnahme."""
     try:
-        from app.ai import circuit_export
         from app.observability import service_name as dienst
+        from app.observability.ai_control import circuit_export
 
         name = dienst.service_name()
         # Nur unter systemd und nur in ein vorhandenes artifacts/runtime: Tests,
