@@ -389,8 +389,11 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     # ueberfaelligen Annotationen null. Damit ist die Population keine Stichprobe
     # von Befunden, auf die der Operator haette reagieren sollen.
     # WATCH 2 -> 1 (v2 raus), INVALIDATED_PENDING_SUCCESSOR 0 -> 1.
-    assert agg["TOTAL"] == len(entries) == 9
-    assert agg["WATCH"] == counts.get("WATCH", 0) == 1
+    # 2026-10-02: oracle_invite_beta_v1 (8565c20a41872d4a, D-299 A1) versiegelt und im
+    # selben Zug unter Aufsicht (Fristwaechter kai-prereg-maturity). TOTAL 9 -> 10,
+    # WATCH 1 -> 2, WATCH_INSTALLED 1 -> 2.
+    assert agg["TOTAL"] == len(entries) == 10
+    assert agg["WATCH"] == counts.get("WATCH", 0) == 2
     assert (
         agg["INVALIDATED_BEFORE_MEASUREMENT"]
         == counts.get("INVALIDATED_BEFORE_MEASUREMENT", 0)
@@ -410,7 +413,7 @@ def test_aggregate_stimmen_mit_den_eintraegen(
     assert agg["MANUAL"] == 5
     assert agg["RETIRE"] == 0 and agg["NO_WATCH_REQUIRED"] == 0
     assert agg["UNRESOLVED"] == 0
-    assert agg["WATCH_INSTALLED"] == sum(1 for e in entries if e.get("spec_installed")) == 1
+    assert agg["WATCH_INSTALLED"] == sum(1 for e in entries if e.get("spec_installed")) == 2
     assert agg["stab_06a_closed"] is False, (
         "Die Klassifikation allein schliesst STAB-06a nicht — erst die vier Attestierungen."
     )

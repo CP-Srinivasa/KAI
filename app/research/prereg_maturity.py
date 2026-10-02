@@ -389,6 +389,25 @@ MATURITY_SPECS: tuple[dict[str, Any], ...] = (
             "⛔ Keine Kalt-Ansprache, um ein Signal zu erzeugen — das Warten IST die Methode."
         ),
     },
+    # Oracle-Einladungsbeta (D-299 A1, versiegelt 2026-10-02T12:40:50Z). Fenster aus der
+    # versiegelten Regel config/oracle_invite_beta_v1.json, nicht Versiegelung + horizon:
+    # der Mess-Code (#1160) musste vor Fensterstart live sein. Auswertung NUR mit dem
+    # gebundenen Evaluator scripts/oracle_invite_beta_eval.py (sha256 in der Regel).
+    {
+        "name": "oracle_invite_beta_v1",
+        "prereg_id": "8565c20a41872d4a",
+        "kind": "deadline",
+        "since_utc": "2026-10-06T00:00:00+00:00",
+        "window_end_utc": "2026-12-05T00:00:00+00:00",
+        "n_target": 3,
+        "note": (
+            "MET bei >=3 distinkten eingeladenen Dritten mit >=1 settled Oracle-Zahlung im "
+            "Fenster, sonst NOT_MET: Beta endet, keine weitere Monetarisierung im Kern "
+            "(Fork B, D-299). Auswertung: python scripts/oracle_invite_beta_eval.py "
+            "(bricht bei abweichendem Evaluator-Hash ab). Eine Einladung je Partei; "
+            "eigene Tests nur mit --eigen."
+        ),
+    },
 )
 
 _COUNT_SQL = """
