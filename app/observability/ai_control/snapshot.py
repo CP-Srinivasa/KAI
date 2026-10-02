@@ -15,7 +15,7 @@ from app.ai.config import InferenceSettings
 from app.ai.modes import resolve_mode
 from app.ai.routes import ROUTES
 from app.observability.ai_control import history, protocol
-from app.observability.ai_control.accounts import read_accounts
+from app.observability.ai_control.accounts import TOPUP_URLS, read_accounts
 from app.observability.ai_control.circuit_export import ServiceCircuit, read_circuits
 from app.observability.ai_control.config import ControlPaths, ControlThresholds, LiteLLMModels
 from app.observability.ai_control.conflicts import find_conflicts
@@ -219,6 +219,9 @@ def _providers(
             grund = "Schluessel gesetzt, von KAI nicht genutzt" if hat else "kein Schluessel"
         konto = konto_je.get(name) or {}
         leer = konto.get("balance") is not None and float(konto["balance"]) <= 0
+        # Nur wenn der LETZTE Kontakt am Guthaben scheiterte -- nach dem
+        # Aufladen ist der Anbieter mit dem ersten Erfolg wieder heil (Review I5).
+        guthaben_leer = leer or bool(a and a.last_was_quota and a.quota_errors_24h)
         budget = lage.budget_leer and name == "openai"
         v = classify(
             Signals(
@@ -228,9 +231,7 @@ def _providers(
                 consecutive_failures=a.consecutive_failures if a else 0,
                 calls_1h=a.calls_1h if a else 0,
                 failures_1h=a.failures_1h if a else 0,
-                # Nur wenn der LETZTE Kontakt am Guthaben scheiterte -- nach dem
-                # Aufladen ist der Anbieter mit dem ersten Erfolg wieder heil (Review I5).
-                balance_exhausted=leer or bool(a and a.last_was_quota and a.quota_errors_24h),
+                balance_exhausted=guthaben_leer,
                 paused_reason="Tagesbudget leer" if budget else "",
                 paused_until=lage.morgen if budget else None,
                 last_ok=a.last_ok if a else None,
@@ -241,6 +242,7 @@ def _providers(
                 "name": name,
                 "kind": "direct" if name in ("openai", "xai", "anthropic") else "litellm",
                 **_verdict(v),
+                "balance_exhausted": guthaben_leer,
                 "calls_24h": a.calls_24h if a else 0,
                 "failures_24h": a.failures_24h if a else 0,
                 "circuits": [
@@ -557,6 +559,9 @@ def _attention(
                 f"gestoert:anbieter:{anb['name']}",
                 f"Anbieter {anb['name']} gestoert",
                 anb["reason"],
+                action={"kind": "topup", "url": TOPUP_URLS.get(anb["name"])}
+                if anb.get("balance_exhausted")
+                else None,
             )
     for w in workloads:
         if w["state"] == State.GESTOERT.value:

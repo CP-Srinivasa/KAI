@@ -89,6 +89,33 @@ def test_classify_error_schema() -> None:
     assert classify_error(_validation_error()) == "schema"
 
 
+def _openai_429(code: str) -> BaseException:
+    import httpx
+    import openai
+
+    antwort = httpx.Response(
+        429, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    )
+    return openai.RateLimitError(
+        "Error code: 429", response=antwort, body={"code": code, "type": code, "param": None}
+    )
+
+
+def test_leeres_openai_guthaben_ist_quota_nicht_rate_limit() -> None:
+    """02.10. 14:45Z: OpenAI meldet „no credits remaining“ als HTTP 429 insufficient_quota.
+
+    Als rate_limit war das ein vorübergehender, wiederholbarer Fehler -- die
+    Kontrollstation zeigte „Fehlerquote 100 %“ statt „Guthaben leer“ mit Aufladen-Link,
+    und jeder Aufruf wurde sinnlos wiederholt.
+    """
+    leer = _openai_429("insufficient_quota")
+    assert classify_error(leer) == "quota"
+    assert is_retryable_error(leer) is False
+    gedrosselt = _openai_429("rate_limit_exceeded")
+    assert classify_error(gedrosselt) == "rate_limit"
+    assert is_retryable_error(gedrosselt) is True
+
+
 def test_classify_error_unknown_fallback() -> None:
     assert classify_error(ValueError("refusal-ish")) == "unknown"
     assert classify_error(RuntimeError("boom")) == "unknown"
