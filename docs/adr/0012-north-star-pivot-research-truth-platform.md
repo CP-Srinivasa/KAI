@@ -1,6 +1,7 @@
 # ADR 0012 — NORTH_STAR-Pivot: von Alpha-Jagd zu Research-/Truth-Plattform (Hybrid)
 
 - **Status:** ACCEPTED — Operator-Entscheid 2026-06-29: **Hybrid (Research-Kern, Revenue-Gate)**
+- **Revisit 2026-10-02 (M3 NOT_MET, Exit-Review D-299):** Option A + A1 — der Kern wird als Selbst-Instrument / deklariertes Lernprojekt geführt (Fork B); die Oracle-Einladungsbeta läuft nur mit eigener Prä-Registrierung `oracle_invite_beta_v1`.
 - **Datum:** 2026-06-29
 - **Betroffen:** NORTH_STAR, PHASE_MAP, DELIVERY_BACKLOG; präzisiert ADR 0007 (generator-path-no-edge)
 

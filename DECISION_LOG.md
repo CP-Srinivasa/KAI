@@ -2,7 +2,7 @@
 
 ## Current State (Basis 2026-08-26; Lightning aktualisiert 2026-09-25)
 
-- phase: `Research-/Truth-Plattform (ADR-0012 Hybrid), Paper-/Lernbetrieb`
+- phase: `Selbst-Instrument / deklariertes Lernprojekt (ADR-0012-Exit-Review D-299, Fork B bindend), Paper-/Lernbetrieb`
 - status: `ACTIVE` — Pi 5 live; Prozess und Checkout auf demselben Commit (Runtime-Attestation D-236/STAB-02, `/health` nennt `runtime_commit`).
 - source of truth: `Pi 5 (ubuntu@192.168.178.23), live seit 2026-05-07`
 - active workstream: `STAB-2026-08 (Betriebs- und Wahrheitskohaerenz: Runtime-Identitaet, Event-Loop-Messung, Backup-Beweis, Praereg-Reconciliation)`
@@ -23,6 +23,11 @@
 > Vergabereihenfolge, nicht der Chronologie** (D-235/D-236 waren am 25.08. bereits vergeben).
 > Jeder Eintrag nennt seinen Beleg. Wo ein Beleg fehlt, steht das ausdruecklich da —
 > nachtraegliche Sicherheit waere schlimmer als eine sichtbare Luecke.
+
+### D-299 (2026-10-02)
+**Entscheidung (Operator 02.10.: „Option A mit A1, wie empfohlen“):** ADR-0012-Exit-Review nach M3 NOT_MET. Prä-Reg `c489079289070a8c`: 0 von 3 externen Validierungssignalen bis 29.09.; (c) war schon durch C1 FAIL = NO_DEMAND widerlegt (Truth-seq 71). Der KAI-Kern wird als **Selbst-Instrument / deklariertes Lernprojekt** geführt. Das ist die direkte Lesart des seit 27.08. bindenden Fork B (Truth-seq 102): kein Produktanspruch und kein Monetarisierungs-Engineering im Kern. KAI-Pay bleibt der eigene Produktstrang außerhalb des Kerns (D-285).
+**A1:** Die Oracle-Einladungsbeta (D-298) ist Monetarisierung im Kern und lief nicht über den Re-Open-Pfad von Fork B (keine Prä-Registrierung). Sie erhält nachträglich die Prä-Registrierung `oracle_invite_beta_v1` mit Fenster, Erfolgskriterium, Stop-Regel, committetem Evaluator und ohne Eigen-Traffic. **Bis zur Versiegelung gehen keine weiteren Einladungen raus.** OSS-Extraktion der Truth-Werkzeuge (Option B) erst bei unaufgefordertem externem Interesse daran.
+**Beleg:** Verdikt `artifacts/research/verdicts/20261002_100300_m3_external_validation_first_signal.json` (Attestierung `83356c00…`, Truth-Anchor ab 03.10.); Entwurf mit Abwägung `KAI-mirror/reports/KAI_ADR0012_Exit_Review_Entwurf_2026-10-02.md`.
 
 ### D-298 (2026-10-01)
 **Entscheidung (Operator 01.10.: Beta-Paket v0.5 „erstmal so verwenden“, kein BaFin-Antrag):** Das KAI Oracle wird eine begleitete Einladungsbeta für Freunde und Partner. Es bleibt bei echten 10-sat-Zahlungen. Bedingungen, Hilfe und Datenschutz (`/oracle/datenschutz`, neu) übernehmen den v0.5-Text. Korrigiert sind nur Sätze, die sonst eine fehlende Funktion behaupten würden: Bestellung per E-Mail und deshalb keine Web-Widerrufsfunktion; Löschfristen wie tatsächlich umgesetzt; Sicherungen bis 12 Monate.
