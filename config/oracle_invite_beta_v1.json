@@ -1,0 +1,38 @@
+{
+  "schema": "oracle_invite_beta_rule/v1",
+  "name": "oracle_invite_beta_v1",
+  "decision": "D-299 A1 (Operator 2026-10-02): Oracle-Einladungsbeta (D-298) nur mit eigener Prae-Registrierung; Kriterium vom Operator gewaehlt: >=3 Dritte, 60 Tage",
+  "question": "Bezahlen mindestens drei verschiedene eingeladene Dritte im Fenster mindestens eine Oracle-Abfrage?",
+  "window_start_utc": "2026-10-06T00:00:00+00:00",
+  "window_end_utc": "2026-12-05T00:00:00+00:00",
+  "population": "Einladungen mit party=third_party (scripts/oracle_invite.py neu ohne --eigen). Eine Einladung je Partei; eigene Tests nur mit --eigen.",
+  "success": {
+    "min_distinct_third_party_invites": 3,
+    "min_settled_payments_per_invite": 1,
+    "memo_prefix": "kai-oracle:"
+  },
+  "sources": {
+    "settlement": "artifacts/ln_earnings_ledger.jsonl - settled_at im Fenster [start, end)",
+    "attribution": "payment_hash -> l402_challenge_minted.invite_id / invite_party in artifacts/ln_demand_ledger.jsonl"
+  },
+  "exclusions": [
+    "invite_party=operator (Eigen-Traffic)",
+    "Zahlungen ohne invite_id (vor der Einladungspflicht oder Gate aus)",
+    "settled_at ausserhalb des Fensters oder unlesbar",
+    "Memo ohne Praefix kai-oracle:"
+  ],
+  "verdict_mapping": {
+    "PENDING": "vor Fensterende - nie ein Verdikt",
+    "MET": "nach Fensterende >= 3 distinkte third_party-Einladungen mit >= 1 settled Zahlung",
+    "NOT_MET": "nach Fensterende < 3"
+  },
+  "stop_rule": "Bei NOT_MET endet die Beta: keine weiteren Einladungen, im KAI-Kern wird nichts weiter monetarisiert (Fork B ohne Ausnahme, D-299). Bei MET entscheidet der Operator ueber die Fortsetzung; MET ist kein Freibrief fuer Monetarisierungs-Engineering ohne neue Prae-Registrierung.",
+  "known_limits": [
+    "Partei = Einladung: zwei Einladungen fuer dieselbe Partei wuerden doppelt zaehlen; dagegen steht nur die Regel 'eine Einladung je Partei'.",
+    "Eingeladene sind Freunde und Partner des Operators (begleitete Beta), keine anonyme Marktnachfrage; ein MET belegt Zahlungsbereitschaft im Bekanntenkreis, nicht Marktnachfrage."
+  ],
+  "evaluator": {
+    "path": "scripts/oracle_invite_beta_eval.py",
+    "sha256": "08e9cb52c8e007e4a3492411c7dc1731b209ba366c2ea6b57e9d10fc3288919e"
+  }
+}
