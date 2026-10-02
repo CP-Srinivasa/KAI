@@ -453,6 +453,19 @@ def http_status(exc: BaseException) -> int | None:
     return None
 
 
+def _is_insufficient_quota(exc: BaseException) -> bool:
+    """Traegt die Ausnahme den Anbietercode ``insufficient_quota``?
+
+    Nur strukturierte Felder (``code``/``type`` am SDK-Fehler oder im ``body``),
+    nie der Meldungstext.
+    """
+    felder: list[object] = [getattr(exc, "code", None), getattr(exc, "type", None)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        felder += [body.get("code"), body.get("type")]
+    return "insufficient_quota" in felder
+
+
 def classify_error(exc: BaseException) -> ErrorClass:
     """Map *exc* onto the closed taxonomy. Falls back to ``unknown``, never raises."""
     try:
@@ -477,7 +490,11 @@ def classify_error(exc: BaseException) -> ErrorClass:
             if status == 402:
                 return "quota"
             if status == 429:
-                return "rate_limit"
+                # OpenAI meldet ein leeres Guthaben als 429 `insufficient_quota`
+                # (02.10.: „no credits remaining“). Das ist kein vorübergehendes
+                # Drosseln: nicht wiederholen, und die Kontrollstation zeigt
+                # „Guthaben leer“ statt einer Fehlerquote.
+                return "quota" if _is_insufficient_quota(exc) else "rate_limit"
             if status >= 500:
                 return "server"
 

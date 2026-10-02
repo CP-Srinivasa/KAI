@@ -275,3 +275,31 @@ def test_openai_monatskosten_sind_kein_guthaben(tmp_path: Path) -> None:
     openai = next(p for p in snap["connections"]["providers"] if p["name"] == "openai")
     assert openai["state"] == "aktiv"
     assert not [h for h in snap["attention"] if h["key"].startswith("guthaben:")]
+
+
+def test_leeres_guthaben_bietet_aufladen_an(tmp_path: Path) -> None:
+    """02.10.: OpenAI ohne Guthaben -- der Hinweis muss „Guthaben leer“ sagen und den
+    Aufladen-Link tragen, nicht nur eine Fehlerquote."""
+    from app.observability.ai_control.accounts import TOPUP_URLS
+
+    leer = [
+        _analyse(
+            m,
+            ok=False,
+            cost_usd=None,
+            input_tokens=0,
+            output_tokens=0,
+            actual_provider=None,
+            error_type="RateLimitError",
+            error_class="quota",
+            http_status=429,
+            correlation_id=f"leer_{m}",
+        )
+        for m in range(1, 13)
+    ]
+    _schreib(tmp_path, [_analyse(90), *leer])
+    snap = _bau(tmp_path)
+    openai = next(p for p in snap["connections"]["providers"] if p["name"] == "openai")
+    assert openai["state"] == "gestoert" and "Guthaben leer" in openai["reason"]
+    hinweis = next(h for h in snap["attention"] if h["key"] == "gestoert:anbieter:openai")
+    assert hinweis["action"] == {"kind": "topup", "url": TOPUP_URLS["openai"]}
