@@ -132,6 +132,13 @@ def collect_ai_cost(now: datetime) -> dict[str, Any]:
     }
 
 
+def collect_ai_control(now: datetime) -> dict[str, Any]:
+    """KI-Kontrollstation: gestern je Anbieter, Konten, offene Hinweise (Spec §6.2)."""
+    from app.observability.ai_control.digest import collect
+
+    return collect(now)
+
+
 def _paid_unavailable_24h(path: Path, now: datetime) -> int:
     """Verschiedene Zahlungen mit ``l402_paid_unavailable`` in den letzten 24 h."""
     if not path.is_file():
@@ -197,6 +204,7 @@ def collect_ops_status(
         "drill": lambda: collect_drill(artifacts, jetzt),
         "vault": lambda: collect_vault(artifacts, jetzt),
         "ai_cost": lambda: collect_ai_cost(jetzt),
+        "ai_control": lambda: collect_ai_control(jetzt),
         "ln": lambda: collect_ln(artifacts, jetzt),
     }
     out: dict[str, dict[str, Any]] = {}
@@ -287,7 +295,7 @@ def _ln_line(ln: dict[str, Any]) -> str:
 
 
 def format_ops_lines(status: dict[str, dict[str, Any]]) -> list[str]:
-    """Drei Zeilen fuer den Digest-Kopf: Backup, KI-Kosten, Lightning."""
+    """Zeilen fuer den Digest-Kopf: Backup, KI-Kosten, Lightning, dann KI gestern/Konten."""
     backup = " · ".join(
         (
             _backup_part(status.get("backup", {"error": "fehlt"})),
@@ -295,10 +303,14 @@ def format_ops_lines(status: dict[str, dict[str, Any]]) -> list[str]:
             _vault_part(status.get("vault", {"error": "fehlt"})),
         )
     )
+    from app.observability.ai_control.digest import format_lines
+
     return [
         f"🛟 *Backup:* {backup}",
         _cost_line(status.get("ai_cost", {"error": "fehlt"})),
         _ln_line(status.get("ln", {"error": "fehlt"})),
+        # KI-Kontrollstation hinten: die Positionen Backup/Kosten/Lightning sind Vertrag.
+        *format_lines(status.get("ai_control", {"error": "fehlt"})),
     ]
 
 

@@ -296,3 +296,10 @@ def test_ln_line_is_quiet_without_undelivered_payments(tmp_path: Path) -> None:
     _demand(tmp_path, ("l402_access_granted", "dd" * 32, timedelta(hours=1)))
     line = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))[2]
     assert "⚠️" not in line and "nicht geliefert" not in line
+
+
+def test_ki_kontrollstation_haengt_zwei_zeilen_hinten_an(tmp_path: Path) -> None:
+    lines = ob.format_ops_lines(ob.collect_ops_status(tmp_path, NOW))
+    assert lines[2].startswith("⚡ *Lightning:*")
+    assert lines[3].startswith("🧠 *KI")
+    assert lines[4].startswith("🏦 *KI-Konten:*")
