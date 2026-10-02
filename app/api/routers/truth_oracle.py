@@ -219,12 +219,17 @@ async def _issue_challenge(
     raise HTTPException(status_code=402, detail=detail, headers=headers)
 
 
-def _require_invite(request: Request, required: bool) -> dict[str, Any] | None:
+def _require_invite(
+    request: Request, required: bool, scope: str | None = None
+) -> dict[str, Any] | None:
     """Begleitete Beta (Operator 2026-10-01): eine neue Rechnung nur mit Einladung.
 
     Sitzt vor dem S-002-Limiter: Anfragen ohne Einladung verbrauchen kein Mint-Budget
     der Eingeladenen. Bezahlte Zugänge und die Zeitstempel-Abholung kommen hier nie an.
-    Gibt die Einladung (``id``, ``party``) zurück; ``None``, wenn das Gate aus ist.
+    Gibt die Einladung (``id``, ``party``, ``scopes``) zurück; ``None``, wenn das Gate aus
+    ist. Mit ``scope`` muss der Bereich in der Einladung stehen (Operator-Entscheid E2,
+    02.10.2026: Teilnehmer + erlaubte Bereiche + Ablauf); sonst 403 ``invitation_scope``,
+    ebenfalls vor Limiter und Rechnung.
     """
     if not required:
         return None
@@ -232,7 +237,21 @@ def _require_invite(request: Request, required: bool) -> dict[str, Any] | None:
 
     invite = invites.match(invites.code_from_request(request.headers, request.query_params))
     if invite is not None:
-        return invite
+        allowed = invite.get("scopes")
+        if scope is None or allowed is None or scope in allowed:
+            return invite
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "invitation_scope",
+                "message": "Diese Einladung gilt nicht für diesen Bereich. "
+                "Erweiterung per E-Mail an info@formsys.io.",
+                "scope": scope,
+                "allowed_scopes": allowed,
+                "terms": "/oracle/bedingungen",
+                "help": "/oracle/hilfe",
+            },
+        )
     raise HTTPException(
         status_code=403,
         detail={
@@ -263,7 +282,12 @@ async def _require_paid(
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     verdict = _valid_paid_token(request, scope)
     if verdict is None:
-        invite = _require_invite(request, settings.lightning.l402_invite_required) or {}
+        invite = (
+            _require_invite(
+                request, settings.lightning.l402_invite_required, scope=telemetry_scope or scope
+            )
+            or {}
+        )
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         if before_mint is not None:
             await before_mint()

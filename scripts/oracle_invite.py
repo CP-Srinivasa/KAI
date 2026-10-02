@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Einladungen für die begleitete Oracle-Beta verwalten (Operator, auf der Pi).
 
-    python scripts/oracle_invite.py neu "<Bezeichnung>" [--tage 30] [--eigen]
+    python scripts/oracle_invite.py neu "<Bezeichnung>" [--tage 30] [--eigen] [--bereiche a,b]
     python scripts/oracle_invite.py liste
     python scripts/oracle_invite.py sperren <inv_id>
 
@@ -11,6 +11,9 @@ Er schickt ihn als Header ``X-KAI-Invite: <code>`` oder als ``?invite=<code>`` m
 Bezeichnung: Vorname oder Partnerkürzel genügt, keine E-Mail-Adresse.
 ``--eigen`` markiert eine Einladung für eigene Tests; sie zählt in der Auswertung der
 Beta (Prä-Reg oracle_invite_beta_v1) nicht mit. Eine Einladung je Partei.
+``--bereiche``: erlaubte Bereiche, kommagetrennt (onchain-facts, fee-series, verdicts,
+timestamp). Ohne Angabe die betriebsfertigen; ``timestamp`` nur ausdrücklich, weil dort die
+Zusage „Eigenerstattung nach 7 Tagen ohne Nachweis“ gilt. Optionen in beliebiger Reihenfolge.
 """
 
 from __future__ import annotations
@@ -26,17 +29,21 @@ def main(argv: list[str] | None = None) -> int:
     if args[:1] == ["neu"] and len(args) >= 2:
         rest = args[2:]
         party = invites.PARTY_THIRD
-        if "--eigen" in rest:
-            rest.remove("--eigen")
-            party = invites.PARTY_OPERATOR
         days = invites.DEFAULT_DAYS
-        if rest:
-            if len(rest) != 2 or rest[0] != "--tage" or not rest[1].isdigit():
+        scopes: list[str] | None = None
+        while rest:
+            flag = rest.pop(0)
+            if flag == "--eigen":
+                party = invites.PARTY_OPERATOR
+            elif flag == "--tage" and rest and rest[0].isdigit():
+                days = int(rest.pop(0))
+            elif flag == "--bereiche" and rest:
+                scopes = [b.strip() for b in rest.pop(0).split(",") if b.strip()]
+            else:
                 print(__doc__)
                 return 2
-            days = int(rest[1])
         try:
-            code, entry = invites.create(args[1], days=days, party=party)
+            code, entry = invites.create(args[1], days=days, party=party, scopes=scopes)
         except ValueError as exc:
             print(exc)
             return 2
@@ -47,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(
             f"Einladung {entry['id']} für „{entry['label']}“{eigen}, "
-            f"gültig bis {entry['expires_at'][:16]}Z"
+            f"gültig bis {entry['expires_at'][:16]}Z, Bereiche: {', '.join(entry['scopes'])}"
         )
         print(f"Code (nur jetzt sichtbar): {code}")
         print(
@@ -66,9 +73,10 @@ def main(argv: list[str] | None = None) -> int:
                 else ("abgelaufen" if str(e.get("expires_at", "")) <= now.isoformat() else "aktiv")
             )
             party = "eigen" if e.get("party") == invites.PARTY_OPERATOR else "dritte"
+            bereiche = ",".join(e["scopes"]) if isinstance(e.get("scopes"), list) else "alle"
             print(
                 f"{e['id']}  {state:<10}  {party:<6}  bis {str(e.get('expires_at', ''))[:16]}Z  "
-                f"{e.get('label', '')}"
+                f"{bereiche:<40}  {e.get('label', '')}"
             )
         return 0
     if args[:1] == ["sperren"] and len(args) == 2:
