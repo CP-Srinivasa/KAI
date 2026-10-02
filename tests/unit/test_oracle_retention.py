@@ -255,7 +255,10 @@ def test_apply_runs_every_rule_and_survives_a_failing_one(tmp_path: Path, monkey
 
 def test_api_audit_rotates_by_age_even_when_small(tmp_path: Path) -> None:
     rule = next(r for r in audit_rotate.ROTATION_RULES if r.filename == "api_request_audit.jsonl")
-    assert rule.keep_hours == 144 and rule.max_age_hours == 144
+    assert rule.keep_hours == rule.max_age_hours
+    assert timedelta(hours=rule.keep_hours) == retention.IP_RETENTION
+    # Täglicher Lauf: eine Zeile knapp unter der Grenze lebt noch 24 h + Laufzeit.
+    assert retention.IP_RETENTION + timedelta(days=1, hours=1) < retention.IP_PROMISE
     live = _jsonl(
         tmp_path / "api_request_audit.jsonl",
         [

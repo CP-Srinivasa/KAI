@@ -104,10 +104,12 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
         filename="api_request_audit.jsonl",
         max_bytes=20 * _MB,
         keep_lines=50_000,
-        keep_hours=144,
+        keep_hours=142,
         timestamp_key="timestamp_utc",
-        max_age_hours=144,
-        rationale="Loeschfrist (Oracle-Beta v0.5, 01.10.2026): das Live-File haelt nur 6 Tage "
+        max_age_hours=142,
+        rationale="Loeschfrist (Oracle-Beta v0.5, 01.10.2026): das Live-File haelt 142 h "
+        "(6 Tage minus 2 h Puffer fuer Laufzeit/Verzug: mit taeglichem Lauf bleibt keine IP "
+        "laenger als die zugesagten 7 Tage, 02.10.) "
         "und rotiert taeglich auch nach Alter; im Archiv entfernt "
         "app/oracle_legal/retention.py die client_ip -- bei taeglichem Lauf ist keine IP "
         "aelter als 7 Tage. HTTP request audit. Programmatic reader (corrected 2026-09-17): "

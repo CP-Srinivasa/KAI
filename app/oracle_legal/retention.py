@@ -4,7 +4,7 @@ Täglich ausgeführt von ``scripts/audit_rotate.py --apply`` (Timer ``kai-audit-
 04:40). Was die Datenschutzseite zusagt, muss hier stehen:
 
 - **IP-Adressen** in den eigenen Zugriffsprotokollen der Anwendung und der daraus
-  gebildete Schutzkennwert: nach sechs Tagen entfernt. Bei täglichem Lauf ist damit
+  gebildete Schutzkennwert: knapp vor sechs Tagen entfernt. Bei täglichem Lauf ist damit
   keine IP älter als sieben Tage (das sagt die Seite zu, :data:`IP_PROMISE`).
   - ``api_request_audit.jsonl``: das laufende File hält nur sechs Tage
     (``ROTATION_RULES``, auch nach Alter rotiert); Ältere Zeilen liegen im Archiv,
@@ -43,7 +43,10 @@ from app.oracle_legal import invites
 
 logger = logging.getLogger(__name__)
 
-IP_RETENTION = timedelta(days=6)
+#: Sechs Tage minus zwei Stunden: der tägliche Lauf (04:40, ~1 min) räumt eine Zeile, die
+#: knapp unter der Grenze lag, erst 24 h später. 6 d + 24 h wäre exakt die Zusage ohne
+#: Puffer für Laufzeit oder Verzug. Gleich ``keep_hours`` von ``api_request_audit``.
+IP_RETENTION = timedelta(days=6) - timedelta(hours=2)
 #: Öffentliche Zusage der Datenschutzseite („spätestens sieben Tage“); die sechs Tage
 #: oben sind der Puffer für den täglichen Lauf.
 IP_PROMISE = timedelta(days=7)
