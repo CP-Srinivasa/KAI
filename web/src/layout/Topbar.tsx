@@ -17,6 +17,7 @@ const CONTEXT: Record<Route, string> = {
   portfolio: "nav.portfolio",
   risk: "nav.risk",
   ai: "nav.ai",
+  ki: "nav.ki",
   alerts: "nav.alerts",
   external: "nav.external",
   sources: "nav.sources",

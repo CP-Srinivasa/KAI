@@ -23,6 +23,7 @@ import {
   Database,
   Activity,
   Map,
+  Cpu,
 } from "lucide-react";
 import { useRouter, ROUTES, type Route } from "@/state/Router";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -51,6 +52,7 @@ const ROUTE_ICONS: Record<Route, ReactNode> = {
   portfolio: <Briefcase size={14} />,
   risk: <ShieldAlert size={14} />,
   ai: <Sparkles size={14} />,
+  ki: <Cpu size={14} />,
   alerts: <Bell size={14} />,
   external: <Upload size={14} />,
   sources: <Database size={14} />,

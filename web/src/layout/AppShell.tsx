@@ -30,6 +30,9 @@ const SourcesPage = lazy(() => import("@/pages/Sources").then((m) => ({ default:
 const NodePage = lazy(() => import("@/pages/Node").then((m) => ({ default: m.NodePage })));
 const PayPage = lazy(() => import("@/pages/Pay").then((m) => ({ default: m.PayPage })));
 const SystemPage = lazy(() => import("@/pages/System").then((m) => ({ default: m.SystemPage })));
+const AIControlPage = lazy(() =>
+  import("@/pages/AIControl").then((m) => ({ default: m.AIControlPage })),
+);
 const RoadmapsPage = lazy(() => import("@/pages/Roadmaps").then((m) => ({ default: m.RoadmapsPage })));
 const SettingsPage = lazy(() =>
   import("@/pages/Settings").then((m) => ({ default: m.SettingsPage })),
@@ -179,6 +182,8 @@ function renderRoute(r: string) {
       return <AgentsPage />;
     case "roadmaps":
       return <RoadmapsPage />;
+    case "ki":
+      return <AIControlPage />;
     case "system":
       return <SystemPage />;
     case "settings":

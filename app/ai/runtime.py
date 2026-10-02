@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from time import monotonic
@@ -444,6 +445,27 @@ def circuit_state(now_s: float | None = None) -> list[dict[str, Any]]:
 def reset_circuit_state() -> None:
     """Circuit-Zustand verwerfen (Tests, Neustart nach Konfigurationswechsel)."""
     _KREISE.reset()
+
+
+def _circuit_exportieren() -> None:
+    """Circuit-Stand fuer die Kontrollstation -- nur bei Aenderung, nie eine Ausnahme."""
+    try:
+        from app.observability import service_name as dienst
+        from app.observability.ai_control import circuit_export
+
+        name = dienst.service_name()
+        # Nur unter systemd und nur in ein vorhandenes artifacts/runtime: Tests,
+        # CI und der Laptop schreiben so nichts ins Arbeitsverzeichnis.
+        if name == dienst.UNKNOWN or not circuit_export.EXPORT_DIR.is_dir():
+            return
+        circuit_export.export_circuit(
+            circuit_state(),
+            service=name,
+            now=datetime.now(UTC),
+            directory=circuit_export.EXPORT_DIR,
+        )
+    except Exception:  # noqa: BLE001 -- die Anzeige darf keinen Aufruf kosten
+        return
 
 
 def _reservierung(bild: _Budgetbild, verdict: PotVerdict) -> AbstractContextManager[None]:
@@ -911,6 +933,7 @@ async def invoke[T](
                     f"Gesamtfrist {frist:.1f}s fuer Route {route} abgelaufen"
                 ) from exc
 
+    _circuit_exportieren()
     selected = outcome.authoritative_attempt
     if selected is None:
         raise LiteLLMCallError("AI control plane produced no authoritative result")

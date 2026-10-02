@@ -37,6 +37,7 @@ from app.api.middleware.request_governance import RequestGovernanceMiddleware
 from app.api.middleware.security_headers import setup_security_headers
 from app.api.routers import (
     agents,
+    ai_control,
     alerts,
     dashboard,
     diversification,
@@ -462,6 +463,7 @@ def create_app() -> FastAPI:
         return FileResponse(str(_paper_path), media_type="text/html")
 
     app.include_router(health.router)
+    app.include_router(ai_control.router)
     # 2026-05-14 P0 #4: End-to-End-Pipeline-Healthcheck. Wird vom Operator-
     # Dashboard + kai-premium-healthcheck.timer konsumiert. Separater Router
     # damit der triviale /health (Server-Liveness) ohne DBus-Dependency bleibt.

@@ -7,6 +7,7 @@ export const ROUTES = [
   "portfolio",
   "risk",
   "ai",
+  "ki",
   "alerts",
   "external",
   "sources",

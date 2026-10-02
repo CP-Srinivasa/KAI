@@ -31,7 +31,9 @@ from scripts.litellm_shadow_eval.loader import input_label
 #: Praefixvergleich. Bumpt der Schreiber (``app.observability.llm_telemetry.
 #: SCHEMA_VERSION``), schlaegt der Vertragstest an, und jemand entscheidet
 #: bewusst, statt dass eine v9-Zeile still mitgelesen wird.
-KNOWN_TELEMETRY_SCHEMAS: Final = frozenset({"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"})
+KNOWN_TELEMETRY_SCHEMAS: Final = frozenset(
+    {"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10"}
+)
 
 #: Die Berichtsformate von ``scripts/litellm_shadow_eval``. v2 bringt die
 #: Laufzeitnachweise als Objekte mit; v1 hat keine.
