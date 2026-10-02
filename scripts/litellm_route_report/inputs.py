@@ -8,6 +8,7 @@ die niemand lesen konnte, saehe aus wie ein Bericht ueber eine leere.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import math
@@ -43,6 +44,12 @@ _PROOF_KEYS: Final = ("proven", "referenced", "artifact", "artifact_sha256", "pr
 #: ``TRANSPORT_VERIFIED name=<n> version=<v> tree=<pfad> manifest=<16 hex>``.
 TRANSPORT_MARKER: Final = "TRANSPORT_VERIFIED"
 _TRANSPORT_KEYS: Final = frozenset({"name", "version", "tree", "manifest"})
+
+#: logrotate auf der Pi (``deploy/logrotate/kai``): taeglich, ``rotate 14``,
+#: ``delaycompress`` -- ``.1`` liegt im Klartext, aeltere als ``.N.gz``. Die
+#: Beleg-Zeile entsteht nur beim Start des Transports; nach der ersten Mitternacht
+#: steht sie also NICHT mehr in der aktuellen Datei.
+ROTATION_DEPTH: Final = 14
 
 UNKNOWN_TRANSPORT: Final = "unbekannt"
 
@@ -378,9 +385,18 @@ def _verification(line: str, position: int) -> TransportVerification:
     )
 
 
-def load_transport_log(path: Path) -> TransportLogSummary:
-    """Die letzte ``TRANSPORT_VERIFIED``-Zeile je Transport."""
-    data, label = _read_bytes(path, "Transport-Log")
+def _rotations(path: Path) -> list[Path]:
+    """Die vorhandenen Rotationen von ``path``, neueste zuerst."""
+    kandidaten: list[Path] = []
+    for nummer in range(1, ROTATION_DEPTH + 1):
+        for name in (f"{path.name}.{nummer}", f"{path.name}.{nummer}.gz"):
+            kandidat = path.with_name(name)
+            if kandidat.is_file():
+                kandidaten.append(kandidat)
+    return kandidaten
+
+
+def _scan_transport_log(data: bytes) -> tuple[int, dict[str, TransportVerification]]:
     last: dict[str, TransportVerification] = {}
     count = 0
     for line in data.decode("utf-8", errors="replace").splitlines():
@@ -390,6 +406,28 @@ def load_transport_log(path: Path) -> TransportLogSummary:
         count += 1
         verification = _verification(line, position)
         last[verification.name] = verification
+    return count, last
+
+
+def load_transport_log(path: Path) -> TransportLogSummary:
+    """Die letzte ``TRANSPORT_VERIFIED``-Zeile je Transport.
+
+    Traegt die aktuelle Datei keine, gilt die juengste Rotation, die eine traegt.
+    ``label`` und ``sha256`` nennen dann genau diese Datei.
+    """
+    data, label = _read_bytes(path, "Transport-Log")
+    count, last = _scan_transport_log(data)
+    if count == 0:
+        for rotiert in _rotations(path):
+            try:
+                roh = rotiert.read_bytes()
+                text = gzip.decompress(roh) if rotiert.suffix == ".gz" else roh
+            except (OSError, EOFError, gzip.BadGzipFile):
+                continue
+            gefunden, letzte = _scan_transport_log(text)
+            if gefunden:
+                data, label, count, last = roh, input_label(rotiert, 1), gefunden, letzte
+                break
     return TransportLogSummary(
         label=label,
         sha256=hashlib.sha256(data).hexdigest(),

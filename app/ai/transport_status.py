@@ -16,6 +16,7 @@ traegt einen Grund in ``null_reasons`` -- nie eine stille 0.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -36,6 +37,9 @@ REPORT_SCHEMA: Final = "litellm-route-report/v1"
 ROUTE_ORDER: Final = ("bulk", "standard", "reasoning", "critical", "stt", "research")
 MARKER: Final = "TRANSPORT_VERIFIED"
 _LOG_TAIL_BYTES: Final = 256 * 1024
+#: logrotate (``deploy/logrotate/kai``): taeglich, ``rotate 14``, ``delaycompress``.
+#: Die Beleg-Zeile entsteht nur beim Start -- nach Mitternacht steht sie in ``.1``.
+_ROTATION_DEPTH: Final = 14
 _PROBE_TIMEOUT_S: Final = 2.0
 _KEIN_BERICHT: Final = (
     "noch kein Routenbericht (artifacts/litellm_route_report.json) -- "
@@ -105,20 +109,42 @@ def _sha256(path: Path) -> str | None:
         return None
 
 
+def _log_ende(path: Path) -> str:
+    if path.suffix == ".gz":
+        return gzip.decompress(path.read_bytes())[-_LOG_TAIL_BYTES:].decode(
+            "utf-8", errors="replace"
+        )
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        groesse = handle.tell()
+        handle.seek(max(0, groesse - _LOG_TAIL_BYTES))
+        return handle.read().decode("utf-8", errors="replace")
+
+
 def _letzte_beleg_zeile(path: Path) -> tuple[str | None, str]:
-    """Die letzte TRANSPORT_VERIFIED-Zeile -- oder (None, Grund)."""
+    """Die letzte TRANSPORT_VERIFIED-Zeile -- oder (None, Grund).
+
+    Erst die aktuelle Datei, dann ihre Rotationen, neueste zuerst.
+    """
     try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            groesse = handle.tell()
-            handle.seek(max(0, groesse - _LOG_TAIL_BYTES))
-            text = handle.read().decode("utf-8", errors="replace")
+        text = _log_ende(path)
     except OSError:
         return None, f"{path.as_posix()} fehlt oder ist nicht lesbar"
-    for zeile in reversed(text.splitlines()):
-        if MARKER in zeile:
-            return zeile, ""
-    return None, f"keine {MARKER}-Zeile im Ende von {path.as_posix()}"
+    rotationen = (
+        path.with_name(name)
+        for nummer in range(1, _ROTATION_DEPTH + 1)
+        for name in (f"{path.name}.{nummer}", f"{path.name}.{nummer}.gz")
+    )
+    for kandidat in (None, *rotationen):
+        if kandidat is not None:
+            try:
+                text = _log_ende(kandidat)
+            except (OSError, EOFError, gzip.BadGzipFile):
+                continue
+        for zeile in reversed(text.splitlines()):
+            if MARKER in zeile:
+                return zeile, ""
+    return None, f"keine {MARKER}-Zeile in {path.as_posix()} und seinen Rotationen"
 
 
 def _transport(paths: TransportPaths, gruende: dict[str, str]) -> dict[str, Any]:

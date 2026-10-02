@@ -54,6 +54,13 @@ def test_das_budget_deckt_den_gemessenen_bedarf() -> None:
     assert MAX_TOKENS > 1506, "unter dem gemessenen Spitzenbedarf"
 
 
+def test_das_budget_deckt_deepseek_mit_luft() -> None:
+    """02.10.2026, 115 reale Dokumente, ``deepseek/deepseek-v4-flash``: Completion bis
+    3881 Token (Denken bis 3542), EIN Lauf bei 4096 abgeschnitten -> Rueckfall auf gpt-4o,
+    also doppelt bezahlt. Doppelter Spitzenbedarf als Deckel; bezahlt wird nur Erzeugtes."""
+    assert MAX_TOKENS >= 2 * 3881
+
+
 def test_eine_gueltige_antwort_wird_gelesen() -> None:
     """Ohne diese Kontrolle koennte alles andere gruen sein, weil nie etwas ankommt."""
     ergebnis = parse_analysis_body(_body(_GUELTIG), user_prompt="egal")
