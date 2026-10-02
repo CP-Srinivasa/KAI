@@ -265,3 +265,64 @@ def test_node_script_refuses_to_run_over_an_unfinished_rotation() -> None:
     src = (TOOLS / "macrot_node.sh").read_text(encoding="utf-8")
     assert "existiert schon (frueherer Lauf)" in src
     assert "confirm ROTIEREN" in src and "confirm AUFRAEUMEN" in src
+
+
+# ---------------------------------------------------------------- Pool-Rueckfall (02.10.2026)
+# litd erreicht den Pool-Auctioneer ueber Tor; ab 02.10. mittags "tor host is unreachable".
+# `pool accounts list` holt zuerst die Auctioneer-Bedingungen und scheitert dann -- die
+# Abbruchbedingung blockierte jede Node-Wartung, obwohl nie ein Pool-Konto existierte.
+
+
+_AUCTIONEER_DOWN = (
+    "sudo -u lit pool: [pool] rpc error: code = Unknown desc = unable to list marshalled "
+    "accounts: unable to query auctioneer terms: rpc error: code = Unavailable"
+)
+
+
+def _pool_run(monkeypatch, *, pool_error: str | None, labels: list[str], accounts=None):  # noqa: ANN001, ANN202
+    snap = _load("macrot_snap")
+
+    def fake_run(cmd, *, as_json=True):  # noqa: ANN001, ANN202
+        if "pool" in cmd:
+            if pool_error is not None:
+                raise RuntimeError(pool_error)
+            return {"accounts": accounts or []}
+        if cmd[:2] == ["lncli", "listchaintxns"]:
+            return {"transactions": [{"label": lab} for lab in labels]}
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(snap, "run", fake_run)
+    return snap
+
+
+def test_pool_counts_open_accounts_when_the_auctioneer_answers(monkeypatch) -> None:  # noqa: ANN001
+    snap = _pool_run(
+        monkeypatch, pool_error=None, labels=[], accounts=[{"state": "OPEN"}, {"state": "CLOSED"}]
+    )
+    assert snap.pool_state() == {"mode": "pool", "open_accounts": 1}
+
+
+def test_pool_falls_back_to_the_wallet_history_when_the_auctioneer_is_down(monkeypatch) -> None:  # noqa: ANN001
+    snap = _pool_run(
+        monkeypatch,
+        pool_error=_AUCTIONEER_DOWN,
+        labels=["", "external", "0:openchannel:shortchanid-1051429984464338944"],
+    )
+    state = snap.pool_state()
+    assert state["open_accounts"] == 0 and "Auctioneer" in state["mode"]
+
+
+def test_pool_aborts_if_the_wallet_ever_funded_a_pool_account(monkeypatch) -> None:  # noqa: ANN001
+    snap = _pool_run(
+        monkeypatch,
+        pool_error=_AUCTIONEER_DOWN,
+        labels=["poold -- AccountCreation(acct_key=02ab)"],
+    )
+    with pytest.raises(RuntimeError, match="nicht pruefbar"):
+        snap.pool_state()
+
+
+def test_pool_other_errors_still_abort(monkeypatch) -> None:  # noqa: ANN001
+    snap = _pool_run(monkeypatch, pool_error="sudo -u lit pool: permission denied", labels=[])
+    with pytest.raises(RuntimeError, match="permission denied"):
+        snap.pool_state()
