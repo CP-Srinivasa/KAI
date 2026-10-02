@@ -244,6 +244,14 @@ class SourceSettings(BaseSettings):
     # shadow so the would-skip set can be validated before flipping to enforce.
     crypto_relevance_gate_mode: Literal["off", "shadow", "enforce"] = Field(default="shadow")
 
+    # LLM-Sparfenster (02.10.2026, app/analysis/llm_sparfenster.py): Stunden (UTC) und
+    # Quellen, deren LLM-Analysen kaum 4-h-Kurssignal tragen, bekommen nur die
+    # Regelanalyse -- das feste Tagesbudget reicht dann bis in die Spitze 12-14 UTC.
+    # off=unveraendert · shadow=nur protokollieren · enforce=Aufruf sparen.
+    llm_sparfenster_mode: Literal["off", "shadow", "enforce"] = Field(default="off")
+    llm_sparfenster_hours_utc: list[int] = Field(default_factory=lambda: [2, 3, 4])
+    llm_sparfenster_sources: list[str] = Field(default_factory=lambda: ["YouTube"])
+
     # Autonomous source-discovery/rotation kill-switch (Phase 3). OFF by default
     # (gated+inert): the scheduler then runs DRY — no outbound probe, no DB mutation.
     discovery_enabled: bool = Field(default=False)

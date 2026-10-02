@@ -77,6 +77,7 @@ from app.analysis.input_contract import (
     append_analysis_input_rejection,
 )
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
+from app.analysis.llm_sparfenster import Sparfenster, resolve_sparfenster
 from app.analysis.prompts import ACTIVE_SYSTEM_PROMPT_SHA256, ACTIVE_SYSTEM_PROMPT_VERSION
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.analysis.scoring import (
@@ -555,6 +556,7 @@ class AnalysisPipeline:
         trusted_social_handles: frozenset[str] | None = None,
         crypto_gate_mode: str | None = None,
         input_rejection_path: Path | None = None,
+        sparfenster: Sparfenster | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
@@ -569,6 +571,8 @@ class AnalysisPipeline:
         # construction (one pipeline per batch, not per doc). None → read the
         # SOURCE_CRYPTO_RELEVANCE_GATE_MODE setting (default ``shadow``).
         self._crypto_gate_mode = self._resolve_crypto_gate_mode(crypto_gate_mode)
+        # LLM-Sparfenster (02.10.2026). None -> SOURCE_LLM_SPARFENSTER_* (Standard off).
+        self._sparfenster = resolve_sparfenster(sparfenster)
 
         if self._shadow_overlaps_ensemble() and shadow_provider is not None:
             # CLAUDE.md §6 requires Konsens/Dissens/Red-Team. A shadow that
@@ -942,6 +946,29 @@ class AnalysisPipeline:
                         doc_id=str(doc.id),
                         would_skip=True,
                         reason=crypto_reason,
+                        title=doc.title[:80] if doc.title else "",
+                    )
+
+        # LLM-Sparfenster (02.10.2026): Stunden/Quellen ohne 4-h-Signal geben ihr Budget
+        # an die Spitze 12-14 UTC ab. Nur fuer Dokumente, die sonst zum LLM gingen.
+        if fallback_reason is None and not trusted_author:
+            spar_grund = self._sparfenster.verdict(source=doc.source_name, at=doc.fetched_at)
+            if spar_grund is not None:
+                if self._sparfenster.mode == "enforce":
+                    fallback_reason = f"llm_sparfenster: {spar_grund}"
+                    gate_declined_document = True
+                    logger.info(
+                        "llm_sparfenster_skipped_llm",
+                        doc_id=str(doc.id),
+                        reason=spar_grund,
+                        title=doc.title[:80] if doc.title else "",
+                    )
+                else:  # shadow -- nur messen
+                    logger.info(
+                        "llm_sparfenster_shadow",
+                        doc_id=str(doc.id),
+                        would_skip=True,
+                        reason=spar_grund,
                         title=doc.title[:80] if doc.title else "",
                     )
 
