@@ -20,6 +20,7 @@ import {
   Activity,
   Map,
   X,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/ui/Primitives";
@@ -52,6 +53,7 @@ const SOVEREIGN: Item[] = [
 
 // Kontroll-Ebene (Claude-Code-only Agenten)
 const CONTROL: Item[] = [
+  { id: "ki", labelKey: "nav.ki", icon: <Cpu size={16} /> },
   { id: "agents", labelKey: "nav.agents", icon: <Bot size={16} /> },
   { id: "roadmaps", labelKey: "nav.roadmaps", icon: <Map size={16} /> },
 ];
