@@ -9,15 +9,33 @@ bekommen die Regelanalyse wie nach Budgetende.
 
 Wie das Relevanz-Gate: ``off`` (Standard) aendert nichts, ``shadow`` protokolliert nur,
 ``enforce`` spart den Aufruf. Fail-safe: jede Unklarheit heisst ``off``.
+
+Die Schalter leben HIER und nicht in ``app/core/settings.py``: dort laesst der
+God-File-Ratchet keine Zeile Zuwachs zu.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Final
+from typing import Final, Literal
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 MODES: Final = frozenset({"off", "shadow", "enforce"})
+
+
+class SparfensterSettings(BaseSettings):
+    """``SOURCE_LLM_SPARFENSTER_MODE`` / ``_HOURS_UTC`` (JSON-Liste) / ``_SOURCES`` (JSON-Liste)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SOURCE_LLM_SPARFENSTER_", env_file=".env", extra="ignore"
+    )
+
+    mode: Literal["off", "shadow", "enforce"] = Field(default="off")
+    hours_utc: list[int] = Field(default_factory=lambda: [2, 3, 4])
+    sources: list[str] = Field(default_factory=lambda: ["YouTube"])
 
 
 @dataclass(frozen=True)
@@ -44,19 +62,17 @@ def resolve_sparfenster(explicit: Sparfenster | None = None) -> Sparfenster:
     if explicit is not None:
         return explicit
     try:
-        from app.core.settings import get_settings
-
-        s = get_settings().sources
-        mode = str(s.llm_sparfenster_mode).strip().lower()
+        s = SparfensterSettings()
+        mode = str(s.mode).strip().lower()
         if mode not in MODES:
             return Sparfenster()
         return Sparfenster(
             mode=mode,
-            hours_utc=frozenset(h for h in s.llm_sparfenster_hours_utc if 0 <= int(h) <= 23),
-            sources=frozenset(q.strip().casefold() for q in s.llm_sparfenster_sources if q.strip()),
+            hours_utc=frozenset(h for h in s.hours_utc if 0 <= int(h) <= 23),
+            sources=frozenset(q.strip().casefold() for q in s.sources if q.strip()),
         )
     except Exception:  # noqa: BLE001 -- ein Konfigurationsfehler darf nie Aufrufe sparen
         return Sparfenster()
 
 
-__all__ = ["MODES", "Sparfenster", "resolve_sparfenster"]
+__all__ = ["MODES", "Sparfenster", "SparfensterSettings", "resolve_sparfenster"]

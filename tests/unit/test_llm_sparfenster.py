@@ -9,12 +9,11 @@ Kursbewegung ueber der ueblichen Schwankung in 4 h) nachts 02-04 UTC 0-4,6 %, Yo
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.analysis.llm_sparfenster import Sparfenster, resolve_sparfenster
+from app.analysis.llm_sparfenster import Sparfenster, SparfensterSettings, resolve_sparfenster
 from app.core.enums import AnalysisSource
 
 NACHT = datetime(2026, 10, 2, 3, 15, tzinfo=UTC)
@@ -47,18 +46,13 @@ def test_ohne_quelle_greift_nur_die_stunde() -> None:
     assert AKTIV.verdict(source=None, at=NACHT) == "stunde_utc=03"
 
 
-def _settings(**over: object) -> SimpleNamespace:
-    werte: dict[str, object] = {
-        "llm_sparfenster_mode": "enforce",
-        "llm_sparfenster_hours_utc": [2, 3, 4, 99, -1],
-        "llm_sparfenster_sources": [" YouTube ", ""],
-    }
-    werte.update(over)
-    return SimpleNamespace(sources=SimpleNamespace(**werte))
+def _env(monkeypatch: pytest.MonkeyPatch, **werte: str) -> None:
+    for name, wert in werte.items():
+        monkeypatch.setenv(f"SOURCE_LLM_SPARFENSTER_{name}", wert)
 
 
 def test_aus_den_settings_aufgeloest_und_bereinigt(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.core.settings.get_settings", lambda: _settings())
+    _env(monkeypatch, MODE="enforce", HOURS_UTC="[2, 3, 4, 99, -1]", SOURCES='[" YouTube ", ""]')
     fenster = resolve_sparfenster()
     assert fenster.mode == "enforce"
     assert fenster.hours_utc == frozenset({2, 3, 4})
@@ -68,25 +62,19 @@ def test_aus_den_settings_aufgeloest_und_bereinigt(monkeypatch: pytest.MonkeyPat
 def test_unbekannter_modus_und_kaputte_settings_heissen_aus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "app.core.settings.get_settings", lambda: _settings(llm_sparfenster_mode="ja")
-    )
+    _env(monkeypatch, MODE="ja")
     assert resolve_sparfenster().mode == "off"
-
-    def kaputt() -> None:
-        raise RuntimeError("settings")
-
-    monkeypatch.setattr("app.core.settings.get_settings", kaputt)
+    _env(monkeypatch, MODE="enforce", HOURS_UTC="zwei bis vier")
     assert resolve_sparfenster().mode == "off"
 
 
-def test_der_standard_aendert_nichts() -> None:
-    from app.core.settings import SourceSettings
-
-    s = SourceSettings()
-    assert s.llm_sparfenster_mode == "off"
-    assert s.llm_sparfenster_hours_utc == [2, 3, 4]
-    assert s.llm_sparfenster_sources == ["YouTube"]
+def test_der_standard_aendert_nichts(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("MODE", "HOURS_UTC", "SOURCES"):
+        monkeypatch.delenv(f"SOURCE_LLM_SPARFENSTER_{name}", raising=False)
+    s = SparfensterSettings(_env_file=None)
+    assert s.mode == "off"
+    assert s.hours_utc == [2, 3, 4]
+    assert s.sources == ["YouTube"]
 
 
 def _provider() -> AsyncMock:
