@@ -123,6 +123,20 @@ def test_embedded_pi_script_is_valid_bash(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stderr
 
 
+def test_tunnel_credentials_are_in_the_vault_under_the_ln_key() -> None:
+    """02.10.2026: ``~/.cloudflared`` lag in keiner Sicherung. Zugangsdaten nur mit ``ln``."""
+    src = VAULT.read_text(encoding="utf-8")
+    assert "VAULT_COUNT ln_pi_tunnel" in src, "ohne Quellzaehlung prueft die Probe nichts"
+    # Root-eigene Altkopien (*.bak-*, 0600) sind fuer `ubuntu` unlesbar: tar und find schliessen
+    # sie gleich aus, sonst bricht tar ab oder die Zaehlung stimmt nicht.
+    assert "--exclude='*.bak-*' .cloudflared" in src
+    assert "find /home/ubuntu/.cloudflared ! -name '*.bak-*'" in src
+    block = src[src.index("'ln\\ln_pi_tunnel.tar.gz.enc'") :]
+    block = block[: block.index("Add-Result 'ln_pi_tunnel' 'OK'")]
+    assert "env:KAI_VAULT_LNKEY" in block
+    assert "KAI_VAULT_PASS" not in block, "nie die Artefakt-Passphrase fuer Zugangsdaten"
+
+
 def test_attach_task_fires_only_on_plug_in_of_the_vault_disk() -> None:
     ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
     root = ET.parse(WS / "tasks" / "KAI-Vault-OnAttach.xml").getroot()  # noqa: S314

@@ -30,9 +30,10 @@ wertlos, genau so ist es gewollt.
 **Nicht auf dem Stick** (bewusst, Schlüsseltrennung: Zugangsdaten nie mit der
 Artefakt-Passphrase):
 - `~/kai-secrets` (HOTP-Seed, Lightning-Macaroons): im Vault, Gruppe `ln`, mit `LN_SECRET_BACKUP_KEY`.
-- `~/.cloudflared` (Tunnel-Zugangsdaten): **derzeit in keiner Sicherung** (Befund 02.10.2026).
-  Bis das behoben ist: nach einer Wiederherstellung den Tunnel im Cloudflare-Dashboard neu
-  verbinden (`cloudflared tunnel login`, Zugangsdatei neu erzeugen). Die DNS-Routen bleiben bestehen.
+- `~/.cloudflared` (Tunnel-Zugangsdaten): im Vault, Gruppe `ln` (`ln_pi_tunnel`), mit
+  `LN_SECRET_BACKUP_KEY`, seit 02.10.2026; nach `/home/ubuntu` entpacken. Ohne Vault: den Tunnel
+  im Cloudflare-Dashboard neu verbinden (`cloudflared tunnel login`, Zugangsdatei neu erzeugen),
+  die DNS-Routen bleiben bestehen.
 
 ## Wiederherstellung nach SD-Tod (Reihenfolge einhalten)
 
@@ -126,7 +127,7 @@ Artefakt-Passphrase):
 | Ausfall | Quelle |
 |---|---|
 | SD-Karte tot, Pi lebt | **dieser Stick** (vor Ort, kein Netz nötig) |
-| Pi tot, Diebstahl, Brand | **KAI-Vault** auf der Platte „KAI Backup“: `pi_state` (`data/`, `artifacts/`, `.env`, Datenbanken), `ln` (Zugangsdaten), Generationen 7 Tage / 4 Wochen / 12 Monate, `README-RESTORE.md` in jeder Generation |
+| Pi tot, Diebstahl, Brand | **KAI-Vault** auf der Platte „KAI Backup“: `pi_state` (`data/`, `artifacts/`, `.env`, Datenbanken), `ln` (Zugangsdaten inkl. Tunnel), Generationen 7 Tage / 4 Wochen / 12 Monate, `README-RESTORE.md` in jeder Generation |
 | zusätzlich | Laptop `KAI-mirror\runtime-backups` (DPAPI, nur dieser Windows-Benutzer) |
 
 Den Stick nach Möglichkeit an der Pi lassen. Er ist verschlüsselt, aber er ist die schnelle

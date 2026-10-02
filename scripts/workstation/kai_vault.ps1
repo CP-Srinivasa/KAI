@@ -683,6 +683,9 @@ else
   echo "VAULT_NOTE no_pi_backup"
 fi
 echo "VAULT_COUNT ln_pi_secrets $(find /home/ubuntu/kai-secrets 2>/dev/null | wc -l)"
+# Tunnel-Zugangsdaten (02.10.2026: lagen in KEINER Sicherung). Root-eigene Altkopien
+# (*.bak-*, 0600 root) kann `ubuntu` nicht lesen -- gleicher Ausschluss wie beim tar.
+echo "VAULT_COUNT ln_pi_tunnel $(find /home/ubuntu/.cloudflared ! -name '*.bak-*' 2>/dev/null | wc -l)"
 echo "VAULT_DONE"
 exit 0
 '@
@@ -698,6 +701,9 @@ exit 0
         $script:LnPiCount = $null
         $c = $lines | Where-Object { $_ -match '^VAULT_COUNT ln_pi_secrets ' } | Select-Object -First 1
         if ($c) { $script:LnPiCount = [int](($c -split ' ')[2]) }
+        $script:LnTunnelCount = $null
+        $c = $lines | Where-Object { $_ -match '^VAULT_COUNT ln_pi_tunnel ' } | Select-Object -First 1
+        if ($c) { $script:LnTunnelCount = [int](($c -split ' ')[2]) }
         if (-not ($lines -match '^VAULT_DONE')) {
             Add-Result 'pi_state' 'PARTIAL' ("Pi-Teil ohne VAULT_DONE (rc=$rc): " + (($lines | Where-Object { $_ -match '^VAULT_ERR' }) -join ' | '))
         } else {
@@ -746,6 +752,23 @@ exit 0
                 $extra = @{ key = 'ln'; kind = 'tar' }
                 if ($null -ne $script:LnPiCount) { $extra['members_source'] = $script:LnPiCount }
                 Add-Result 'ln_pi_secrets' 'OK' 'Pi ~/kai-secrets, LN-Schluessel' 'ln\ln_pi_secrets.tar.gz.enc' (Get-Item -LiteralPath $out).Length (Get-Sha256 $out) $extra
+            }
+        }
+        # Tunnel-Zugangsdaten (Cloudflare, kai-trader.org) -- Authentisierungsmaterial, also
+        # Schluessel `ln`, nie die Artefakt-Passphrase (Operator-Direktive 27.08.).
+        $out = Join-Path $GenDir 'ln\ln_pi_tunnel.tar.gz.enc'
+        if (-not $env:KAI_VAULT_LNKEY) {
+            Add-Result 'ln_pi_tunnel' 'PARTIAL' 'LN_SECRET_BACKUP_KEY fehlt -- ~/.cloudflared NICHT gesichert (kein Rueckfall)'
+        } else {
+            $e1 = New-TempPath 'e1.txt'; $e2 = New-TempPath 'e2.txt'
+            $rc = Invoke-Cmd "$(Q $SshExe) -n -o BatchMode=yes -o ConnectTimeout=20 $PI `"tar czf - -C /home/ubuntu --exclude='*.bak-*' .cloudflared`" 2>$(Q $e1) | $(Q $Ossl) $OpensslEnc -pass env:KAI_VAULT_LNKEY -out $(Q $out) 2>$(Q $e2)"
+            $err = @(Read-ErrLines $e1) + @(Read-ErrLines $e2)
+            if ($rc -ne 0 -or $err.Count -gt 0 -or -not (Test-Path -LiteralPath $out)) {
+                Add-Result 'ln_pi_tunnel' 'FAIL' ("rc=$rc " + (($err | Select-Object -First 2) -join ' | '))
+            } else {
+                $extra = @{ key = 'ln'; kind = 'tar' }
+                if ($null -ne $script:LnTunnelCount) { $extra['members_source'] = $script:LnTunnelCount }
+                Add-Result 'ln_pi_tunnel' 'OK' 'Pi ~/.cloudflared (Tunnel), LN-Schluessel' 'ln\ln_pi_tunnel.tar.gz.enc' (Get-Item -LiteralPath $out).Length (Get-Sha256 $out) $extra
             }
         }
     }
@@ -916,7 +939,7 @@ Probe-Ergebnis: ``VERIFIED.json`` (fehlt die Datei, ist diese Generation NICHT g
 
 ## Schluessel (beide in KeePass, NICHT auf dieser Platte)
 - ``backup`` = **KAI_BACKUP_PASSPHRASE** (dieselbe wie fuer die Pi-Tagesarchive)
-- ``ln`` = **LN_SECRET_BACKUP_KEY** (nur Authentisierungsmaterial: Pi ~/kai-secrets, .ssh, Codex-/Claude-Anmeldung)
+- ``ln`` = **LN_SECRET_BACKUP_KEY** (nur Authentisierungsmaterial: Pi ~/kai-secrets, Pi ~/.cloudflared, .ssh, Codex-/Claude-Anmeldung)
 - ``none`` = unverschluesselt: KeePass-DB (eigenverschluesselt), channel.backup (von LND verschluesselt), Pi-Backup-Manifest
 
 ## Dateien
@@ -939,6 +962,7 @@ Passphrase (CBC ohne MAC, R10) -- erst ``tar -t`` bzw. der sha256-Vergleich mit 
    ``_pi_extras/`` enthaelt Unit-Liste, Timer, Checkout-/Release-Stand, crontab und unversionierte Skripte; ``pi_etc`` das /etc-Tier.
 3. **Lightning:** ``channel.backup`` nur ueber die Wallet-Recovery mit dem Seed einspielen. NIE einen alten channel.db-Stand starten
    (Force-Close-/Penalty-Risiko). ``ln_pi_secrets`` enthaelt Macaroons, TLS und den HOTP-Seed (Schluessel ``ln``).
+   ``ln_pi_tunnel`` enthaelt die Cloudflare-Tunnel-Zugangsdaten (``~/.cloudflared``, Schluessel ``ln``) -- nach /home/ubuntu entpacken.
 4. **Laptop:** ``laptop_claude`` (Skills, Plans, Memory, Projekte), ``laptop_codex``, ``laptop_ops`` (.kai, .local\bin-Skripte, Task-XML), ``laptop_kaimirror``, ``laptop_desktop``, ``laptop_env``, ``laptop_auth`` (Schluessel ``ln``).
 "@
     Set-Content -LiteralPath (Join-Path $GenDir 'README-RESTORE.md') -Value $readme -Encoding utf8
