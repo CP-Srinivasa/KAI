@@ -279,3 +279,36 @@ def test_evaluator_urteilt_erst_nach_fensterende() -> None:
     assert met["verdict_proposal"] == "MET" and met["distinct_third_party_invites"] == 3
     short = evaluate(rule=rule, earnings_rows=earnings[:2], demand_rows=demand, now=end)
     assert short["verdict_proposal"] == "NOT_MET"
+
+
+def test_fristwaechter_entspricht_der_versiegelten_regel() -> None:
+    from app.research.prereg_ledger import prereg_key
+    from app.research.prereg_maturity import MATURITY_SPECS
+
+    spec = next(s for s in MATURITY_SPECS if s["name"] == "oracle_invite_beta_v1")
+    rule = _rule()
+    assert spec["kind"] == "deadline"
+    assert spec["since_utc"] == rule["window_start_utc"]
+    assert spec["window_end_utc"] == rule["window_end_utc"]
+    assert spec["n_target"] == rule["success"]["min_distinct_third_party_invites"]
+    # Versiegelt 2026-10-02T12:40:50Z auf kai-pi5; die ID haengt am Kriterientext,
+    # der die sha256 von Regel und Evaluator nennt.
+    rule_sha = hashlib.sha256(_RULE.read_bytes()).hexdigest()
+    criteria = (
+        "MET nur bei >=3 distinkten eingeladenen Dritten (invite_party=third_party) mit >=1 "
+        "settled Oracle-Zahlung (Memo kai-oracle:) im Fenster "
+        "2026-10-06T00:00Z..2026-12-05T00:00Z; "
+        "Eigen-Traffic (invite_party=operator) und Zahlungen ohne Einladung zaehlen nicht. Sonst "
+        "NOT_MET: die Beta endet, keine weitere Monetarisierung im KAI-Kern (Fork B, D-299). "
+        f"Versiegelte Regel config/oracle_invite_beta_v1.json sha256:{rule_sha} mit Evaluator "
+        "scripts/oracle_invite_beta_eval.py "
+        f"sha256:{rule['evaluator']['sha256']} (Commit 7446c486)."
+    )
+    key = prereg_key(
+        name="oracle_invite_beta_v1",
+        direction="neutral",
+        horizon="60d",
+        success_criteria=criteria,
+        sample_size_target=3,
+    )
+    assert key == spec["prereg_id"] == "8565c20a41872d4a"
