@@ -278,13 +278,23 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("[audit-rotate] unexpected error")
         return 1
+    rc = 0
     if args.apply:
         # Loeschfristen der Oracle-Beta (Datenschutzseite v0.5) im selben Tageslauf.
+        # Gruen nur, wenn jede Frist lief UND die Zusage danach nachweislich gilt
+        # (02.10.: ein Teilfehler endete sonst mit 0, der Timer sah gruen aus).
         from app.oracle_legal import retention
 
-        logger.info("[retention] %s", retention.apply(Path(args.artifacts_dir)))
+        counts = retention.apply(Path(args.artifacts_dir))
+        open_items = retention.overdue(Path(args.artifacts_dir))
+        logger.info("[retention] %s offen=%s", counts, open_items)
+        if any(v < 0 for v in counts.values()) or any(open_items.values()):
+            logger.error(
+                "[retention] Loeschfristen NICHT eingehalten: %s offen=%s", counts, open_items
+            )
+            rc = 1
     print(json.dumps([r.__dict__ for r in results], ensure_ascii=False))
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
