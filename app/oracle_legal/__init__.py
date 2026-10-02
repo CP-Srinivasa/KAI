@@ -38,7 +38,7 @@ from app.core.file_lock import append_lock
 logger = logging.getLogger(__name__)
 
 VERSION = "0.5-Beta"
-STAND = "01.10.2026"
+STAND = "02.10.2026"  # Datenschutz: Einladungskennung am Zahlungsprotokoll (D-299 A1)
 PAGES = ("bedingungen", "hilfe", "datenschutz")
 CASES_PATH = Path("artifacts/oracle/oracle_cases.jsonl")
 # Freiwillige Serviceziele von der Hilfe-Seite, in Werktagen (Mo–Fr).

@@ -12,6 +12,11 @@ Betreiber genau einmal beim Anlegen (``scripts/oracle_invite.py``).
 
 Löschung: Einladungen werden 30 Tage nach ihrem Ende (Ablauf oder Sperre) entfernt
 (:func:`prune`, täglich über ``scripts/audit_rotate.py``).
+
+Partei (D-299 A1, Prä-Reg ``oracle_invite_beta_v1``): jede Einladung ist ``third_party``
+oder ``operator`` (eigene Tests). Die Rechnungsausstellung schreibt ``id`` und Partei ins
+Demand-Ledger, damit bezahlte Abfragen eingeladenen Dritten zugeordnet werden können,
+ohne Eigen-Traffic mitzuzählen.
 """
 
 from __future__ import annotations
@@ -33,6 +38,9 @@ RETAIN_AFTER_END = timedelta(days=30)
 HEADER = "X-KAI-Invite"
 QUERY = "invite"
 _MAX_CODE_LEN = 64
+PARTY_THIRD = "third_party"
+PARTY_OPERATOR = "operator"
+_PARTIES = (PARTY_THIRD, PARTY_OPERATOR)
 
 
 def _hash(code: str) -> str:
@@ -72,7 +80,12 @@ def _current(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def create(
-    label: str, *, days: int = DEFAULT_DAYS, now: datetime | None = None, path: Path | None = None
+    label: str,
+    *,
+    days: int = DEFAULT_DAYS,
+    party: str = PARTY_THIRD,
+    now: datetime | None = None,
+    path: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Neue Einladung; gibt den Klartext-Code (nur jetzt sichtbar) und den Eintrag zurück."""
     path = path or INVITES_PATH
@@ -81,12 +94,15 @@ def create(
         raise ValueError("Bitte eine Bezeichnung angeben (z. B. Vorname oder Partnerkürzel).")
     if not 1 <= days <= 365:
         raise ValueError("Gültigkeit 1 bis 365 Tage.")
+    if party not in _PARTIES:
+        raise ValueError(f"Partei {party!r} unbekannt; erlaubt: {', '.join(_PARTIES)}.")
     now = now or datetime.now(UTC)
     code = secrets.token_urlsafe(16)
     entry = {
         "id": "inv_" + secrets.token_hex(4),
         "code_sha256": _hash(code),
         "label": label,
+        "party": party,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(days=days)).isoformat(),
     }
@@ -116,19 +132,31 @@ def _end(entry: dict[str, Any]) -> datetime | None:
     return min(ends) if ends else None
 
 
-def is_valid(code: str | None, *, now: datetime | None = None, path: Path | None = None) -> bool:
-    """True, wenn der Code zu einer nicht gesperrten, nicht abgelaufenen Einladung gehört."""
+def match(
+    code: str | None, *, now: datetime | None = None, path: Path | None = None
+) -> dict[str, Any] | None:
+    """Die gültige Einladung zum Code (``id``, ``party``) oder ``None``.
+
+    Einladungen von vor dem 02.10.2026 tragen kein ``party`` und gelten als Dritte.
+    """
     path = path or INVITES_PATH
     if not code or len(code) > _MAX_CODE_LEN:
-        return False
+        return None
     now = now or datetime.now(UTC)
     wanted = _hash(code)
     for entry in _current(path).values():
         if not hmac.compare_digest(str(entry.get("code_sha256", "")), wanted):
             continue
         end = _end(entry)
-        return end is not None and now < end
-    return False
+        if end is None or now >= end:
+            return None
+        return {"id": entry["id"], "party": entry.get("party") or PARTY_THIRD}
+    return None
+
+
+def is_valid(code: str | None, *, now: datetime | None = None, path: Path | None = None) -> bool:
+    """True, wenn der Code zu einer nicht gesperrten, nicht abgelaufenen Einladung gehört."""
+    return match(code, now=now, path=path) is not None
 
 
 def code_from_request(headers: Any, query: Any) -> str | None:
@@ -164,11 +192,14 @@ __all__ = [
     "DEFAULT_DAYS",
     "HEADER",
     "INVITES_PATH",
+    "PARTY_OPERATOR",
+    "PARTY_THIRD",
     "QUERY",
     "code_from_request",
     "create",
     "is_valid",
     "listing",
+    "match",
     "prune",
     "revoke",
 ]

@@ -144,7 +144,12 @@ def _valid_expired_replay_token(request: Request, scope: str) -> L402Verdict | N
 
 
 async def _issue_challenge(
-    scope: str, *, requester_fp: str = "", telemetry_scope: str | None = None
+    scope: str,
+    *,
+    requester_fp: str = "",
+    telemetry_scope: str | None = None,
+    invite_id: str = "",
+    invite_party: str = "",
 ) -> NoReturn:
     """Mint an invoice + token and raise a 402 challenge. Never returns.
 
@@ -185,6 +190,9 @@ async def _issue_challenge(
         payment_hash=payment_hash_hex,
         # D-291 E1: die beim Kauf angezeigte Bedingungsversion gehört zum Auftrag.
         terms_version=oracle_legal.VERSION if published else "",
+        # D-299 A1: welche Einladung die Rechnung ausgelöst hat (Prä-Reg oracle_invite_beta_v1).
+        invite_id=invite_id,
+        invite_party=invite_party,
     )
     expires = datetime.fromtimestamp(token_expiry(token), UTC).isoformat().replace("+00:00", "Z")
     headers = {
@@ -211,18 +219,20 @@ async def _issue_challenge(
     raise HTTPException(status_code=402, detail=detail, headers=headers)
 
 
-def _require_invite(request: Request, required: bool) -> None:
+def _require_invite(request: Request, required: bool) -> dict[str, Any] | None:
     """Begleitete Beta (Operator 2026-10-01): eine neue Rechnung nur mit Einladung.
 
     Sitzt vor dem S-002-Limiter: Anfragen ohne Einladung verbrauchen kein Mint-Budget
     der Eingeladenen. Bezahlte Zugänge und die Zeitstempel-Abholung kommen hier nie an.
+    Gibt die Einladung (``id``, ``party``) zurück; ``None``, wenn das Gate aus ist.
     """
     if not required:
-        return
+        return None
     from app.oracle_legal import invites
 
-    if invites.is_valid(invites.code_from_request(request.headers, request.query_params)):
-        return
+    invite = invites.match(invites.code_from_request(request.headers, request.query_params))
+    if invite is not None:
+        return invite
     raise HTTPException(
         status_code=403,
         detail={
@@ -253,11 +263,17 @@ async def _require_paid(
     fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     verdict = _valid_paid_token(request, scope)
     if verdict is None:
-        _require_invite(request, settings.lightning.l402_invite_required)
+        invite = _require_invite(request, settings.lightning.l402_invite_required) or {}
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         if before_mint is not None:
             await before_mint()
-        await _issue_challenge(scope, requester_fp=fp, telemetry_scope=telemetry_scope)
+        await _issue_challenge(
+            scope,
+            requester_fp=fp,
+            telemetry_scope=telemetry_scope,
+            invite_id=str(invite.get("id", "")),
+            invite_party=str(invite.get("party", "")),
+        )
     # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
     append_demand_event(
         ACCESS_GRANTED, scope=telemetry_scope or scope, payment_hash=verdict.payment_hash

@@ -54,13 +54,19 @@ def append_demand_event(
     price_sat: int = 0,
     payment_hash: str = "",
     terms_version: str = "",
+    invite_id: str = "",
+    invite_party: str = "",
     path: Path | None = None,
 ) -> bool:
     """Append one demand event. Fail-soft: a write error is logged and returns False;
     it must never propagate to the request that triggered the telemetry.
 
     ``terms_version`` (nur bei veröffentlichten Oracle-Bedingungen gesetzt) ordnet dem
-    Auftrag die beim Kauf angezeigte Bedingungsversion zu (D-291 E1)."""
+    Auftrag die beim Kauf angezeigte Bedingungsversion zu (D-291 E1).
+
+    ``invite_id``/``invite_party`` (D-299 A1): die Einladung, mit der die Rechnung
+    ausgestellt wurde. Anders als ``requester_fp`` bleiben sie stehen — sie tragen keinen
+    IP-Bezug, und ohne sie ist die Prä-Reg ``oracle_invite_beta_v1`` nicht auswertbar."""
     out = path or _DEMAND_PATH
     record = {
         "ts": datetime.now(UTC).isoformat(),
@@ -72,6 +78,9 @@ def append_demand_event(
     }
     if terms_version:
         record["terms_version"] = terms_version
+    if invite_id:
+        record["invite_id"] = invite_id
+        record["invite_party"] = invite_party
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         # Sperre wie app/oracle_legal/retention.py beim Leeren alter Kennwerte.
