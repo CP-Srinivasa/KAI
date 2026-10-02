@@ -28,7 +28,7 @@ from scripts.litellm_shadow_eval.models import (
 #: kuenftiges v6 soll hier ANKOMMEN, nicht stillschweigend durchrutschen. Wer
 #: das Format aendert, sieht dann diese Zeile und entscheidet bewusst.
 SUPPORTED_SCHEMA_VERSIONS = frozenset(
-    {"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "litellm-shadow-eval/v1"}
+    {"v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "litellm-shadow-eval/v1"}
 )
 _SECRET_MARKERS = ("api_key", "authorization", "secret", "token", "password", "audio")
 

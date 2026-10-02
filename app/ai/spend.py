@@ -488,6 +488,11 @@ def _usage(row: dict[str, Any]) -> tuple[int, int]:
     return ein or 0, aus or 0
 
 
+def row_usage(row: dict[str, Any]) -> tuple[int, int]:
+    """Oeffentlicher Zugang zu den Token einer Zeile -- dieselbe Regel wie das Budget."""
+    return _usage(row)
+
+
 def _add(
     buckets: dict[str, SpendBucket],
     name: str,

@@ -61,7 +61,8 @@ from app.storage.jsonl_io import iter_jsonl_tolerant
 #: Zeile geschrieben hat. Ohne sie belegte die Telemetrie einen Aufruf, aber
 #: nicht das Release, aus dem er kam; der Routen-Abnahmebericht musste die
 #: Release-SHA jeder Route als unbelegt fuehren (LiteLLM-Audit, Nachtrag).
-SCHEMA_VERSION = "v9"
+#: v10 (2026-10-02): `service` -- welcher Dienst die Zeile schrieb (KI-Kontrollstation).
+SCHEMA_VERSION = "v10"
 
 DEFAULT_TELEMETRY_PATH = Path("artifacts/llm_telemetry.jsonl")
 
@@ -83,6 +84,16 @@ def _runtime_provenance() -> tuple[str | None, str | None]:
     except Exception:  # noqa: BLE001 - Telemetrie reisst den Aufruf nie mit
         return None, None
     return identitaet.runtime_commit, identitaet.runtime_source
+
+
+def _service_label() -> str:
+    """Der schreibende Dienst (v10) -- nie eine Ausnahme in die Telemetrie."""
+    try:
+        from app.observability.service_name import service_name
+
+        return service_name()
+    except Exception:  # noqa: BLE001 - Telemetrie reisst den Aufruf nie mit
+        return "unbekannt"
 
 
 def _cost_fields(
@@ -310,6 +321,7 @@ def record_llm_call(
     }
     # --- v9: aus welchem Release die Zeile stammt --------------------------
     row["runtime_commit"], row["runtime_source"] = _runtime_provenance()
+    row["service"] = _service_label()
     gemessene_eingabe = row["input_tokens"]
     gemessene_ausgabe = row["output_tokens"]
     # Auch die Summe erbt UNKNOWN != 0: nur wenn BEIDE Seiten bekannt sind,
