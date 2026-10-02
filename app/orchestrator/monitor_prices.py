@@ -19,10 +19,10 @@ war da, sie kam nur nie dort an, wo der Befund entsteht.
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any, Protocol
 
 from app.execution.models import PriceEvidence
+from app.execution.price_evidence import quote_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +86,6 @@ async def collect_monitor_prices(
             continue
         by_symbol[symbol] = point.price
         sources[symbol] = point.source
-        # ``freshness_seconds`` ist das Alter der Quote beim Abruf. Fehlt es,
-        # bleibt age_ms None — fehlende Evidenz wird ausgewiesen, nicht geraten.
-        age_s = getattr(point, "freshness_seconds", None)
-        evidence[symbol] = PriceEvidence(
-            source=point.source,
-            observed_at_utc=str(getattr(point, "timestamp_utc", "") or ""),
-            observed_price=point.price,
-            age_ms=(float(age_s) * 1000.0 if isinstance(age_s, (int, float)) else None),
-            is_stale=bool(point.is_stale),
-            # Zweitanbieter-Bestaetigung (2026-09-23): nur sie laesst einen Close
-            # ueber dem Phantom-Cap zu (app/execution/close_guard.py).
-            corroborated_by=str(getattr(point, "corroborated_by", "") or ""),
-            corroborating_price=_finite_or_none(getattr(point, "corroborating_price", None)),
-        )
+        evidence[symbol] = quote_evidence(point)
 
     return MonitorPrices(by_symbol, sources, no_market_data, evidence)
-
-
-def _finite_or_none(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    out = float(value)
-    return out if math.isfinite(out) and out > 0 else None
