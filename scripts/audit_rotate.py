@@ -104,10 +104,12 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
         filename="api_request_audit.jsonl",
         max_bytes=20 * _MB,
         keep_lines=50_000,
-        keep_hours=144,
+        keep_hours=142,
         timestamp_key="timestamp_utc",
-        max_age_hours=144,
-        rationale="Loeschfrist (Oracle-Beta v0.5, 01.10.2026): das Live-File haelt nur 6 Tage "
+        max_age_hours=142,
+        rationale="Loeschfrist (Oracle-Beta v0.5, 01.10.2026): das Live-File haelt 142 h "
+        "(6 Tage minus 2 h Puffer fuer Laufzeit/Verzug: mit taeglichem Lauf bleibt keine IP "
+        "laenger als die zugesagten 7 Tage, 02.10.) "
         "und rotiert taeglich auch nach Alter; im Archiv entfernt "
         "app/oracle_legal/retention.py die client_ip -- bei taeglichem Lauf ist keine IP "
         "aelter als 7 Tage. HTTP request audit. Programmatic reader (corrected 2026-09-17): "
@@ -278,13 +280,23 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 — entrypoint boundary
         logger.exception("[audit-rotate] unexpected error")
         return 1
+    rc = 0
     if args.apply:
         # Loeschfristen der Oracle-Beta (Datenschutzseite v0.5) im selben Tageslauf.
+        # Gruen nur, wenn jede Frist lief UND die Zusage danach nachweislich gilt
+        # (02.10.: ein Teilfehler endete sonst mit 0, der Timer sah gruen aus).
         from app.oracle_legal import retention
 
-        logger.info("[retention] %s", retention.apply(Path(args.artifacts_dir)))
+        counts = retention.apply(Path(args.artifacts_dir))
+        open_items = retention.overdue(Path(args.artifacts_dir))
+        logger.info("[retention] %s offen=%s", counts, open_items)
+        if any(v < 0 for v in counts.values()) or any(open_items.values()):
+            logger.error(
+                "[retention] Loeschfristen NICHT eingehalten: %s offen=%s", counts, open_items
+            )
+            rc = 1
     print(json.dumps([r.__dict__ for r in results], ensure_ascii=False))
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

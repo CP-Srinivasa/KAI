@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 import sys
+import tracemalloc
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from app import oracle_legal as legal
 from app.oracle_legal import invites, retention
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
@@ -69,21 +73,169 @@ def test_audit_archives_lose_the_ip_and_are_not_reread(tmp_path: Path) -> None:
 
 
 def test_cases_go_90_days_after_closure_and_open_cases_stay(tmp_path: Path) -> None:
-    def at(days: float) -> str:
-        return (_NOW - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    """Fälle so anlegen, wie der echte Schreiber sie schreibt (``status``, nicht ``state``).
 
-    path = _jsonl(
-        tmp_path / "oracle" / "oracle_cases.jsonl",
-        [
-            {"case_id": "A", "kind": "meldung", "received_at": at(200), "email": "a@x.de"},
-            {"case_id": "A", "state": "erledigt", "at": at(91), "note": "ok"},
-            {"case_id": "B", "kind": "meldung", "received_at": at(100), "email": "b@x.de"},
-            {"case_id": "B", "state": "erledigt", "at": at(30), "note": "ok"},
-            {"case_id": "C", "kind": "meldung", "received_at": at(300), "email": "c@x.de"},
-        ],
-    )
+    Der frühere Test schrieb die Zeilen von Hand mit ``state`` und war damit grün, obwohl
+    ``mark_case`` ``status`` schreibt: erledigte Fälle wären nie gelöscht worden.
+    """
+    path = tmp_path / "oracle" / "oracle_cases.jsonl"
+
+    def case(received_days: float, closed_days: float | None) -> str:
+        cid = legal.record_case(
+            "meldung", {"email": "x@x.de"}, now=_NOW - timedelta(days=received_days), path=path
+        )["case_id"]
+        if closed_days is not None:
+            legal.mark_case(
+                cid, "erledigt", "ok", now=_NOW - timedelta(days=closed_days), path=path
+            )
+        return cid
+
+    old_closed = case(200, 91)
+    recent_closed = case(100, 30)
+    still_open = case(300, None)
     assert retention.prune_cases(path, _NOW) == 1
-    assert {r["case_id"] for r in _rows(path)} == {"B", "C"}
+    assert {r["case_id"] for r in _rows(path)} == {recent_closed, still_open}
+    assert old_closed not in path.read_text(encoding="utf-8")
+    assert retention.prune_cases(path, _NOW) == 0
+
+
+def _archive_rows(n: int, pad: int = 120) -> list[dict]:
+    return [
+        {
+            "timestamp_utc": f"2026-09-2{i % 9}T10:00:00+00:00",
+            "request_id": f"r{i}",
+            "path": "/oracle/verdicts/" + "x" * pad,
+            "client_ip": f"10.0.{i % 250}.{i % 200}",
+        }
+        for i in range(n)
+    ]
+
+
+def test_archive_strip_streams_instead_of_loading_the_whole_file(tmp_path: Path) -> None:
+    """02.10.: 133/191-MB-Archive in einer Liste -> OOM-Kill unter MemoryMax=256M.
+
+    Gemessen wird der Python-Speicher-Peak: er muss unabhängig von der Archivgröße klein
+    bleiben (hier ~8 MB Archiv, Peak-Grenze 1 MB).
+    """
+    archive = tmp_path / "archive"
+    src = _jsonl(archive / "api_request_audit.20261001T044000Z.jsonl", _archive_rows(40_000))
+    assert src.stat().st_size > 7_000_000
+    tracemalloc.start()
+    try:
+        assert retention.strip_audit_archive_ips(archive) == 1
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1_000_000, f"Peak {peak} B: Archiv wird nicht gestreamt"
+    [done] = archive.glob("api_request_audit.*.noip.jsonl")
+    with done.open(encoding="utf-8") as fh:
+        assert sum(1 for line in fh if "client_ip" not in json.loads(line)) == 40_000
+
+
+def test_malformed_archive_lines_never_reach_the_noip_file(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    src = archive / "api_request_audit.20261001T044000Z.jsonl"
+    src.parent.mkdir(parents=True)
+    src.write_text(
+        json.dumps({"timestamp_utc": "2026-09-28T10:00:00+00:00", "client_ip": "1.2.3.4"})
+        + "\n"
+        + '{"timestamp_utc": "2026-09-28T10:00:01+00:00", "client_ip": "9.9.9.9", "pa\n'
+        + '"8.8.8.8"\n'
+        + "\n"
+        + json.dumps({"timestamp_utc": "2026-09-28T10:00:02+00:00", "client_ip": "7.7.7.7"}),
+        encoding="utf-8",
+    )
+    assert retention.strip_audit_archive_ips(archive) == 1
+    [done] = archive.glob("api_request_audit.*.noip.jsonl")
+    text = done.read_text(encoding="utf-8")
+    for ip in ("1.2.3.4", "9.9.9.9", "8.8.8.8", "7.7.7.7"):
+        assert ip not in text
+    assert [r["timestamp_utc"][17:19] for r in _rows(done)] == ["00", "02"]
+
+
+def test_an_interrupted_archive_run_is_finished_on_the_next_run(tmp_path: Path) -> None:
+    """Abbruch nach dem Ersetzen, vor dem Löschen der Quelle, plus liegengebliebene .tmp."""
+    archive = tmp_path / "archive"
+    src = _jsonl(archive / "api_request_audit.20261001T044000Z.jsonl", _archive_rows(5, pad=1))
+    _jsonl(archive / "api_request_audit.20261001T044000Z.noip.jsonl", _archive_rows(2, pad=1))
+    (archive / "api_request_audit.20261001T044000Z.noip.jsonl.tmp").write_text("{kaputt")
+    assert retention.strip_audit_archive_ips(archive) == 1
+    assert not src.exists()
+    assert not list(archive.glob("*.tmp"))
+    rows = _rows(archive / "api_request_audit.20261001T044000Z.noip.jsonl")
+    assert len(rows) == 5 and all("client_ip" not in r for r in rows)
+
+
+def test_one_unreadable_archive_does_not_stop_the_others_but_is_reported(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    (archive / "api_request_audit.20260901T044000Z.jsonl").mkdir(parents=True)  # unlesbar
+    _jsonl(archive / "api_request_audit.20261001T044000Z.jsonl", _archive_rows(3, pad=1))
+    with pytest.raises(retention.RetentionIncompleteError):
+        retention.strip_audit_archive_ips(archive)
+    assert (archive / "api_request_audit.20261001T044000Z.noip.jsonl").exists()
+    assert not (archive / "api_request_audit.20261001T044000Z.jsonl").exists()
+
+
+def test_small_rules_run_before_the_archives(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """Ein Abbruch in den großen Archiven darf die kleinen Fristen nicht mitreißen."""
+    order: list[str] = []
+    for name in (
+        "strip_audit_archive_ips",
+        "strip_demand_fingerprints",
+        "prune_cases",
+    ):
+        monkeypatch.setattr(retention, name, lambda *_a, _n=name, **_k: order.append(_n) or 0)
+    monkeypatch.setattr(invites, "prune", lambda **_k: order.append("invites") or 0)
+    retention.apply(tmp_path, now=_NOW)
+    assert order[-1] == "strip_audit_archive_ips"
+    assert set(order[:-1]) == {"strip_demand_fingerprints", "prune_cases", "invites"}
+
+
+def test_malformed_demand_lines_lose_their_fingerprint(tmp_path: Path) -> None:
+    path = tmp_path / "ln_demand_ledger.jsonl"
+    path.write_text(
+        json.dumps({"ts": _NOW.isoformat(), "event": "x", "requester_fp": "beef"})
+        + "\n"
+        + '{"ts": "2026-09-01T00:00:00+00:00", "requester_fp": "dead", "eve\n'
+        + '{"ts": "2026-09-01T00:00:00+00:00", "requester_fp": "ca\n',
+        encoding="utf-8",
+    )
+    retention.strip_demand_fingerprints(path, _NOW)
+    text = path.read_text(encoding="utf-8")
+    assert "dead" not in text and '"ca' not in text
+    assert json.loads(text.splitlines()[0])["requester_fp"] == "beef"  # jung, gültig: bleibt
+
+
+def test_overdue_reports_what_the_privacy_page_promises(tmp_path: Path) -> None:
+    """Selbstprüfung nach dem Lauf: grün heißt Zusage eingehalten, nicht nur „gelaufen“."""
+    old = (_NOW - timedelta(days=8)).isoformat()
+    _jsonl(tmp_path / "archive" / "api_request_audit.20261001T044000Z.jsonl", [{"x": 1}])
+    _jsonl(tmp_path / "ln_demand_ledger.jsonl", [{"ts": old, "requester_fp": "abcd"}])
+    _jsonl(tmp_path / "api_request_audit.jsonl", [{"timestamp_utc": old, "client_ip": "1.1.1.1"}])
+    assert retention.overdue(tmp_path, _NOW) == {
+        "audit_archives_with_ip": 1,
+        "demand_fingerprints_overdue": 1,
+        "live_audit_older_than_7d": 1,
+        "cases_overdue": 0,
+    }
+    retention.apply(tmp_path, now=_NOW)
+    _jsonl(tmp_path / "api_request_audit.jsonl", [{"timestamp_utc": _NOW.isoformat()}])
+    assert set(retention.overdue(tmp_path, _NOW).values()) == {0}
+
+
+def test_audit_rotate_exits_nonzero_when_a_rule_fails_or_is_overdue(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    monkeypatch.setattr(retention, "apply", lambda *_a, **_k: {"x": -1})
+    monkeypatch.setattr(retention, "overdue", lambda *_a, **_k: {"y": 0})
+    assert audit_rotate.main(["--apply", "--artifacts-dir", str(tmp_path)]) == 1
+    monkeypatch.setattr(retention, "apply", lambda *_a, **_k: {"x": 3})
+    monkeypatch.setattr(retention, "overdue", lambda *_a, **_k: {"y": 2})
+    assert audit_rotate.main(["--apply", "--artifacts-dir", str(tmp_path)]) == 1
+    monkeypatch.setattr(retention, "overdue", lambda *_a, **_k: {"y": 0})
+    assert audit_rotate.main(["--apply", "--artifacts-dir", str(tmp_path)]) == 0
 
 
 def test_apply_runs_every_rule_and_survives_a_failing_one(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
@@ -103,7 +255,10 @@ def test_apply_runs_every_rule_and_survives_a_failing_one(tmp_path: Path, monkey
 
 def test_api_audit_rotates_by_age_even_when_small(tmp_path: Path) -> None:
     rule = next(r for r in audit_rotate.ROTATION_RULES if r.filename == "api_request_audit.jsonl")
-    assert rule.keep_hours == 144 and rule.max_age_hours == 144
+    assert rule.keep_hours == rule.max_age_hours
+    assert timedelta(hours=rule.keep_hours) == retention.IP_RETENTION
+    # Täglicher Lauf: eine Zeile knapp unter der Grenze lebt noch 24 h + Laufzeit.
+    assert retention.IP_RETENTION + timedelta(days=1, hours=1) < retention.IP_PROMISE
     live = _jsonl(
         tmp_path / "api_request_audit.jsonl",
         [
