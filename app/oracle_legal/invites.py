@@ -26,6 +26,7 @@ import hmac
 import json
 import os
 import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,12 @@ _MAX_CODE_LEN = 64
 PARTY_THIRD = "third_party"
 PARTY_OPERATOR = "operator"
 _PARTIES = (PARTY_THIRD, PARTY_OPERATOR)
+#: Bereiche der bezahlten Oracle-Routen (oeffentlicher Name = telemetry scope).
+SCOPES = ("onchain-facts", "fee-series", "verdicts", "timestamp")
+#: Betriebsfertig fuer Einladungen (Operator-Entscheid E2, 02.10.2026). "timestamp" nur
+#: ausdruecklich: dort gilt die Zusage "Eigenerstattung nach 7 Tagen ohne Nachweis", deren
+#: Faelligkeit noch nicht automatisch verfolgt wird.
+READY_SCOPES = ("onchain-facts", "fee-series", "verdicts")
 
 
 def _hash(code: str) -> str:
@@ -84,10 +91,14 @@ def create(
     *,
     days: int = DEFAULT_DAYS,
     party: str = PARTY_THIRD,
+    scopes: Sequence[str] | None = None,
     now: datetime | None = None,
     path: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Neue Einladung; gibt den Klartext-Code (nur jetzt sichtbar) und den Eintrag zurück."""
+    """Neue Einladung; gibt den Klartext-Code (nur jetzt sichtbar) und den Eintrag zurück.
+
+    ``scopes``: erlaubte Bereiche; ohne Angabe die betriebsfertigen (:data:`READY_SCOPES`).
+    """
     path = path or INVITES_PATH
     label = " ".join(label.split())[:80]
     if not label:
@@ -96,6 +107,10 @@ def create(
         raise ValueError("Gültigkeit 1 bis 365 Tage.")
     if party not in _PARTIES:
         raise ValueError(f"Partei {party!r} unbekannt; erlaubt: {', '.join(_PARTIES)}.")
+    allowed = sorted(set(READY_SCOPES if scopes is None else scopes))
+    unknown = [s for s in allowed if s not in SCOPES]
+    if not allowed or unknown:
+        raise ValueError(f"Bereiche {unknown or '(leer)'} unbekannt; erlaubt: {', '.join(SCOPES)}.")
     now = now or datetime.now(UTC)
     code = secrets.token_urlsafe(16)
     entry = {
@@ -103,6 +118,7 @@ def create(
         "code_sha256": _hash(code),
         "label": label,
         "party": party,
+        "scopes": allowed,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(days=days)).isoformat(),
     }
@@ -135,9 +151,10 @@ def _end(entry: dict[str, Any]) -> datetime | None:
 def match(
     code: str | None, *, now: datetime | None = None, path: Path | None = None
 ) -> dict[str, Any] | None:
-    """Die gültige Einladung zum Code (``id``, ``party``) oder ``None``.
+    """Die gültige Einladung zum Code (``id``, ``party``, ``scopes``) oder ``None``.
 
-    Einladungen von vor dem 02.10.2026 tragen kein ``party`` und gelten als Dritte.
+    Einladungen von vor dem 02.10.2026 tragen kein ``party`` und gelten als Dritte, und
+    kein ``scopes`` -- dann ``None`` = alle Bereiche (rückwärtskompatibel).
     """
     path = path or INVITES_PATH
     if not code or len(code) > _MAX_CODE_LEN:
@@ -150,7 +167,12 @@ def match(
         end = _end(entry)
         if end is None or now >= end:
             return None
-        return {"id": entry["id"], "party": entry.get("party") or PARTY_THIRD}
+        scopes = entry.get("scopes")
+        return {
+            "id": entry["id"],
+            "party": entry.get("party") or PARTY_THIRD,
+            "scopes": sorted(scopes) if isinstance(scopes, list) else None,
+        }
     return None
 
 
@@ -195,6 +217,8 @@ __all__ = [
     "PARTY_OPERATOR",
     "PARTY_THIRD",
     "QUERY",
+    "READY_SCOPES",
+    "SCOPES",
     "code_from_request",
     "create",
     "is_valid",
