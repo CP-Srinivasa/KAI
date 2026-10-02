@@ -66,6 +66,10 @@ logger = logging.getLogger(__name__)
 # test seam.
 _mint_limiter: MintLimiter | None = None
 ONCHAIN_FACTS_MAX_AGE_SECONDS = CHAIN_CACHE_TTL_SECONDS * 2
+# Der Chain-Cache frischt sich nur auf Anfrage auf: der erste Abruf nach einer Ruhephase
+# wartet so lange auf die gerade angestossene Auffrischung, statt 503 'stale' zu liefern
+# (02.10.2026). Kurz genug fuer HTTP-Clients, lang genug fuer eine normale RPC-Runde.
+ONCHAIN_FACTS_REFRESH_WAIT_SECONDS = 8.0
 _timestamp_submit_slots = asyncio.Semaphore(2)
 # Oracle invoices expire after 300 s (``LndRestClient.add_invoice`` default expiry).
 _INVOICE_EXPIRY_MINUTES = 5
@@ -316,10 +320,10 @@ def _paid_delivery(request: Request, scope: str) -> Iterator[None]:
 @router.api_route("/onchain-facts", methods=_GET_AND_HEAD)
 async def onchain_facts(request: Request) -> dict[str, Any]:
     """UC-4: verifiable on-chain facts from KAI's own node (L402-paid)."""
-    from app.chain.cache import get_cached_chain_status
+    from app.chain.cache import get_fresh_chain_status
 
     _require_oracle_enabled()
-    status, age = await get_cached_chain_status()
+    status, age = await get_fresh_chain_status(ONCHAIN_FACTS_REFRESH_WAIT_SECONDS)
     state = str(getattr(status, "state", "unknown"))
     blocks = getattr(status, "blocks", 0)
     headers = getattr(status, "headers", 0)
