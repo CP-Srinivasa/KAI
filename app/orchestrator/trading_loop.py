@@ -17,6 +17,7 @@ from app.core.l2_candidate_context import bind_candidate
 from app.core.settings import AppSettings, get_settings
 from app.execution.models import PaperFill, PaperOrder, PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
+from app.execution.price_evidence import quote_evidence
 from app.execution.real_analysis_paper import (
     is_real_analysis_source,
     is_synthetic_probe_document,
@@ -69,11 +70,6 @@ _PAPER_EXECUTION_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _ALLOWED_CONTROL_MODES = frozenset({ExecutionMode.PAPER, ExecutionMode.SHADOW})
 
 _TV_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH")
-
-# Source taxonomy (SOURCE_* constants + derive_autonomous_signal_source +
-# resolve_signal_source) now lives in app/orchestrator/signal_source.py; the
-# names this module uses are imported above.
-
 
 # Sprint S7 god-file ratchet (D-234): paper-entry accounting lives in
 # app/execution/paper_entry_accounting.py now — ONE opening-fill truth shared
@@ -736,7 +732,9 @@ class TradingLoop:
                 position_side=position_side,
                 regime=self._entry_regime_label(symbol, started_at),
             )
-            fill = self._exec.fill_order(order, current_price=signal.entry_price)
+            fill = self._exec.fill_order(
+                order, signal.entry_price, price_evidence=quote_evidence(market_data)
+            )
         except Exception as exc:  # noqa: BLE001
             notes.append(f"execution_error:{exc}")
             cycle = self._build_cycle(
@@ -1125,7 +1123,9 @@ class TradingLoop:
                 document_id=signal.source_document_id or "",
                 regime=self._entry_regime_label(symbol, started_at),
             )
-            fill = self._exec.fill_order(order, current_price=live_price)
+            fill = self._exec.fill_order(
+                order, live_price, price_evidence=quote_evidence(market_data)
+            )
         except Exception as exc:  # noqa: BLE001
             notes.append(f"execution_error:{exc}")
             cycle = self._build_cycle(

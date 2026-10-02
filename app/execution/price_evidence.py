@@ -8,7 +8,44 @@ mehr.
 
 from __future__ import annotations
 
-__all__ = ["_age_ms_at_fill", "_finite_or_none"]
+import math
+
+from app.execution.models import PriceEvidence
+
+__all__ = ["_age_ms_at_fill", "_finite_or_none", "quote_evidence"]
+
+
+def quote_evidence(point: object) -> PriceEvidence:
+    """Beleg einer Kursquote (``MarketDataPoint``) fuer den Fill, der gegen sie laeuft.
+
+    EINE Regel fuer Einstieg und Monitor-Close. Vorher gab nur der Positionsmonitor
+    einen Beleg mit; Einstiege standen mit leerer ``price_source`` im Audit. So
+    blieb der MATIC-Einstieg vom 23.09.2026 zu einem eingefrorenen BitMEX-Kurs
+    (0.40875) ohne Spur seiner Quelle.
+
+    ``freshness_seconds`` ist das Alter der Quote beim Abruf. Fehlt es, bleibt
+    ``age_ms`` None — fehlende Evidenz wird ausgewiesen, nicht geraten.
+    """
+    age_s = getattr(point, "freshness_seconds", None)
+    return PriceEvidence(
+        source=str(getattr(point, "source", "") or ""),
+        observed_at_utc=str(getattr(point, "timestamp_utc", "") or ""),
+        observed_price=_price_or_none(getattr(point, "price", None)),
+        age_ms=(float(age_s) * 1000.0 if isinstance(age_s, (int, float)) else None),
+        is_stale=bool(getattr(point, "is_stale", False)),
+        # Zweitanbieter-Bestaetigung (2026-09-23): nur sie laesst einen Close
+        # ueber dem Phantom-Cap zu (app/execution/close_guard.py).
+        corroborated_by=str(getattr(point, "corroborated_by", "") or ""),
+        corroborating_price=_price_or_none(getattr(point, "corroborating_price", None)),
+    )
+
+
+def _price_or_none(value: object) -> float | None:
+    """Ein Kurs ist endlich und groesser 0 — sonst keiner."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    out = float(value)
+    return out if math.isfinite(out) and out > 0 else None
 
 
 def _finite_or_none(value: object) -> float | None:
