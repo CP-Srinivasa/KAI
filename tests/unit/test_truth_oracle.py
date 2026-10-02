@@ -1321,3 +1321,37 @@ def test_every_paid_get_route_also_answers_head() -> None:
     }
     assert set(methods) == paid
     assert all({"GET", "HEAD"} <= m for m in methods.values()), methods
+
+
+def test_onchain_facts_after_idle_waits_for_the_refresh(client: TestClient) -> None:
+    """02.10.2026: der erste (bezahlte) Abruf nach >2 min Ruhe bekam 503 'stale' --
+    und zaehlte als 'bezahlt, nicht geliefert'. Jetzt wartet die Route kurz auf die
+    laufende Auffrischung des (lazy) Chain-Caches."""
+    from app.chain import cache as chain_cache
+
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
+    chain_cache.reset_cache_for_tests()
+    chain_cache._cached = _healthy_chain(blocks=1)  # type: ignore[assignment]
+    chain_cache._cached_at = time.monotonic() - chain_cache.CHAIN_CACHE_TTL_SECONDS * 5
+    try:
+        with (
+            patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+            patch.object(
+                chain_cache,
+                "get_settings",
+                return_value=SimpleNamespace(chain=SimpleNamespace(enabled=True)),
+            ),
+            patch.object(
+                chain_cache,
+                "get_chain_status",
+                AsyncMock(return_value=_healthy_chain(blocks=954999)),
+            ),
+        ):
+            r = client.get(
+                "/oracle/onchain-facts",
+                headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
+            )
+    finally:
+        chain_cache.reset_cache_for_tests()
+    assert r.status_code == 200, r.text
+    assert r.json()["block_height"] == 954999

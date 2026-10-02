@@ -87,6 +87,30 @@ async def get_cached_chain_status() -> tuple[ChainStatus, float | None]:
     return _cached, age
 
 
+async def get_fresh_chain_status(max_wait_s: float) -> tuple[ChainStatus, float | None]:
+    """Like :func:`get_cached_chain_status`, but waits up to ``max_wait_s`` for a refresh.
+
+    For the paid Oracle path (UC-4) only. The cache refreshes lazily, on request: after
+    a quiet spell the first caller saw the stale value and got 503 ``stale`` -- for a
+    paying client that was counted as "paid, not delivered" (02.10.2026). Here a stale
+    or cold cache waits, bounded, for the single-flight refresh it just started. The
+    refresh is shielded: giving up does not cancel it, a later call still profits. The
+    dashboard keeps the never-blocking variant (bitcoind can hold ``cs_main`` for
+    minutes).
+    """
+    status, age = await get_cached_chain_status()
+    if age is not None and age <= CHAIN_CACHE_TTL_SECONDS:
+        return status, age
+    task = _refresh_task
+    if task is None or task.done():
+        return status, age
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=max_wait_s)
+    except TimeoutError:
+        return status, age
+    return await get_cached_chain_status()
+
+
 def reset_cache_for_tests() -> None:
     """Clear module state (test seam only; not used in production paths)."""
     global _cached, _cached_at, _refresh_task
@@ -95,4 +119,9 @@ def reset_cache_for_tests() -> None:
     _refresh_task = None
 
 
-__all__ = ["CHAIN_CACHE_TTL_SECONDS", "get_cached_chain_status", "reset_cache_for_tests"]
+__all__ = [
+    "CHAIN_CACHE_TTL_SECONDS",
+    "get_cached_chain_status",
+    "get_fresh_chain_status",
+    "reset_cache_for_tests",
+]
