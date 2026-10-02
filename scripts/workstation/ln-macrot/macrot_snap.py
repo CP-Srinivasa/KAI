@@ -102,6 +102,37 @@ def boltz_state() -> dict:
     }
 
 
+def pool_state() -> dict:
+    """Pool fuer die Abbruchbedingungen -- belegt statt angenommen.
+
+    - Der Auctioneer antwortet: offene Konten ueber ``pool accounts list``.
+    - Der Auctioneer ist nicht erreichbar (02.10.2026: litd erreicht ihn ueber Tor, "tor host
+      is unreachable"): ``pool accounts list`` holt zuerst die Auctioneer-Bedingungen und
+      scheitert. Dann zaehlt die Wallet-Historie von lnd: ein Pool-Konto wird immer von poold
+      aus der lnd-Wallet finanziert, und poold beschriftet diese Transaktionen ("poold -- ...").
+      Keine solche Transaktion = nie ein Konto. Gibt es eine, bleibt es beim Abbruch.
+    - Jeder andere Fehler bleibt ein Abbruch.
+    """
+    try:
+        accs = run(["sudo", "-u", "lit", "pool", *LIT, "accounts", "list"]).get("accounts") or []
+    except RuntimeError as exc:
+        if "auctioneer" not in str(exc):
+            raise
+    else:
+        return {"mode": "pool", "open_accounts": sum(a.get("state") != "CLOSED" for a in accs)}
+    txs = run(["lncli", "listchaintxns"]).get("transactions") or []
+    pooled = [t for t in txs if "pool" in str(t.get("label", "")).lower()]
+    if pooled:
+        raise RuntimeError(
+            f"Pool-Auctioneer nicht erreichbar und {len(pooled)} Pool-Transaktion(en) in der "
+            "Wallet -- offene Konten nicht pruefbar"
+        )
+    return {
+        "mode": f"lnd-Wallet (Auctioneer nicht erreichbar, 0 Pool-Transaktionen in {len(txs)})",
+        "open_accounts": 0,
+    }
+
+
 def take() -> dict:
     s: dict = {}
 
@@ -190,8 +221,7 @@ def take() -> dict:
         return {"autoloop": bool(params.get("autoloop")), "open_swaps": len(open_)}
 
     def pool():
-        accs = run(["sudo", "-u", "lit", "pool", *LIT, "accounts", "list"]).get("accounts") or []
-        return {"open_accounts": sum(a.get("state") != "CLOSED" for a in accs)}
+        return pool_state()
 
     def macids():
         return run(["lncli", "listmacaroonids"]).get("root_key_ids") or []
