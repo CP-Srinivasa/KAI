@@ -367,6 +367,61 @@ def test_transport_log_zeile_ohne_zeitstempel_hat_kein_pruefdatum(tmp_path: Path
     assert log["last"]["litellm"]["null_reasons"]["verified_at"]
 
 
+# Die Pi rotiert ``logs/*.log`` taeglich um Mitternacht (copytruncate, delaycompress).
+# Die Beleg-Zeile schreibt der Transport nur beim Start; ohne Blick in die Rotation
+# verliert jede Route nach jeder Mitternacht ihren Versionsbeleg (02.10.2026).
+ROTIERT = (
+    "2026-10-01T19:15:15Z TRANSPORT_VERIFIED name=litellm version=1.102.1 "
+    "tree=/home/ubuntu/transport/litellm/1.102.1-8fe49f6f manifest=8fe49f6fd0352080\n"
+)
+
+
+def _rotiert(tmp_path: Path, rows: list[object], *, aktuell: str) -> dict[str, Any]:
+    telemetry = write_jsonl(tmp_path / "llm_telemetry.jsonl", rows)
+    log = write_text(tmp_path / "litellm.err.log", aktuell)
+    return build_report(
+        telemetry=[telemetry], transport_log=log, now=NOW, max_age_hours=168.0
+    ).to_dict()
+
+
+def test_beleg_zeile_ueberlebt_die_mitternachts_rotation(tmp_path: Path) -> None:
+    write_text(tmp_path / "litellm.err.log.1", "INFO: alt\n" + ROTIERT)
+    bericht = _rotiert(tmp_path, _vollstaendig(), aktuell="ERROR: No api key passed in.\n")
+    litellm = bericht["routes"]["standard"]["transports"]["litellm"]
+    assert litellm["version"]["transport_version"] == "1.102.1"
+    assert litellm["version"]["transport_manifest"] == "8fe49f6fd0352080"
+    log = bericht["inputs"]["transport_log"]
+    assert log["label"].endswith("litellm.err.log.1")
+    assert log["verified_lines"] == 1
+
+
+def test_komprimierte_rotation_wird_gelesen(tmp_path: Path) -> None:
+    import gzip
+
+    write_text(tmp_path / "litellm.err.log.1", "INFO: nur Rauschen\n")
+    (tmp_path / "litellm.err.log.2.gz").write_bytes(gzip.compress(ROTIERT.encode("utf-8")))
+    bericht = _rotiert(tmp_path, _vollstaendig(), aktuell="")
+    log = bericht["inputs"]["transport_log"]
+    assert log["label"].endswith("litellm.err.log.2.gz")
+    assert log["last"]["litellm"]["verified_at"] == "2026-10-01T19:15:15+00:00"
+
+
+def test_aktuelle_datei_schlaegt_die_rotation(tmp_path: Path) -> None:
+    write_text(tmp_path / "litellm.err.log.1", ROTIERT)
+    bericht = _rotiert(tmp_path, _vollstaendig(), aktuell=TRANSPORT_LOG)
+    log = bericht["inputs"]["transport_log"]
+    assert log["label"].endswith("litellm.err.log")
+    assert log["last"]["litellm"]["version"] == "1.99.0"
+
+
+def test_ohne_beleg_auch_in_der_rotation_bleibt_es_unbelegt(tmp_path: Path) -> None:
+    write_text(tmp_path / "litellm.err.log.1", "INFO: nur Rauschen\n")
+    bericht = _rotiert(tmp_path, _vollstaendig(), aktuell="")
+    litellm = bericht["routes"]["standard"]["transports"]["litellm"]
+    assert litellm["version"]["transport_version"] is None
+    assert bericht["inputs"]["transport_log"]["verified_lines"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Eval-Report v1 und v2: uebernommen, nicht neu bewertet.
 # ---------------------------------------------------------------------------

@@ -157,6 +157,24 @@ async def test_eine_undatierte_zeile_hat_kein_pruefdatum_aber_einen_grund(tmp_pa
     assert "Zeitstempel" in snap["null_reasons"]["transport.verified_at"]
 
 
+async def test_die_beleg_zeile_ueberlebt_die_log_rotation(tmp_path: Path) -> None:
+    # Mitternachts-Rotation (copytruncate): die Startzeile steht dann in ``.1``.
+    paths = _paths(tmp_path, log="ERROR: No api key passed in.\n", report=_bericht())
+    (tmp_path / "litellm.err.log.1").write_text(DATIERT, encoding="utf-8")
+    transport = (await _snapshot(tmp_path, paths=paths))["transport"]
+    assert transport["manifest"] == "8fe49f6fd0352080"
+    assert transport["verified_at"] == "2026-09-30T16:21:34+00:00"
+
+
+async def test_auch_eine_komprimierte_rotation_belegt_die_version(tmp_path: Path) -> None:
+    import gzip
+
+    paths = _paths(tmp_path, log="", report=_bericht())
+    (tmp_path / "litellm.err.log.2.gz").write_bytes(gzip.compress(DATIERT.encode("utf-8")))
+    transport = (await _snapshot(tmp_path, paths=paths))["transport"]
+    assert transport["version"] == "1.102.1"
+
+
 async def test_ohne_log_ist_die_version_unbelegt(tmp_path: Path) -> None:
     snap = await _snapshot(tmp_path, paths=_paths(tmp_path, log=None, report=_bericht()))
     assert snap["transport"]["version"] is None

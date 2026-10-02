@@ -6,6 +6,7 @@ from typing import Any
 
 from app.ai.audit import analysis_prompt_scope
 from app.ai.config import InferenceSettings
+from app.ai.models import total_cost_usd
 from app.ai.runtime import LiteLLMRequest, invoke
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.prompts import (
@@ -31,7 +32,11 @@ _MAX_TEXT_CHARS = 6000
 #: dann `Invalid JSON: EOF while parsing a string` -- wer das liest, sucht beim
 #: Modell statt beim Budget. Der Wert hat deshalb Luft nach oben: ein hoher
 #: Deckel kostet nichts, weil nur erzeugte Token bezahlt werden.
-MAX_TOKENS = 4096
+#:
+#: 02.10.2026, 115 reale Dokumente, `deepseek/deepseek-v4-flash`: Completion bis
+#: 3881, Denken bis 3542 -- EIN Lauf schnitt bei 4096 ab und fiel auf gpt-4o zurueck
+#: (doppelt bezahlt). Daher der doppelte Spitzenbedarf.
+MAX_TOKENS = 8192
 
 
 def parse_analysis_body(body: dict[str, Any], *, user_prompt: str) -> LLMAnalysisOutput:
@@ -143,8 +148,16 @@ class ControlPlaneAnalysisProvider(BaseAnalysisProvider):
         output = routed.value
         if routed.transport == "litellm" and routed.outcome is not None:
             selected = routed.outcome.authoritative_attempt
-            if selected is not None and selected.trace.identity_proven:
-                output.provider_used = selected.trace.actual_provider
+            belegt = selected.trace if selected is not None else None
+            modell: str | None = None
+            if belegt is not None and belegt.identity_proven:
+                output.provider_used = belegt.actual_provider
+                modell = belegt.actual_model
+            output.mark_routed(
+                transport="litellm",
+                model=modell,
+                cost_usd=total_cost_usd([a.trace for a in routed.outcome.litellm_attempts]),
+            )
         return output
 
 

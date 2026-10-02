@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from app.core.enums import MarketScope, SentimentLabel
 
@@ -49,6 +49,33 @@ class LLMAnalysisOutput(BaseModel):
     raw_response: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+
+    # Welcher Transport die Antwort WIRKLICH lieferte -- gesetzt von der
+    # Steuerebene (``app/analysis/ai_control_plane.py``), gelesen von der
+    # aeusseren Telemetriezeile. Privat: nicht im Antwortschema, das als
+    # ``response_format`` an den Anbieter geht, und aus Modell-JSON nicht
+    # befuellbar. Ohne das trug die Huelle eines DeepSeek-Aufrufs das Modell
+    # und den Listenpreis des direkten Anbieters (02.10.2026).
+    _routed_transport: str | None = PrivateAttr(default=None)
+    _routed_model: str | None = PrivateAttr(default=None)
+    _routed_cost_usd: float | None = PrivateAttr(default=None)
+
+    def mark_routed(self, *, transport: str, model: str | None, cost_usd: float | None) -> None:
+        self._routed_transport = transport
+        self._routed_model = model or None
+        self._routed_cost_usd = cost_usd
+
+    @property
+    def routed_transport(self) -> str | None:
+        return self._routed_transport
+
+    @property
+    def routed_model(self) -> str | None:
+        return self._routed_model
+
+    @property
+    def routed_cost_usd(self) -> float | None:
+        return self._routed_cost_usd
 
 
 class BaseAnalysisProvider(ABC):

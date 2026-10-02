@@ -141,6 +141,26 @@ async def test_kai_chat_primary_uses_control_plane(monkeypatch: pytest.MonkeyPat
     assert result.source == "litellm"
 
 
+async def test_kai_chat_litellm_deckel_laesst_dem_denken_luft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Denkende Modelle (deepseek-v4-flash: Denken im Median 1262 Token je Analyse,
+    # 02.10.2026) zaehlen das Denken gegen max_tokens. 150 hiesse: abgeschnitten,
+    # Rueckfall auf gpt-4o, doppelt bezahlt. Die Kuerze der Antwort regelt der Prompt.
+    from app.messaging import kai_chat_engine
+
+    aufruf = AsyncMock(return_value=LiteLLMResponse(trace=_trace(), body=_chat_body("Klar.")))
+    monkeypatch.setattr("app.ai.runtime.call_litellm_async", aufruf)
+    configured = SimpleNamespace(
+        providers=SimpleNamespace(openai_api_key="direct-key", openai_model="gpt-4o"),
+        ai_gateway=_settings("standard"),
+    )
+    monkeypatch.setattr(kai_chat_engine, "get_settings", lambda: configured)
+    monkeypatch.setattr("openai.AsyncOpenAI", MagicMock(side_effect=AssertionError))
+    await kai_chat_engine._respond_smalltalk("Hallo", "de")
+    assert aufruf.call_args.kwargs["payload"]["max_tokens"] >= 2048
+
+
 async def test_voice_stt_primary_uses_same_control_plane(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 ChatIntent = Literal["trading", "smalltalk"]
 ChatSource = Literal["system", "gpt4o", "litellm", "fallback"]
 
+#: Deckel der LiteLLM-Anfrage. Denkende Modelle zaehlen das Denken gegen
+#: max_tokens (deepseek-v4-flash, 02.10.2026: Denken im Median 1262 Token je
+#: Analyse) -- mit den 150 des Direktpfads schnitte fast jede Antwort ab und fiele
+#: auf gpt-4o zurueck, doppelt bezahlt. Die Kuerze regelt der Persona-Prompt;
+#: bezahlt wird nur Erzeugtes.
+_LITELLM_CHAT_MAX_TOKENS = 2048
+
 
 @dataclass(frozen=True)
 class ChatReply:
@@ -281,7 +288,11 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
             direct_model=model,
             litellm=LiteLLMRequest(
                 parser=parse_litellm,
-                payload={"messages": messages, "max_tokens": 150, "temperature": 0.7},
+                payload={
+                    "messages": messages,
+                    "max_tokens": _LITELLM_CHAT_MAX_TOKENS,
+                    "temperature": 0.7,
+                },
             ),
             settings=settings,
         )

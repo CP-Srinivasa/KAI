@@ -690,11 +690,19 @@ class AnalysisPipeline:
                 source=source,
             )
             raise
-        laufmodell = _resolve_runtime_model_name(self._provider, output)
+        # Hat die Steuerebene ueber LiteLLM getragen, nennt SIE Modell und Preis --
+        # nicht der direkte Anbieter, den sie umhuellt. Sonst trug die Huelle eines
+        # DeepSeek-Aufrufs ``gpt-4o`` und dessen Listenpreis (02.10.2026).
+        if output.routed_transport is not None:
+            laufmodell = output.routed_model
+        else:
+            laufmodell = _resolve_runtime_model_name(self._provider, output)
         record_llm_call(
             provider=_telemetry_provider(output.provider_used or name, self._provider, source),
             model=laufmodell or "",
             actual_model=laufmodell,
+            transport=output.routed_transport,
+            cost_usd=output.routed_cost_usd,
             use_case=resolve_use_case("analysis"),
             ok=True,
             latency_ms=(monotonic() - started) * 1000.0,
