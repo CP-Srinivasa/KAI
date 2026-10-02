@@ -23,6 +23,8 @@ PROOF_DIR="$ROOT/artifacts/ops/backup_drill"
 AUDIT_FILE="$ROOT/artifacts/backup_audit.jsonl"
 BACKUP_SCRIPT="$ROOT/scripts/kai_backup_artifacts.sh"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+# USB-Kaltreserve (seit 2026-10-02 verschluesselt, deploy/bin/standby_to_usb.sh).
+USB_STANDBY_DIR="${KAI_DRILL_USB_DIR:-/mnt/kai-data/kai-standby}"
 
 START_EPOCH="$(date -u +%s)"
 TS_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -37,6 +39,9 @@ TMP_DIR=""
 VALIDATION_JSON=""
 STATUS="FAIL"
 REASON=""
+USB_STATUS="NOT_RUN"
+USB_ARCHIVE=""
+USB_DETAIL=""
 
 cleanup() {
     if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
@@ -62,13 +67,14 @@ write_proof() {
     mkdir -p "$PROOF_DIR"
     if ! "$PYTHON_BIN" - "$PROOF_PATH" "$STATUS" "$REASON" "$ARCHIVE" \
             "$ARCHIVE_SHA256" "$TS_UTC" "$duration_s" "$HOST" \
-            "${VALIDATION_JSON:-}" <<'PY'
+            "${VALIDATION_JSON:-}" "$USB_STATUS" "$USB_ARCHIVE" "$USB_DETAIL" <<'PY'
 import json
 import os
 import sys
 from pathlib import Path
 
 proof_path, status, reason, archive, archive_sha256, ts_utc, duration_s, host, validation_path = sys.argv[1:10]
+usb_status, usb_archive, usb_detail = sys.argv[10:13]
 payload = {
     "schema": "backup_restore_drill/v1",
     "ts_utc": ts_utc,
@@ -88,6 +94,9 @@ payload = {
     "off_pi_redundancy": "NOT_CLAIMED",
     "duration_s": int(duration_s),
     "host": host,
+    # Zweiter, unabhaengiger Beleg: der neueste USB-Datensatz. ABSENT = kein Stick
+    # oder noch kein verschluesselter Satz (kein Befund), NOT_RUN = Drill brach vorher ab.
+    "usb_standby": {"status": usb_status, "archive": usb_archive, "detail": usb_detail},
 }
 if validation_path:
     try:
@@ -465,6 +474,46 @@ if fail_closed_reason or missing or mismatches:
 PY
 then
     fail 6 "content mismatch"
+fi
+
+# USB-Kaltreserve: der neueste Datensatz (data_*.tar.gz.enc) muss zu seiner
+# Pruefsumme passen und sich mit derselben Passphrase vollstaendig auflisten
+# lassen (tar liest bis zum Ende, also auch die gzip-Pruefsumme). Kein Stick oder
+# noch kein verschluesselter Satz ist ABSENT und kein Befund -- der Drill gilt
+# vor allem der Artefakt-Sicherung. Ein vorhandener, aber kaputter Satz IST einer.
+check_usb_standby() {
+    local newest list
+    newest="$(ls -1t "$USB_STANDBY_DIR"/data_*.tar.gz.enc 2>/dev/null | head -n 1)"
+    if [[ -z "$newest" ]]; then
+        USB_STATUS="ABSENT"
+        USB_DETAIL="kein verschluesselter Datensatz unter $USB_STANDBY_DIR"
+        return 0
+    fi
+    USB_ARCHIVE="$newest"
+    if [[ ! -f "$newest.sha256" ]] \
+            || ! (cd "$(dirname "$newest")" && sha256sum -c --status "$(basename "$newest").sha256"); then
+        USB_STATUS="FAIL"
+        USB_DETAIL="Pruefsumme fehlt oder passt nicht"
+        return 1
+    fi
+    list="$TMP_DIR/usb_members.txt"
+    if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in "$newest" \
+            -pass "env:KAI_BACKUP_PASSPHRASE" 2>/dev/null | tar -tzf - >"$list" 2>/dev/null; then
+        USB_STATUS="FAIL"
+        USB_DETAIL="entschluesseln oder auflisten gescheitert"
+        return 1
+    fi
+    if ! grep -qE '^(\./)?data(/|$)' "$list" || ! grep -qE '^(\./)?artifacts(/|$)' "$list"; then
+        USB_STATUS="FAIL"
+        USB_DETAIL="data/ oder artifacts/ fehlt im Satz"
+        return 1
+    fi
+    USB_STATUS="VERIFIED"
+    USB_DETAIL="$(wc -l <"$list" | tr -d ' ') Eintraege"
+}
+
+if ! check_usb_standby; then
+    fail 6 "usb standby: $USB_DETAIL"
 fi
 
 STATUS="PASS"

@@ -33,9 +33,18 @@ Jeder Pfad schreibt `artifacts/ops/backup_drill/<UTC-ts>.json` mit festem Schema
   "files_missing": [],
   "sha256_mismatch": [],
   "duration_s": 2,
-  "host": "kai-pi5"
+  "host": "kai-pi5",
+  "usb_standby": {"status": "VERIFIED", "archive": "/mnt/kai-data/kai-standby/data_<ts>.tar.gz.enc", "detail": "1234 Eintraege"}
 }
 ```
+
+`usb_standby` (seit 2026-10-02): Der Drill prueft zusaetzlich den neuesten verschluesselten
+Datensatz der USB-Kaltreserve. Er muss zu seiner `.sha256` passen, sich mit
+`KAI_BACKUP_PASSPHRASE` vollstaendig auflisten lassen und `data/` sowie `artifacts/` enthalten.
+`ABSENT` bedeutet, dass kein Stick oder noch kein verschluesselter Satz da ist; das ist kein
+Befund. Ein vorhandener, aber kaputter Satz ist einer: `FAIL`, Exit 6. `NOT_RUN` heisst, der
+Drill brach vorher ab. Pfad-Override fuer Tests: `KAI_DRILL_USB_DIR`. Wiederherstellung vom
+Stick: `deploy/standby/RESTORE_FROM_USB.md`.
 
 Wenn `backup_audit.jsonl` spaeter per-file-Hashes schreibt, nutzt der Drill diese
 als Erwartung. Bis dahin nimmt er die aktuelle explizite Quellliste aus

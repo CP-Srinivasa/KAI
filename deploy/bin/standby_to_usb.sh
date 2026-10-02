@@ -43,9 +43,23 @@
 #
 # exfat note: no Unix perms/symlinks on the FS itself, but tar PRESERVES them
 # inside the archive, so .venv symlinks + file modes survive the round-trip.
-# Secrets (.env, session) land plaintext-in-archive on the USB -- acceptable: the
-# USB shares the Pi's physical trust boundary. The OFF-SITE copy (OneDrive) is the
-# encrypted one. Do NOT carry this USB off-premises unencrypted.
+#
+# VERSCHLUESSELT SEIT 2026-10-02 (Operator-Entscheid). Vorher lagen .env,
+# Telegram-Sitzung und IP-haltige Zugriffsprotokolle im Klartext auf dem Stick --
+# "gleiche physische Vertrauensgrenze" stimmte, solange der Stick steckt, aber er
+# ist genau das Teil, das man abzieht, verleiht oder entsorgt, und die
+# Datenschutzseite sagt "verschluesselte Sicherungen". Jetzt:
+#   * jedes Archiv entsteht als tar | openssl direkt auf dem Stick, im selben
+#     Format wie Vault und Pi-Tagesarchive (aes-256-cbc, PBKDF2, 200 000 Runden,
+#     KAI_BACKUP_PASSPHRASE) -- Klartext beruehrt den Stick nie;
+#   * jedes Archiv wird sofort entschluesselt und vollstaendig gelistet, erst dann
+#     bekommt es seinen Namen und eine .sha256 daneben;
+#   * fehlt die Passphrase, wird NICHTS geschrieben und der Lauf endet rot;
+#   * die Passphrase wird aus der .env GELESEN, nie `source`d: dieses Skript laeuft
+#     als root, die .env gehoert `ubuntu` -- sourcen hiesse, fremden Code als root
+#     auszufuehren;
+#   * nach einem erfolgreichen Lauf loescht das Skript die alten Klartext-Saetze
+#     seiner Stufe selbst.
 set -euo pipefail
 
 MODE="${1:?usage: standby_to_usb.sh system|data}"
@@ -67,6 +81,9 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 LOG=$USB/standby.log
 
 DEPLOY_MARKER="$STATE_ROOT/artifacts/runtime/deployment_marker.json"
+ENV_FILE="$REPO/.env"
+RESTORE_DOC="$REPO/deploy/standby/RESTORE_FROM_USB.md"
+PASS=""
 
 log() { echo "$(date -u +%FT%TZ)  [$MODE] $*" | tee -a "$LOG" >&2; }
 
@@ -78,16 +95,88 @@ fail() {
     exit 1
 }
 
-# tar over a LIVE tree: the running bot appends to JSONL while we read, so tar
-# returns 1 ("file changed as we read it"). That is benign for an append-only
-# snapshot (worst case a partial trailing line). Accept 0 and 1; fail only on >=2.
-tar_snapshot() {
-    local out=$1; shift
-    local rc=0
-    tar czf "$out" "$@" 2>>"$LOG" || rc=$?
-    if [ "$rc" -ge 2 ]; then log "FAIL: tar rc=$rc for $out"; return "$rc"; fi
-    [ "$rc" -eq 1 ] && log "note: tar rc=1 (live file changed during read) -- accepted"
-    return 0
+# Passphrase LESEN, nicht sourcen (root liest eine ubuntu-Datei; `. .env` wuerde
+# jede Kommandosubstitution darin als root ausfuehren). Gleiche Semantik wie das
+# Vault fuer einfache Werte: KEY=wert, optional in "..." oder '...'.
+read_passphrase() {
+    local line
+    [ -r "$ENV_FILE" ] || return 1
+    line="$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?KAI_BACKUP_PASSPHRASE=' "$ENV_FILE" || true)"
+    line="${line#*KAI_BACKUP_PASSPHRASE=}"
+    line="${line%$'\r'}"
+    case "$line" in
+        \"*\") line="${line#\"}"; line="${line%\"}" ;;
+        \'*\') line="${line#\'}"; line="${line%\'}" ;;
+    esac
+    PASS="$line"
+    [ "${#PASS}" -ge 32 ]
+}
+
+# Entschluesseln und VOLLSTAENDIG auflisten. `tar tzf -` liest bis zum Ende, prueft
+# also auch die gzip-Pruefsumme. Kein `grep -q` in dieser Pipe (siehe archive_has).
+list_sealed() {
+    local archive=$1 cache=$2 st
+    set +e
+    KAI_STANDBY_PASS="$PASS" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+        -pass env:KAI_STANDBY_PASS -in "$archive" 2>>"$LOG" \
+        | tar tzf - > "$cache" 2>>"$LOG"
+    st=("${PIPESTATUS[@]}")
+    set -e
+    [ "${st[0]}" -eq 0 ] && [ "${st[1]}" -eq 0 ] && [ -s "$cache" ]
+}
+
+# seal <name> <tar-argumente...>: verschluesselt schreiben, pruefen, erst dann fertig.
+#
+# tar | openssl landet als <name>.part auf dem Stick. tar ueber einen LAUFENDEN
+# Baum endet mit 1 ("file changed as we read it") -- fuer append-only-Stroeme
+# harmlos (schlimmstenfalls eine halbe letzte Zeile); 0 und 1 gelten, ab 2 und
+# bei jedem openssl-Fehler ist der Satz verworfen. Danach die Probe
+# (list_sealed); die Liste bleibt fuer archive_has im Cache. Erst nach bestandener
+# Probe entstehen <name>.sha256 und der fertige Name. Gibt != 0 zurueck statt
+# abzubrechen: der Aufrufer kennt den passenden BACKUP_FAIL-Grund.
+seal() {
+    local name=$1 st
+    shift
+    local part="$USB/$name.part" cache="$_LISTING_DIR/$name.list"
+    rm -f "$part"
+    set +e
+    tar czf - "$@" 2>>"$LOG" \
+        | KAI_STANDBY_PASS="$PASS" openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+            -pass env:KAI_STANDBY_PASS -out "$part" 2>>"$LOG"
+    st=("${PIPESTATUS[@]}")
+    set -e
+    if [ "${st[0]}" -ge 2 ] || [ "${st[1]}" -ne 0 ]; then
+        log "FAIL: tar rc=${st[0]} openssl rc=${st[1]} for $name"
+        rm -f "$part"
+        return 1
+    fi
+    if [ "${st[0]}" -eq 1 ]; then
+        log "note: tar rc=1 (live file changed during read) -- accepted"
+    fi
+    if ! list_sealed "$part" "$cache"; then
+        log "FAIL: Probe (entschluesseln + auflisten) fuer $name"
+        rm -f "$part" "$cache"
+        return 1
+    fi
+    (cd "$USB" && sha256sum "$name.part" | sed 's/\.part$//' > "$name.sha256")
+    mv "$part" "$USB/$name"
+    log "sealed: $name ($(wc -l < "$cache") Eintraege, $(du -h "$USB/$name" | cut -f1))"
+}
+
+# Aufbewahrung: die neuesten <n> verschluesselten Saetze einer Stufe, samt .sha256.
+keep_newest() {
+    local kind=$1 n=$2 f
+    { ls -1t "$USB/${kind}"_*.tar.gz.enc 2>/dev/null || true; } | tail -n +$((n + 1)) \
+        | while read -r f; do rm -f "$f" "$f.sha256"; done
+}
+
+# Alte Klartext-Saetze (vor 2026-10-02) und liegengebliebene .part einer Stufe
+# loeschen -- nur, wenn es von ihr schon einen fertigen verschluesselten Satz gibt.
+drop_plaintext() {
+    local kind=$1
+    { ls "$USB/${kind}"_*.tar.gz.enc >/dev/null 2>&1; } || return 0
+    find "$USB" -maxdepth 1 -type f \
+        \( -name "${kind}_*.tar.gz" -o -name "${kind}_*.tar.gz.part" \) -delete
 }
 
 # Ein JSON-Feld ohne Python: dieses Skript laeuft im Wiederherstellungspfad und
@@ -141,7 +230,7 @@ archive_has() {
     local archive=$1 pattern=$2 cache treffer
     cache="$_LISTING_DIR/$(basename "$archive").list"
     if [ ! -s "$cache" ]; then
-        tar tzf "$archive" > "$cache" 2>/dev/null || return 1
+        list_sealed "$archive" "$cache" || return 1
     fi
     # `grep -c` liest bis zum Ende -- kein SIGPIPE, kein falsches Negativ.
     treffer="$(grep -cE "$pattern" "$cache" || true)"
@@ -152,19 +241,25 @@ archive_has() {
 if [ -n "$MOUNT_GUARD" ]; then
     mountpoint -q "$MOUNT_GUARD" || { echo "FAIL: $MOUNT_GUARD not mounted" >&2; exit 1; }
 fi
+case "$MODE" in
+    system | data) ;;
+    *) echo "unknown mode: $MODE (use system|data)" >&2; exit 2 ;;
+esac
 mkdir -p "$USB"
 log "start ($TS)"
+read_passphrase \
+    || fail "PASSPHRASE_MISSING (KAI_BACKUP_PASSPHRASE in $ENV_FILE fehlt oder < 32 Zeichen) -- nichts geschrieben"
 
 case "$MODE" in
   system)
     # ---- 1. Quell-Checkout, unveraendert wie bisher -------------------------
     [ -d "$REPO" ] || fail "CHECKOUT_MISSING ($REPO)"
-    tar_snapshot "$USB/system_$TS.tar.gz.part" \
+    seal "system_$TS.tar.gz.enc" \
         --exclude=./data --exclude=./artifacts --exclude=./.git \
         --exclude='./.mypy_cache' --exclude='./.ruff_cache' \
         --exclude='./.pytest_cache' --exclude='./.hypothesis' \
-        -C "$REPO" .
-    mv "$USB/system_$TS.tar.gz.part" "$USB/system_$TS.tar.gz"
+        -C "$REPO" . \
+        || fail "SYSTEM_TAR_FAILED ($REPO)"
 
     # ---- 2. Das AKTIVE Release -- Vertrag, kein Bonus ----------------------
     # Aufgeloest, nicht als Symlink: ein Backup des Symlinks sichert einen Namen.
@@ -198,28 +293,28 @@ case "$MODE" in
     # ---- 4. Release sichern, .venv ausdruecklich EINGESCHLOSSEN ------------
     # Kein --exclude=.venv: ohne sie ist der Baum kein lauffaehiger Stand,
     # sondern Quelltext, und der Restore braeuchte Netz und Paketquellen.
-    tar_snapshot "$USB/release_$TS.tar.gz.part" -C "$RELEASE_PATH" . \
+    seal "release_$TS.tar.gz.enc" -C "$RELEASE_PATH" . \
         || fail "RELEASE_TAR_FAILED ($RELEASE_PATH)"
-    mv "$USB/release_$TS.tar.gz.part" "$USB/release_$TS.tar.gz"
 
-    tar_snapshot "$USB/deploymarker_$TS.tar.gz.part" \
+    seal "deploymarker_$TS.tar.gz.enc" \
         -C "$(dirname "$DEPLOY_MARKER")" "$(basename "$DEPLOY_MARKER")" \
         || fail "DEPLOYMENT_MARKER_TAR_FAILED"
-    mv "$USB/deploymarker_$TS.tar.gz.part" "$USB/deploymarker_$TS.tar.gz"
 
     # ---- 5. Inventar: enthaelt das Archiv wirklich, was es soll? -----------
-    archive_has "$USB/release_$TS.tar.gz" '(^|/)release\.json$' \
+    archive_has "$USB/release_$TS.tar.gz.enc" '(^|/)release\.json$' \
         || fail "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (release.json)"
-    archive_has "$USB/release_$TS.tar.gz" '(^|/)\.venv/' \
+    archive_has "$USB/release_$TS.tar.gz.enc" '(^|/)\.venv/' \
         || fail "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (.venv)"
-    archive_has "$USB/release_$TS.tar.gz" '(^|/)app/' \
+    archive_has "$USB/release_$TS.tar.gz.enc" '(^|/)app/' \
         || fail "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (app/)"
-    archive_has "$USB/deploymarker_$TS.tar.gz" 'deployment_marker\.json$' \
+    archive_has "$USB/deploymarker_$TS.tar.gz.enc" 'deployment_marker\.json$' \
         || fail "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT (deployment_marker.json)"
 
     # Config bits outside the repo needed for a clean rebuild.
-    tar_snapshot "$USB/etc_$TS.tar.gz.part" -C / etc/systemd/system etc/fstab || true
-    [ -f "$USB/etc_$TS.tar.gz.part" ] && mv "$USB/etc_$TS.tar.gz.part" "$USB/etc_$TS.tar.gz"
+    archive_has "$USB/system_$TS.tar.gz.enc" '(^|/)app/' \
+        || fail "ARCHIVE_MISSING_REQUIRED_CHECKOUT_CONTENT (app/)"
+    seal "etc_$TS.tar.gz.enc" -C / etc/systemd/system etc/fstab \
+        || log "WARN: etc-Abzug nicht erstellt (best effort, kein Vertragsbestandteil)"
     # Rebuild hints (versions + package state) for a faithful restore.
     {
         echo "# KAI standby rebuild hints  $TS"
@@ -232,24 +327,33 @@ case "$MODE" in
         echo "## fstab kai-data UUID"; grep kai-data /etc/fstab 2>/dev/null
         echo "## kai/cloudflared units"; ls /etc/systemd/system/ | grep -Ei 'kai|cloudflared' 2>/dev/null
     } > "$USB/REBUILD_HINTS_$TS.txt" 2>/dev/null || true
-    # Retention: keep newest 4 weekly sets.
-    ls -1t "$USB"/system_*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
-    ls -1t "$USB"/release_*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
-    ls -1t "$USB"/deploymarker_*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
-    ls -1t "$USB"/etc_*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
-    ls -1t "$USB"/REBUILD_HINTS_*.txt 2>/dev/null | tail -n +5 | xargs -r rm -f
-    sz=$(du -h "$USB/system_$TS.tar.gz" | cut -f1)
-    rsz=$(du -h "$USB/release_$TS.tar.gz" | cut -f1)
-    log "done: system_$TS.tar.gz ($sz) + release_$TS.tar.gz ($rsz) [$RELEASE_SHA]"
+    # Retention: keep newest 4 weekly sets (verschluesselt, samt .sha256).
+    for kind in system release deploymarker etc; do
+        keep_newest "$kind" 4
+        drop_plaintext "$kind"
+    done
+    { ls -1t "$USB"/REBUILD_HINTS_*.txt 2>/dev/null || true; } | tail -n +5 | xargs -r rm -f
+    sz=$(du -h "$USB/system_$TS.tar.gz.enc" | cut -f1)
+    rsz=$(du -h "$USB/release_$TS.tar.gz.enc" | cut -f1)
+    log "done: system_$TS.tar.gz.enc ($sz) + release_$TS.tar.gz.enc ($rsz) [$RELEASE_SHA]"
     ;;
   data)
-    tar_snapshot "$USB/data_$TS.tar.gz.part" -C "$REPO" data artifacts
-    mv "$USB/data_$TS.tar.gz.part" "$USB/data_$TS.tar.gz"
+    seal "data_$TS.tar.gz.enc" -C "$REPO" data artifacts || fail "DATA_TAR_FAILED ($REPO)"
+    archive_has "$USB/data_$TS.tar.gz.enc" '^(\./)?data(/|$)' \
+        || fail "ARCHIVE_MISSING_REQUIRED_DATA_CONTENT (data/)"
+    archive_has "$USB/data_$TS.tar.gz.enc" '^(\./)?artifacts(/|$)' \
+        || fail "ARCHIVE_MISSING_REQUIRED_DATA_CONTENT (artifacts/)"
     # Retention: keep newest 28 sets (~7d @ 6h).
-    ls -1t "$USB"/data_*.tar.gz 2>/dev/null | tail -n +29 | xargs -r rm -f
-    sz=$(du -h "$USB/data_$TS.tar.gz" | cut -f1)
-    log "done: data_$TS.tar.gz ($sz)"
+    keep_newest data 28
+    drop_plaintext data
+    sz=$(du -h "$USB/data_$TS.tar.gz.enc" | cut -f1)
+    log "done: data_$TS.tar.gz.enc ($sz)"
     ;;
-  *)
-    echo "unknown mode: $MODE (use system|data)" >&2; exit 2 ;;
 esac
+
+# Die Wiederherstellungsanleitung liegt versioniert im Repo und wird bei jedem
+# erfolgreichen Lauf auf den Stick gelegt -- dort wird sie im Ernstfall gelesen.
+if [ -f "$RESTORE_DOC" ]; then
+    cp -f "$RESTORE_DOC" "$USB/RESTORE_FROM_USB.md.part" \
+        && mv -f "$USB/RESTORE_FROM_USB.md.part" "$USB/RESTORE_FROM_USB.md"
+fi

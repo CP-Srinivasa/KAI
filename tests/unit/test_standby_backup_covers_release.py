@@ -17,7 +17,10 @@ Linux-CI-Runner also immer.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -27,9 +30,12 @@ import pytest
 
 SKRIPT = Path(__file__).resolve().parents[2] / "deploy" / "bin" / "standby_to_usb.sh"
 SHA = "a" * 40
+#: Mindestens 32 Zeichen wie in Produktion; GEHEIM steht in .env und Artefakten.
+PASSPHRASE = "standby-test-passphrase-" + "x" * 16
+GEHEIM = "GEHEIMNIS-aus-der-env-4711"
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("tar") is None,
+    shutil.which("bash") is None or shutil.which("tar") is None or shutil.which("openssl") is None,
     reason="Der Backup-Vertrag ist ein POSIX-Shell-Skript (laeuft in CI auf Linux)",
 )
 
@@ -40,6 +46,14 @@ def _welt(tmp: Path, *, release_sha: str = SHA, marker_sha: str | None = None) -
     (repo / "app").mkdir(parents=True)
     (repo / "app" / "main.py").write_text("print('checkout')\n", encoding="utf-8")
     (repo / "artifacts" / "runtime").mkdir(parents=True)
+    (repo / ".env").write_text(
+        f"KAI_BACKUP_PASSPHRASE={PASSPHRASE}\nAPI_TOKEN={GEHEIM}\n", encoding="utf-8"
+    )
+    (repo / "data").mkdir()
+    (repo / "data" / "x.jsonl").write_text("{}\n", encoding="utf-8")
+    (repo / "artifacts" / "api_request_audit.jsonl").write_text(
+        json.dumps({"client_ip": GEHEIM}) + "\n", encoding="utf-8"
+    )
 
     releases = tmp / "releases"
     release = releases / release_sha
@@ -106,9 +120,33 @@ def _lauf(welt: dict[str, Path], *, modus: str = "system") -> subprocess.Complet
 
 
 def _archiv(usb: Path, praefix: str) -> Path:
-    treffer = sorted(usb.glob(f"{praefix}_*.tar.gz"))
-    assert treffer, f"kein {praefix}-Archiv erzeugt"
+    treffer = sorted(usb.glob(f"{praefix}_*.tar.gz.enc"))
+    assert treffer, f"kein verschluesseltes {praefix}-Archiv erzeugt"
     return treffer[-1]
+
+
+def _entschluesseln(pfad: Path, passphrase: str = PASSPHRASE) -> bytes:
+    """Unabhaengig von openssl: genau das dokumentierte Format.
+
+    ``openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000``: ``Salted__`` + 8 Byte
+    Salz, Schluessel und IV per PBKDF2-HMAC-SHA256 (48 Byte), PKCS#7. Dasselbe
+    Format wie Vault und Pi-Tagesarchive -- mit derselben Passphrase lesbar.
+    """
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    roh = pfad.read_bytes()
+    assert roh[:8] == b"Salted__", f"{pfad.name}: kein openssl-enc-Format"
+    material = hashlib.pbkdf2_hmac("sha256", passphrase.encode(), roh[8:16], 200_000, dklen=48)
+    entschl = Cipher(algorithms.AES(material[:32]), modes.CBC(material[32:])).decryptor()
+    gepolstert = entschl.update(roh[16:]) + entschl.finalize()
+    entpolster = padding.PKCS7(128).unpadder()
+    return entpolster.update(gepolstert) + entpolster.finalize()
+
+
+def _namen(pfad: Path) -> list[str]:
+    with tarfile.open(fileobj=io.BytesIO(_entschluesseln(pfad)), mode="r:gz") as tar:
+        return tar.getnames()
 
 
 # --------------------------------------------------------------------------
@@ -121,29 +159,25 @@ def test_gueltiger_zustand_sichert_checkout_release_venv_und_marker(tmp_path: Pa
     ergebnis = _lauf(welt)
     assert ergebnis.returncode == 0, ergebnis.stderr
 
-    inhalt = tarfile.open(_archiv(welt["usb"], "release")).getnames()
+    inhalt = _namen(_archiv(welt["usb"], "release"))
     assert any(n.endswith("release.json") for n in inhalt), "RELEASE_JSON_COVERED"
     assert any("/.venv/" in n or n.endswith("/.venv") for n in inhalt), "RELEASE_VENV_COVERED"
     assert any("/app/" in n or n.endswith("/app") for n in inhalt), "ACTIVE_RELEASE_COVERED"
 
-    marker = tarfile.open(_archiv(welt["usb"], "deploymarker")).getnames()
+    marker = _namen(_archiv(welt["usb"], "deploymarker"))
     assert any(n.endswith("deployment_marker.json") for n in marker), "DEPLOYMENT_MARKER_COVERED"
 
     # Der Checkout bleibt erhalten — nicht ersetzt, sondern zusätzlich.
-    system = tarfile.open(_archiv(welt["usb"], "system")).getnames()
+    system = _namen(_archiv(welt["usb"], "system"))
     assert any(n.endswith("app/main.py") for n in system), "CHECKOUT_COVERED"
 
 
 def test_der_datentier_bleibt_unveraendert(tmp_path: Path) -> None:
     """Die Härtung darf den bestehenden 6-Stunden-Lauf nicht anfassen."""
     welt = _welt(tmp_path)
-    (welt["repo"] / "data").mkdir()
-    (welt["repo"] / "data" / "x.jsonl").write_text("{}\n", encoding="utf-8")
     ergebnis = _lauf(welt, modus="data")
     assert ergebnis.returncode == 0, ergebnis.stderr
-    assert any(
-        n.endswith("data/x.jsonl") for n in tarfile.open(_archiv(welt["usb"], "data")).getnames()
-    )
+    assert any(n.endswith("data/x.jsonl") for n in _namen(_archiv(welt["usb"], "data")))
 
 
 # --------------------------------------------------------------------------
@@ -262,7 +296,7 @@ def test_ein_nicht_gemounteter_guard_pfad_bricht_ab(tmp_path: Path) -> None:
     )
     assert ergebnis.returncode != 0
     assert "not mounted" in ergebnis.stderr
-    assert not list(welt["usb"].glob("*.tar.gz")), "kein Archiv bei blockiertem Guard"
+    assert not list(welt["usb"].glob("*.tar.gz*")), "kein Archiv bei blockiertem Guard"
 
 
 def test_die_kanonische_fassung_liegt_im_repository() -> None:
@@ -336,8 +370,7 @@ def test_ein_grosses_release_archiv_wird_nicht_faelschlich_als_leer_gemeldet(
 
     # Und der Beweis, dass die Pruefung nicht einfach uebersprungen wurde:
     # das Archiv enthaelt wirklich, was sie behauptet.
-    with tarfile.open(_archiv(welt["usb"], "release")) as tar:
-        namen = tar.getnames()
+    namen = _namen(_archiv(welt["usb"], "release"))
     assert any(n.endswith("release.json") for n in namen)
     assert sum(1 for n in namen if "/.venv/" in n or n.startswith("./.venv")) > _VIELE
 
@@ -363,3 +396,145 @@ def test_die_pruefung_meldet_einen_echt_fehlenden_eintrag_auch_im_grossen_archiv
     assert "RELEASE_JSON_MISSING" in ergebnis.stderr or (
         "ARCHIVE_MISSING_REQUIRED_RELEASE_CONTENT" in ergebnis.stderr
     )
+
+
+# ---------------------------------------------------------------------------
+# Verschluesselung (Operator 2026-10-02): auf dem Stick liegt kein Klartext mehr.
+#
+# Vorher lagen .env, Telegram-Sitzung und IP-haltige Zugriffsprotokolle offen
+# auf dem USB-Stick, die Datenschutzseite sagt "verschluesselte Sicherungen".
+# ---------------------------------------------------------------------------
+
+
+def _beide_stufen(welt: dict[str, Path]) -> None:
+    for modus in ("system", "data"):
+        ergebnis = _lauf(welt, modus=modus)
+        assert ergebnis.returncode == 0, f"{modus}: {ergebnis.stderr}"
+
+
+def test_auf_dem_stick_liegt_kein_klartext(tmp_path: Path) -> None:
+    welt = _welt(tmp_path)
+    _beide_stufen(welt)
+
+    dateien = [p for p in welt["usb"].iterdir() if p.is_file()]
+    assert not [p.name for p in dateien if p.name.endswith((".tar.gz", ".part"))]
+    for datei in dateien:
+        inhalt = datei.read_bytes()
+        assert GEHEIM.encode() not in inhalt, f"{datei.name} traegt ein Geheimnis im Klartext"
+        assert PASSPHRASE.encode() not in inhalt, f"{datei.name} traegt die Passphrase"
+
+    # Gesichert ist es trotzdem -- verschluesselt, mit der Passphrase lesbar.
+    roh = _entschluesseln(_archiv(welt["usb"], "system"))
+    with tarfile.open(fileobj=io.BytesIO(roh), mode="r:gz") as tar:
+        env = tar.extractfile("./.env")
+        assert env is not None and GEHEIM.encode() in env.read()
+    roh = _entschluesseln(_archiv(welt["usb"], "data"))
+    with tarfile.open(fileobj=io.BytesIO(roh), mode="r:gz") as tar:
+        audit = tar.extractfile("artifacts/api_request_audit.jsonl")
+        assert audit is not None and GEHEIM.encode() in audit.read()
+
+
+@pytest.mark.parametrize("env", ["ANDERES=1\n", "KAI_BACKUP_PASSPHRASE=zu-kurz\n", None])
+def test_ohne_passphrase_wird_nichts_geschrieben(tmp_path: Path, env: str | None) -> None:
+    welt = _welt(tmp_path)
+    if env is None:
+        (welt["repo"] / ".env").unlink()
+    else:
+        (welt["repo"] / ".env").write_text(env, encoding="utf-8")
+    for modus in ("system", "data"):
+        _erwarte_fail(_lauf(welt, modus=modus), "PASSPHRASE_MISSING")
+    assert not [p.name for p in welt["usb"].iterdir() if ".tar.gz" in p.name]
+
+
+def test_die_env_wird_gelesen_nicht_ausgefuehrt(tmp_path: Path) -> None:
+    """Das Skript laeuft als root, die .env gehoert ``ubuntu``: sourcen = Root-Codeausfuehrung."""
+    welt = _welt(tmp_path)
+    falle = tmp_path / "ausgefuehrt"
+    (welt["repo"] / ".env").write_text(
+        f"X=$(touch {falle})\nY=`touch {falle}`\nKAI_BACKUP_PASSPHRASE={PASSPHRASE}\n",
+        encoding="utf-8",
+    )
+    ergebnis = _lauf(welt, modus="data")
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert not falle.exists(), "eine Zeile der .env wurde als Shell ausgefuehrt"
+
+
+@pytest.mark.parametrize(
+    "zeile",
+    [
+        f'KAI_BACKUP_PASSPHRASE="{PASSPHRASE}"',
+        f"KAI_BACKUP_PASSPHRASE='{PASSPHRASE}'",
+        f"export KAI_BACKUP_PASSPHRASE={PASSPHRASE}",
+        f"KAI_BACKUP_PASSPHRASE={PASSPHRASE}\r",
+    ],
+)
+def test_die_passphrase_gilt_wie_beim_vault(tmp_path: Path, zeile: str) -> None:
+    """Anfuehrungszeichen, ``export`` und CRLF aendern die Passphrase nicht."""
+    welt = _welt(tmp_path)
+    (welt["repo"] / ".env").write_text(zeile + "\n", encoding="utf-8", newline="")
+    ergebnis = _lauf(welt, modus="data")
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    assert any(n.endswith("data/x.jsonl") for n in _namen(_archiv(welt["usb"], "data")))
+
+
+def test_jeder_satz_hat_eine_passende_pruefsumme(tmp_path: Path) -> None:
+    welt = _welt(tmp_path)
+    _beide_stufen(welt)
+    saetze = sorted(welt["usb"].glob("*.tar.gz.enc"))
+    assert {p.name.split("_")[0] for p in saetze} >= {"system", "release", "deploymarker", "data"}
+    for satz in saetze:
+        zeile = (satz.parent / f"{satz.name}.sha256").read_text(encoding="utf-8").split()
+        assert zeile == [hashlib.sha256(satz.read_bytes()).hexdigest(), satz.name]
+
+
+def test_alte_klartext_saetze_verschwinden_erst_nach_erfolg(tmp_path: Path) -> None:
+    welt = _welt(tmp_path)
+    alt = welt["usb"] / "data_20260101T000000Z.tar.gz"
+    halb = welt["usb"] / "data_20260101T060000Z.tar.gz.part"
+    fremd = welt["usb"] / "system_20260101T000000Z.tar.gz"
+    for datei in (alt, halb, fremd):
+        datei.write_bytes(b"klartext")
+    env = welt["repo"] / ".env"
+    richtig = env.read_text(encoding="utf-8")
+
+    env.write_text("NICHTS=1\n", encoding="utf-8")
+    assert _lauf(welt, modus="data").returncode != 0
+    assert alt.exists() and halb.exists(), "ohne neuen verschluesselten Satz bleibt der alte"
+
+    env.write_text(richtig, encoding="utf-8")
+    assert _lauf(welt, modus="data").returncode == 0
+    assert not alt.exists() and not halb.exists()
+    assert fremd.exists(), "die Datenstufe raeumt nur ihre eigenen Saetze"
+
+
+def test_die_datenstufe_behaelt_28_verschluesselte_saetze(tmp_path: Path) -> None:
+    welt = _welt(tmp_path)
+    for i in range(30):
+        alt = welt["usb"] / f"data_202601{i + 1:02d}T000000Z.tar.gz.enc"
+        alt.write_bytes(b"x")
+        (welt["usb"] / f"{alt.name}.sha256").write_text(f"x  {alt.name}\n", encoding="utf-8")
+        os.utime(alt, (1_700_000_000 + i, 1_700_000_000 + i))
+    assert _lauf(welt, modus="data").returncode == 0
+    assert len(list(welt["usb"].glob("data_*.tar.gz.enc"))) == 28
+    assert len(list(welt["usb"].glob("data_*.tar.gz.enc.sha256"))) == 28
+    assert not (welt["usb"] / "data_20260101T000000Z.tar.gz.enc").exists(), "aeltester weg"
+    assert (welt["usb"] / "data_20260130T000000Z.tar.gz.enc").exists()
+
+
+def test_die_anleitung_kommt_bei_jedem_lauf_auf_den_stick(tmp_path: Path) -> None:
+    welt = _welt(tmp_path)
+    ordner = welt["repo"] / "deploy" / "standby"
+    ordner.mkdir(parents=True)
+    (ordner / "RESTORE_FROM_USB.md").write_text("# Anleitung\n", encoding="utf-8")
+    assert _lauf(welt, modus="data").returncode == 0
+    assert (welt["usb"] / "RESTORE_FROM_USB.md").read_text(encoding="utf-8") == "# Anleitung\n"
+
+
+def test_die_anleitung_prueft_entschluesselt_und_loescht_vor_dem_start() -> None:
+    """Wiederherstellung: erst Pruefsummen, dann entschluesseln, Loeschregeln VOR dem Start."""
+    text = (SKRIPT.parents[1] / "standby" / "RESTORE_FROM_USB.md").read_text(encoding="utf-8")
+    assert "openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000" in text
+    pruefen = text.index("sha256sum -c")
+    loeschen = text.index("scripts/audit_rotate.py --apply")
+    starten = text.index("systemctl enable --now")
+    assert pruefen < loeschen < starten

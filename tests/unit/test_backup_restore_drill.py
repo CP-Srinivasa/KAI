@@ -143,10 +143,15 @@ def _make_backup(root: Path) -> Path:
 
 
 def _run_drill(
-    root: Path, archive: Path | None, passphrase: str | None = PASSPHRASE
+    root: Path,
+    archive: Path | None,
+    passphrase: str | None = PASSPHRASE,
+    usb_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     (root / "tmp").mkdir(exist_ok=True)
-    env_prefix = "env TMPDIR=$PWD/tmp "
+    # Hermetisch: nie den echten Stick (/mnt/kai-data) einer Pi lesen, auf der der Test laeuft.
+    usb = usb_dir if usb_dir is not None else root / "kein-usb"
+    env_prefix = f"env TMPDIR=$PWD/tmp KAI_DRILL_USB_DIR={shlex.quote(usb.as_posix())} "
     if passphrase is not None:
         env_prefix += f"KAI_BACKUP_PASSPHRASE={shlex.quote(passphrase)} "
     archive_arg = ""
@@ -698,3 +703,81 @@ def test_non_claims_survive_a_failing_run(tmp_path: Path) -> None:
     assert proof["status"] == "FAIL"
     assert proof["global_atomic_point_in_time"] == "NOT_CLAIMED"
     assert proof["off_pi_redundancy"] == "NOT_CLAIMED"
+
+
+# ---------------------------------------------------------------------------
+# USB-Kaltreserve (seit 2026-10-02 verschluesselt): der Drill prueft den
+# neuesten Datensatz unabhaengig von dem Lauf, der ihn geschrieben hat.
+# ---------------------------------------------------------------------------
+
+
+def _usb_satz(root: Path, usb: Path, *, ohne: str = "") -> Path:
+    """Ein Datensatz wie von standby_to_usb.sh: tar | openssl, .sha256 daneben."""
+    quelle = root / "usb-quelle"
+    for teil in ("data", "artifacts"):
+        if teil != ohne:
+            (quelle / teil).mkdir(parents=True, exist_ok=True)
+            (quelle / teil / "x.jsonl").write_text("{}\n", encoding="utf-8")
+    usb.mkdir(parents=True, exist_ok=True)
+    satz = usb / "data_20261002T062000Z.tar.gz.enc"
+    teile = " ".join(t for t in ("data", "artifacts") if t != ohne)
+    ergebnis = _run_bash(
+        root,
+        f"tar czf - -C {shlex.quote(quelle.as_posix())} {teile} | env "
+        f"P={shlex.quote(PASSPHRASE)} openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 "
+        f"-pass env:P -out {shlex.quote(satz.as_posix())} && cd {shlex.quote(usb.as_posix())} "
+        f"&& sha256sum {satz.name} > {satz.name}.sha256",
+    )
+    assert ergebnis.returncode == 0, ergebnis.stderr
+    return satz
+
+
+def test_drill_verifies_the_encrypted_usb_standby(tmp_path: Path) -> None:
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+    usb = tmp_path / "usb"
+    _usb_satz(tmp_path, usb)
+
+    result = _run_drill(tmp_path, archive, usb_dir=usb)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    usb_beleg = cast(dict[str, str], _latest_proof(tmp_path)["usb_standby"])
+    assert usb_beleg["status"] == "VERIFIED"
+    assert usb_beleg["archive"].endswith("data_20261002T062000Z.tar.gz.enc")
+
+
+def test_drill_without_a_usb_set_reports_absent_not_fail(tmp_path: Path) -> None:
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+
+    result = _run_drill(tmp_path, archive)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    proof = _latest_proof(tmp_path)
+    assert proof["status"] == "PASS"
+    assert cast(dict[str, str], proof["usb_standby"])["status"] == "ABSENT"
+
+
+@pytest.mark.parametrize("schaden", ["pruefsumme", "inhalt"])
+def test_drill_fails_on_a_broken_usb_set(tmp_path: Path, schaden: str) -> None:
+    _require_backup_tools()
+    _copy_drill_fixture(tmp_path)
+    _write_fixture_sources(tmp_path)
+    archive = _make_backup(tmp_path)
+    usb = tmp_path / "usb"
+    satz = _usb_satz(tmp_path, usb, ohne="artifacts" if schaden == "inhalt" else "")
+    if schaden == "pruefsumme":
+        roh = bytearray(satz.read_bytes())
+        roh[-1] ^= 0xFF
+        satz.write_bytes(bytes(roh))
+
+    result = _run_drill(tmp_path, archive, usb_dir=usb)
+
+    assert result.returncode == 6, result.stderr + result.stdout
+    proof = _latest_proof(tmp_path)
+    assert proof["status"] == "FAIL"
+    assert cast(dict[str, str], proof["usb_standby"])["status"] == "FAIL"
