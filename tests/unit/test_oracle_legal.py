@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -185,8 +185,10 @@ def test_privacy_page_promises_only_what_the_retention_job_does() -> None:
     from app.oracle_legal import invites, retention
 
     page = legal.render("datenschutz", price_sat=10, access_min=60, invoice_min=5, preview=False)
-    # IP: nach 6 Tagen entfernt, täglicher Lauf -> höchstens 7 Tage
-    assert retention.IP_RETENTION.days == 6
+    # IP: knapp vor 6 Tagen entfernt; mit täglichem Lauf (24 h) und Laufzeit bleibt das
+    # unter den zugesagten 7 Tagen.
+    assert retention.IP_PROMISE == timedelta(days=7)
+    assert retention.IP_RETENTION + timedelta(days=1, hours=1) < retention.IP_PROMISE
     assert "Schutzkennwerte: spätestens sieben Tage nach Erhebung" in page
     assert "Löschung nach 14 Tagen" in page  # logrotate rotate 14 (deploy/logrotate/kai)
     assert retention.CASE_RETENTION_AFTER_CLOSE.days == 90 and "90 Tage nach Abschluss" in page
