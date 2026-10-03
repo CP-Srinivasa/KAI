@@ -15,9 +15,18 @@ python scripts/kai_dev_hub.py status
 python scripts/kai_dev_hub.py ui
 ```
 
-Der Installer kopiert Hub und Workflow in
-`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.3.4), schreibt `install.json` mit
+Der Installer kopiert Hub, Workflow und Oberfläche (`kai_dev_hub_ui.py`) in
+`%USERPROFILE%\.kai\developer-hub\app\v<Version>` (aktuell 0.4.0), schreibt `install.json` mit
 Quell-SHA und Datei-Hashes und erzeugt **KAI Developer Hub** auf dem Desktop.
+
+Ab 0.4.0 ist die Oberfläche Ollama-artig dunkel mit KAI-Neon: links die
+Arbeitsbereiche, in der Mitte die Engine-Auswahl (OpenCode lokal/Cloud, Hermes,
+Kimi) mit Fähigkeits-Symbolen (offline, Cloud, schreibt Code, Werkzeuge, 64K,
+Kontextpaket, Zwischenablage, nur lesen, Modell gepinnt; Erklärung per
+Mauszeiger), darunter die Startleiste (Enter startet), rechts der Systemzustand
+und die Diagnose. Das Fenster ist DPI-bewusst (scharf bei 200 %). Es ist nur
+Darstellung: Start, Schreibersperre, Übergabe-Ledger und Modell-Pinning laufen
+unverändert über `kai_dev_hub.py`.
 Der Shortcut zeigt auf diese versionierte Kopie, nicht auf einen Donor-Branch.
 Ein Worktree mit detached HEAD ist als Quelle zulässig. Die Herkunft belegt dann
 `source_head` (voller SHA), `source_branch` ist `null` und `source_detached` ist `true`.

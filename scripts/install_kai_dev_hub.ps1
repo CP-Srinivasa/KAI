@@ -43,7 +43,9 @@ foreach ($required in @('AGENTS.md', 'docs\AI_HANDOFF.md', 'opencode.json')) {
 
 $source = Join-Path $PSScriptRoot 'kai_dev_hub.py'
 $sourceWorkflow = Join-Path $PSScriptRoot 'kai_dev_workflow.py'
-foreach ($file in @($source, $sourceWorkflow)) {
+# Ab 0.4.0 liegt die Oberflaeche in einem eigenen Modul neben dem Hub.
+$sourceUi = Join-Path $PSScriptRoot 'kai_dev_hub_ui.py'
+foreach ($file in @($source, $sourceWorkflow, $sourceUi)) {
     if (-not (Test-Path -LiteralPath $file)) { throw "Hub-Quelldatei fehlt: $file" }
 }
 
@@ -81,8 +83,10 @@ try {
     New-Item -ItemType Directory -Path $staging | Out-Null
     $stagedScript = Join-Path $staging 'kai_dev_hub.py'
     $stagedWorkflow = Join-Path $staging 'kai_dev_workflow.py'
+    $stagedUi = Join-Path $staging 'kai_dev_hub_ui.py'
     Copy-Item -LiteralPath $source -Destination $stagedScript
     Copy-Item -LiteralPath $sourceWorkflow -Destination $stagedWorkflow
+    Copy-Item -LiteralPath $sourceUi -Destination $stagedUi
 
     $manifest = [ordered]@{
         schema_version = 1
@@ -94,6 +98,7 @@ try {
         repository = $repositoryPath
         hub_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedScript).Hash
         workflow_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedWorkflow).Hash
+        ui_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedUi).Hash
     }
     # UTF-8 ohne BOM, unabhaengig davon, ob powershell.exe oder pwsh laeuft.
     [System.IO.File]::WriteAllText(
