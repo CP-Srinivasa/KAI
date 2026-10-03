@@ -729,9 +729,10 @@ def test_doctor_separates_inference_from_task_startability(
 
 def test_hub_version_and_offline_basis_are_operator_visible() -> None:
     text = HUB_PATH.read_text(encoding="utf-8")
-    assert 'HUB_VERSION = "0.3.4"' in text
-    assert "Offline-Start von" in text
-    assert "OFFLINE-BASIS" in text
+    window = (HUB_PATH.parent / "kai_dev_hub_ui.py").read_text(encoding="utf-8")
+    assert 'HUB_VERSION = "0.4.0"' in text
+    assert "Offline-Start von" in window
+    assert "OFFLINE-BASIS" in window
 
 
 # --- KAI-DEV-INDEPENDENCE-02: handoff identity, task sources, cleanup ---------

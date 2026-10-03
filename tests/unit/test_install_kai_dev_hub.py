@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install_kai_dev_hub.ps1"
 HUB = ROOT / "scripts" / "kai_dev_hub.py"
 WORKFLOW = ROOT / "scripts" / "kai_dev_workflow.py"
+UI = ROOT / "scripts" / "kai_dev_hub_ui.py"
 
 _SHELL = shutil.which("pwsh") or shutil.which("powershell")
 
@@ -51,7 +52,7 @@ def kai_fixture(tmp_path: Path) -> Path:
     (repo / "AGENTS.md").write_text("# agents\n", encoding="utf-8")
     (repo / "docs" / "AI_HANDOFF.md").write_text("# handoff\n", encoding="utf-8")
     (repo / "opencode.json").write_text("{}\n", encoding="utf-8")
-    for quelle in (INSTALLER, HUB, WORKFLOW):
+    for quelle in (INSTALLER, HUB, WORKFLOW, UI):
         shutil.copy2(quelle, repo / "scripts" / quelle.name)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", "-A")
@@ -130,7 +131,9 @@ def test_detached_head_installiert_mit_source_head_als_herkunft(
     assert manifest["source_detached"] is True
     assert manifest["hub_sha256"] == _sha256(ziel / "kai_dev_hub.py")
     assert manifest["workflow_sha256"] == _sha256(ziel / "kai_dev_workflow.py")
+    assert manifest["ui_sha256"] == _sha256(ziel / "kai_dev_hub_ui.py")
     assert _sha256(ziel / "kai_dev_hub.py") == _sha256(HUB)
+    assert _sha256(ziel / "kai_dev_hub_ui.py") == _sha256(UI)
     assert _app_dirs(root) == [ziel.name], "kein Staging-Rest neben der Version"
 
 
